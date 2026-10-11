@@ -51,10 +51,36 @@ spec:
           spec:
             description: PlatformSecurityPolicySpec holds cluster-admin security configuration.
             properties:
+              allowedClusterRoles:
+                description: |-
+                  AllowedClusterRoles lists, per profile, the platform's cluster roles
+                  this cluster permits. It permits and does not grant: a role is bound
+                  only where it is also granted on the install.
+                items:
+                  description: |-
+                    AllowedClusterRole permits one of the platform's cluster roles for one
+                    catalogue profile on this cluster.
+                  properties:
+                    profile:
+                      description: Profile is the ComponentProfile metadata.name that
+                        may be bound to it.
+                      minLength: 1
+                      type: string
+                    role:
+                      description: |-
+                        Role is the platform's name of the role, as a profile asks for it in
+                        requires.privileges.clusterRoles[].name.
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - profile
+                  - role
+                  type: object
+                type: array
               allowedMacWaivers:
                 description: |-
                   AllowedMacWaivers lists profile/policy/scope tuples the cluster permits.
-                  AppProfile requests outside this list are denied at deploy time.
+                  A profile's requests outside this list are denied at deploy time.
                 items:
                   description: AllowedMacWaiver is a cluster-admin approved MAC waiver
                     for a catalogue profile.
@@ -63,11 +89,11 @@ spec:
                       description: Policy is the Kyverno ClusterPolicy name.
                       type: string
                     profile:
-                      description: Profile is the AppProfile metadata.name that may
-                        use this waiver.
+                      description: Profile is the ComponentProfile metadata.name that
+                        may use this waiver.
                       type: string
                     scope:
-                      description: Scope matches MacWaiverRequest.scope on the AppProfile.
+                      description: Scope matches MacWaiverRequest.scope on the profile.
                       type: string
                   required:
                   - policy

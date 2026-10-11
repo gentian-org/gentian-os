@@ -19,8 +19,13 @@ llmEnabled: "false"
 relayHost: ""
 egressHost: ""
 storageClass: ""
-# Whether this cluster has GPUs (spec.llm.gpuAcceleration) and whether the
-# claim lists external providers. The first decides whether the mock backend
-# runs; the second whether the chart reads a vault path for provider keys.
-llmGpuAcceleration: "false"
-llmExternalProviders: "false"
+
+# Whether the four shared stores -- PostgreSQL, MariaDB, Redis, MinIO -- each
+# get the NetworkPolicy that says who may connect to them
+# (templates/networkpolicy.yaml in each engine's chart). On unless a cluster
+# says otherwise; "false" removes all four and leaves credentials as the only
+# check on a connection. From the bootstrap chart's value of the same name.
+# The mail servers' charts take the same switch for theirs.
+# The same switch carries the policies of the model gateway's namespace
+# (kernel/services/llm/manifests), on a cluster that serves models.
+storeNetworkPolicies: "true"

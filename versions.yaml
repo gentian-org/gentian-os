@@ -48,8 +48,13 @@ metrics-server:
   chart: "3.13.0"
   repo: https://kubernetes-sigs.github.io/metrics-server/
 
+# Envoy Gateway 1.9 is tested on Kubernetes 1.33 to 1.36 and installs the
+# Gateway API v1.6.1 CRDs; the installer's pre-flight refuses an older cluster.
+# The operator's tests validate what it writes against this release's CRDs,
+# which are copied into the repository: after changing the version, run
+# scripts/gen/gen-envoy-gateway-crds.py.
 envoy-gateway:
-  chart: "v1.2.5"
+  chart: "v1.9.2"
   repo: oci://docker.io/envoyproxy/gateway-helm
 
 argocd:

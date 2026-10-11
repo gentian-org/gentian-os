@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authz
@@ -206,7 +200,7 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileTenants(ctx, cluster, []string{"platform", "acme"}); err != nil {
+	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform", "acme")); err != nil {
 		t.Fatal(err)
 	}
 	// A platform administrator: in the group, so admin of the cluster, so
@@ -231,7 +225,7 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("acme")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileTenants(ctx, cluster, []string{"platform", "acme"}); err != nil {
+	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform", "acme")); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("acme")); ok {
@@ -240,7 +234,7 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("platform")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileTenants(ctx, cluster, []string{"platform"}); err != nil {
+	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform")); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("platform")); !ok {
@@ -248,10 +242,12 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	}
 }
 
-// Opening a catalogue to a tenant is the Cluster claim's to say (AD-14), and
-// closing it again is the same edit undone: this is the path that has to take
-// the access away as readily as it gives it.
-func TestOpenCatalogueSourcesFollowTheClaim(t *testing.T) {
+// Who approves a tenant's public addresses follows the tenant's manifest and
+// nothing else: the administrators' group holds perimeter_approver while the
+// manifest says so and loses it when it stops, the cluster's administrator
+// approves wherever the tenant is operated by its cluster, and a member of
+// the perimeter group always does.
+func TestWhoApprovesPublicAddressesFollowsTheManifest(t *testing.T) {
 	o := requireOpenFGA(t)
 	ctx := context.Background()
 	store, model, err := Bootstrap(ctx, o)
@@ -263,46 +259,71 @@ func TestOpenCatalogueSourcesFollowTheClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenants := []string{"sources-a", "sources-b"}
-	entry := "in-house/timesheets"
-
-	// Nothing declared: nothing is open, and an entry nobody granted is not
-	// installable by anybody.
-	if err := c.ReconcileCatalogueSources(ctx, tenants, nil); err != nil {
+	cluster := "perimeter-test"
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.BindEntryToSource(ctx, entry); err != nil {
+	if err := c.Write(ctx, []Tuple{
+		{User: "user:p-root", Relation: "member", Object: "group:gentian/platform/admin"},
+		{User: "user:p-tom", Relation: "member", Object: "group:gentian/tenant/p-acme/admins"},
+		{User: "user:p-pat", Relation: "member", Object: "group:gentian/tenant/p-acme/perimeter"},
+		{User: "user:p-mia", Relation: "member", Object: "group:gentian/tenant/p-acme/members"},
+		{User: "user:p-root", Relation: "member", Object: "group:gentian/tenant/platform/admins"},
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	object, _ := CatalogueEntry(entry)
-	for _, tenant := range tenants {
-		if ok, _ := c.Check(ctx, "test", Tenant(tenant), "can_install", object); ok {
-			t.Fatalf("%s may install from a source nothing opened", tenant)
+	expect := func(when string, want map[string]bool) {
+		t.Helper()
+		for user, allowed := range want {
+			ok, err := c.Check(ctx, "test", "user:"+user, "can_expose", Tenant("p-acme"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != allowed {
+				t.Errorf("%s: can_expose for %s = %v, want %v", when, user, ok, allowed)
+			}
+		}
+	}
+	project := func(approve bool) {
+		t.Helper()
+		if err := c.ReconcileTenants(ctx, cluster, []TenantRights{
+			{Name: "platform", AdminsApprove: approve}, {Name: "p-acme", AdminsApprove: approve},
+		}); err != nil {
+			t.Fatal(err)
 		}
 	}
 
-	// The claim opens it to one of them.
-	if err := c.ReconcileCatalogueSources(ctx, tenants, map[string][]string{
-		"in-house": {"sources-a"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if ok, err := c.Check(ctx, "test", Tenant("sources-a"), "can_install", object); err != nil || !ok {
-		t.Fatalf("the tenant the claim named may not install: %v %v", ok, err)
-	}
-	if ok, _ := c.Check(ctx, "test", Tenant("sources-b"), "can_install", object); ok {
-		t.Fatal("a source opened to one tenant admits another")
+	project(false)
+	expect("a new tenant", map[string]bool{"p-root": true, "p-pat": true, "p-tom": false, "p-mia": false})
+
+	project(true)
+	expect("switched on", map[string]bool{"p-root": true, "p-pat": true, "p-tom": true, "p-mia": false})
+	// The platform tenant's administrators are the cluster's: the switch
+	// writes nothing there.
+	approve, _ := adminsApprove(PlatformTenant)
+	if have, err := c.Read(ctx, approve); err != nil || len(have) != 0 {
+		t.Errorf("the switch wrote %v for the platform tenant (%v)", have, err)
 	}
 
-	// Binding twice writes nothing more, and the claim dropping the source
-	// entirely closes it again.
-	if err := c.BindEntryToSource(ctx, entry); err != nil {
+	project(false)
+	expect("switched off again", map[string]bool{"p-root": true, "p-pat": true, "p-tom": false, "p-mia": false})
+
+	// An entry of that shape written by hand does not outlive a projection:
+	// the manifest is where the switch is.
+	approve, _ = adminsApprove("p-acme")
+	if err := c.Write(ctx, []Tuple{approve}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileCatalogueSources(ctx, tenants, nil); err != nil {
+	project(false)
+	expect("written by hand", map[string]bool{"p-tom": false})
+
+	// A tenant that withdrew the operator is not approved for by the
+	// cluster's administrator; its own approvers still approve.
+	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("p-acme")}}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := c.Check(ctx, "test", Tenant("sources-a"), "can_install", object); ok {
-		t.Fatal("a source dropped from the claim is still open")
-	}
+	project(false)
+	expect("the operator withdrawn", map[string]bool{"p-root": false, "p-pat": true, "p-tom": false})
+	project(true)
+	expect("the operator withdrawn, switched on", map[string]bool{"p-root": false, "p-pat": true, "p-tom": true})
 }

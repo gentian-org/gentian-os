@@ -1,0 +1,55 @@
+# A cluster that serves models from external providers.
+#
+# What this asserts is the credential each provider gets from the claim alone:
+# a CredentialRequirement llm-provider-<name> and its probe in the control
+# namespace, both on the one vault path providers share, with the one field
+# <name>_api_key. The third provider names another provider's property; its
+# requirement still declares its own and nothing else. The fourth has a name
+# that is no DNS label and declares nothing.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  llm:
+    enabled: true
+    providers:
+      - name: infomaniak
+        displayName: Infomaniak AI Services
+        apiBase: https://api.infomaniak.com/2/ai/12345/openai/v1
+        apiKeyProperty: infomaniak_api_key
+        models:
+          - name: gemma-4-31b
+            model: google/gemma-4-31B-it
+      - name: acme-eu
+        apiBase: https://models.acme.example/v1
+        apiKeyProperty: acme_eu_api_key
+        models: []
+      - name: borrower
+        apiBase: https://elsewhere.example/v1
+        apiKeyProperty: infomaniak_api_key
+        models: []
+      - name: Not_A_Label
+        apiBase: https://elsewhere.example/v1
+        apiKeyProperty: x
+        models: []
+  compositeDeletePolicy: Background
+  resourceRefs: []

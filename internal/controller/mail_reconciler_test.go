@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -41,7 +35,6 @@ func TestMail_Disabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "maildisabled"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Disabled Co",
-			Domain:      "maildisabled.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeDisabled},
 		},
 	}
@@ -87,7 +80,6 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mailself"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Selfhosted Co",
-			Domain:      "mailself.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
@@ -129,8 +121,8 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM) == nil
 	})
-	if postfixCM.Data["mailself"] != "mailself.example.com" {
-		t.Errorf("expected Postfix virtual-domain 'mailself.example.com', got %q", postfixCM.Data["mailself"])
+	if postfixCM.Data["mailself"] != "mailself.platform.example.test" {
+		t.Errorf("expected Postfix virtual-domain 'mailself.platform.example.test', got %q", postfixCM.Data["mailself"])
 	}
 
 	// Dovecot domains ConfigMap must contain the tenant domain.
@@ -139,8 +131,8 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM) == nil
 	})
-	if dovecotCM.Data["mailself"] != "mailself.example.com" {
-		t.Errorf("expected Dovecot domain 'mailself.example.com', got %q", dovecotCM.Data["mailself"])
+	if dovecotCM.Data["mailself"] != "mailself.platform.example.test" {
+		t.Errorf("expected Dovecot domain 'mailself.platform.example.test', got %q", dovecotCM.Data["mailself"])
 	}
 
 	// SMTP credentials Secret must be in the tenant namespace.
@@ -188,7 +180,6 @@ func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mailnoapps"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail No Apps Co",
-			Domain:      "mailnoapps.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
@@ -226,7 +217,6 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "maildefault"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Default Co",
-			Domain:      "maildefault.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -251,8 +241,8 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM) == nil
 	})
-	if postfixCM.Data["maildefault"] != "maildefault.example.com" {
-		t.Errorf("expected Postfix virtual-domain 'maildefault.example.com', got %q",
+	if postfixCM.Data["maildefault"] != "maildefault.platform.example.test" {
+		t.Errorf("expected Postfix virtual-domain 'maildefault.platform.example.test', got %q",
 			postfixCM.Data["maildefault"])
 	}
 
@@ -262,8 +252,8 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM) == nil
 	})
-	if dovecotCM.Data["maildefault"] != "maildefault.example.com" {
-		t.Errorf("expected Dovecot domain 'maildefault.example.com', got %q",
+	if dovecotCM.Data["maildefault"] != "maildefault.platform.example.test" {
+		t.Errorf("expected Dovecot domain 'maildefault.platform.example.test', got %q",
 			dovecotCM.Data["maildefault"])
 	}
 }
@@ -277,7 +267,6 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mailrelay"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Relay Co",
-			Domain:      "mailrelay.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeTransportOnly},
 		},
 	}
@@ -295,8 +284,8 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 		}
 		return postfixCM.Data["mailrelay"] != ""
 	})
-	if postfixCM.Data["mailrelay"] != "mailrelay.example.com" {
-		t.Errorf("expected Postfix virtual-domain 'mailrelay.example.com', got %q",
+	if postfixCM.Data["mailrelay"] != "mailrelay.platform.example.test" {
+		t.Errorf("expected Postfix virtual-domain 'mailrelay.platform.example.test', got %q",
 			postfixCM.Data["mailrelay"])
 	}
 
@@ -326,7 +315,6 @@ func TestMail_External_MissingConfig(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mailextnotconf"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail External No Config",
-			Domain:      "mailextnotconf.example.com",
 			Mail: &gentianov1alpha1.TenantMail{
 				Mode: gentianov1alpha1.MailModeExternal,
 				// SmtpCredentialsSecret intentionally not set.
@@ -376,7 +364,6 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mailexternal"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail External Co",
-			Domain:      "mailexternal.example.com",
 			Mail: &gentianov1alpha1.TenantMail{
 				Mode:                  gentianov1alpha1.MailModeExternal,
 				SmtpCredentialsSecret: "tenant-smtp-creds",
@@ -427,7 +414,6 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mailmaps"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Maps Co",
-			Domain:      "mailmaps.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -436,20 +422,20 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	mapsKey := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {
 			return false
 		}
-		return strings.Contains(maps.Data["virtual_mailbox_domains"], "mailmaps.example.com")
+		return strings.Contains(maps.Data["virtual_mailbox_domains"], "mailmaps.platform.example.test")
 	})
 
-	if got := maps.Data["virtual_mailbox_domains"]; !strings.Contains(got, "mailmaps.example.com OK") {
-		t.Errorf("expected virtual_mailbox_domains to accept mailmaps.example.com, got %q", got)
+	if got := maps.Data["virtual_mailbox_domains"]; !strings.Contains(got, "mailmaps.platform.example.test OK") {
+		t.Errorf("expected virtual_mailbox_domains to accept mailmaps.platform.example.test, got %q", got)
 	}
-	if got := maps.Data["virtual_mailbox_maps"]; !strings.Contains(got, "@mailmaps.example.com mailmaps.example.com/") {
-		t.Errorf("expected virtual_mailbox_maps catch-all for mailmaps.example.com, got %q", got)
+	if got := maps.Data["virtual_mailbox_maps"]; !strings.Contains(got, "@mailmaps.platform.example.test mailmaps.platform.example.test/") {
+		t.Errorf("expected virtual_mailbox_maps catch-all for mailmaps.platform.example.test, got %q", got)
 	}
 
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
@@ -459,52 +445,10 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {
 			return false
 		}
-		return !strings.Contains(maps.Data["virtual_mailbox_domains"], "mailmaps.example.com")
+		return !strings.Contains(maps.Data["virtual_mailbox_domains"], "mailmaps.platform.example.test")
 	})
-	if got := maps.Data["virtual_mailbox_maps"]; strings.Contains(got, "mailmaps.example.com") {
+	if got := maps.Data["virtual_mailbox_maps"]; strings.Contains(got, "mailmaps.platform.example.test") {
 		t.Errorf("expected deleted tenant to drop out of virtual_mailbox_maps, got %q", got)
-	}
-}
-
-// TestMail_MapsDedupeSharedDomain verifies two tenants naming the same mail
-// domain produce one texthash line, not two.
-//
-// The registry is keyed by tenant, and a defaults component that hardcodes
-// mail.domain gives every tenant the same one — which emitted the kernel entry
-// and the tenant entry as duplicate lines in both files.
-func TestMail_MapsDedupeSharedDomain(t *testing.T) {
-	t.Parallel()
-	shared := "shareddomain.example.com"
-	for _, name := range []string{"sharedone", "sharedtwo"} {
-		tenant := &gentianov1alpha1.Tenant{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec: gentianov1alpha1.TenantSpec{
-				DisplayName: name,
-				Mail:        &gentianov1alpha1.TenantMail{Domain: shared},
-			},
-		}
-		if err := testClient.Create(context.Background(), tenant); err != nil {
-			t.Fatalf("create tenant %s: %v", name, err)
-		}
-		t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
-	}
-
-	maps := &corev1.ConfigMap{}
-	key := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
-	}
-	waitFor(t, jobAppearTimeout, func() bool {
-		if err := testClient.Get(context.Background(), key, maps); err != nil {
-			return false
-		}
-		return strings.Contains(maps.Data["virtual_mailbox_domains"], shared)
-	})
-
-	if got := strings.Count(maps.Data["virtual_mailbox_domains"], shared+" OK"); got != 1 {
-		t.Errorf("expected one accept line for %s, got %d:\n%s", shared, got, maps.Data["virtual_mailbox_domains"])
-	}
-	if got := strings.Count(maps.Data["virtual_mailbox_maps"], "@"+shared+" "); got != 1 {
-		t.Errorf("expected one route line for %s, got %d:\n%s", shared, got, maps.Data["virtual_mailbox_maps"])
 	}
 }
 
@@ -522,7 +466,6 @@ func TestTenant_PublishesResolvedAdminEmail(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "adminemail"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Admin Email Co",
-			Domain:      "adminemail.example.com",
 			// No AdminEmail: the derivation is what is under test.
 		},
 	}
@@ -540,7 +483,7 @@ func TestTenant_PublishesResolvedAdminEmail(t *testing.T) {
 		return updated.Status.AdminEmail != ""
 	})
 
-	if got, want := updated.Status.AdminEmail, "admin@adminemail.example.com"; got != want {
+	if got, want := updated.Status.AdminEmail, "admin@adminemail.platform.example.test"; got != want {
 		t.Errorf("status.adminEmail = %q, want %q", got, want)
 	}
 	// spec.adminEmail no longer exists: the address is derived, so status is
@@ -708,6 +651,54 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		}
 	})
 
+	// The user tenant of a single-tenancy cluster has the cluster's own
+	// domain as its mail domain. Mail from that domain is signed with the
+	// kernel's key, and the kernel's endpoint publishes it; the tenant's
+	// endpoint carries the domain's MX, SPF and DMARC and not a second DKIM
+	// record of another key under the same name.
+	t.Run("the cluster's own domain: no second DKIM record", func(t *testing.T) {
+		for _, c := range []struct {
+			name, mode string
+			wantDKIM   bool
+		}{
+			{"user", "single", false},
+			{"user", "multi", true},
+			{"acme", "single", true},
+		} {
+			cl := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
+			r := &controller.TenantReconciler{
+				Client: cl, KernelDomain: "example.org", MailServiceMode: "system", TenancyMode: c.mode,
+			}
+			tenant := newTenant()
+			tenant.Name = c.name
+			tenant.Status.Mail.DKIMPublicKey = "TENANTKEY"
+			if err := r.SyncTenantMailDNSForTest(context.Background(), tenant); err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+			o := &unstructured.Unstructured{}
+			o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
+			o.SetKind("DNSEndpoint")
+			if err := cl.Get(context.Background(), types.NamespacedName{Name: "mail-" + c.name, Namespace: "system-mail-dmz"}, o); err != nil {
+				t.Fatalf("%s under %s: no DNSEndpoint: %v", c.name, c.mode, err)
+			}
+			endpoints, _, _ := unstructured.NestedSlice(o.Object, "spec", "endpoints")
+			var dkim, mx bool
+			for _, e := range endpoints {
+				m := e.(map[string]interface{})
+				name, _ := m["dnsName"].(string)
+				if strings.Contains(name, "._domainkey.") {
+					dkim = true
+				}
+				if m["recordType"] == "MX" {
+					mx = true
+				}
+			}
+			if dkim != c.wantDKIM || !mx {
+				t.Errorf("%s under %s: DKIM record published = %v (want %v), MX = %v", c.name, c.mode, dkim, c.wantDKIM, mx)
+			}
+		}
+	})
+
 	t.Run("external mail publishes nothing", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
@@ -758,7 +749,6 @@ func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "wishful", Namespace: "default"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Wishful Co",
-			Domain:      "wishful.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
@@ -798,7 +788,6 @@ func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "hosted", Namespace: "default"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Hosted Co",
-			Domain:      "hosted.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}

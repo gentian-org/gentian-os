@@ -344,24 +344,17 @@ spec:
                  a group nobody was in, so no exchange granted cluster-admin
                  and the install's last step waited for a proof that could
                  never be written. */}}
-            {{- /* The audiences OpenBao's roles accept.
-                 
-                 The director's audience is not optional and is not part of
-                 additionalAudiences: every component behind the edge presents
-                 the zone's token, whose audience is the director's, so a
-                 cluster whose roles do not accept it cannot exchange a token
-                 at all -- which is the credential manager refusing every
-                 caller and the install's last step waiting for a proof nobody
-                 can produce.
-                 
-                 It was in additionalAudiences, defaulted in the XRD. The
-                 default was later corrected to include it, and that reached
-                 no existing composite, because a changed default does not
-                 touch an object that already has the field. "additional" now
-                 means what it says: extra audiences on top of the ones the
-                 platform requires. */}}
-            {{- $requiredAudiences := list (default "openbao" $oidc.clientId) "gentian-director" }}
-            {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+            {{- /* The audiences OpenBao's roles accept: its own client's, which is
+                 what a person signing in to OpenBao's UI is issued, plus
+                 whatever the claim adds.
+
+                 The director's audience used to be required here as well,
+                 because the custodian presented the zone's token -- minted for
+                 the director -- to these roles. It presents nothing of a
+                 caller's any more, so a zone token is no longer something the
+                 vault accepts from anybody. */}}
+            {{- $requiredAudiences := list (default "openbao" $oidc.clientId) }}
+            {{- range (default (list) $oidc.additionalAudiences) }}
             {{- if not (has . $requiredAudiences) }}
             {{- $requiredAudiences = append $requiredAudiences . }}
             {{- end }}
@@ -515,7 +508,7 @@ spec:
                 userClaim: preferred_username
                 # claimMappings puts the caller's NAME into the token's alias
                 # metadata. user_claim already decides the alias itself, but the
-                # credential manager reads auth.metadata — so without this it saw
+                # custodian reads auth.metadata — so without this it saw
                 # an empty name, wrote credentials with no set_by, and recorded
                 # the handover proof against nobody. An audit trail that cannot
                 # say who is most of the reason writes go through a human
@@ -550,7 +543,7 @@ spec:
 
                  claimMappings is the load-bearing line. It copies the verified
                  `tenant` claim into the alias metadata that the tenant-admin
-                 policy templates its path from, and that the credential manager
+                 policy templates its path from, and that the custodian
                  reads to decide which tenant's requirements to show. Both the
                  write path and the read path therefore agree by construction,
                  because they read the same value.
@@ -595,67 +588,16 @@ spec:
               providerConfigRef:
                 name: openbao
 
-            {{- /* ── The JWT-typed roles the credential manager exchanges against ─
-                 The two roles above are role_type oidc: they serve the browser
-                 flow into OpenBao's own UI, and the JWT plugin refuses a direct
-                 token exchange against them ("role with oidc role_type is not
-                 allowed"). The credential manager does exactly that exchange —
-                 it presents the caller's portal token — so it needs roles of
-                 role_type jwt, or it authenticates nobody at all.
-
-                 Added beside the oidc roles rather than replacing them, because
-                 oidc.externalUrl is configured and the browser flow is a real
-                 path. Bound claims and policies are deliberately identical to
-                 their oidc counterparts: these are the same two identities
-                 reached by a different mechanism, and a difference here would be
-                 a privilege discrepancy nobody would notice until it mattered.
-
-                 No allowedRedirectUris — a jwt role has no callback.
-              */}}
-            ---
-            apiVersion: jwt.vault.upbound.io/v1alpha1
-            kind: AuthBackendRole
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-jwt-role-cluster-admin
-              name: {{ $name }}-auth-jwt-cluster-admin
-            spec:
-              forProvider:
-                backend: oidc
-                roleName: cluster-admin-jwt
-                roleType: jwt
-                userClaim: preferred_username
-                # claimMappings puts the caller's NAME into the token's alias
-                # metadata. user_claim already decides the alias itself, but the
-                # credential manager reads auth.metadata — so without this it saw
-                # an empty name, wrote credentials with no set_by, and recorded
-                # the handover proof against nobody. An audit trail that cannot
-                # say who is most of the reason writes go through a human
-                # identity at all.
-                claimMappings:
-                  preferred_username: username
-                boundAudiences:
-                  {{- range $requiredAudiences }}
-                  - {{ . | quote }}
-                  {{- end }}
-                boundClaimsType: string
-                boundClaims:
-                  groups: {{ $clusterAdminGroup | quote }}
-                tokenPolicies:
-                  - cluster-admin
-                tokenTtl: 1800
-                tokenMaxTtl: 3600
-              providerConfigRef:
-                name: openbao
-
-            {{- /* The tenant-admin JWT role that used to sit here is gone.
-                 A tenant member authenticates in their own realm, so their token
-                 is signed by that realm and is never presented to this mount —
-                 the role could not be reached by the people it was written for,
-                 and its presence read as coverage that did not exist. Each
-                 tenant realm now has its own mount and role, reconciled by the
-                 TenantReconciler; see internal/controller/openbao_tenant_auth.go.
-              */}}
+            {{- /* No JWT-typed role. There was one, cluster-admin-jwt, so that the
+                 custodian could exchange a caller's token for a vault token
+                 and write as that person. The custodian no longer shows the
+                 vault a caller's token at all: it asks the authorization
+                 store who may set a credential and writes as itself, by the
+                 Kubernetes role below. A role that turned anybody's zone
+                 token into a cluster-admin vault token is then a door with
+                 nothing left behind it but risk, and it is gone. The two
+                 roles above are role_type oidc and serve only a person
+                 signing in to OpenBao's own UI. */}}
 
             {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
                  Everything above configures OpenBao to TRUST Keycloak. None of
@@ -772,7 +714,7 @@ spec:
 
             {{- /* The tenant claim, from a user attribute. This is the value the
                  tenant-admin role maps into alias metadata, which the policy
-                 templates its path from and the credential manager filters by.
+                 templates its path from and the custodian filters by.
                  A user without the attribute gets no claim, so they reach no
                  tenant — absent means nothing, never everything. */}}
             ---
@@ -882,23 +824,6 @@ spec:
                   path "auth/token/create"                    { capabilities = ["update"] }
                   path "auth/token/lookup-self"               { capabilities = ["read"] }
 
-                  # Per-tenant JWT auth mounts. A tenant member authenticates in
-                  # their own Keycloak realm — that is where their apps' OIDC
-                  # clients live — so their portal token is signed by that realm
-                  # and the kernel realm's mount cannot verify it. One mount per
-                  # realm is what makes the exchange possible.
-                  #
-                  # Deliberately NOT one mount trusting many keys, which would be
-                  # fewer objects and a privilege escalation: a tenant
-                  # administrator holds realm-admin in their own realm, so they
-                  # can mint a token carrying any groups claim, the cluster admin
-                  # group included. Isolation belongs at the mount boundary,
-                  # because claim values are precisely what they control.
-                  #
-                  # Glob, not the + segment wildcard: OpenBao's + matches one
-                  # whole path segment, so "oidc-+" matches nothing at all.
-                  path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
-                  path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
               providerConfigRef:
                 name: openbao
 
@@ -919,6 +844,61 @@ spec:
                   - {{ $controlNs }}
                 tokenPolicies:
                   - operator-write
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── The custodian's identity at the vault ──────────────────────
+                 The custodian sets a credential for a person the
+                 authorization store says may set it, and does so as itself:
+                 the director's pattern, with the vault where the director has
+                 git. This is that identity.
+
+                 What it may do is deliberately less than the operator beside
+                 it. It writes a credential and reads and annotates its
+                 metadata -- whether one is set, by whom, when -- and it has no
+                 capability to READ a stored value and none to delete one. The
+                 custodian returns no value on any route, and with this policy
+                 it could not if it tried.
+
+                 Bound to the custodian's own ServiceAccount and to nothing
+                 else. The custodian is a Deployment of its own for this
+                 reason: under the operator's ServiceAccount the same pod
+                 could have logged in to the operator's role as well, and the
+                 narrow policy would have bounded nothing. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-custodian-write
+              name: {{ $name }}-policy-custodian-write
+            spec:
+              forProvider:
+                name: custodian-write
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/*"     { capabilities = ["create","update","patch"] }
+                  path "{{ $kvMount }}/metadata/gentian-os/*" { capabilities = ["create","read","update"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-custodian
+              name: {{ $name }}-auth-role-custodian
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: gentian-os-custodian
+                boundServiceAccountNames:
+                  - gentian-os-custodian
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                tokenPolicies:
+                  - custodian-write
                 tokenTtl: 3600
               providerConfigRef:
                 name: openbao
@@ -986,6 +966,35 @@ spec:
               providerConfigRef:
                 name: openbao
             {{- end }}
+
+            {{- /* The platform tenant's desktop keeps its data on the kernel's
+                 PostgreSQL, in a database and under a role of its own. That
+                 role's credential is the tenant's, so it is seeded under the
+                 tenant's paths, laid out as any tenant's desktop database
+                 credential is: the desktop reads it through the platform
+                 tenant's own store, and the kernel's database chart reads the
+                 same path for the role's password. Created once and never
+                 overwritten, like the kernel paths above. */}}
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-platform-desktop-database
+              name: {{ $name }}-kv-platform-desktop-database
+            spec:
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: {{ $kvMount }}
+                name: gentian-os/tenants/platform/apps/shell/database
+                dataJsonSecretRef:
+                  name: gentian-os-tenants-platform-apps-shell-database
+                  namespace: {{ $provisioningNs }}
+                  key: data.json
+              providerConfigRef:
+                name: openbao
 
             {{- /* ── ArgoCD AppProject for tenant workloads ───────────────────── */}}
             ---
@@ -1098,7 +1107,15 @@ spec:
                     # the oidc block is absent on clusters that do not use the auth backend
                     # and a default parked there never materialises.
                     identity.kernelRealm: {{ dig "oidc" "realm" (dig "identity" "kernelRealm" "" $spec) $spec | quote }}
+                    # Where Keycloak runs. The tenant Composition publishes its
+                    # broker clients' secrets here for the IdPs that read them
+                    # back; derived from the layout like the edge namespace below.
+                    identity.namespace: {{ "kernel-authentication" | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    # Whether the model gateway's console is routed at
+                    # llm.<kernelDomain>. The operator reads it and nothing
+                    # else answers for it there: absent means off.
+                    llm.console.enabled: {{ default false (dig "llm" "console" "enabled" false $spec) | quote }}
                     # Where the edge runs, which is the one kernel namespace a
                     # Composition has to name. The Gateway, its SecurityPolicies
                     # and the zone client secrets they read all live there, and
@@ -1137,6 +1154,23 @@ spec:
                     # tenant is reachable at is derived from this, so the two disagreeing
                     # is not cosmetic.
                     tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
+                    # How a credential nothing has stored yet is made: derived
+                    # from the master password, or random. The installer reads
+                    # the claim for the kernel's credentials; this is where the
+                    # operator reads it for each app's. The field was on the
+                    # claim with nothing passing it on, so an app's credentials
+                    # were derived on a cluster whose claim said random.
+                    secretMode: {{ default "derived" (dig "secretMode" "" $spec) | quote }}
+                    # Where OpenBao is and how ESO signs in to it: what the
+                    # kernel's ClusterSecretStore below is made from. The Tenant
+                    # Composition makes each tenant's store from the same
+                    # values, so the two cannot name different servers.
+                    openbao.namespace: {{ $secretsNs | quote }}
+                    openbao.server: {{ $openbaoServer | quote }}
+                    openbao.kvMount: {{ $kvMount | quote }}
+                    openbao.authMount: {{ $authMount | quote }}
+                    eso.namespace: {{ $esoNs | quote }}
+                    eso.serviceAccount: {{ $esoSa | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
                     tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}
@@ -1144,7 +1178,24 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- /* ── ESO ClusterSecretStore pointing at OpenBao ───────────────── */}}
+            {{- /* ── ESO ClusterSecretStore pointing at OpenBao ─────────────────
+                 The kernel's store. Its role reads every kernel path, so
+                 which namespaces may name it is what keeps a kernel secret
+                 out of a tenant's namespace: an ExternalSecret anywhere else
+                 is refused by ESO before OpenBao is asked.
+
+                 Selected by the tier label, which the installer puts on the
+                 kernel namespaces and this Composition on the system ones,
+                 and never by a list of names. A tenant's namespace reads
+                 through the store its own Composition makes for it
+                 (openbao-tenant-<tenant>, tenant-default.yaml), whose role
+                 sees that tenant's paths and nothing of the kernel. That
+                 holds for the platform tenant too: no tenant's namespace is
+                 named here.
+
+                 kernel/services/_globals/eso-cluster-secret-store.yaml is the
+                 installer's copy of this object and carries the same
+                 conditions. */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -1160,6 +1211,14 @@ spec:
                   metadata:
                     name: openbao
                   spec:
+                    conditions:
+                      - namespaceSelector:
+                          matchExpressions:
+                            - key: gentianos.io/tier
+                              operator: In
+                              values:
+                                - kernel
+                                - system
                     provider:
                       vault:
                         server: {{ $openbaoServer }}
@@ -1181,6 +1240,100 @@ spec:
                               namespace: {{ $esoNs }}
               providerConfigRef:
                 name: kubernetes
+
+            {{- /* ── A model provider's credential, declared from the claim ────
+                 A provider under spec.llm.providers needs a place for its API
+                 token, which is a credential requirement the custodian lists
+                 and a probe that says whether the token is there. Both follow
+                 from the claim here, so that naming a provider is enough: no
+                 edit of the credential catalogue, no installer step.
+
+                 What a claim can make of this is narrow, and it is narrow
+                 here, not in what the claim is trusted to say. The
+                 requirement's name is llm-provider-<name>. Its vault path is
+                 the one path all providers share, written out below. Its one
+                 field is <name>_api_key ("-" as "_"), computed from the name:
+                 the claim's own apiKeyProperty is not read, so a claim cannot
+                 declare a field of another provider, another path, or any
+                 other requirement. A name that is not a short DNS label
+                 declares nothing. The gateway's chart computes the same
+                 property and offers no model of a provider that names
+                 another (kernel/services/llm/manifests, gateway-config.yaml).
+
+                 The custodian writes a token as the person, under that
+                 person's own OpenBao policy, so a requirement here gives
+                 nobody a right to write they did not have. */}}
+            {{- if dig "llm" "enabled" false $spec }}
+            {{- range $p := (dig "llm" "providers" list $spec) }}
+            {{- $pname := toString (dig "name" "" $p) }}
+            {{- if regexMatch "^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$" $pname }}
+            {{- $pprop := printf "%s_api_key" ($pname | replace "-" "_") }}
+            ---
+            apiVersion: gentianos.io/v1alpha1
+            kind: CredentialRequirement
+            metadata:
+              name: llm-provider-{{ $pname }}
+              labels:
+                gentianos.io/credential-phase: runtime
+                gentianos.io/credential-scope: cluster
+                gentianos.io/credential-provider: {{ $pname }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: credreq-llm-provider-{{ $pname }}
+                # A declaration: nothing writes conditions to it, so it is
+                # ready when it exists (see repository-default).
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              displayName: {{ printf "%s API token" (default $pname (dig "displayName" "" $p)) | quote }}
+              description: {{ printf "Bearer token for the model provider %s, which the Cluster claim lists under spec.llm.providers. The model gateway sends it to the provider's address and nowhere else. Until it is supplied the provider's models are listed and answer an authentication error." $pname | quote }}
+              phase: runtime
+              scope: cluster
+              optional: true
+              vaultPath: gentian-os/kernel/llm-providers
+              fields:
+                - key: {{ $pprop }}
+                  format: token
+                  secret: true
+              validate:
+                type: noop
+              consumedBy:
+                - kind: XCluster
+                  name: {{ $name }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: credprobe-llm-provider-{{ $pname }}
+              name: {{ $name }}-credprobe-llm-provider-{{ $pname }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: credreq-llm-provider-{{ $pname }}
+                    namespace: {{ $controlNs }}
+                    labels:
+                      gentianos.io/credential-requirement: llm-provider-{{ $pname }}
+                      gentianos.io/credential-phase: runtime
+                      gentianos.io/credential-optional: "true"
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      creationPolicy: None
+                    data:
+                      - secretKey: {{ $pprop }}
+                        remoteRef:
+                          key: gentian-os/kernel/llm-providers
+                          property: {{ $pprop }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+            {{- end }}
 
             {{- /* ── Certificate issuers: owned by step 05, not here ──────────
                  This composition used to emit a letsencrypt-http01

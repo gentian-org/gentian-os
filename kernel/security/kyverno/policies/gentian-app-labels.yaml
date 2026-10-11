@@ -6,7 +6,7 @@
 # Helm `podLabels`, which works only for charts that honour a `.Values.podLabels`
 # key (Bitnami family). Charts that support neither `podLabels` nor `commonLabels`
 # on their pod template (e.g. the community xwiki-contrib chart) cannot receive the
-# label through Helm values at all — so those AppProfiles publish the identifiers as
+# label through Helm values at all — so those profiles publish the identifiers as
 # pod ANNOTATIONS (extraValues.podAnnotations) instead, and this policy copies them
 # onto the corresponding labels at pod admission.
 #

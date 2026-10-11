@@ -16,7 +16,7 @@ spec:
     helm:
       valueFiles:
       - $values/kernel/values/reloader.yaml
-  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
   destination:

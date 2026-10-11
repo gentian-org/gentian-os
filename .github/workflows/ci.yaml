@@ -36,7 +36,7 @@ jobs:
           cache: true
 
       - name: go vet
-        run: go vet ./...
+        run: go vet ./... ./api/...
 
       # Pinned, like controller-gen below. An unpinned @latest picks up a
       # toolchain bump on an unrelated day and fails a run nobody changed —
@@ -67,11 +67,11 @@ jobs:
         run: |
           # internal/controller uses envtest whose watch goroutines are incompatible
           # with the race detector; run it separately without -race.
-          go test $(go list ./... | grep -v 'internal/controller') -race -count=1
+          go test $(go list ./... ./api/... | grep -v 'internal/controller') -race -count=1
           go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
 
       - name: go build
-        run: go build ./...
+        run: go build ./... ./api/...
 
   generate:
     name: Verify generated files
@@ -107,6 +107,13 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11
+
+      # A module of its own, with its own license header to check.
+      - name: golangci-lint (api)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11
+          working-directory: api
 
       - name: yamllint
         uses: ibiqlik/action-yamllint@v3
@@ -146,7 +153,7 @@ jobs:
         # lint-marker-ascii: a kubebuilder marker that carries a typographic
         # quote renders a CRD the API server refuses, and nothing else catches
         # it — not envtest, whose newer API server is more forgiving.
-        run: make lint-shell lint-yaml lint-job-scripts lint-portability lint-image-digests lint-marker-ascii
+        run: make lint-shell lint-yaml lint-job-scripts lint-portability lint-image-digests lint-marker-ascii verify-openbao-cli-release
 
       # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
       # and only its export was ever exercised. age is installed rather than

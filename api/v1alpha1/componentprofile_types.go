@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -78,23 +80,45 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || self.classes.size() == 1",message="service is exclusive: a component may not be both a service and an app"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('shared-app' in self.classes) || self.trustTier == 'platform'",message="shared-app requires trustTier platform"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
+// One policy carries a component's session on every host it has, and that
+// policy either hands the edge's token over in the Authorization header or
+// leaves the header to the app. It cannot do both.
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !self.expose.exists(e, (has(e.forwardToken) && e.forwardToken) || (has(e.exchangeToken) && e.exchangeToken)) || !self.expose.exists(e, has(e.clientAuthorization))",message="clientAuthorization excludes forwardToken and exchangeToken across a component's entries: the Authorization header toward the app is either the app's own or a token the platform puts there, and one policy carries the session for all of a component's entries"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.clientAuthorization))",message="a service does not declare clientAuthorization: it is approved in a tenant's registry by that tenant's perimeter approver, and a service runs in no tenant"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights) || self.trustTier == 'platform'",message="requires.services.rights requires trustTier platform: the answer says who in the tenant may use what"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken) && e.exchangeToken) || (e.surface == 'gateway' && e.authMode == 'oidc'))",message="exchangeToken is for a gateway entry behind a session (authMode oidc): there is a session's token to exchange only there"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken) && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) && e.exchangeToken))",message="a component asks for forwardToken or for exchangeToken, not both: its entries share one host, and a host's backends are handed one token or the other"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching) || self.trustTier == 'platform'",message="requires.services.vouching requires trustTier platform: the component can obtain a person's token for any app of the tenant"
 // A service may expose -- a console is not a contract surface -- but only on
 // the gateway. The perimeter has no session, and a service console published
 // there is never what anybody meant.
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, e.surface == 'gateway')",message="a service exposes on the gateway only: the perimeter has no session"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.tile) || e.tile.object == 'cluster')",message="a service's tile asks on the cluster: it has no app object and runs in no tenant"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultForTenants) || !self.defaultForTenants",message="defaultForTenants is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultWhereStoreOffered) || !self.defaultWhereStoreOffered",message="defaultWhereStoreOffered is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size() == 0 || self.trustTier == 'platform'",message="storeUrlKey requires trustTier platform: naming it opens the component a way out of the cluster"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database) || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)",message="requires.services.identity.sidecar.database needs requires.services.database: the database the handler is given is the app's own"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail) || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn) || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity) && has(self.requires.services.identity.oidc))",message="requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc: the sign-in client whose tokens the mail server is to accept"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)) || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
+// The address the realm posts a logout token to is built from an entry's
+// backend, so the entry has to be this profile's, has to route to this
+// component's own Service, and that Service's name has to be a name and
+// nothing else: it becomes the host of the address.
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.oidc) || !has(self.requires.services.identity.oidc.backchannelLogout) || (has(self.expose) && self.expose.exists(e, e.name == self.requires.services.identity.oidc.backchannelLogout.exposure && (!has(e.backend.component) || e.backend.component.size() == 0) && e.backend.service.matches('^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$')))",message="requires.services.identity.oidc.backchannelLogout.exposure must name an entry of this profile that routes to this component's own Service (no backend.component), whose backend.service is a plain Service name: the realm is told to call that Service and no other address"
+// An extension's client is not told of a sign-out: nothing builds an address
+// for it, and a declaration that did nothing would read as one that works.
+// +kubebuilder:validation:XValidation:rule="!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements) || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc) || !has(x.kernelRequirements.identity.oidc.backchannelLogout))",message="backchannelLogout is served for the component's own client (requires.services.identity.oidc), not for an extension's"
 // One delivery, and nothing outside package to reach for. The OR this replaces
 // admitted a chart beside an API integration, and deploymentMethod could
 // contradict whichever was set.
 //
 // chart and composition together are the one legal pair, because they answer
 // different halves of one question: the chart is WHAT is installed, and the
-// composition is WHAT ELSE is created beside it. Three catalogue entries are
-// like this -- Odoo, Element and OpenProject each render their chart through a
-// Composition that also emits a portal bridge, an SSO sidecar or a stable
-// service alias. Refusing the pair sent that fact into an annotation, where
-// nothing validated it.
+// composition is WHAT ELSE is created beside it. Two catalogue entries are
+// like this -- Odoo and Element each render their chart through a
+// Composition that also emits an SSO sidecar or a stable service alias.
+// Refusing the pair sent that fact into an annotation, where nothing
+// validated it.
 //
 // Every other pairing is still refused, and composition alone is still a
 // delivery of its own: a component the Composition creates entirely.
@@ -102,8 +126,12 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
 // +kubebuilder:validation:XValidation:rule="self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size() > 0)",message="launch from needs launchFrom: which contract's provider opens this"
 // +kubebuilder:validation:XValidation:rule="self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size() == 0",message="launchFrom is meaningless unless launch is from"
-// +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile)))",message="launch tile needs a tile on an exposure: an app nobody can open is installed and lost"
-// +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || !has(self.expose) || !self.expose.exists(e, has(e.tile))",message="a tile means launch tile: say how a person reaches this"
+// A tile is on an exposure, or on package.api for a component that is only a
+// link to a service hosted elsewhere -- it has no exposure to carry one, and
+// counting exposures alone refused every such profile. `package` is a CEL
+// reserved word, so the API server names the field __package__.
+// +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile))) || (has(self.__package__.api) && has(self.__package__.api.tile))",message="launch tile needs a tile on an exposure or on package.api: an app nobody can open is installed and lost"
+// +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e, has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))",message="a tile means launch tile: say how a person reaches this"
 type ComponentProfileSpec struct {
 	// Classes lists the modes this component may be deployed under. It is a
 	// certification claim, not a choice: whether a component *can* serve
@@ -208,6 +236,26 @@ type ComponentProfileSpec struct {
 	// have one instance, so there is nothing to give each tenant.
 	// +optional
 	DefaultForTenants bool `json:"defaultForTenants,omitempty"`
+
+	// DefaultForPlatform means the platform tenant gets a Component of this
+	// profile, and no other tenant does: something the cluster has one of and
+	// that runs with a tenant's authority rather than the kernel's. Created
+	// and named the way DefaultForTenants creates its own.
+	// +optional
+	DefaultForPlatform bool `json:"defaultForPlatform,omitempty"`
+
+	// DefaultWhereStoreOffered means every tenant except the platform tenant
+	// gets a Component of this profile for as long as the cluster offers an
+	// App Store: licence reporting is on and the Cluster claim names a store
+	// (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
+	// creates its own.
+	//
+	// Unlike the two above it is also taken away: when the cluster stops
+	// offering a store the Component is removed again, so a profile that says
+	// this must own no data. The platform tenant gets none because nobody
+	// installs apps there.
+	// +optional
+	DefaultWhereStoreOffered bool `json:"defaultWhereStoreOffered,omitempty"`
 }
 
 // PackageSpec is the chart, the deployment method, and the mapping from granted
@@ -307,7 +355,8 @@ type PrivilegeRequest struct {
 
 	// ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
 	// rarest: an app that needs the Kubernetes API is most of the way to being
-	// a controller.
+	// a controller. Each entry asks, by name, for one of the roles the
+	// platform defines; a profile never states the rules of a role.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -343,13 +392,31 @@ type EgressRequest struct {
 	Reason string `json:"reason"`
 }
 
-// ClusterRoleRequest asks for Kubernetes API access.
+// ClusterRoleRequest asks for one of the cluster roles the platform defines.
+//
+// The role is bound to ServiceAccount, in the component's own namespace, when
+// three things hold: Name is one of the platform's roles, the cluster's
+// PlatformSecurityPolicy permits it for this profile, and it was granted on
+// the install. Otherwise nothing is bound and the Component says why.
 type ClusterRoleRequest struct {
-	// Name is what a PrivilegeGrant refers to. Unique within the profile.
+	// Name is the platform's name of the role, and what a PrivilegeGrant
+	// refers to (clusterRoles/<name>). Unique within the profile.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
-	// +kubebuilder:validation:MinItems=1
-	Rules []rbacv1.PolicyRule `json:"rules"`
+	// ServiceAccount is the ServiceAccount the component's chart runs its
+	// pods under, in the component's namespace. The role is bound to it and
+	// to nothing else. An entry without one binds nothing, and so does one
+	// that names "default", which every pod without an account of its own
+	// runs under.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+	// Rules is not used. A profile used to state the rules of the role it
+	// wanted; no role is ever made from them. An entry that still carries
+	// rules stays installable, binds nothing, and the Component says so.
+	// +optional
+	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
 	// Reason is what the approver reads.
 	// +kubebuilder:validation:MinLength=10
 	Reason string `json:"reason"`
@@ -362,9 +429,10 @@ type ComponentSecrets struct {
 	// +optional
 	Generated []AppSecret `json:"generated,omitempty"`
 
-	// Derived secrets are recomputed from the tenant and component name. Their
-	// formula and inputs are load-bearing forever: a change to either silently
-	// rotates the value for every existing tenant. Prefer Generated.
+	// Derived secrets are keys the platform adds to the credentials Secret it
+	// manages for the component, under the names given. Each is made once per
+	// tenant, component and key, the way the cluster's secretMode says, and
+	// kept in the vault.
 	// +optional
 	Derived []DerivedSecretKey `json:"derived,omitempty"`
 }
@@ -383,11 +451,27 @@ const (
 )
 
 // AuthMode is how a caller of an exposure entry is authenticated.
-// +kubebuilder:validation:Enum=oidc;jwt;bearer;basic;signature;none
+//
+// The values the platform acts on are three. oidc is the zone's session, on a
+// gateway entry. none and app are for a perimeter entry: none publishes the
+// declared paths to anyone and passes no credential on; app passes the
+// caller's own Authorization header to the app, which alone checks it.
+//
+// jwt, bearer, basic and signature remain values of the field, and no
+// perimeter entry may declare them: there they named a check at the edge
+// that nothing makes.
+// +kubebuilder:validation:Enum=oidc;app;jwt;bearer;basic;signature;none
 type AuthMode string
 
 const (
-	AuthModeOIDC      AuthMode = "oidc"
+	AuthModeOIDC AuthMode = "oidc"
+	// AuthModeApp is a perimeter entry whose callers present a credential
+	// the app itself issued -- an app password, an API key, a token of the
+	// app's own -- in the Authorization header. The publishing proxy passes
+	// that one header on and checks nothing; the app checks every caller.
+	// It takes effect once the tenant's perimeter approver has approved the
+	// entry as that.
+	AuthModeApp       AuthMode = "app"
 	AuthModeJWT       AuthMode = "jwt"
 	AuthModeBearer    AuthMode = "bearer"
 	AuthModeBasic     AuthMode = "basic"
@@ -397,10 +481,91 @@ const (
 	AuthModeNone AuthMode = "none"
 )
 
+// ClientAuthorization says whose the Authorization header is on an entry
+// behind the zone's session.
+// +kubebuilder:validation:Enum=app
+type ClientAuthorization string
+
+const (
+	// ClientAuthorizationApp: the header is the app's own. Its pages put a
+	// token the app issued there, and the edge neither replaces nor removes
+	// it. Sign-in and the question who may use the app stay as on any entry
+	// behind the session.
+	ClientAuthorizationApp ClientAuthorization = "app"
+)
+
+// ExposureKind is what approving one entry of a profile allows. The registry
+// records it with the approval, and an approval is in force only for an entry
+// that still declares the kind it was approved as.
+// +kubebuilder:validation:Enum=public;publicAppCredential;signInAppAuthorization
+type ExposureKind string
+
+const (
+	// ExposureKindPublic is a public address: the declared paths of a
+	// perimeter entry, reachable by anyone, with no credential passed on
+	// (authMode none). An approval that names no kind is this one.
+	ExposureKindPublic ExposureKind = "public"
+	// ExposureKindPublicAppCredential is a public address that passes the
+	// caller's Authorization header to the app (authMode app).
+	ExposureKindPublicAppCredential ExposureKind = "publicAppCredential"
+	// ExposureKindSignInAppAuthorization is no public address. It is an
+	// entry behind sign-in on which the Authorization header is the app's
+	// own (clientAuthorization app).
+	ExposureKindSignInAppAuthorization ExposureKind = "signInAppAuthorization"
+)
+
+// Normalized reads an approval that names no kind as the one every approval
+// was before kinds existed: a public address.
+func (k ExposureKind) Normalized() ExposureKind {
+	if k == "" {
+		return ExposureKindPublic
+	}
+	return k
+}
+
+// RequestKind is what this entry asks a perimeter approver for, or "" for an
+// entry that asks for nothing: one behind the session that leaves the
+// Authorization header to the platform, and any entry in a mode the platform
+// does not act on.
+func (e *ExposureSpec) RequestKind() ExposureKind {
+	if e == nil {
+		return ""
+	}
+	switch e.Surface {
+	case SurfacePerimeter:
+		switch e.AuthMode {
+		case AuthModeNone:
+			return ExposureKindPublic
+		case AuthModeApp:
+			return ExposureKindPublicAppCredential
+		}
+	case SurfaceGateway:
+		if e.AuthMode == AuthModeOIDC && e.ClientAuthorization == ClientAuthorizationApp {
+			return ExposureKindSignInAppAuthorization
+		}
+	}
+	return ""
+}
+
+// ApprovedAs reports whether an approval recorded as approved covers what
+// this entry declares now. An entry whose profile changed what it asks for
+// after the approval is not covered until it is approved again.
+func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
+	want := e.RequestKind()
+	return want != "" && want == approved.Normalized()
+}
+
 // ExposureSpec declares one entry point.
 //
 // +kubebuilder:validation:XValidation:rule="!(self.surface == 'perimeter' && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter entry: it has no session"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode != 'oidc'",message="a perimeter entry cannot use authMode oidc: the session lives on the gateway"
+// +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || (self.surface == 'perimeter' && !has(self.subDomain))",message="apex is for a perimeter entry and names the whole host: it takes no subDomain"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode in ['none', 'app', 'oidc']",message="authMode jwt, bearer, basic and signature are not available on a perimeter entry yet: the platform verifies no token, password or signature there. Declare authMode app if the app itself checks the credential its callers send in the Authorization header, or authMode none if the paths are for anyone"
+// +kubebuilder:validation:XValidation:rule="self.authMode != 'app' || self.surface == 'perimeter'",message="authMode app is for a perimeter entry: it passes the caller's Authorization header to the app with no sign-in in front. Behind sign-in, declare authMode oidc with clientAuthorization app"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || (self.surface == 'gateway' && self.authMode == 'oidc')",message="clientAuthorization is for a gateway entry behind the session (authMode oidc): it says whose the Authorization header is once a person has signed in"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))",message="clientAuthorization excludes forwardToken and exchangeToken: the Authorization header toward the app is either the app's own or a token the platform puts there"
+// +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || self.authMode == 'none'",message="an apex entry is a website for anyone (authMode none): the cluster's main address passes no credential to an app"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc' || has(self.source)",message="a gateway entry is behind the zone's session (authMode oidc) or pins its caller (source). What needs neither is a perimeter surface"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
@@ -417,6 +582,17 @@ type ExposureSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	SubDomain string `json:"subDomain,omitempty"`
+
+	// Apex publishes this entry on the cluster's bare domain -- its main
+	// address -- instead of a host under the zone's domain. Only a perimeter
+	// entry may say it. The operator honours it for the platform tenant,
+	// and for the one user tenant of a single-tenancy cluster when that
+	// tenant's approver published the entry for the main address (apex on
+	// the enablement) and no other surface holds it. Everywhere else an
+	// apex entry has no host and is not published: the bare domain is the
+	// first thing anybody typing the cluster's address meets.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
 
 	// Paths this entry serves. Empty means the whole host.
 	// +optional
@@ -447,6 +623,38 @@ type ExposureSpec struct {
 	// also valid at the director and at every sibling.
 	// +optional
 	ForwardToken bool `json:"forwardToken,omitempty"`
+
+	// ExchangeToken asks the front door to hand this backend a token of the
+	// person that is valid at this app and nowhere else: the session's token
+	// exchanged at the tenant's realm for one whose audience is the app. The
+	// backend verifies it -- signature, issuer, audience, expiry -- and need
+	// not trust the identity headers, which anything that can reach it could
+	// set.
+	//
+	// Not forwardToken: that passes the session's own token, which is valid
+	// at the director and at every sibling, and so is for a component of
+	// platform trust. An exchanged token is worth nothing outside the app it
+	// names, and any app may ask for it.
+	// +optional
+	ExchangeToken bool `json:"exchangeToken,omitempty"`
+
+	// ClientAuthorization says whose the Authorization header is on this
+	// entry. Unset, it is the platform's: the edge replaces whatever a
+	// client sent there and removes it before the app. "app" says the app's
+	// pages send a token of the app's own in that header, and asks that it
+	// be left alone.
+	//
+	// It is a request. It takes effect once the tenant's perimeter approver
+	// has approved this entry; until then the entry is served like any other
+	// behind sign-in and the header is removed. Approved, a person still has
+	// to be signed in and still has to be allowed to use the app, exactly as
+	// before; the edge puts no token of its own in the header and removes
+	// none, and no platform token reaches the app.
+	//
+	// The session's cookies belong to a host, so what one entry declares
+	// holds for every entry of the component on the same host.
+	// +optional
+	ClientAuthorization ClientAuthorization `json:"clientAuthorization,omitempty"`
 
 	// Annotations are gateway policy for this host, by the same keys
 	// AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and
@@ -639,6 +847,7 @@ type BackendRef struct {
 	Component string `json:"component,omitempty"`
 
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	Service string `json:"service"`
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
@@ -791,7 +1000,7 @@ func (p *ComponentProfile) PostInstall() *AppPostInstallJob {
 	return p.Spec.Hooks.PostInstall
 }
 
-// DerivedSecrets are secrets computed from others rather than generated, or
+// DerivedSecrets are the keys the profile declares under secrets.derived, or
 // nil.
 func (p *ComponentProfile) DerivedSecrets() []DerivedSecretKey {
 	if p == nil || p.Spec.Secrets == nil {

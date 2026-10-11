@@ -9,6 +9,8 @@
 ---
 # The role's password: read from the vault, so it is one value in one place.
 # Wave 0, before the Cluster reads it as the managed role's passwordSecret.
+# A database that is one tenant's names its own path (passwordPath); the
+# kernel's own are properties of the kernel's path.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -31,7 +33,7 @@ spec:
   data:
     - secretKey: password
       remoteRef:
-        key: gentian-os/kernel/database/postgresql
+        key: {{ .passwordPath | default "gentian-os/kernel/database/postgresql" }}
         property: {{ .passwordKey }}
 ---
 apiVersion: postgresql.cnpg.io/v1

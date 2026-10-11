@@ -1,93 +1,169 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // router is what the route registrars take, so the guard cannot be forgotten
 // by registering against the bare mux: the only implementation here wraps
 // every handler.
+//
+// It has two ways to register and a route says which it is. HandleFunc is the
+// director's alone: every command, and the reads only the director's own
+// commands need. Read is a read of state the usher answers a person with; the
+// director's identity admits it and so does the usher's.
 type router interface {
 	HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request))
+	Read(pattern string, h func(http.ResponseWriter, *http.Request))
 }
 
-// guardedMux registers every handler behind the token check.
+// guardedMux registers every handler behind the caller check.
 type guardedMux struct {
-	mux  *http.ServeMux
-	auth func(http.HandlerFunc) http.HandlerFunc
+	mux *http.ServeMux
+	// auth wraps a handler; reader says whether the reader's identity admits
+	// it.
+	auth func(next http.HandlerFunc, reader bool) http.HandlerFunc
 }
 
 func (g *guardedMux) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
-	g.mux.HandleFunc(pattern, g.auth(h))
+	g.mux.HandleFunc(pattern, g.auth(h, false))
+}
+
+// Read registers a route the reader's identity admits. Only a GET can be one,
+// which is checked here rather than trusted: a route that made something
+// happen and was open to the reader would hand the usher a command.
+func (g *guardedMux) Read(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	if !strings.HasPrefix(pattern, "GET ") {
+		panic("applifecycle: only a GET can be open to the reader: " + pattern)
+	}
+	g.mux.HandleFunc(pattern, g.auth(h, true))
 }
 
 // HTTPServer exposes app lifecycle operations over HTTP.
 type HTTPServer struct {
 	Service *Service
 	Addr    string
-	// Token is the shared secret the director presents. Every request except
-	// /healthz must carry it as a bearer.
+	// Auth says who is calling. Every request except /healthz must carry a
+	// ServiceAccount token issued for this listener's audience, and is
+	// admitted by the identity the API server reports for it (auth.go): the
+	// director's for every route, the usher's for the routes registered with
+	// Read and for nothing else -- no command, no bundle, and not the reads
+	// the director's own commands make.
 	//
-	// This API used to authenticate nobody: it is reachable by anything that
-	// can reach the Service, it has writes -- installing an app, setting
-	// addons, taking and deleting a backup -- and each took the actor's name
-	// from an X-Gentian-Actor header, which is a claim and not a proof. Any
-	// pod in any namespace could take a backup and have somebody else's name
-	// recorded against it.
+	// This API takes and deletes backups and purges an app's data, and each
+	// command records the actor named in an X-Gentian-Actor header. That
+	// header is a claim; what makes it worth recording is that only the
+	// director's identity is admitted to a route that reads it. The operator
+	// verifies no person here: that is the director's job and the usher's,
+	// done before either calls.
 	//
-	// A shared token rather than the caller's own: verifying that would mean
-	// the operator holding the issuer's keys and the authorization graph,
-	// which is the director's job and not this process's. The honest end
-	// state is that there is no HTTP write here at all, only the director's;
-	// until then this is what makes the actor header worth the paper it is
-	// written on, because only the director can set it.
-	//
-	// Empty refuses everything rather than admitting everything. A
-	// misconfigured deployment that drops the secret must not quietly become
-	// the open API this replaces.
-	Token string
+	// Nil, or configured with nobody to admit, refuses every request rather
+	// than serving any: a deployment that lost its configuration must not
+	// become an open API.
+	Auth *CallerAuth
+	// Definitions is what the operator found the cluster serves of the
+	// resource definitions it was built with (internal/schemacheck). Nil on
+	// an operator that runs no check, which the route then says.
+	Definitions *schemacheck.Gate
 }
 
-// authenticated wraps a handler so it is reached only by a caller presenting
-// the shared token. Constant-time compared: the token is a fixed string and
-// an early-exit comparison leaks its prefix to anything that can time it.
-func (h *HTTPServer) authenticated(next http.HandlerFunc) http.HandlerFunc {
+// bearer returns the token a request presents, or "".
+func bearer(r *http.Request) string {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+// authenticated wraps a handler so it is reached only by a caller whose
+// identity admits it: the director's for every route, the reader's for a
+// route registered with Read.
+func (h *HTTPServer) authenticated(next http.HandlerFunc, reader bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.Token == "" {
+		if !h.Auth.configured() {
 			writeErr(w, http.StatusServiceUnavailable, errors.New(
-				"this API has no token configured and refuses every request; set appLifecycle.tokenSecretRef"))
+				"this API has no caller configured and refuses every request; set appLifecycle.audience and enable the director"))
 			return
 		}
-		presented := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		if subtle.ConstantTimeCompare([]byte(presented), []byte(h.Token)) != 1 {
-			writeErr(w, http.StatusUnauthorized, errors.New("this API is the director's; present its token"))
+		presented := bearer(r)
+		if presented == "" {
+			writeErr(w, http.StatusUnauthorized, errors.New("this API is the director's and the usher's; present a ServiceAccount token of theirs"))
+			return
+		}
+		username, err := h.Auth.identify(r.Context(), presented)
+		callers := h.Auth.callers
+		switch {
+		case errors.Is(err, errNotAuthenticated):
+			writeErr(w, http.StatusUnauthorized, errors.New("this API is the director's and the usher's; the token presented is not a valid one for it"))
+			return
+		case err != nil:
+			// The API server could not be asked. Refused, not admitted: the
+			// alternative is a listener that opens when the control plane is
+			// unwell. The error names no token; identify never puts one in.
+			ctrllog.FromContext(r.Context()).WithName("app-lifecycle").Error(err, "a caller could not be identified and was refused")
+			writeErr(w, http.StatusServiceUnavailable, errors.New("the caller could not be identified: the API server did not answer"))
+			return
+		case username == callers.Director:
+		case username == callers.Reader && reader && r.Method == http.MethodGet:
+		case username == callers.Reader:
+			writeErr(w, http.StatusForbidden, errors.New("this identity reads state; this route is the director's"))
+			return
+		default:
+			writeErr(w, http.StatusForbidden, errors.New("this API is the director's and the usher's; this identity is neither"))
 			return
 		}
 		next(w, r)
 	}
+}
+
+// routes is everything this listener serves.
+//
+// Installing an app, removing one and choosing its addons are not here. They
+// are changes to what a tenant is meant to have, the director makes them as
+// commits, and the operator learns of them from git like everything else. The
+// routes that once did them here, and the checkout and push credential they
+// needed, are gone.
+func (h *HTTPServer) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	// Nothing below /v1 is open: a tenant's installed apps, its usage and
+	// its backups are its own business. Each registrar says which of its
+	// routes the reader's identity admits as well.
+	guarded := &guardedMux{mux: mux, auth: h.authenticated}
+	guarded.HandleFunc("GET /v1/tenants/{tenant}/apps", h.handleList)
+	h.registerAppRoutes(guarded)
+	h.registerResourceRoutes(guarded)
+	h.registerBackupRoutes(guarded)
+	h.registerPlatformRoutes(guarded)
+	h.registerNotificationRoutes(guarded)
+	h.registerTenantRoutes(guarded)
+	h.registerImportRoutes(guarded)
+	h.registerDefinitionRoutes(guarded)
+	h.registerResidueRoutes(guarded)
+	return mux
 }
 
 // Start runs the HTTP server until ctx is cancelled.
@@ -95,23 +171,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	if h.Service == nil {
 		return errors.New("applifecycle service is nil")
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	// Everything below /v1 is the director's, reads included: a tenant's
-	// installed apps, its usage and its backups are its own business.
-	guarded := &guardedMux{mux: mux, auth: h.authenticated}
-	guarded.HandleFunc("GET /v1/tenants/{tenant}/apps", h.handleList)
-	guarded.HandleFunc("POST /v1/tenants/{tenant}/apps/{profile}", h.handleInstall)
-	guarded.HandleFunc("DELETE /v1/tenants/{tenant}/apps/{profile}", h.handleUninstall)
-	guarded.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
-	h.registerAppRoutes(guarded)
-	h.registerResourceRoutes(guarded)
-	h.registerBackupRoutes(guarded)
-	h.registerPlatformRoutes(guarded)
-	h.registerNotificationRoutes(guarded)
+	mux := h.routes()
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
@@ -140,92 +200,6 @@ func (h *HTTPServer) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": tenant, "apps": apps})
-}
-
-func (h *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	profile := r.PathValue("profile")
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-	wait := r.URL.Query().Get("wait") == "true" || r.URL.Query().Get("wait") == "1"
-	provision := r.URL.Query().Get("provision") == "true" || r.URL.Query().Get("provision") == "1"
-	result, err := h.Service.Install(r.Context(), InstallRequest{
-		Tenant:    tenant,
-		Profile:   profile,
-		Actor:     actor,
-		Wait:      wait,
-		Provision: provision,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *HTTPServer) handleUninstall(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	profile := r.PathValue("profile")
-	purge := r.URL.Query().Get("purge") == "true" || r.URL.Query().Get("purge") == "1"
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-	result, err := h.Service.Uninstall(r.Context(), UninstallRequest{
-		Tenant:  tenant,
-		Profile: profile,
-		Purge:   purge,
-		Actor:   actor,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	profile := r.PathValue("profile")
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-
-	// PUT, not PATCH: the body is the complete selection. A partial "add these"
-	// verb would make deselection unexpressible, and deselecting to nothing is a
-	// selection the activation script has to see.
-	var body struct {
-		Addons []string `json:"addons"`
-		// Provision mirrors the app-level flag: install and grant access to all
-		// existing tenant users, rather than install and leave access to group
-		// assignment. It applies to every addon in the request.
-		Provision bool `json:"provision"`
-		// ProvisionFor is the same choice made per addon, which is how the store
-		// asks it — Install and Provision are separate buttons on each row. Given
-		// both, this one decides; an addon it omits is installed and not granted.
-		ProvisionFor []string `json:"provisionFor"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
-		return
-	}
-
-	result, err := h.Service.SetAddons(r.Context(), SetAddonsRequest{
-		Tenant:       tenant,
-		Profile:      profile,
-		Addons:       body.Addons,
-		Provision:    body.Provision,
-		ProvisionFor: body.ProvisionFor,
-		Actor:        actor,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

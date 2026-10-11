@@ -37,7 +37,9 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[2]
 VALUES = ROOT / "charts" / "gentian-os" / "values.yaml"
-SCAFFOLD = ROOT / "scripts" / "kubectl-gentian"
+# Where a new tenant's manifest is written: the director, which every tenant is
+# created through (the console and the CLI are its clients).
+SCAFFOLD = ROOT / "internal" / "director" / "gitops" / "tenants.go"
 
 # The fields that are sold or that bound a tenant. storage/maxApps excluded --
 # see the header.

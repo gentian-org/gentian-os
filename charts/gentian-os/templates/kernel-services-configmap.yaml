@@ -2,7 +2,7 @@
 {{- $stage := .Values.stage | default "dev" -}}
 {{- $keycloakInternal := $ks.keycloakInternalURL -}}
 {{- if not $keycloakInternal -}}
-{{- $keycloakInternal = printf "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080" -}}
+{{- $keycloakInternal = printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080" (.Values.layout.authentication | default "kernel-authentication") -}}
 {{- end -}}
 {{- /*
   Cluster-service hostnames follow a fixed naming convention
@@ -21,20 +21,20 @@
 {{- $mysqlHost := $ks.mysqlHost | default (printf "gentian-mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
-{{- /* The kernel mail stack runs in servicesNamespace (platform-kernel), not
-       gentian-<stage>. mailSharedPostfixHost() in the mail reconciler reads
-       MAIL_SMTP_HOST — this value — BEFORE falling back to servicesNamespace, so a
-       gentian-<stage> default here silently overrides the correct location and
-       every tenant app is handed an SMTP host that does not resolve. */ -}}
-{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage .Values.servicesNamespace) -}}
+{{- /* Postfix runs in the mail namespace of the system tier (system-mail,
+       kernel/namespaces.yaml), where the mail ApplicationSet deploys it. This
+       default named servicesNamespace, which is the edge: a host that resolves
+       to nothing. The operator's own fallback, mailSharedPostfixHost() in the
+       mail reconciler, names the same Service as this line. */ -}}
+{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage (.Values.mailNamespace | default "system-mail")) -}}
 {{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $keycloakInternal }}
 {{- /*
   Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
   restriction, not something a namespace field on the ref can work around.
   Kernel SERVICES (keycloak-idp, etc.) that need KERNEL_DOMAIN/TENANCY_MODE
-  live in platform-kernel, not this release's own namespace (gentian-system),
-  so this ConfigMap is mirrored into both — same name, same data, so any
-  existing platform-kernel configMapKeyRef to "gentian-kernel-services"
+  live in other kernel namespaces, not this release's own (kernel-control),
+  so this ConfigMap is mirrored into each — same name, same data, so any
+  configMapKeyRef there to "gentian-kernel-services"
   just works without a separate reference convention to maintain.
 */ -}}
 {{- range $ns := list .Release.Namespace (.Values.servicesNamespace | default "kernel-edge") (.Values.layout.authentication | default "") | compact | uniq }}

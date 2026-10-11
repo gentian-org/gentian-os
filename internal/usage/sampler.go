@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package usage
@@ -51,7 +45,7 @@ const (
 // Sampler records each tenant's ceiling and consumption on a ticker.
 type Sampler struct {
 	Client client.Client
-	// KernelNamespace holds the portal-shell-<tenant> Secrets whose
+	// KernelNamespace holds the desktop-database Secrets whose
 	// DATABASE_URL points at each tenant's own database.
 	KernelNamespace string
 	// Interval is how often every tenant is sampled.
@@ -194,8 +188,17 @@ func (s *Sampler) storeFor(ctx context.Context, tenantName string) (*Store, erro
 	return StoreForTenant(ctx, s.Client, layout.Tenant(tenantName), tenantName)
 }
 
-// StoreForTenant resolves a tenant's shell database from its portal-shell
-// Secret and returns a usage store over it.
+// ShellDatabaseSecret is the Secret holding the connection to a tenant's
+// desktop database, in the tenant's namespace. The desktop is a component and
+// the component reconciler names its database Secret <component>-database;
+// this is that name for the component called desktop. It was
+// portal-shell-<tenant> while the portal owned the database, and reading the
+// old name left the usage history and the notifications unreadable for every
+// tenant.
+const ShellDatabaseSecret = "desktop-database"
+
+// StoreForTenant resolves a tenant's desktop database from that Secret and
+// returns a usage store over it.
 //
 // Shared with the resources API, which reads the same history it writes: one
 // resolver means the API can never end up reading a different database from
@@ -205,7 +208,7 @@ func StoreForTenant(
 	c client.Client,
 	kernelNamespace, tenantName string,
 ) (*Store, error) {
-	secretName := fmt.Sprintf("portal-shell-%s", tenantName)
+	secretName := ShellDatabaseSecret
 	var secret corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: kernelNamespace}, &secret); err != nil {
 		return nil, fmt.Errorf("read %s/%s: %w", kernelNamespace, secretName, err)

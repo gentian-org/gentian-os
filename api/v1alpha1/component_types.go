@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -86,8 +88,28 @@ type ComponentSpec struct {
 	// +kubebuilder:validation:items:MaxLength=63
 	Addons []string `json:"addons,omitempty"`
 
-	// Exposures are the perimeter entries of the profile that are switched on.
-	// Gateway entries need none: they carry the session and are always on.
+	// AddonPins is the build each pinned addon was installed from, as the
+	// Tenant records it. Nothing is rendered for this instance while a
+	// pinned addon's profile is not shown to be that build: the addon list
+	// reaches the release through this component, so this is where an
+	// unverified addon is kept out of it.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+
+	// Config is what this install overrides of the profile's defaults: the
+	// replica count and chart values the tenant chose. It is the install's
+	// and not the profile's, so two tenants installing one profile may differ
+	// here and nowhere else.
+	// +optional
+	Config *TenantAppConfig `json:"config,omitempty"`
+
+	// Exposures are the entries of the profile a perimeter approver approved:
+	// the perimeter entries that are switched on, and the entries behind
+	// sign-in whose Authorization header is left to the app. Every other
+	// gateway entry needs none: it carries the session and is always on.
 	// +optional
 	// +listType=map
 	// +listMapKey=exposureName
@@ -110,33 +132,36 @@ type ProfileRef struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// Digest pins the profile bundle this instance was installed from.
+	// Digest pins the profile bundle this instance was installed from. When
+	// set, nothing is rolled out from a profile that is not shown to be that
+	// build: the bundle the profile carries must hash to it, and the profile
+	// must be what the bundle says.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest,omitempty"`
 }
 
-// ExposureEnablement switches on one perimeter entry of the profile.
+// ExposureEnablement is the approval of one entry of the profile: it switches
+// on a perimeter entry, or lets an entry behind sign-in keep the app's own
+// Authorization header. Which, is Kind.
 //
 // authMode is not repeated here: the profile's entry is the one source, and an
 // enablement cannot weaken it.
 //
 // +kubebuilder:validation:XValidation:rule="self.owner == oldSelf.owner",message="owner is immutable: a renewal by someone else is a new enablement"
-// +kubebuilder:validation:XValidation:rule="!has(self.reviewAt) || self.reviewAt <= self.expiresAt",message="reviewAt must not be later than expiresAt"
+// +kubebuilder:validation:XValidation:rule="!has(self.expiresAt) || self.reviewAt <= self.expiresAt",message="reviewAt must not be later than expiresAt"
 type ExposureEnablement struct {
-	// ExposureName names an entry of the profile's expose list whose surface is
-	// "perimeter".
+	// ExposureName names an entry of the profile's expose list that asks for
+	// approval.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
 
-	// Host is the public hostname. Empty means the entry's default host in the
-	// tenant's zone. A vanity host is admitted only if the tenant's approved
-	// domains include it.
+	// Kind is what was approved, copied from the Tenant's entry; empty is a
+	// public address. An approval is in force only for an entry that
+	// declares this kind.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
-	// +kubebuilder:validation:MaxLength=253
-	Host string `json:"host,omitempty"`
+	Kind ExposureKind `json:"kind,omitempty"`
 
 	// Owner is the Keycloak subject that enabled the surface, set by the
 	// director from the caller's token.
@@ -144,15 +169,24 @@ type ExposureEnablement struct {
 	// +kubebuilder:validation:MaxLength=256
 	Owner string `json:"owner"`
 
-	// ExpiresAt bounds the exposure, and is always set: a public surface with
-	// no end is not something anybody decided. At expiry the operator treats
-	// the enablement as absent; the entry stays in git as history.
-	ExpiresAt metav1.Time `json:"expiresAt"`
-
-	// ReviewAt is when the owner and the perimeter approver are asked to renew
-	// or revoke.
+	// ExpiresAt ends the exposure, for one that was published for a while:
+	// at expiry the operator treats the enablement as absent, and the entry
+	// stays in git as history. Optional. A surface meant to stay -- a
+	// tenant's website -- has none, because an expiry nobody renewed takes
+	// a production site off the internet with no decision behind it.
 	// +optional
-	ReviewAt *metav1.Time `json:"reviewAt,omitempty"`
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// ReviewAt is when the owner and the perimeter approver look at it again,
+	// and it is always set: what is public is known and revisited, whether or
+	// not it ends. A review that is overdue is reported; it takes nothing
+	// down.
+	ReviewAt metav1.Time `json:"reviewAt"`
+
+	// Apex is the approver saying that this surface is for the cluster's
+	// main address (the bare domain), copied from the Tenant's entry.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
 }
 
 // PrivilegeGrant answers one entry of the profile's privilege request.

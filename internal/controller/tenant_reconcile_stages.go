@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -19,9 +13,10 @@ package controller
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/api/equality"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -36,7 +31,7 @@ import (
 //
 // 30s matches the platform gateway reconciler's retry on an unsatisfied
 // dependency. Blocked preconditions are usually resolved by something outside the
-// Tenant's watches — a cluster admin approving a waiver, an AppProfile being
+// Tenant's watches — a cluster admin approving a waiver, a ComponentProfile being
 // published, ESO syncing a Secret — so this is a poll, and the interval trades
 // how long a fixed cluster stays Degraded against reconcile churn per tenant.
 const tenantBlockedRequeueAfter = 30 * time.Second
@@ -126,6 +121,11 @@ type tenantReconcileState struct {
 	appsResult      ctrl.Result
 	privilegeResult ctrl.Result
 
+	// defaultGrantRetry is set when an app declaring defaultGrant has not
+	// been granted yet, so the reconcile is run again even when nothing else
+	// asks for it.
+	defaultGrantRetry bool
+
 	// statusAtEntry is the Tenant status as this reconcile found it, so a
 	// short-circuit can tell a write that changes something from one that
 	// changes nothing. Set by runTenantReconcileStages before any stage runs:
@@ -153,7 +153,7 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 			// Requeue rather than stopping dead.
 			//
 			// Blocked means a stage found a precondition it cannot satisfy itself —
-			// a missing AppProfile, an unapproved waiver, a Secret that has not
+			// a missing ComponentProfile, an unapproved waiver, a Secret that has not
 			// synced. Returning an empty Result meant nothing was scheduled, so the
 			// Tenant only moved again if some watched object happened to fire an
 			// event. For a precondition owned by something the Tenant does not
@@ -212,6 +212,9 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 	// Finalize has a return per data-plane stage; the pacing applies to all of
 	// them, so it is applied to what finalize returns rather than at each one.
 	finalRes, finalErr := r.reconcileTenantStageFinalize(ctx, state)
+	if finalErr == nil && finalRes.RequeueAfter == 0 && state.defaultGrantRetry {
+		finalRes.RequeueAfter = defaultGrantRetryAfter
+	}
 	if finalRes.RequeueAfter > 0 {
 		finalRes.RequeueAfter = tenantConvergenceRequeue(state.tenant, finalRes.RequeueAfter, time.Now())
 	}
@@ -263,14 +266,22 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
 			fmt.Sprintf("ComponentProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
-			"Identity provisioning blocked because one or more requested AppProfiles are missing")
+			"Identity provisioning blocked because one or more requested ComponentProfiles are missing")
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, nil
 	}
 
-	if err := tenancy.EnforceSingle(ctx, r.Client, r.TenancyMode, tenant); err != nil {
+	// A tenant a single-tenancy cluster may not carry: one the webhook would
+	// have refused, here because the mode was changed from multi under it or
+	// because it was written while the webhook was away. Nothing it has is
+	// touched -- its namespaces, its data and its routes stay as they are --
+	// but nothing more is provisioned for it, and its status says why for as
+	// long as that is so.
+	if err := tenancy.EnforceSingle(r.TenancyMode, r.KernelRealm, tenant); err != nil {
+		log.FromContext(ctx).Error(err, "tenant refused by the cluster's tenancy mode; nothing of it is removed and nothing more is provisioned",
+			"tenant", tenant.Name)
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint", err.Error())
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
@@ -405,6 +416,18 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 		return ctrl.Result{}, fmt.Errorf("ensure default components: %w", err)
 	}
 
+	// The model gateway, for the apps and the placed components that
+	// declared it -- and its removal from the ones that did not. After both
+	// kinds of Component exist: each holds its release, or runs without the
+	// gateway, until this has delivered its key.
+	profiles, err := loadComponentProfileIndex(ctx, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if _, err := r.ensureModelAccess(ctx, tenant, profiles); err != nil {
+		return ctrl.Result{}, fmt.Errorf("model access: %w", err)
+	}
+
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
@@ -420,10 +443,8 @@ func (r *TenantReconciler) reconcileTenantStageIntegrations(ctx context.Context,
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
-	if _, err := r.ensureAppGrants(ctx, tenant); err != nil {
-		r.updateBlockedStatus(ctx, tenant)
-		return ctrl.Result{}, fmt.Errorf("ensure app grants: %w", err)
-	}
+	// A binding is a request and stays one here: the grant that answers it
+	// is an administrator's, and this stage writes none.
 	return ctrl.Result{}, nil
 }
 
@@ -476,7 +497,7 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// the stages asked for. See tenantFoundationNotReady: requeues answer "did a
 	// stage want to run again", which is not the same question as "is this tenant
 	// ready", and the two disagreed for any tenant that finalized before its
-	// AppProfiles resolved.
+	// ComponentProfiles resolved.
 	notReady := tenantFoundationNotReady(tenant)
 
 	switch {
@@ -496,6 +517,9 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// A plan change that Argo CD has synced is recorded in the usage history
 	// here, before the status it is noted on is written.
 	r.recordResourcePlan(ctx, tenant)
+	// The same for an app installed for everyone: granted here, once, and
+	// noted on the status this writes.
+	state.defaultGrantRetry = r.applyDefaultGrants(ctx, tenant)
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

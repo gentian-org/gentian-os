@@ -2,8 +2,10 @@
 # =============================================================================
 # scripts/lib/verify-kernel-services.sh — post-install smoke check for kernel mail
 # =============================================================================
-# Sourced from scripts/lib/load.sh. One verifier remains, called from
-# mail-lib.sh: Dovecot, when MAIL_SERVICE_MODE=system.
+# Sourced from scripts/lib/load.sh. One verifier remains: Dovecot, when the
+# cluster runs its own mail. No install step calls it; its caller is
+# crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
+# (make verify-kernel-services), against a cluster that is already installed.
 #
 # There were three. verify_keycloak_installation, verify_keycloak_iframe_policy
 # and verify_argocd_controller were written and never wired to a caller, so they
@@ -21,12 +23,19 @@ _verify_kernel_services_enabled() {
     [[ "${VERIFY_KERNEL_SERVICES:-1}" == "1" ]]
 }
 
-# Run a one-shot Pod; delete it afterward. Returns the container exit code.
+# Run a one-shot Pod in the given namespace; delete it afterward. Returns the
+# container exit code.
+#
+# The namespace is the caller's to say, and it is the one of the server being
+# probed: a server's NetworkPolicy admits a probe from beside it, by the
+# gentianos.io/purpose=verify label below, and from nowhere else. The pod used
+# to run in `default`, which no server's policy admits. VERIFY_POD_NAMESPACE
+# still overrides it.
 _run_ephemeral_pod() {
-    local image="$1"
-    shift
+    local ns="${VERIFY_POD_NAMESPACE:-$1}"
+    local image="$2"
+    shift 2
     local name="gentian-verify-$$-${RANDOM}"
-    local ns="${VERIFY_POD_NAMESPACE:-default}"
     local phase exit_code=1 create_err
 
     # The pod spec is generated rather than left to `kubectl run`, because a bare
@@ -105,9 +114,10 @@ print(json.dumps({
 }
 
 _verify_tcp_from_cluster() {
-    local host="$1"
-    local port="$2"
-    _run_ephemeral_pod "busybox:1.36" \
+    local ns="$1"
+    local host="$2"
+    local port="$3"
+    _run_ephemeral_pod "${ns}" "busybox:1.36" \
         sh -c "nc -z -w 5 ${host} ${port}"
 }
 
@@ -121,7 +131,7 @@ verify_dovecot_installation() {
     local mode
 
     mode="$(gentian_mail_service_mode)"
-    if [[ "${mode}" != "kernel" ]]; then
+    if [[ "${mode}" != "system" ]]; then
         info "Skipping Dovecot verification (MAIL_SERVICE_MODE=${mode})."
         return 0
     fi
@@ -129,9 +139,10 @@ verify_dovecot_installation() {
     banner "Verify Dovecot deployment"
 
     local env="${ENV:-dev}"
-    # platform-kernel, matching the operator's SERVICES_NAMESPACE and the
-    # namespace the 09-infra-helm ApplicationSet deploys the mail stack into.
-    local ns="${SERVICES_NAMESPACE:-platform-kernel}"
+    # The system tier's mail namespace (kernel/namespaces.yaml), where the
+    # mail ApplicationSet deploys Dovecot.
+    local ns
+    ns="$(ns_system mail)" || return 1
     local deploy="dovecot-${env}"
     local svc="dovecot-${env}"
     local timeout="${DOVECOT_VERIFY_TIMEOUT:-300}"
@@ -154,7 +165,7 @@ verify_dovecot_installation() {
     local fqdn="${svc}.${ns}.svc.cluster.local"
     for port in 143 24; do
         info "Probing Dovecot TCP ${fqdn}:${port} from cluster..."
-        if ! _verify_tcp_from_cluster "${fqdn}" "${port}"; then
+        if ! _verify_tcp_from_cluster "${ns}" "${fqdn}" "${port}"; then
             error "Dovecot TCP check failed on port ${port}."
             error "  kubectl get pods,svc -n ${ns} -l app.kubernetes.io/name=dovecot"
             return 1

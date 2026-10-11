@@ -249,7 +249,7 @@ spec:
                       revisions.
                     type: string
                   profile:
-                    description: Profile is the AppProfile name this customization
+                    description: Profile is the ComponentProfile name this customization
                       targets.
                     minLength: 1
                     type: string

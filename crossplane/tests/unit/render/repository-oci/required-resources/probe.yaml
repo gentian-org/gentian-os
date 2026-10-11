@@ -3,7 +3,7 @@ apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: credreq-repository-infra-charts
-  namespace: gentian-system
+  namespace: kernel-control
   labels:
     gentianos.io/credential-requirement: infra-charts
 status:

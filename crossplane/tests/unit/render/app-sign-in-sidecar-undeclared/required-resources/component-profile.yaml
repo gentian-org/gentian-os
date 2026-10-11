@@ -1,0 +1,41 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: tile
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      database:
+        hostKey: database.host
+        passwordKey: database.password
+  requires:
+    services:
+      # No identity requirement: the app signs nobody in through the platform.
+      database:
+        engine: postgresql
+        databasePerTenant: true
+  secrets:
+    generated:
+      - name: app_secret
+        valuePath: appSecret
+      - name: other_secret
+        valuePath: otherSecret
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: demo
+      backend:
+        service: demo-app
+        port: 3000

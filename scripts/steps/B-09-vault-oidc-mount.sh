@@ -84,7 +84,12 @@ check() {
     # Missing is the honest verdict: it makes apply() run, and apply() already
     # says exactly what is wrong and stops. A check that cannot verify a step
     # must never be the reason the step is skipped.
-    _v5_oidc_bao || return "${CHECK_MISSING}"
+    # Except after handover: then there is no token by design (see
+    # gentian_handed_over), and the mount was made before it was revoked.
+    if ! _v5_oidc_bao; then
+        gentian_handed_over && return "${CHECK_UNDEFINED}"
+        return "${CHECK_MISSING}"
+    fi
 
     # The mount, and only the mount. Whether it is CONFIGURED is a later
     # step's verdict; asking it here would report this step unsatisfied for
@@ -94,6 +99,7 @@ check() {
     # Permission denied is a token that cannot answer the question, which is
     # the same "cannot tell" as above and gets the same verdict.
     if grep -qi 'permission denied' <<<"${body}"; then
+        gentian_handed_over && return "${CHECK_UNDEFINED}"
         return "${CHECK_MISSING}"
     fi
     jq -e '.data["oidc/"] // .["oidc/"]' >/dev/null 2>&1 <<<"${body}"

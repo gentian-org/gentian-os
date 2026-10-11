@@ -1,79 +1,39 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package api
 
 import (
-	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/locales"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
-// A tenant's resources.
+// A tenant's resource plan.
 //
 // The cluster knows the ceiling it enforces and what is committed under it;
-// git knows which plan was chosen. This file joins the two the way every
-// other route does: the reads are relayed from the operator once the caller
-// is allowed them, and the write is a commit the caller is allowed to make.
-// The operator has no write to call. It reads the plan back from git once
-// Argo CD has synced it, like every other change to a tenant.
-
-// relayed passes the operator's answer to one read through as it came, with
-// only the query parameters the route allows.
-func (s *Server) relayed(w http.ResponseWriter, r *http.Request, path string, allowed ...string) {
-	query := url.Values{}
-	for _, name := range allowed {
-		if v := r.URL.Query().Get(name); v != "" {
-			query.Set(name, v)
-		}
-	}
-	status, body, err := s.cfg.Lifecycle.Get(r.Context(), path, query)
-	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
-}
-
-func resourcesPath(r *http.Request, suffix string) string {
-	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + "/resources" + suffix
-}
-
-func (s *Server) resourceState(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, resourcesPath(r, ""))
-}
-
-func (s *Server) resourceUsage(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, resourcesPath(r, "/usage"), "from", "to", "stepSeconds")
-}
-
-func (s *Server) resourceReport(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, resourcesPath(r, "/report"), "from", "to")
-}
+// git knows which plan was chosen. Reading either is the usher's. What is
+// here is the write: a commit the caller is allowed to make, validated against
+// the operator's answer first. The operator has no write to call. It reads the
+// plan back from git once Argo CD has synced it, like every other change to a
+// tenant.
 
 // selfService reports whether the caller chooses for themselves, as a tenant
 // administrator does, rather than for the cluster, as its operator does.
@@ -89,24 +49,6 @@ func (s *Server) selfService(r *http.Request, c call) (bool, error) {
 		return false, err
 	}
 	return !configures, nil
-}
-
-// resourcePlans answers the catalogue as it applies to this tenant and this
-// caller. The plans come from the operator, which marks the ones this tenant
-// may not move to and why; whether the caller is self-service is decided
-// here.
-func (s *Server) resourcePlans(w http.ResponseWriter, r *http.Request, c call) {
-	self, err := s.selfService(r, c)
-	if err != nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return
-	}
-	plans, err := s.cfg.Lifecycle.Plans(r.Context(), r.PathValue("t"), self)
-	if err != nil {
-		s.lifecycleError(w, r, err)
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "plans": plans})
 }
 
 type setResourcePlanRequest struct {
@@ -194,35 +136,6 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 	s.json(w, http.StatusAccepted, answer)
 }
 
-// clusterResources answers every tenant's state, for the view that shows the
-// cluster's ceilings side by side. The tenants are git's list; each state is
-// the operator's answer. A tenant the operator cannot answer for -- one it
-// has not provisioned yet, say -- is named under unavailable rather than
-// dropped, so the view never silently shows fewer tenants than exist.
-func (s *Server) clusterResources(w http.ResponseWriter, r *http.Request, _ call) {
-	names, err := s.cfg.Repo.Tenants(r.Context())
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	states := make([]json.RawMessage, 0, len(names))
-	unavailable := make([]map[string]string, 0)
-	for _, name := range names {
-		status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/tenants/"+url.PathEscape(name)+"/resources", nil)
-		if err != nil {
-			s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
-			s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
-			return
-		}
-		if status != http.StatusOK || !json.Valid(body) {
-			unavailable = append(unavailable, map[string]string{"tenant": name, "reason": lifecycle.ErrorMessage(body)})
-			continue
-		}
-		states = append(states, json.RawMessage(body))
-	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "tenants": states, "unavailable": unavailable})
-}
-
 // lifecycleError answers a failed question to the operator. Its refusals
 // carry over -- an unknown tenant is its 400 -- and its absence is a 502
 // that says so.
@@ -236,41 +149,29 @@ func (s *Server) lifecycleError(w http.ResponseWriter, r *http.Request, err erro
 	s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
 
-// A tenant's backups, relayed from the operator.
-//
-// What exists, what each run did, what policy is in force and when the next
-// scheduled run is are all cluster state, held on the CRs the backup
-// reconcilers own. The inheritance — a tenant's policy over the cluster's —
-// is resolved there and reported on status, so it is relayed rather than
-// recomputed here: two answers to "what applies to this tenant" is exactly
-// the drift this architecture exists to avoid.
-
 func backupsPath(r *http.Request, suffix string) string {
 	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + suffix
 }
 
-func (s *Server) tenantBackups(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backups"))
-}
-
-func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))))
-}
-
-func (s *Server) tenantBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backup-policy"))
-}
-
-func (s *Server) tenantBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backup-schedules"))
-}
-
-func (s *Server) clusterBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/backup-policy")
-}
-
-func (s *Server) clusterBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/backup-schedules")
+// tenantBundleDownload relays the operator's stream of one bundle. The
+// director's write deadline is lifted for it: the transfer takes as long as
+// the bundle is big, and the request's context ends it if the reader goes.
+func (s *Server) tenantBundleDownload(w http.ResponseWriter, r *http.Request, _ call) {
+	resp, err := s.cfg.Lifecycle.Stream(r.Context(), backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))+"/download"))
+	if err != nil {
+		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for _, h := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // ── Backup: declared state, and actions ─────────────────────────────────────
@@ -405,9 +306,11 @@ func (s *Server) setTenantLocales(w http.ResponseWriter, r *http.Request, c call
 		return
 	}
 	res, err := s.cfg.Repo.SetTenantLocales(r.Context(), r.PathValue("t"), body.Locales, c.meta)
-	if err != nil && !errors.Is(err, gitops.ErrInvalidName) {
+	var refusal *schemacheck.Refusal
+	if err != nil && !errors.Is(err, gitops.ErrInvalidName) && !errors.As(err, &refusal) {
 		// A language that is not a language code is the caller's mistake, and
-		// the message names the value.
+		// the message names the value. A write refused over the cluster's
+		// definitions is not the caller's, and is answered as one below.
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -469,15 +372,7 @@ func (s *Server) clusterChanges(w http.ResponseWriter, r *http.Request, _ call) 
 	})
 }
 
-// ── Integrations, platform security, customisation ──────────────────────────
-
-func (s *Server) tenantIntegrations(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/integrations")
-}
-
-func (s *Server) customizations(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/customizations")
-}
+// ── Grants and platform security ────────────────────────────────────────────
 
 // setAppGrant writes what one app may consume. Declared state: a commit.
 func (s *Server) setAppGrant(w http.ResponseWriter, r *http.Request, c call) {
@@ -496,54 +391,59 @@ func (s *Server) clearAppGrant(w http.ResponseWriter, r *http.Request, c call) {
 	s.written(w, r, res, err)
 }
 
-// platformSecurity answers what the cluster permits and what asks for it.
+// platformSecurity answers the allowlist git declares, and only that.
 //
-// Two sources on purpose: the allowlist is declared in git and read from
-// there, because that is the list this screen edits; what the catalogue asks
-// of it is cluster state and comes from the operator. Reading the allowlist
-// from the cluster instead would show the last thing that synced rather than
-// the thing about to be changed.
+// From git because this is the list the screen edits: read from the cluster
+// it would be the last thing that synced, and an edit made on top of that
+// drops a change committed a moment earlier. What the cluster has, and what
+// the catalogue asks of it, is live state and the usher's to answer.
 func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
 	declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
-	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/platform-security", nil)
-	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
-		return
-	}
-	if status != http.StatusOK || !json.Valid(body) {
-		s.fail(w, r, status, lifecycle.ErrorMessage(body))
-		return
-	}
-	var fromCluster map[string]any
-	if err := json.Unmarshal(body, &fromCluster); err != nil {
-		s.fail(w, r, http.StatusBadGateway, "the operator's API answered something unreadable")
-		return
-	}
 	if declared == nil {
 		declared = []gitops.MacWaiver{}
 	}
-	// What git declares wins as "the list", and what the cluster has is
-	// reported beside it: the two differing means a commit has not synced
-	// yet, which is worth seeing rather than hiding.
-	fromCluster["allowedMacWaivers"] = declared
-	s.json(w, http.StatusOK, fromCluster)
+	roles, err := s.cfg.Repo.PlatformClusterRoles(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if roles == nil {
+		roles = []gitops.ClusterRoleAllowance{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"allowedMacWaivers": declared, "allowedClusterRoles": roles})
 }
 
 // setPlatformSecurity commits the allowlist.
+//
+// Two lists in one object. The list a body does not name is left as it is, so
+// a screen that edits waivers cannot empty the permitted cluster roles; a
+// body that names neither states the waivers as empty, as it always did.
 func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
-		AllowedMacWaivers []gitops.MacWaiver `json:"allowedMacWaivers"`
+		AllowedMacWaivers   *[]gitops.MacWaiver            `json:"allowedMacWaivers"`
+		AllowedClusterRoles *[]gitops.ClusterRoleAllowance `json:"allowedClusterRoles"`
 	}
 	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}]}`)
+		s.fail(w, r, http.StatusBadRequest,
+			`body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}], "allowedClusterRoles": [{"profile":…,"role":…}]}, either or both`)
 		return
 	}
-	res, err := s.cfg.Repo.SetPlatformSecurity(r.Context(), body.AllowedMacWaivers, c.meta)
+	var res gitops.Result
+	var err error
+	if body.AllowedMacWaivers != nil || body.AllowedClusterRoles == nil {
+		var waivers []gitops.MacWaiver
+		if body.AllowedMacWaivers != nil {
+			waivers = *body.AllowedMacWaivers
+		}
+		res, err = s.cfg.Repo.SetPlatformSecurity(r.Context(), waivers, c.meta)
+	}
+	if err == nil && body.AllowedClusterRoles != nil {
+		res, err = s.cfg.Repo.SetPlatformClusterRoles(r.Context(), *body.AllowedClusterRoles, c.meta)
+	}
 	if errors.Is(err, gitops.ErrInvalidName) {
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
@@ -551,12 +451,7 @@ func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c c
 	s.written(w, r, res, err)
 }
 
-// tenantNotifications answers what has been said to this tenant's people.
-func (s *Server) tenantNotifications(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/notifications")
-}
-
-// publishNotification says something to them. An action: it happens once,
+// publishNotification says something to a tenant's people. An action: it happens once,
 // and the person who published it is recorded because a notice nobody can
 // ask about is worse than none.
 func (s *Server) publishNotification(w http.ResponseWriter, r *http.Request, c call) {

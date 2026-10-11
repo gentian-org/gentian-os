@@ -131,9 +131,10 @@ collaboration stays federation or public links (networking.md §5).
   passdb, the edge client) rather than assume them unchanged. Test: export
   on cluster A, restore on B, first login succeeds with the old password
   and the old second factor.
-- `[ ]` Entitlements move with the tenant: a signed grant names
-  `(tenant, app)` for one cluster; the migration procedure asks the store
-  to re-issue for the new one.
+- `[ ]` Pull credentials move with the tenant: the credential a tenant
+  holds for a licensed app's source repository is what lets the app arrive
+  (AD-3), so the migration procedure carries it, or has it re-issued for
+  the new cluster.
 - `[ ]` Offer Organizations within a tenant realm as a tenant-level
   setting, with the tenant admin as organization admin.
 - `[ ]` State portability as a product property where the isolation model
@@ -144,7 +145,7 @@ collaboration stays federation or public links (networking.md §5).
 
 The director verifies the token, makes the OpenFGA check, writes the tuples
 that check reads, signs the commit, holds a Keycloak identity that can manage
-users, and drives the credential manager. Decision point, tuple writer and
+users, and drives the custodian. Decision point, tuple writer and
 enforcement point are one process, so a compromised director can grant itself
 a relation and then sign a commit Argo applies — cluster-wide execution
 through provider-helm. AD-2 makes git the audited source, and AD-12 has the
@@ -162,8 +163,8 @@ authoritative and nothing compares the two.
 
 ## New — Audit integrity against the holder of break-glass
 
-Break-glass holds kubeconfig and, by the WP-10 decision, the director's
-signing key material, so it can act on the cluster and produce commits
+Break-glass holds kubeconfig and, with the recovery kit, signing key
+material Argo CD accepts, so it can act on the cluster and produce commits
 attributed to the director. The stated mitigations are custody and audit —
 but an audit log in a store the same holder can reach is not evidence about
 them.
@@ -177,9 +178,10 @@ them.
 
 ## New — Rollback protection on profile digests
 
-The App Store names the digest the director materialises. A compromised store
-can name an older digest of a legitimate, reviewed profile: valid entitlement
-signature, valid digest, downgrade to a known-vulnerable version through
+The install request names the digest the director materialises, and the App
+Store's confirmation is where it usually comes from. A compromised store, or
+anyone who may install, can name an older digest of a legitimate, reviewed
+profile: valid digest, downgrade to a known-vulnerable version through
 entirely correct machinery. Nothing refuses it.
 
 - `[ ]` Refuse a digest older than the one installed unless a human confirms

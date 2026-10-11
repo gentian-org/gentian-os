@@ -1,0 +1,128 @@
+{{- /*
+  Who may open a connection to the kernel's own PostgreSQL.
+
+  It holds Keycloak's database, OpenFGA's, the registrar's record and the
+  desktop's of the tenant that adopts the kernel realm. Until this policy it
+  took a connection from any pod of any namespace that has no egress policy
+  of its own, and a password was the only thing in the way. Now a connection
+  is admitted from the clients below and from nothing else.
+
+  The data port:
+
+    the authentication  Keycloak (kernel/services/keycloak-idp, database.hostname).
+    namespace           Named whole: the pods are built by an upstream chart
+                        the Suze claim installs at a version the claim may
+                        move, and a pod there can mount Keycloak's database
+                        Secret anyway.
+    the authorization   OpenFGA and the migration that runs as its init
+    namespace           container (kernel/services/openfga, datastore.uri).
+                        Named whole, for the same two reasons.
+    the control         two programs of the operator's chart, by label: the
+    namespace           registrar, which keeps its record here
+                        (externalsecret-registrar-database.yaml), and the
+                        operator, which reads and writes the usage history and
+                        the notices in the desktop's database of the tenant
+                        that adopts the kernel realm (internal/usage,
+                        applifecycle/notifications.go). The director, the
+                        usher and the custodian are not admitted.
+    tenant namespaces   every namespace labelled gentianos.io/tier=tenant.
+                        The desktop of the tenant that adopts the kernel realm
+                        keeps its database here (component_desktop.go
+                        componentDatabaseNamespace). Which tenant that is, is
+                        decided by its realm and not by its name, so no
+                        namespace can be named; what narrows it is the
+                        tenant's side, where egress is denied by default
+                        (tenant-isolation) and only that one tenant's desktop
+                        is opened this namespace (component-desktop). A
+                        tenant's DMZ is a different tier and is not admitted.
+    this namespace      the cluster's own replicas and join Jobs stream from
+                        the primary, and CloudNativePG's operator runs here.
+                        A pod here can mount the role Secrets, so naming pods
+                        would keep nobody out.
+
+  The instance manager's port (status): CloudNativePG's operator, in this
+  namespace, asks every instance for its state there, and without it the
+  Cluster never reports healthy. Nothing else is admitted to it. The
+  kubelet's probes use the same port; traffic from a pod's own node is not
+  subject to a NetworkPolicy.
+
+  The metrics port (9187) is listed nowhere and so is closed: nothing the
+  platform runs scrapes it. A cluster that brings a Prometheus adds a policy
+  of its own selecting these pods -- policies add up.
+
+  It selects the instance pods only (CloudNativePG labels them with the
+  cluster's name and the role `instance`; its initdb and join Jobs carry the
+  cluster label without that role and serve nothing). CloudNativePG's
+  operator, in the same namespace, is selected by nothing: its webhook is
+  called by the API server from a host address and its ports stay as open as
+  they were. Nothing is said about egress.
+
+  Sync wave -1: before the role Secrets (0) and the Cluster (1), so the
+  server is never up without it. It needs nothing the vault provides, so it
+  is applied at the first sync, while the rest of this chart still waits for
+  the secret store.
+
+  Switched off, the policy is kept and admits everything, where the stores'
+  charts render none. The Application that syncs this chart does not prune
+  (kernel/bootstrap/chart/templates/kernel-postgres.yaml), so a policy that
+  merely stopped being rendered would stay on the cluster as it last was --
+  the switch would read as off and the rule would still hold.
+*/ -}}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kernel-postgres-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    gentianos.io/tier: kernel
+    gentianos.io/function: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: kernel-postgres
+      cnpg.io/podRole: instance
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if eq (toString $np.enabled) "false" }}
+    - {}
+    {{- else }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.authentication | quote }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.authorization | quote }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.control | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gentian-os
+              app.kubernetes.io/component: registrar
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.control | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gentian-os
+              app.kubernetes.io/component: operator
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.postgresql }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.status }}
+    {{- end }}

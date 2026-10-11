@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -28,7 +22,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// newProviderProfile builds an AppProfile that provides the given contract.
+// newProviderProfile builds a ComponentProfile that provides the given contract.
 func newProviderProfile(name, contract string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -47,7 +41,7 @@ func newProviderProfile(name, contract string) *gentianov1alpha1.ComponentProfil
 	}
 }
 
-// newConsumerProfile builds an AppProfile that optionally integrates with the given contract.
+// newConsumerProfile builds a ComponentProfile that optionally integrates with the given contract.
 func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -89,7 +83,6 @@ func TestBindings_NoIntegrations(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "bind-none"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Bind None Co",
-			Domain:      "bind-none.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "bind-profile-none"}},
 		},
 	}
@@ -127,13 +120,13 @@ func TestBindings_ProviderPresent(t *testing.T) {
 	t.Parallel()
 	providerProfile := newProviderProfile("bind-provider-app", "file-store")
 	if err := testClient.Create(context.Background(), providerProfile); err != nil {
-		t.Fatalf("create provider AppProfile: %v", err)
+		t.Fatalf("create provider ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), providerProfile) })
 
 	consumerProfile := newConsumerProfile("bind-consumer-app", "file-store", "bind-provider-app")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
-		t.Fatalf("create consumer AppProfile: %v", err)
+		t.Fatalf("create consumer ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
 
@@ -142,7 +135,6 @@ func TestBindings_ProviderPresent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: tenantName},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Bind Both Co",
-			Domain:      "bind-both.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "bind-provider-app"},
 				{Profile: "bind-consumer-app"},
@@ -182,7 +174,7 @@ func TestBindings_ProviderAbsent(t *testing.T) {
 	t.Parallel()
 	consumerProfile := newConsumerProfile("bind-consumer-only", "file-store", "bind-provider-missing")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
-		t.Fatalf("create consumer AppProfile: %v", err)
+		t.Fatalf("create consumer ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
 
@@ -191,7 +183,6 @@ func TestBindings_ProviderAbsent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: tenantName},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Provider Co",
-			Domain:      "bind-no-provider.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "bind-consumer-only"}},
 		},
 	}
@@ -231,13 +222,13 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 	t.Parallel()
 	providerProfile := newProviderProfile("bind-gc-provider", "file-store")
 	if err := testClient.Create(context.Background(), providerProfile); err != nil {
-		t.Fatalf("create provider AppProfile: %v", err)
+		t.Fatalf("create provider ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), providerProfile) })
 
 	consumerProfile := newConsumerProfile("bind-gc-consumer", "file-store", "bind-gc-provider")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
-		t.Fatalf("create consumer AppProfile: %v", err)
+		t.Fatalf("create consumer ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
 
@@ -246,7 +237,6 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: tenantName},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GC Bind Co",
-			Domain:      "bind-gc.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "bind-gc-provider"},
 				{Profile: "bind-gc-consumer"},

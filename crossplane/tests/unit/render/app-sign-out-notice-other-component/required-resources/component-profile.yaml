@@ -1,0 +1,50 @@
+# A profile the definition refuses, rendered all the same: the Composition
+# does not rely on having been reached through the definition's rules.
+#
+# The entry the sign-out path is said to belong to routes to ANOTHER
+# component's Service, and the profile still carries the withdrawn free-form
+# address. Neither is registered: the realm is told to call nothing.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+          backchannelLogoutUrl: "https://collect.elsewhere.example/logout"
+          backchannelLogout:
+            exposure: web
+            path: /oidc/backchannel-logout
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: demo
+      backend:
+        component: another-app
+        service: another-app-web
+        port: 8080

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1_test
@@ -201,7 +203,7 @@ func TestComponentProfileRules(t *testing.T) {
 		// A service may have a console. What it may not have is a console on
 		// the perimeter, or a tile asking about an object it does not have.
 		{"a service with a console", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+\", relation: can_operate_system, object: cluster}}\n", ""},
-		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
+		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
 		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+\", relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
 		{"a service given to every tenant", "  classes: [service]\n  launch: none\n  trustTier: platform\n  defaultForTenants: true\n", "defaultForTenants is for class app"},
 
@@ -222,9 +224,32 @@ func TestComponentProfileRules(t *testing.T) {
 
 		{"forwardToken below platform tier", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", "forwardToken requires trustTier platform"},
 		{"forwardToken at platform tier", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", ""},
-		{"forwardToken on the perimeter", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter entry"},
+		{"forwardToken on the perimeter", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter entry"},
+
+		// The two entry types an approver decides beside a plain public
+		// address, and the modes that promised a check nothing makes.
+		{"a public entry whose callers the app checks", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: app, paths: [/dav/], backend: {service: x, port: 80}}\n", ""},
+		{"authMode app behind sign-in", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: app, source: {component: c}, backend: {service: x, port: 80}}\n", "authMode app is for a perimeter entry"},
+		{"a password the proxy would have to check", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: basic, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
+		{"a token the edge would have to verify", app + "\n  expose:\n  - {name: api, surface: perimeter, authMode: jwt, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
+		{"a bearer the edge would have to verify", app + "\n  expose:\n  - {name: api, surface: perimeter, authMode: bearer, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
+		{"a webhook signature the proxy would have to verify", app + "\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, backend: {service: x, port: 80}}\n", "Declare authMode app if the app itself checks the credential"},
+		{"the main address passes no credential", app + "\n  expose:\n  - {name: site, surface: perimeter, authMode: app, apex: true, paths: [/], backend: {service: x, port: 80}}\n", "an apex entry is a website for anyone"},
+		{"a website for the main address", app + "\n  expose:\n  - {name: site, surface: perimeter, authMode: none, apex: true, paths: [/], backend: {service: x, port: 80}}\n", ""},
+
+		{"the Authorization header is the app's own", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n", ""},
+		{"clientAuthorization is one word", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: platform, backend: {service: x, port: 80}}\n", "Unsupported value"},
+		{"clientAuthorization on a public entry", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: app, clientAuthorization: app, backend: {service: x, port: 80}}\n", "clientAuthorization is for a gateway entry behind the session"},
+		{"clientAuthorization without a session", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c}, clientAuthorization: app, backend: {service: x, port: 80}}\n", "clientAuthorization is for a gateway entry behind the session"},
+		{"the app's own header and the platform's token in one", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, forwardToken: true, backend: {service: x, port: 80}}\n", "clientAuthorization excludes forwardToken and exchangeToken: the Authorization header"},
+		{"the app's own header and an exchanged token in one", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, exchangeToken: true, backend: {service: x, port: 80}}\n", "clientAuthorization excludes forwardToken and exchangeToken: the Authorization header"},
+		{"the app's own header beside an entry that asks for an exchanged token", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n  - {name: api, surface: gateway, authMode: oidc, subDomain: api, exchangeToken: true, backend: {service: x, port: 80}}\n", "across a component's entries"},
+		{"the app's own header beside an entry that forwards the platform's token", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n  - {name: api, surface: gateway, authMode: oidc, subDomain: api, forwardToken: true, backend: {service: x, port: 80}}\n", "excludes forwardToken and exchangeToken across a component's entries"},
+		{"a service asks no tenant's approver", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n", "a service does not declare clientAuthorization"},
 
 		{"a pinned caller, by component", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", ""},
+		{"a gateway entry with no session and no pinned caller", app + "\n  expose:\n  - {name: open, surface: gateway, authMode: none, backend: {service: x, port: 80}}\n", "behind the zone's session"},
+		{"a gateway entry with a bearer and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 		{"a source that pins nothing", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
 		{"a source that pins both ways", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c, cidrs: [10.0.0.0/8]}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
 
@@ -260,6 +285,36 @@ func TestComponentProfileRules(t *testing.T) {
 	}
 	for _, c := range cases {
 		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+
+	// A link to a service hosted elsewhere: no chart, no exposure, and the
+	// tile on package.api. Refused outright until the launch rules counted it.
+	linkHead := `
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata: {name: x}
+spec:
+  version: "1.0.0"
+  classes: [app]
+  trustTier: experimental
+`
+	apiTile := `
+  package:
+    api:
+      runtime: redirect
+      baseUrl: "https://example.com"
+      tile: {displayName: Billing, logo: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+", relation: can_administer, object: tenant}
+`
+	apiNoTile := `
+  package:
+    api: {runtime: redirect, baseUrl: "https://example.com"}
+`
+	for _, c := range []struct{ name, spec, want string }{
+		{"a link tile, and launch says so", "  launch: tile" + apiTile, ""},
+		{"a link tile the profile does not own up to", "  launch: none" + apiTile, "a tile means launch tile"},
+		{"launch tile on a link with no tile", "  launch: tile" + apiNoTile, "launch tile needs a tile"},
+	} {
+		expect(t, c.name, v.check(t, linkHead+c.spec, ""), c.want)
 	}
 }
 
@@ -301,12 +356,21 @@ func component(spec string) string {
 
 func TestComponentRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_components.yaml")
-	enabled := func(owner, expires string) string {
+	// reviewed is an enablement with its review date, and an expiry when one
+	// is given: what is public is always looked at again and ends only if
+	// somebody said so.
+	reviewed := func(owner, review, expires string) string {
 		s := "  class: app\n  exposures:\n  - exposureName: share\n    owner: " + owner + "\n"
+		if review != "" {
+			s += "    reviewAt: \"" + review + "\"\n"
+		}
 		if expires != "" {
 			s += "    expiresAt: \"" + expires + "\"\n"
 		}
 		return s
+	}
+	enabled := func(owner, expires string) string {
+		return reviewed(owner, "2026-11-01T00:00:00Z", expires)
 	}
 	granted := func(approver string) string {
 		return "  class: app\n  privileges:\n  - privilege: egress/smtp-relay\n    approver: " + approver +
@@ -319,12 +383,14 @@ func TestComponentRules(t *testing.T) {
 		{"fulfilment is a tenant's choice", component("  class: shared-app\n  fulfilment: dedicated\n"), "", "applies to class app only"},
 
 		{"an exposure with an end", component(enabled("u-pat", "2026-12-01T00:00:00Z")), "", ""},
-		{"an exposure without one", component(enabled("u-pat", "")), "", "expiresAt"},
+		{"an exposure meant to stay", component(enabled("u-pat", "")), "", ""},
+		{"an approval that says its kind", component(enabled("u-pat", "") + "    kind: signInAppAuthorization\n"), "", ""},
+		{"an approval of a public address that passes the credential", component(enabled("u-pat", "") + "    kind: publicAppCredential\n"), "", ""},
+		{"an approval of a kind there is not", component(enabled("u-pat", "") + "    kind: everything\n"), "", "Unsupported value"},
+		{"an exposure nobody will look at again", component(reviewed("u-pat", "", "2026-12-01T00:00:00Z")), "", "reviewAt"},
 		{"an exposure nobody owns", component("  class: app\n  exposures:\n  - {exposureName: share, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "owner"},
-		{"review after expiry", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    reviewAt: \"2027-01-01T00:00:00Z\"\n"), "", "reviewAt must not be later"},
+		{"review after expiry", component(reviewed("u-pat", "2027-01-01T00:00:00Z", "2026-12-01T00:00:00Z")), "", "reviewAt must not be later"},
 		{"a service on the perimeter", component("  class: service\n  exposures:\n  - {exposureName: share, owner: u, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "a service switches on no perimeter entry"},
-		{"a vanity host", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    host: www.example.org\n"), "", ""},
-		{"a host that is not one", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    host: \"*.example.org\"\n"), "", "host"},
 
 		{"renewed by its owner", component(enabled("u-pat", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), ""},
 		{"taken over by someone else", component(enabled("u-mallory", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), "owner is immutable"},

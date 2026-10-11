@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -157,7 +151,7 @@ func ApplyExportDestination(
 			// The Secret is staged beside the capture Jobs and discarded with
 			// the export.
 			eff.CredentialName = ""
-			eff.CredentialSecret = ExportCredentialSecretName(exportName)
+			eff.CredentialSecret = ExportCredentialSecretName(tenant.Name, exportName)
 		}
 		// credentialSource: managed keeps whatever the policy resolved, which
 		// is the workspace's own destination credential — already materialised
@@ -172,8 +166,11 @@ func ApplyExportDestination(
 // Jobs. Derived from the export rather than the requester's Secret name, so a
 // tenant cannot aim it at a Secret in the kernel namespace it does not own —
 // which is why the export's name is the argument and the reference is not.
-func ExportCredentialSecretName(exportName string) string {
-	return "tenant-export-destination-" + exportName
+//
+// The tenant's name is part of it: the namespace is shared by every tenant's
+// exports, and an export's name is unique in its tenant only.
+func ExportCredentialSecretName(tenantName, exportName string) string {
+	return "tenant-export-destination-" + tenantName + "-" + exportName
 }
 
 // ResolveEffective merges the cluster policy with a tenant's own.

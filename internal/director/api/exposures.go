@@ -1,89 +1,133 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
-// Publishing a surface to the internet (AD-6).
+// Publishing a surface to the internet (AD-6), and the one other thing a
+// perimeter approver decides for an app's entry (AD-13).
 //
 // A profile declares that it COULD publish something; a perimeter approver
-// decides that it DOES, for a host, until a date. These are that decision,
+// decides that it DOES, and when it is looked at again. These are that decision,
 // and the read is the registry of everything this tenant has on the internet.
-
-// maxExposure is how long one enablement may run before somebody has to look
-// at it again.
 //
-// A year, and not "no expiry", because the failure this bounds is the one
-// nobody notices: a surface published for a reason that stopped being true,
-// still answering because removing it was never anybody's task. An expiry
-// makes forgetting the safe outcome instead of the dangerous one.
-const maxExposure = 365 * 24 * time.Hour
+// The same routes carry the approval of an entry behind sign-in that asks to
+// keep the app's own Authorization header. It is no public address and is
+// never published; it is decided by the same person, recorded in the same
+// registry with its kind, reviewed and withdrawn the same way.
 
-// defaultExposure is what a caller gets for saying nothing. Short enough that
-// an experiment expires on its own, long enough to be useful.
-const defaultExposure = 90 * 24 * time.Hour
+// maxReview is the longest anything public goes without somebody looking at
+// it again.
+//
+// A year. What this bounds is the surface nobody remembers: published for a
+// reason that stopped being true, still answering because removing it was
+// never anybody's task. The answer to that is knowing what is public and
+// revisiting it -- not an expiry, which makes the forgotten surface go away
+// and takes a tenant's website with it the day nobody renewed.
+const maxReview = 365 * 24 * time.Hour
+
+// defaultReview is the review date a caller gets for naming none: a year,
+// which is also the longest. Once a year is the regular look this asks for.
+const defaultReview = maxReview
 
 type publishExposureRequest struct {
-	// Host is a vanity hostname. Empty means the entry's default in the
-	// tenant's own zone, which is the ordinary case and the safe one.
-	Host string `json:"host,omitempty"`
-	// ExpiresAt bounds it, RFC 3339. Empty means the default.
-	ExpiresAt string `json:"expiresAt,omitempty"`
-	// ReviewAt is when to ask again, before expiry.
+	// ReviewAt is when it is looked at again, RFC 3339. Empty means a year
+	// from now, and it is never later than that.
 	ReviewAt string `json:"reviewAt,omitempty"`
+	// ExpiresAt ends it, RFC 3339, for a surface published for a while.
+	// Empty means it stays until somebody withdraws it.
+	ExpiresAt string `json:"expiresAt,omitempty"`
 	// Reason is why this is public, in the approver's words.
 	Reason string `json:"reason,omitempty"`
+	// Apex asks for the cluster's main address, the bare domain. Only the
+	// user tenant of a single-tenancy cluster may, and for one surface at a
+	// time. The profile's entry has to be one declared for it (apex: true);
+	// the operator checks that and says so on the Component.
+	Apex bool `json:"apex,omitempty"`
+	// AcknowledgeMainAddressRule is the approver saying they were told what
+	// a script on the main address can do to people's sign-in, and that the
+	// site is one whose scripts their organisation controls. Required with
+	// apex, on a first publication and on every review; refused without
+	// (mainAddressWarning). It means nothing on any other surface.
+	AcknowledgeMainAddressRule bool `json:"acknowledgeMainAddressRule,omitempty"`
+	// Kind is the kind of entry the approver was shown and means to
+	// approve, as the read gave it. Optional. Where it is sent and the
+	// app's catalogue entry now declares another kind -- the profile
+	// changed between the look and the yes -- the approval is refused,
+	// so nobody approves a credential passed on having been shown a plain
+	// public address. What is recorded is always what the entry declares.
+	Kind string `json:"kind,omitempty"`
 }
 
-// tenantExposures answers what this tenant publishes: the registry.
+// tenantExposures answers what this tenant publishes and what its apps ask to
+// have published.
+//
+// live, expired and reviewDue are the registry, as they always were. entries
+// is the same registry seen from the apps: every entry an installed app
+// declares for the internet with what approving it would publish and its
+// state, and every registry entry that matches none (exposure_requests.go).
 func (s *Server) tenantExposures(w http.ResponseWriter, r *http.Request, _ call) {
-	published, err := s.cfg.Repo.TenantExposures(r.Context(), r.PathValue("t"))
+	view, err := s.readExposureView(r.Context(), r.PathValue("t"))
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
+	published := view.published
 	if published == nil {
 		published = []gitops.Exposure{}
 	}
 	// Live and expired are different answers, and a screen that showed them
 	// the same would report a tenant as publishing something it no longer is.
-	now := time.Now()
-	live := make([]gitops.Exposure, 0, len(published))
-	expired := make([]gitops.Exposure, 0)
+	// reviewDue is the live ones whose review date has passed: still
+	// published, and somebody owes them a look.
+	live, expired, due := sortExposures(published, time.Now())
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":    r.PathValue("t"),
+		"live":      live,
+		"expired":   expired,
+		"reviewDue": due,
+		"entries":   view.entries(),
+		// The kinds an entry of the registry may name, in a few words: for
+		// whoever lists live, expired and reviewDue, whose entries carry
+		// the kind and not its wording.
+		"kinds": kindLabels,
+	})
+}
+
+// sortExposures splits a tenant's registry by what is true of each entry now.
+func sortExposures(published []gitops.Exposure, now time.Time) (live, expired, reviewDue []gitops.Exposure) {
+	live, expired, reviewDue = []gitops.Exposure{}, []gitops.Exposure{}, []gitops.Exposure{}
 	for _, e := range published {
-		at, err := time.Parse(time.RFC3339, e.ExpiresAt)
-		if err == nil && !now.Before(at) {
-			expired = append(expired, e)
-			continue
+		if e.ExpiresAt != "" {
+			if at, err := time.Parse(time.RFC3339, e.ExpiresAt); err == nil && !now.Before(at) {
+				expired = append(expired, e)
+				continue
+			}
 		}
 		live = append(live, e)
+		if at, err := time.Parse(time.RFC3339, e.ReviewAt); err != nil || !now.Before(at) {
+			reviewDue = append(reviewDue, e)
+		}
 	}
-	s.json(w, http.StatusOK, map[string]any{
-		"tenant":  r.PathValue("t"),
-		"live":    live,
-		"expired": expired,
-	})
+	return live, expired, reviewDue
 }
 
 // publishExposure records that a perimeter approver put one surface on the
@@ -97,41 +141,109 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	var body publishExposureRequest
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"expiresAt": "<RFC 3339>", "reason": "...", "host": "..."}`)
+			`body must be {"reviewAt": "<RFC 3339>", "expiresAt": "<RFC 3339>", "reason": "..."}; all optional`)
 		return
 	}
 
-	expires := time.Now().Add(defaultExposure)
-	if body.ExpiresAt != "" {
-		at, err := time.Parse(time.RFC3339, body.ExpiresAt)
+	// What does not exist is not approved: the app instance has to be one
+	// the tenant has installed, and the entry one its profile declares for
+	// the internet. Recording anything else would list as published
+	// something the operator publishes nothing for.
+	// Nor is an approval that the operator would publish nothing for: one
+	// whose word on the main address is not the profile's.
+	kind, why, err := s.nothingToPublish(r.Context(), r.PathValue("t"), install, exposure, body.Apex)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if why != "" {
+		s.fail(w, r, http.StatusUnprocessableEntity, why+". Nothing was changed")
+		return
+	}
+	// What the approver was shown has to be what is approved.
+	if shown := strings.TrimSpace(body.Kind); shown != "" && normalKind(shown) != normalKind(kind) {
+		s.fail(w, r, http.StatusConflict, fmt.Sprintf(
+			"the request approves entry %s of %s as %q, and the app's catalogue entry declares %q (%s). "+
+				"Read the tenant's requests again and approve what is shown there. Nothing was changed",
+			exposure, install, shown, normalKind(kind), kindLabels[normalKind(kind)]))
+		return
+	}
+
+	if body.Apex {
+		// The main address is the most visible page of the cluster and
+		// nobody is signed in on it. Whose it may be is the mode's.
+		settings, err := s.cfg.Repo.ClusterSettingValues(r.Context())
+		if err != nil && !errors.Is(err, gitops.ErrNoClusterClaim) {
+			s.repoError(w, r, err)
+			return
+		}
+		// No claim is no word that the cluster is single, and so it is not.
+		if !tenancy.SoleUserTenant(settings["tenancyMode"], r.PathValue("t")) {
+			s.fail(w, r, http.StatusConflict, mainAddressRefused)
+			return
+		}
+		// Asked after the mode, so nobody is told to acknowledge a rule for
+		// something this cluster would refuse anyway.
+		if !body.AcknowledgeMainAddressRule {
+			s.fail(w, r, http.StatusBadRequest, mainAddressWarning)
+			return
+		}
+	}
+
+	now := time.Now()
+	review := now.Add(defaultReview)
+	if v := strings.TrimSpace(body.ReviewAt); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			s.fail(w, r, http.StatusBadRequest, "reviewAt must be an RFC 3339 timestamp")
+			return
+		}
+		if !at.After(now) {
+			s.fail(w, r, http.StatusBadRequest, "reviewAt is in the past; a review date is when to look again")
+			return
+		}
+		if at.After(now.Add(maxReview)) {
+			// Refused rather than clamped: somebody asking for ten years
+			// should be told no, not quietly given one.
+			s.fail(w, r, http.StatusBadRequest, "a public surface is reviewed at least once a year")
+			return
+		}
+		review = at
+	}
+	expires := ""
+	if v := strings.TrimSpace(body.ExpiresAt); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "expiresAt must be an RFC 3339 timestamp")
 			return
 		}
-		if !at.After(time.Now()) {
+		if !at.After(now) {
 			s.fail(w, r, http.StatusBadRequest, "expiresAt is in the past; that publishes nothing")
 			return
 		}
-		if at.After(time.Now().Add(maxExposure)) {
-			// Refused rather than clamped: somebody asking for ten years
-			// should be told no, not quietly given one.
-			s.fail(w, r, http.StatusBadRequest,
-				"a surface may be published for at most a year at a time; renew it instead")
-			return
+		// Something that ends before its review is reviewed by ending.
+		if at.Before(review) {
+			review = at
 		}
-		expires = at
+		expires = at.UTC().Format(time.RFC3339)
 	}
 
 	e := gitops.Exposure{
 		Install:      install,
 		ExposureName: exposure,
-		Host:         strings.TrimSpace(body.Host),
 		// From the token, never the body: an enablement that could name its
 		// own owner records nobody.
 		Owner:     c.meta.Subject,
-		ExpiresAt: expires.UTC().Format(time.RFC3339),
-		ReviewAt:  strings.TrimSpace(body.ReviewAt),
+		ReviewAt:  review.UTC().Format(time.RFC3339),
+		ExpiresAt: expires,
 		Reason:    strings.TrimSpace(body.Reason),
+		Apex:      body.Apex,
+		// What the profile's entry declares, never the body's word for it.
+		Kind: kind,
+	}
+	if body.Apex {
+		// Who acknowledged is the caller, from the token like the owner.
+		e.ApexAcknowledgedBy = c.meta.Subject
 	}
 	res, err := s.cfg.Repo.PublishExposure(r.Context(), r.PathValue("t"), e, c.meta)
 	if err != nil && errors.Is(err, gitops.ErrInvalidName) {
@@ -140,7 +252,95 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err != nil && errors.Is(err, gitops.ErrMainAddressNotAcknowledged) {
+		s.fail(w, r, http.StatusBadRequest, mainAddressWarning)
+		return
+	}
+	if err != nil && errors.Is(err, gitops.ErrMainAddressHeld) {
+		// The message names the holder, which is what the approver needs.
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
 	s.written(w, r, res, err)
+}
+
+// mainAddressRefused is the answer to apex: true anywhere but the user
+// tenant of a single-tenancy cluster.
+const mainAddressRefused = "a website on the cluster's main address is for the user tenant of a single-tenancy cluster only. " +
+	"On a multi-tenancy cluster the main address is the sign-in form, and the platform tenant's own page is published at install. " +
+	"Nothing was changed"
+
+// mainAddressRule is what the approver has to know before a website goes on
+// the main address. The platform cannot check what a website loads, so the
+// rule is the approver's to keep, and they are told it: in the refusal of a
+// request without the acknowledgement, and with the entry in the read, so
+// that whatever asks for the approval can show it first.
+const mainAddressRule = "Any script that runs in a page on the main address can set cookies for the whole domain, " +
+	"and browsers send those cookies to the desktop, the consoles and sign-in as well. " +
+	"Such a script cannot read anybody's session. " +
+	"It can stop people from signing in until they clear their cookies, " +
+	"and it can sign a person in to an account its author chose, without the person noticing, so that what they do there ends up in that account. " +
+	"The platform cannot check what a website loads. " +
+	"The rule: publish here only a site whose scripts your organisation itself controls -- " +
+	"no third-party scripts (analytics, embeds, widgets, anything loaded from another host) and no pages uploaded by users."
+
+// mainAddressWarning is the answer to apex: true without the acknowledgement:
+// the rule, and the field that says the approver knows it.
+const mainAddressWarning = "a website on the cluster's main address needs your acknowledgement (\"acknowledgeMainAddressRule\": true). " +
+	mainAddressRule + " " +
+	"If that is true of this site, send the request again with \"acknowledgeMainAddressRule\": true; your name and the time are recorded with the entry. " +
+	"Nothing was changed"
+
+// nothingToPublish is why an approval names nothing this tenant can publish,
+// or "". apex is what the approval says of the main address.
+//
+// One exception, and it creates nothing. A component the platform's own
+// chart ships has no profile in the repository, so what it declares cannot
+// be read here; the installer publishes the platform tenant's page that way.
+// Such an entry can be reviewed where the registry already holds it, on the
+// main-address setting it has, and cannot be published where it does not.
+//
+// kind is what an approval of the entry records: what the profile's entry
+// declares, or for the exception what the registry already holds.
+func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure string, apex bool) (kind, why string, err error) {
+	if !gitops.ValidName(tenant) || !gitops.ValidName(install) || !gitops.ValidName(exposure) {
+		// The write names the value that is not a name; this has nothing to
+		// add to that.
+		return "", "", nil
+	}
+	view, err := s.readExposureView(ctx, tenant)
+	if err != nil {
+		return "", "", err
+	}
+	if view.unknownToTheRepository(install) != "" {
+		want := gitops.Exposure{Install: install, ExposureName: exposure}.Key()
+		for _, have := range view.published {
+			if have.Key() != want {
+				continue
+			}
+			if have.Apex != apex {
+				// What the profile says of the main address cannot be read,
+				// so a review is not where the registry's word on it changes.
+				return "", fmt.Sprintf(
+					"%s is a component the platform itself ships, and its profile is not in the repository, so whether entry %s is one for the cluster's main address cannot be checked. "+
+						"A review keeps the setting the entry has (\"apex\": %t), and this request says \"apex\": %t",
+					install, exposure, have.Apex, apex), nil
+			}
+			// Nor its kind: a review keeps the one recorded.
+			return have.Kind, "", nil
+		}
+		return "", fmt.Sprintf(
+			"%s is a component the platform itself ships, and its profile is not in the repository, so what it declares cannot be checked. "+
+				"An entry of it that is already published can be reviewed; a new one cannot be published here", install), nil
+	}
+	if why := view.unmatched(install, exposure); why != "" {
+		return "", why, nil
+	}
+	if why := view.mainAddressMismatch(install, exposure, apex); why != "" {
+		return "", why, nil
+	}
+	entry, _, _ := approvableEntry(view.profiles[install], exposure)
+	return string(entry.RequestKind()), "", nil
 }
 
 // withdrawExposure takes one down.

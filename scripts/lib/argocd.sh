@@ -22,69 +22,162 @@ gentian_argocd_namespace() {
     ns_kernel gitops
 }
 
-# =============================================================================
-# _apply_argocd_repo_creds <role> <repo_var> <auth_var> <user_var> <token_var>
+# -----------------------------------------------------------------------------
+# The bootstrap repository credentials
 #
-# Registers a prefix-matched ArgoCD repo-creds Secret directly from the
-# shell-collected credential — the one Path-A exception in an otherwise
-# ESO/OpenBao-managed credential design (see repository-default.yaml). Exists
-# only for repositories a bootstrap Application needs before OpenBao is
-# reachable; today that is gentian-os alone, called from install_argocd() above.
+# Every repository credential reaches Argo CD from OpenBao, through the
+# repository's Repository claim: the claim composes an ExternalSecret, and
+# External Secrets writes the Secret repo-<name> that Argo CD reads. Two
+# repositories are read before that can happen:
 #
-# url is a PREFIX match in an ArgoCD repo-creds Secret (secret-type:
-# repo-creds, as opposed to the exact-match secret-type: repository the
-# Composition emits later) — an exact repo URL here matches only that repo, so
-# it does not need trimming or wildcarding.
+#   gentian-os    B-01's Applications read it before OpenBao is initialised.
 #
-# Skipped, not an error, when auth is "none" (public repo, nothing to
-# authenticate) or when the credential was never collected — collect_bootstrap_credentials
-# only gathers it when _requirement_applies() gated it in, which mirrors the
-# same GENTIAN_OS_AUTH check here.
-# =============================================================================
-_apply_argocd_repo_creds() {
-    local role="$1" repo_var="$2" auth_var="$3" user_var="$4" token_var="$5"
-    local repo="${!repo_var:-}"
-    local auth="${!auth_var:-none}"
-    [[ -n "${repo}" && "${auth}" != "none" ]] || return 0
+#   deployments   Its Repository claim is a file IN the deployments
+#                 repository (clusters/<id>/kernel/claims), delivered by the
+#                 gentian-claims Application -- which reads that repository.
+#                 Where it is private, the claim that would supply the
+#                 credential can only arrive once the credential is there: C-02
+#                 waited fifteen minutes for gentian-claims and failed. The
+#                 catalogue and the tenants ApplicationSets read the same
+#                 repository and stood beside it.
+#
+# So for those two the installer hands Argo CD the credential it collected,
+# as a repo-creds Secret (A-06), and takes it away again once the claim's own
+# Secret holds a login (C-05). The two never collide: they have different
+# names and different types, and Argo CD uses a credential template only for
+# a repository whose own Secret carries no login, so from the moment
+# repo-<name> exists it is the one that is used.
+# -----------------------------------------------------------------------------
 
-    local user="${!user_var:-}" token="${!token_var:-}"
-    if [[ -z "${token}" ]]; then
-        warn "No credential collected for ${role} repository (${auth_var}=${auth}); skipping bootstrap ArgoCD repo-creds Secret."
-        return 0
-    fi
+# argocd_bridged_repositories -- the requirements A-06 bridges and C-05 hands
+# over, in the order they are first read.
+argocd_bridged_repositories() {
+    echo "gentian-os-repository deployments-repository"
+}
+
+# argocd_bootstrap_repo_credential_name <requirement> -- the bridge's Secret.
+argocd_bootstrap_repo_credential_name() {
+    local name
+    name="$(_repo_credential "$1" vault)" || return 1
+    echo "argocd-repo-creds-bootstrap-${name}"
+}
+
+# argocd_repo_needs_credential <requirement> -- whether Argo CD needs a login
+# to read that repository at all: it authenticates, and it has an address.
+# False for the public default, which is why a plain install registers
+# nothing.
+argocd_repo_needs_credential() {
+    local repo_var
+    repo_var="$(_repo_credential "$1" repo)" || return 1
+    [[ "$(_repo_credential_mode "$1")" != "none" && -n "${!repo_var:-}" ]]
+}
+
+# argocd_claim_repo_credential_present <requirement> -- whether the Secret the
+# Repository claim composes for Argo CD exists AND carries a login.
+#
+# Asked of the Secret rather than of the claim's status. The claim reports
+# credentialSatisfied when the vault path has a value, which is before
+# External Secrets has written the Secret Argo CD reads; and a claim that
+# declares no credential composes a Secret with an address and no login.
+# Neither is a credential Argo CD can use yet. The value is tested for being
+# there and is never printed.
+argocd_claim_repo_credential_present() {
+    local name
+    name="$(_repo_credential "$1" vault)" || return 1
+    [[ -n "$(kubectl get secret "repo-${name}" -n "$(gentian_argocd_namespace)" \
+        -o jsonpath='{.data.password}{.data.bearerToken}' 2>/dev/null)" ]]
+}
+
+# argocd_repo_credential_ok <requirement> -- whether Argo CD has what this run
+# could give it to read that repository: nothing needed, the claim's own
+# Secret, or the bootstrap bridge.
+#
+# Two cases are decided by whether this run holds a token:
+#
+#   No credential on the cluster and a token in hand is not ok, and the next
+#   apply() registers the bridge. With no token in hand there is nothing an
+#   apply() could register, so it is not reported: a check that stays
+#   unsatisfied whatever its step does names the wrong step, and --status and
+#   --dry-run collect no credentials at all.
+#
+#   A bridge that holds a different address or token from the ones this run
+#   was given is not ok: the token was rotated, or the repository moved, while
+#   the bridge was still the credential in use, and the next apply() writes
+#   the current ones over it. A run that holds no token has nothing to
+#   compare and takes the bridge as it finds it.
+#
+# The values are compared and never printed.
+argocd_repo_credential_ok() {
+    local req="$1" bridge ns repo_var token_var have
+    argocd_repo_needs_credential "${req}" || return 0
+    argocd_claim_repo_credential_present "${req}" && return 0
+    token_var="$(_repo_credential "${req}" token)"
+    [[ -n "${!token_var:-}" ]] || return 0
+    bridge="$(argocd_bootstrap_repo_credential_name "${req}")"
+    ns="$(gentian_argocd_namespace)"
+    kubectl get secret "${bridge}" -n "${ns}" >/dev/null 2>&1 || return 1
+    repo_var="$(_repo_credential "${req}" repo)"
+    have="$(kubectl get secret "${bridge}" -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    [[ "${have}" == "${!repo_var}" ]] || return 1
+    have="$(kubectl get secret "${bridge}" -n "${ns}" \
+        -o jsonpath='{.data.password}{.data.bearerToken}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    [[ "${have}" == "${!token_var}" ]]
+}
+
+# argocd_bootstrap_repo_credential <requirement>
+#
+# Hands Argo CD the credential the installer collected for one repository, as
+# a repo-creds Secret, before OpenBao can serve it.
+#
+# A repo-creds Secret matches by URL prefix, so the repository's own URL
+# matches that repository and nothing else.
+#
+# Does nothing for a repository that does not authenticate, and warns without
+# failing when it does but no token was collected. The token goes from the
+# environment into the Secret through jq and a pipe: it is not echoed, and it
+# is in no command line.
+argocd_bootstrap_repo_credential() {
+    local req="$1" name mode repo_var user_var token_var
+    name="$(_repo_credential "${req}" vault)" || {
+        error "argocd_bootstrap_repo_credential: '${req}' is not a repository credential."
+        return 1
+    }
+    mode="$(_repo_credential_mode "${req}")"
+    repo_var="$(_repo_credential "${req}" repo)"
+    user_var="$(_repo_credential "${req}" username)"
+    token_var="$(_repo_credential "${req}" token)"
+
+    case "${mode}:${!repo_var:+repo}:${!token_var:+token}" in
+        none:*|*::*) return 0 ;;
+        *:repo:)
+            warn "The ${name} repository authenticates (${mode}) but no token was collected; no bootstrap repo-creds Secret for Argo CD."
+            return 0 ;;
+    esac
 
     local ns; ns="$(gentian_argocd_namespace)"
-    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo}) in ${ns}..."
-    if [[ "${auth}" == "bearer" ]]; then
-        kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: argocd-repo-creds-bootstrap-${role}
-  namespace: ${ns}
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-stringData:
-  type: git
-  url: ${repo}
-  bearerToken: "${token}"
-EOF
-    else
-        kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: argocd-repo-creds-bootstrap-${role}
-  namespace: ${ns}
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-stringData:
-  type: git
-  url: ${repo}
-  username: "${user}"
-  password: "${token}"
-EOF
-    fi
+    info "Registering bootstrap ArgoCD repo-creds for ${name} (${!repo_var}) in ${ns}..."
+    # Built by jq and applied as JSON, so a token is quoted by something that
+    # knows how, whatever characters it holds. The two modes differ only in
+    # the keys Argo CD reads the login from.
+    #
+    # The token is exported to jq for the one call and read there from the
+    # environment (env.T), not passed with --arg: an argument is in the
+    # process list for as long as jq runs.
+    #
+    # The username falls back to x-access-token, the same fallback the vault
+    # is seeded with (seed_repository_credentials), so the bridge and the
+    # claim's Secret that replaces it hold the same login.
+    GENTIAN_BRIDGE_TOKEN="${!token_var}" jq -n \
+        --arg name "argocd-repo-creds-bootstrap-${name}" --arg ns "${ns}" \
+        --arg url "${!repo_var}" --arg mode "${mode}" \
+        --arg user "${!user_var:-x-access-token}" '
+        { kind: "Secret", apiVersion: "v1",
+          metadata: { namespace: $ns, name: $name,
+                      labels: { "argocd.argoproj.io/secret-type": "repo-creds" } },
+          stringData: ( { url: $url, type: "git" }
+                        + if $mode == "bearer" then { bearerToken: env.GENTIAN_BRIDGE_TOKEN }
+                          else { username: $user, password: env.GENTIAN_BRIDGE_TOKEN } end ) }' |
+        kubectl apply -f -
 }
 
 # =============================================================================
@@ -95,7 +188,8 @@ resolve_argocd_url() {
         echo "https://argocd.${KERNEL_DOMAIN}"
         return 0
     fi
-    local ingress_host svc_type node_port lb_host lb_ip
+    local ingress_host svc_type node_port lb_host lb_ip argo_ns
+    argo_ns="$(gentian_argocd_namespace)"
 
     _pick_node_ip() {
         local detected
@@ -122,26 +216,26 @@ resolve_argocd_url() {
         return 0
     }
 
-    ingress_host=$(kubectl get ingress -n argocd \
+    ingress_host=$(kubectl get ingress -n "${argo_ns}" \
         -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || true)
     if [[ -n "$ingress_host" ]]; then
         echo "https://${ingress_host}"
         return 0
     fi
 
-    svc_type=$(kubectl get svc argocd-server -n argocd \
+    svc_type=$(kubectl get svc argocd-server -n "${argo_ns}" \
         -o jsonpath='{.spec.type}' 2>/dev/null || true)
-    node_port=$(kubectl get svc argocd-server -n argocd \
+    node_port=$(kubectl get svc argocd-server -n "${argo_ns}" \
         -o jsonpath='{range .spec.ports[?(@.name=="https")]}{.nodePort}{end}' 2>/dev/null || true)
     if [[ -z "$node_port" ]]; then
-        node_port=$(kubectl get svc argocd-server -n argocd \
+        node_port=$(kubectl get svc argocd-server -n "${argo_ns}" \
             -o jsonpath='{range .spec.ports[0]}{.nodePort}{end}' 2>/dev/null || true)
     fi
 
     if [[ "$svc_type" == "LoadBalancer" ]]; then
-        lb_host=$(kubectl get svc argocd-server -n argocd \
+        lb_host=$(kubectl get svc argocd-server -n "${argo_ns}" \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-        lb_ip=$(kubectl get svc argocd-server -n argocd \
+        lb_ip=$(kubectl get svc argocd-server -n "${argo_ns}" \
             -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         if [[ -n "$lb_host" ]]; then
             echo "https://${lb_host}"
@@ -159,7 +253,7 @@ resolve_argocd_url() {
     fi
 
     # ClusterIP or unresolved external endpoint.
-    echo "kubectl port-forward -n argocd svc/argocd-server 8080:443"
+    echo "kubectl port-forward -n ${argo_ns} svc/argocd-server 8080:443"
 }
 
 # Configure ArgoCD OIDC settings and group mapping.
@@ -186,7 +280,16 @@ configure_argocd_oidc() {
             --patch "{\"data\":{\"id.${kernel_domain}\":$(jq -R -s '.' <<<"${ca_cert}")}}"
     fi
 
-    # 2. Patch argocd-cm with OIDC settings and external URL
+    # 2. Patch argocd-cm with OIDC settings and external URL, and switch the
+    # local admin account off.
+    #
+    # Argo CD ships an "admin" with a generated password, which the installer
+    # used to print in its summary. That account is everything Keycloak is
+    # not: no MFA, no activation link, no record of who used it, and a
+    # password sitting in terminal scrollback. Once Argo CD signs in against
+    # the realm, a platform administrator has role:admin through the group
+    # below, and anyone with kubectl in the gitops namespace can turn the
+    # account back on -- so nothing is lost by turning it off.
     local oidc_config
     oidc_config=$(cat <<EOF
 name: Keycloak
@@ -200,9 +303,14 @@ EOF
 {
   \"data\": {
     \"url\": \"https://argocd.${kernel_domain}\",
+    \"admin.enabled\": \"false\",
     \"oidc.config\": $(jq -R -s '.' <<<"${oidc_config}")
   }
 }"
+    # The generated password goes with the account. Argo CD keeps only its
+    # hash in argocd-secret; this Secret holds it in the clear and exists for
+    # the first sign-in, which is Keycloak's now.
+    kubectl delete secret argocd-initial-admin-secret -n "${ns}" --ignore-not-found >/dev/null
 
     # 3. Patch argocd-rbac-cm to map group to admin role
     #
@@ -245,6 +353,7 @@ g, /${platform_admin_group}, role:admin"
 
 verify_argocd_apps() {
     banner "Verify — ArgoCD Applications"
+    local argo_ns; argo_ns="$(gentian_argocd_namespace)"
 
     # Restart the application-controller once to clear any stale resource
     # health cached during the OpenBao seal-migration window (when ESO
@@ -253,9 +362,9 @@ verify_argocd_apps() {
     # Degraded indefinitely because ArgoCD doesn't re-evaluate cached
     # resource health unless the resource generation changes.
     info "Restarting argocd-application-controller to clear stale health cache..."
-    kubectl rollout restart statefulset -n argocd argocd-application-controller \
+    kubectl rollout restart statefulset -n "${argo_ns}" argocd-application-controller \
         >/dev/null 2>&1 || true
-    kubectl rollout status  statefulset -n argocd argocd-application-controller \
+    kubectl rollout status  statefulset -n "${argo_ns}" argocd-application-controller \
         --timeout=120s >/dev/null 2>&1 || warn "application-controller rollout did not become ready in 120s; continuing."
 
     local timeout=${VERIFY_TIMEOUT:-600}
@@ -267,7 +376,7 @@ verify_argocd_apps() {
     while true; do
         # If no Applications exist yet, keep waiting (root ApplicationSet may
         # still be generating children).
-        total=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+        total=$(kubectl get applications -n "${argo_ns}" --no-headers 2>/dev/null | wc -l)
         if [[ "$total" -eq 0 ]]; then
             if [[ $elapsed -ge $timeout ]]; then
                 warn "No ArgoCD Applications appeared within ${timeout}s."
@@ -279,17 +388,17 @@ verify_argocd_apps() {
             continue
         fi
 
-        synced=$(kubectl get applications -n argocd \
+        synced=$(kubectl get applications -n "${argo_ns}" \
             -o jsonpath='{range .items[?(@.status.sync.status=="Synced")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
         # Bootstrap operator / ApplicationSet parent: kube-defaulted fields or
         # Argo tracking annotations can leave apps OutOfSync while Healthy.
         while IFS= read -r _app; do
             [[ -n "$_app" ]] && synced=$((synced + 1))
-        done < <(kubectl get applications -n argocd \
+        done < <(kubectl get applications -n "${argo_ns}" \
             -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | grep -E '^(gentian-os|gentian-appsets)$' || true)
-        healthy=$(kubectl get applications -n argocd \
+        healthy=$(kubectl get applications -n "${argo_ns}" \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
 
@@ -304,7 +413,7 @@ verify_argocd_apps() {
         fi
 
         if [[ $elapsed -ge $timeout ]]; then
-            bad_lines=$(kubectl get applications -n argocd \
+            bad_lines=$(kubectl get applications -n "${argo_ns}" \
                 -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' \
                 --no-headers 2>/dev/null | awk '$2!="Synced" || $3!="Healthy"')
             warn "Timed out after ${timeout}s with ${total} Applications, ${synced} Synced, ${healthy} Healthy."
@@ -407,11 +516,57 @@ request_argo_sync_if_stalled() {
     json="$(kubectl get application "${app}" -n "${ns}" -o json 2>/dev/null)" || return 0
     phase="$(jq -r '.status.operationState.phase // ""' <<<"${json}")"
     sync="$(jq -r '.status.sync.status // ""' <<<"${json}")"
+
+    # An operation still Running, but pinned to a revision Argo CD refuses:
+    # it retries that revision with backoff and never looks at the commit that
+    # replaced it -- an unsigned head followed by a signed one (AD-2) left the
+    # claims Application retrying the unsigned commit indefinitely. Stop it
+    # and refresh; automated sync starts again on the current head.
+    if [[ "${phase}" == "Running" ]] && \
+       jq -e '(.status.operationState.message // "") | test("GIT/GPG|Failed verifying revision")' <<<"${json}" >/dev/null 2>&1; then
+        info "${app}: its sync is pinned to a revision Argo CD refuses; stopping it and refreshing."
+        kubectl patch application "${app}" -n "${ns}" --type merge -p '{"operation":null}' >/dev/null 2>&1 || true
+        kubectl annotate application "${app}" -n "${ns}" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+        return 0
+    fi
+    # A sync that SUCCEEDED and an Application that is still OutOfSync: what
+    # Argo CD applied changed nothing, and it goes on reporting a difference.
+    # Seen when a CRD gained a field in the same sync as an object using it:
+    # the diff computed at that moment had the object without the field,
+    # Argo CD caches diffs by the object's version, and every later apply was
+    # a no-op -- so the version never moved, the cached diff was served for
+    # ever, and restarting the controller did not help because the cache is
+    # not in it. A hard refresh recomputes without the cache. It changes
+    # nothing in the cluster, and is asked at most once a minute.
+    if [[ "${phase}" == "Succeeded" && "${sync}" == "OutOfSync" ]] && \
+       [[ "$(jq -r '.operation // "" | type' <<<"${json}")" == "string" ]]; then
+        local now=${SECONDS} last_var="_ARGO_HARD_REFRESH_${app//[^A-Za-z0-9]/_}"
+        if (( now - ${!last_var:--60} >= 60 )); then
+            printf -v "${last_var}" '%s' "${now}"
+            info "${app}: synced and still OutOfSync; asking Argo CD to recompute the comparison."
+            kubectl annotate application "${app}" -n "${ns}" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
     [[ "${phase}" == "Failed" || "${phase}" == "Error" ]] || return 0
     [[ "${sync}" != "Synced" ]] || return 0
     # An operation still in flight has its own phase; only a finished one is
     # ours to replace.
     [[ "$(jq -r '.operation // "" | type' <<<"${json}")" == "string" ]] || return 0
+
+    # An ExternalSecret that failed while its store was not ready yet is not
+    # retried by External Secrets until its refresh interval -- an hour -- so
+    # a new sync would only meet the same failure. Nudge the Application's
+    # unready ExternalSecrets first; a cold install met this on every run.
+    local es_ns es_name
+    while read -r es_ns es_name; do
+        [[ -n "${es_name}" ]] || continue
+        [[ "$(kubectl get externalsecret "${es_name}" -n "${es_ns}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] && continue
+        info "  ${app}: refreshing ExternalSecret ${es_ns}/${es_name}, which failed earlier."
+        kubectl annotate externalsecret "${es_name}" -n "${es_ns}" \
+            force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+    done < <(jq -r '.status.resources[]? | select(.kind=="ExternalSecret") | "\(.namespace) \(.name)"' <<<"${json}")
 
     info "${app}: its last sync failed and automated retries are exhausted; asking for another."
     kubectl patch application "${app}" -n "${ns}" --type merge \

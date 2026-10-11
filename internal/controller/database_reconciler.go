@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -29,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -41,13 +36,12 @@ const (
 	cnpgGroup              = "postgresql.cnpg.io"
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
-	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
 	// portalShellAppName names the desktop's database as exports and restores
 	// address it. The tenant reconciler no longer provisions it: the desktop
 	// is a component, and its database is that component's granted
 	// requirement (ui-restructure.md §1), fulfilled where the component is.
-	portalShellAppName = "shell"
+	portalShellAppName = backup.DesktopStore
 )
 
 // cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
@@ -105,23 +99,11 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 // collectPostgresApps returns profile names of apps that require a per-tenant
 // PostgreSQL database.
 func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
-	if err != nil {
-		return nil, err
-	}
-	var pgApps []string
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
-		if !ok {
-			continue
-		}
-		if profile.Services() != nil &&
-			profile.Services().Database != nil &&
-			profile.Services().Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
-			pgApps = append(pgApps, app.Profile)
-		}
-	}
-	return pgApps, nil
+	return r.collectKernelApps(ctx, tenant, CollectForProvision, matchPostgresProfile, nil, nil)
+}
+
+func matchPostgresProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return backup.ProfileStores(profile).Database == gentianov1alpha1.DatabaseEnginePostgreSQL
 }
 
 // schemaPreferenceFor reports the search_path order an app's profile asked for.
@@ -176,14 +158,54 @@ func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1
 }
 
 // deleteDatabase handles database cleanup on tenant deletion.
-// DeletionPolicy=Delete: deletes all tenant-labeled CloudNativePG Database CRs
-// (including databases from previously uninstalled apps).
+// DeletionPolicy=Delete: drops every PostgreSQL database and role the tenant
+// was ever provisioned, then deletes the tenant-labeled CloudNativePG Database
+// CRs. The CRs alone were what used to go, and CloudNativePG's default
+// reclaim policy retains the database behind a deleted CR, so a purged tenant
+// kept every table and a login role nobody could remove from the console.
 // DeletionPolicy=Retain: no-op — databases and data are preserved.
 func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
+	apps, err := r.collectPostgresAppsForDelete(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := r.ensureDeleteJobs(ctx, postgresNamespace, tenant, apps, pgDeleteJobName, makePostgresDeleteJob); err != nil {
+		return err
+	}
 	return r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name)
+}
+
+// collectPostgresAppsForDelete is every app a database was provisioned for:
+// the ones the spec names now, the ones the tenant's record of what was
+// provisioned names, and the ones a Database CR still records -- the last two
+// cover apps uninstalled without a purge, and the CR also the desktop's own
+// database, which is no app's.
+func (r *TenantReconciler) collectPostgresAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	apps, err := r.collectKernelApps(ctx, tenant, CollectForDelete, matchPostgresProfile, nil,
+		func(p backup.Provisioned) bool { return p.DatabaseEngine == gentianov1alpha1.DatabaseEnginePostgreSQL })
+	if err != nil {
+		return nil, err
+	}
+	dbList := &unstructured.UnstructuredList{}
+	dbList.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind + "List"})
+	if err := r.List(ctx, dbList, client.InNamespace(postgresNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
+		return nil, fmt.Errorf("list Database CRs for tenant %s: %w", tenant.Name, err)
+	}
+	for i := range dbList.Items {
+		if app := dbList.Items[i].GetLabels()[appLabel]; app != "" {
+			apps = appendUniqueStrings(apps, app)
+		}
+	}
+	return apps, nil
+}
+
+// makePostgresDeleteJob drops an app's database, every database its role
+// still owns, and the role: the Job the purge of one app runs too.
+func makePostgresDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+	return backup.PostgresDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 // --- CR constructors ---------------------------------------------------------
@@ -258,47 +280,28 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 // Credentials are injected from the postgres-admin Secret in the kernel namespace.
 func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.PostgresProvisionerImage(),
-		Command: []string{"/bin/bash", "-c", script},
-		Env: []corev1.EnvVar{
-			{
-				Name: "PGHOST",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "host",
-					},
-				},
-			},
-			{
-				Name: "PGPORT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "port",
-					},
-				},
-			},
-			{
-				Name: "PGUSER",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "username",
-					},
-				},
-			},
-			{
-				Name: "PGPASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "password",
-					},
-				},
-			},
-		},
+		Name:            name,
+		Image:           kernel.PostgresProvisionerImage(),
+		Command:         []string{"/bin/bash", "-c", script},
+		SecurityContext: provisioningSecurityContext(),
+		// The admin connection is the inventory's, as every Job's that
+		// reaches the shared server is.
+		Env: backup.PostgresAdminEnv(),
+	}
+}
+
+// provisioningSecurityContext is what every provisioning client container runs
+// under: no privilege escalation, no capabilities, the runtime's seccomp
+// profile. The system namespaces these Jobs run in enforce exactly that, and a
+// Job whose pod is refused there never gets a pod at all -- it sits Running
+// with nothing behind it, and whatever waits on it waits for ever. A psql, a
+// mariadb, a redis-cli and an mc need none of what this takes away.
+func provisioningSecurityContext() *corev1.SecurityContext {
+	no := false
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &no,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 }
 
@@ -390,4 +393,8 @@ func roleUserName(tenantName, appName string) string {
 
 func roleJobName(tenantName, appName string) string {
 	return fmt.Sprintf("pg-role-%s-%s", tenantName, appName)
+}
+
+func pgDeleteJobName(tenantName, appName string) string {
+	return backup.PostgresDestroyJobName(tenantName, appName)
 }

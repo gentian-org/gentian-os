@@ -60,6 +60,37 @@ Create the name of the service account to use.
 {{- end }}
 {{- end }}
 
+{{/*
+The ServiceAccounts of the director and of the usher. Named once here because
+each name is used three times: by the ServiceAccount, by the Deployment that
+runs under it, and by the operator, which admits a caller of its listener by
+exactly this identity.
+*/}}
+{{- define "gentian-os.directorServiceAccountName" -}}
+{{- printf "%s-director" (include "gentian-os.fullname" .) -}}
+{{- end }}
+{{- define "gentian-os.usherServiceAccountName" -}}
+{{- printf "%s-usher" (include "gentian-os.fullname" .) -}}
+{{- end }}
+
+{{/*
+The volume a caller of the operator's listener proves its identity with: its
+own ServiceAccount token, issued for that listener's audience and for nothing
+else, valid ten minutes and replaced by the kubelet before then. One
+definition, so the director's and the usher's cannot name different
+audiences. The pod's automountServiceAccountToken stays false: this is not a
+token for the API server, which refuses one issued for another audience.
+*/}}
+{{- define "gentian-os.operatorTokenVolume" -}}
+- name: operator-token
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: {{ required "appLifecycle.audience must be set" .Values.appLifecycle.audience | quote }}
+          expirationSeconds: 600
+          path: token
+{{- end }}
+
 {{- /*
 The ClusterIssuer per-tenant wildcards are issued by.
 
@@ -95,3 +126,13 @@ on its own; a v5 install passes the whole map from kernel/namespaces.yaml.
 {{- end }}
 {{- end }}
 
+{{/*
+Whether this cluster reports what it runs: reporting is on AND there is an
+https address to report to. One definition, because three things follow it and
+must not disagree -- the operator sending, the Secret its key arrives in, and
+the usher withholding the App Store.
+*/}}
+{{- define "gentian-os.licenceReporting" -}}
+{{- $r := .Values.licenceReport | default dict -}}
+{{- if and (eq (toString $r.enabled) "true") (hasPrefix "https://" (toString ($r.url | default ""))) -}}true{{- end -}}
+{{- end }}

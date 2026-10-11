@@ -38,7 +38,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - ghcr.io/cloudnative-pg/charts
@@ -73,7 +73,7 @@ spec:
         labels:
           argocd.argoproj.io/secret-type: repository
         name: repo-ghcr-cloudnative-pg
-        namespace: argocd
+        namespace: kernel-gitops
       stringData:
         enableOCI: "true"
         type: helm

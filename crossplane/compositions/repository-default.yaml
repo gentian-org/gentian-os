@@ -97,8 +97,14 @@ spec:
             {{- $isOci := eq $spec.type "oci" }}
             {{- $isGit := eq $spec.type "git" }}
             {{- $vtype := (($cred.validate).type) | default "noop" }}
-            {{- $authType := $cred.authType | default "basic" }}
-            {{- $isBearer := eq $authType "bearer" }}
+            {{- /*
+                 A bearer credential is one token and no username. It is kept
+                 under the same vault path and in the same `password` field as
+                 a basic one, so only the fields asked for and the keys each
+                 Secret is given differ.
+            */}}
+            {{- $bearer := eq ($cred.authType | default "basic") "bearer" }}
+            {{- $credFields := ternary (list "password") (list "username" "password") $bearer }}
             {{- /*
                  Everything written into the cluster uses the in-cluster
                  address. The external address exists only for the installer's
@@ -117,29 +123,31 @@ spec:
             */ -}}
             {{- $extra  := index .context "apiextensions.crossplane.io/extra-resources" }}
             {{- $probes := dig "credentialProbe" list $extra }}
-            {{- /* Where the kernel runs, from the cluster's own configuration.
-                 Every artefact below is written beside the operator and the
-                 director, and which namespace that is depends on the layout
-                 the cluster was installed with. This was the v4 name,
-                 hardcoded, so on a v5 cluster the git credential landed in a
-                 namespace nothing reads: the director could clone a public
-                 repository and never push to it, which is what it did.
+            {{- /* Where the kernel and Argo CD run, from the cluster's own
+                 configuration. Every artefact below is written beside the
+                 operator and the director or beside Argo CD, and which
+                 namespaces those are is the layout the cluster was installed
+                 with.
 
-                 Absent means a cluster whose claim predates the key, which
-                 is a v4 cluster, and v4's name is the right answer there. */}}
+                 There is no default for either. A configuration without the
+                 keys -- not published yet, or published by something that
+                 does not know the layout -- fails this step, naming the
+                 missing key: the claim reports Synced=False with that
+                 sentence, nothing new is composed and nothing already
+                 delivered is touched. A credential written to a guessed
+                 namespace is one nothing reads, or one something else does. */}}
             {{- $ccData := dict }}
             {{- range (dig "clusterConfig" list $extra) }}
             {{- $ccData = .data | default dict }}
             {{- end }}
-            {{- $kernelNs := dig "kernel.controlNamespace" "gentian-system" $ccData }}
-            {{- /* Where Argo CD runs. Absent means a cluster whose claim
-                 predates the key, which is a v4 cluster, and v4's name is the
-                 right answer there -- the same reasoning as the control
-                 namespace above. This was written as "argocd" four times, so
-                 on v5 the repository Secret and the catalogue ApplicationSet
-                 landed in a namespace that does not exist and Argo CD saw
-                 neither. */}}
-            {{- $argoNs := dig "kernel.gitopsNamespace" "argocd" $ccData }}
+            {{- $kernelNs := dig "kernel.controlNamespace" "" $ccData }}
+            {{- $argoNs := dig "kernel.gitopsNamespace" "" $ccData }}
+            {{- $missing := list }}
+            {{- if eq $kernelNs "" }}{{- $missing = append $missing "kernel.controlNamespace" }}{{- end }}
+            {{- if eq $argoNs "" }}{{- $missing = append $missing "kernel.gitopsNamespace" }}{{- end }}
+            {{- if $missing }}
+            {{- fail (printf "nothing is delivered for repository %s: the cluster configuration (the ConfigMap labelled gentianos.io/config-type=cluster-config) does not carry %s, so there is no namespace to deliver to. The Cluster composition publishes both." $claimName (join " and " $missing)) }}
+            {{- end }}
             {{- /* No credential means nothing to wait for, so the artefacts below are
                  emitted immediately rather than never. */}}
             {{- $satisfied := not $hasCred }}
@@ -190,14 +198,18 @@ spec:
               optional: {{ $cred.optional | default false }}
               vaultPath: {{ $cred.vaultPath | quote }}
               fields:
-                {{- if not $isBearer }}
+                {{- if $bearer }}
+                - key: password
+                  format: token
+                  secret: true
+                {{- else }}
                 - key: username
                   format: string
                   secret: false
-                {{- end }}
                 - key: password
-                  format: {{ if $isBearer }}token{{ else }}password{{ end }}
+                  format: password
                   secret: true
+                {{- end }}
               validate:
                 type: {{ $vtype }}
                 {{- if ne $vtype "noop" }}
@@ -266,9 +278,6 @@ spec:
               artefacts:
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
-                {{- if and $isGit (eq $spec.role "apps") }}
-                - catalogue-{{ $name }}
-                {{- end }}
               {{- else if $satisfied }}
               credentialMessage: "credential present at {{ $cred.vaultPath }}"
               artefacts:
@@ -276,13 +285,10 @@ spec:
                 - credprobe-{{ $name }}
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
-                {{- if and $isGit (eq $spec.role "apps") }}
-                - catalogue-{{ $name }}
-                {{- end }}
               {{- else }}
               credentialMessage: >-
                 requirement {{ $name }} is unsatisfied: no value at
-                {{ $cred.vaultPath }}. Supply it through the credential manager,
+                {{ $cred.vaultPath }}. Supply it through the custodian,
                 or with the installer for phase: bootstrap.
               artefacts:
                 - credreq-{{ $name }}
@@ -347,23 +353,19 @@ spec:
                           # repository, and the pull fails on a registry that only speaks OCI.
                           enableOCI: "true"
                           {{- end }}
-                          {{- if $isBearer }}
-                          bearerToken: "{{ `{{ .password }}` }}"
-                          {{- else }}
+                          {{- if not $bearer }}
                           username: "{{ `{{ .username }}` }}"
                           password: "{{ `{{ .password }}` }}"
+                          {{- else }}
+                          bearerToken: "{{ `{{ .password }}` }}"
                           {{- end }}
                     data:
-                      {{- if not $isBearer }}
-                      - secretKey: username
+                      {{- range $credFields }}
+                      - secretKey: {{ . }}
                         remoteRef:
                           key: {{ $cred.vaultPath | quote }}
-                          property: username
+                          property: {{ . }}
                       {{- end }}
-                      - secretKey: password
-                        remoteRef:
-                          key: {{ $cred.vaultPath | quote }}
-                          property: password
                     {{- end }}
               providerConfigRef:
                 name: kubernetes
@@ -394,121 +396,119 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- if and $isGit (eq $spec.role "apps") }}
+            {{- /* Nothing more for role: apps on a git repository. It composed an
+                 ApplicationSet that synced every profile.yaml under profiles/ of the
+                 repository into the cluster and followed its branch. A profile
+                 now arrives one at a time, through the director, from a
+                 catalogue source and at the digest the install names
+                 (docs/custom-catalogues.md), so a claim of that shape yields the
+                 Argo CD repository and the AppProject source above and nothing
+                 that puts a ComponentProfile on the cluster. */}}
+
+            {{- if and $isOci $hasCred (ne $tenant "") }}
+            {{- /* A TENANT's registry repository: its credential goes to that
+                 tenant's namespace and to no other.
+
+                 Whose it is is spec.tenant, which the director writes from the
+                 route the caller was authorised on, and the selector below is
+                 an exact match on it. Nothing a declaration can carry widens
+                 it: spec.namespaceSelector is not read for a tenant's
+                 repository, and there is no label a namespace can opt in
+                 with. The tier is matched as well, so the Secret reaches the
+                 namespace the tenant's apps run in and not its DMZ, where
+                 only the platform's own proxy runs.
+
+                 The store the ExternalSecret reads through is the tenant's
+                 own (openbao-tenant-<tenant>, tenant-default.yaml), whose
+                 role reads that tenant's paths only and which no other
+                 namespace may name. The path is checked here as well -- a
+                 tenant's repository whose credential is declared outside that
+                 tenant's repositories gets no pull Secret at all, instead of
+                 one that never arrives.
+
+                 One Secret, two readers. A kubelet reads .dockerconfigjson;
+                 provider-helm reads username and password, by those names,
+                 from the Secret a Release's chart.pullSecretRef names. A
+                 dockerconfigjson Secret may carry further keys, so the
+                 credential is in the namespace once rather than twice.
+
+                 Named after the repository's NAME, because a release and a
+                 pod refer to it by name before it exists.
+
+                 Not for a bearer credential: it has no username, and neither
+                 reader pulls without one. And no ImageConfig: that is how
+                 Crossplane pulls its own packages, which are the cluster's
+                 and never a tenant's. */}}
+            {{- $registry := trimSuffix "/" (regexReplaceAll "^[a-zA-Z][a-zA-Z0-9+.-]*://" $url "") }}
+            {{- $ownPath := hasPrefix (printf "gentian-os/tenants/%s/repositories/" $tenant) $cred.vaultPath }}
+            {{- if and $ownPath (not $bearer) }}
             ---
-            # role: apps on a git repository composes the app catalogue: an
-            # ApplicationSet syncing profile bundles (ComponentProfile + optional
-            # composition.yaml, customizations/, assets/) from it. The schema
-            # already promises this is additive — "a private catalogue
-            # alongside the cluster's" — so every such repository gets its own
-            # ApplicationSet rather than one hardcoded source. The cluster's
-            # default catalogue is just the first claim of this shape;
-            # deleting any of them removes the Applications, and so the
-            # ComponentProfiles, it owns.
-            #
-            # A **files** generator (not directories) because gentian-apps
-            # groups profiles at mixed depth — singletons at
-            # profiles/<family>/<name>/, families with addons at
-            # profiles/<family>/{base,addons,packages}/<name>/. Matching a
-            # marker file rather than a fixed directory depth supports both
-            # without an exclude-list of "known family folders".
-            #
-            # Naming Applications from the ComponentProfile CR (.metadata.name)
-            # rather than the source path matters: ComponentProfile is
-            # cluster-scoped, so metadata.name is globally unique by
-            # definition, whereas leaf directory names are not —
-            # profiles/odoo/addons/crm-ce and a future
-            # profiles/foo/addons/crm-ce would both basename to "crm-ce".
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                {{ setResourceNameAnnotation (printf "catalogue-%s" $name) }}
+                {{ setResourceNameAnnotation (printf "pull-secret-%s" $name) }}
             spec:
               forProvider:
                 manifest:
-                  apiVersion: argoproj.io/v1alpha1
-                  kind: ApplicationSet
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterExternalSecret
                   metadata:
-                    name: catalogue-{{ $name }}
-                    namespace: {{ $argoNs }}
-                    finalizers:
-                      - resources-finalizer.argocd.argoproj.io
+                    name: pull-{{ $name }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant | quote }}
                   spec:
-                    goTemplate: true
-                    goTemplateOptions: ["missingkey=error"]
-                    generators:
-                      - git:
-                          repoURL: {{ $url | quote }}
-                          revision: {{ $spec.branch | quote }}
-                          files:
-                            - path: profiles/**/profile.yaml
-                    template:
-                      metadata:
-                        name: 'catalogue-{{ `{{ .metadata.name }}` }}'
-                        finalizers:
-                          - resources-finalizer.argocd.argoproj.io
-                      spec:
-                        project: gentian
-                        source:
-                          repoURL: {{ $url | quote }}
-                          targetRevision: {{ $spec.branch | quote }}
-                          path: '{{ `{{ .path.path }}` }}'
-                        destination:
-                          server: https://kubernetes.default.svc
-                          namespace: {{ $kernelNs }}
-                        # Only ever list fields the API server *adds by
-                        # itself*, i.e. fields with a CRD default — never one
-                        # a profile is meant to set.
-                        # spec.kernelRequirements.database.allowDynamicDatabaseCreation
-                        # was in this list once: it has no CRD default, Argo
-                        # stopped seeing a diff and reported Synced, and the
-                        # value never reached the cluster — creating a
-                        # database failed with "permission denied".
-                        ignoreDifferences:
-                          - group: gentianos.io
-                            kind: ComponentProfile
-                            jsonPointers:
-                              - /metadata/annotations/argocd.argoproj.io~1tracking-id
-                        # The four jq paths that used to sit here named
-                        # AppProfile fields -- ingress.clusterIssuer,
-                        # additionalIngresses[].clusterIssuer and two
-                        # browserProxy sub-fields -- and ComponentProfile has
-                        # none of them. They are not translated, they are
-                        # dropped, and deliberately so.
-                        #
-                        # An entry here is only correct for a field the API
-                        # server adds BY ITSELF and a profile never sets. The
-                        # comment above records what a wrong one costs:
-                        # allowDynamicDatabaseCreation was listed once, Argo
-                        # stopped seeing a diff, the value never reached the
-                        # cluster, and creating a database failed with
-                        # "permission denied". ComponentProfile's defaults are
-                        # nearly all on fields a profile may legitimately set
-                        # -- the database engine, an OIDC access type, a
-                        # tile's object -- so guessing at four of them would
-                        # be choosing that failure in advance.
-                        #
-                        # The other way round is safe: a default that does
-                        # drift shows the Application OutOfSync, which is
-                        # visible, reproducible, and names the field. Add it
-                        # here then, with the evidence.
-                        syncPolicy:
-                          automated:
-                            prune: true
-                            selfHeal: true
-                          syncOptions:
-                            - CreateNamespace=false
-                            - ServerSideApply=true
+                    externalSecretName: repository-{{ $claimName }}-pull
+                    namespaceSelectors:
+                      - matchLabels:
+                          gentianos.io/tenant: {{ $tenant | quote }}
+                          gentianos.io/tier: tenant
+                    refreshTime: 1h
+                    externalSecretSpec:
+                      refreshInterval: 1h
+                      secretStoreRef:
+                        name: openbao-tenant-{{ $tenant }}
+                        kind: ClusterSecretStore
+                      target:
+                        name: repository-{{ $claimName }}-pull
+                        creationPolicy: Owner
+                        template:
+                          type: kubernetes.io/dockerconfigjson
+                          metadata:
+                            labels:
+                              gentianos.io/tenant: {{ $tenant | quote }}
+                              gentianos.io/repository: {{ $claimName | quote }}
+                          data:
+                            .dockerconfigjson: |
+                              {"auths":{ {{- $registry | toJson -}} :{"username":{{ `{{ .username | toJson }}` }},"password":{{ `{{ .password | toJson }}` }}}}}
+                            username: "{{ `{{ .username }}` }}"
+                            password: "{{ `{{ .password }}` }}"
+                      data:
+                        - secretKey: username
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: username
+                        - secretKey: password
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: password
               providerConfigRef:
                 name: kubernetes
             {{- end }}
+            {{- end }}
 
-            {{- if and $isOci $hasCred }}
+            {{- if and $isOci $hasCred (eq $tenant "") }}
             ---
-            # dockerconfigjson for kubelet, in every matching namespace present
-            # and future. A ClusterExternalSecret rather than one per namespace,
-            # so adding a tenant does not add a Git object.
+            # The CLUSTER's registry repository. dockerconfigjson for kubelet,
+            # in every matching namespace present and future. A
+            # ClusterExternalSecret rather than one per namespace, so adding a
+            # tenant does not add a Git object.
+            #
+            # The credential is a kernel path, read through the kernel's
+            # store, which only kernel and system namespaces may name
+            # (cluster-default.yaml). A selector that matches a tenant's
+            # namespace therefore yields no Secret there: ESO refuses the
+            # ExternalSecret it would make.
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
@@ -607,33 +607,25 @@ spec:
                       name: {{ $claimName }}-git-credentials
                       template:
                         data:
-                          {{- if $isBearer }}
-                          # Plain git speaks Basic auth via .git-credentials; a
-                          # bearer token has no equivalent userinfo form, so
-                          # this is consumed instead as
-                          # `git -c http.extraHeader="Authorization: Bearer $(cat token)"`
-                          # by whatever clones or pushes with this credential.
+                          {{- if not $bearer }}
+                          .git-credentials: |
+                            {{- $scheme := ternary "http://" "https://" (hasPrefix "http://" $url) }}
+                            {{ printf "%s{{ .username }}:{{ .password }}@%s" $scheme (trimPrefix $scheme $url) }}
+                          {{- else }}
+                          {{- /* A URL has no place for a bearer token, so there
+                               is no .git-credentials line to write. Whoever
+                               uses this Secret sends the token in an
+                               Authorization header instead. */}}
                           token: |
                             {{ `{{ .password }}` }}
-                          {{- else }}
-                          .git-credentials: |
-                            {{- $scheme := "https://" }}
-                            {{- if hasPrefix "http://" $url }}
-                            {{- $scheme = "http://" }}
-                            {{- end }}
-                            {{ $scheme }}{{ `{{ .username }}` }}:{{ `{{ .password }}` }}@{{ trimPrefix $scheme $url }}
                           {{- end }}
                     data:
-                      {{- if not $isBearer }}
-                      - secretKey: username
+                      {{- range $credFields }}
+                      - secretKey: {{ . }}
                         remoteRef:
                           key: {{ $cred.vaultPath | quote }}
-                          property: username
+                          property: {{ . }}
                       {{- end }}
-                      - secretKey: password
-                        remoteRef:
-                          key: {{ $cred.vaultPath | quote }}
-                          property: password
               providerConfigRef:
                 name: kubernetes
             {{- end }}

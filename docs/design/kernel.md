@@ -19,12 +19,12 @@ OS kernel does the same for cloud-native applications.
 | Secrets keyring | Keychain | Centralised secret store with tenant-scoped policies | v1 |
 | Database services | — | Shared SQL clusters with per-app-per-tenant isolation | v1 |
 | Cache | Page cache, tmpfs | Shared Redis / Memcached with per-app isolation | v1 |
-| Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage + spam filtering (optional kernel extension) | v1 |
-| Package manager | apt, App Store | App catalogue (`AppProfile`) + `app-default` Crossplane composition | v1 |
-| App-to-app permissions | Capabilities, Android intents | Contract-based bindings + OIDC token exchange (RFC 8693) | v1 |
-| Window manager | Desktop env | Browser-based shell/portal with iframes, unified nav, SSO session | v1 |
-| Notifications | Notification daemon | Notification gateway aggregating across apps | v1 |
-| Init / lifecycle | systemd | Crossplane Compositions + ArgoCD | v1 |
+| Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage (optional kernel extension; no spam filter) | v1 |
+| Package manager | apt, App Store | Catalogues of `ComponentProfile` bundles, installed through the director; rendered by the `app-default` Crossplane Composition | v1 |
+| App-to-app permissions | Capabilities, Android intents | Contracts between apps: an `AppGrant` by the tenant's administrator opens the network path and gives the consumer a key of its own ([multi-tenancy.md §4](multi-tenancy.md)) | v1 |
+| Window manager | Desktop env | The tenant desktop: tiles for what a person may open, opened in a frame or a tab, on one session | v1 |
+| Notifications | Notification daemon | Notices an administrator publishes to a tenant's people, shown on the desktop. Notifications from apps are not built | v1 (notices) |
+| Init / lifecycle | systemd | Crossplane Compositions + Argo CD | v1 |
 | Resource quotas | cgroups, ulimits | K8s ResourceQuotas + LimitRanges, per-tenant policies | v1 |
 | IPC bus | D-Bus, sockets | Message broker with per-tenant subjects (CloudEvents) | Future |
 | Clipboard / intents | X11 clipboard | Share-to intent system | Future |
@@ -37,14 +37,14 @@ Each layer of a traditional OS has a direct counterpart in Gentian OS:
 
 | Traditional OS | Gentian OS |
 |---|---|
-| Syscall API (`open`, `socket`, `fork`) — stable, declarative | **CRDs**: `Tenant`, `AppProfile`, `IntegrationBinding` |
+| Syscall API (`open`, `socket`, `fork`) — stable, declarative | **CRDs**: `Tenant`, `ComponentProfile`, `Component`, `IntegrationBinding` |
 | `libc` — friendly call → raw syscalls | **Crossplane Compositions** — claim → managed resources |
 | Syscall dispatcher / VFS | **Crossplane Composition engine** |
 | Loadable kernel modules / drivers | **Crossplane providers** |
 | Hardware behind the drivers | **External operators & APIs** |
 | File descriptor / process handle | **Managed Resource (MR) status** |
 | Scheduler / writeback thread | **Crossplane reconcile loop** |
-| `init` / `systemd` | **ArgoCD** |
+| `init` / `systemd` | **Argo CD** |
 | Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** |
 
 Two consequences worth calling out:
@@ -68,22 +68,22 @@ somewhere to read/write data through a standard API.
 
 Gentian OS ships a **kernel** that must be Ready before any tenant app
 can run. Kernel components provide **platform primitives**; catalogue
-apps (Nextcloud, Collabora, mail, …) are installed per tenant
-via `AppProfile` + the `app-default` composition in `gentian-apps`.
+apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
+`ComponentProfile`, rendered by the `app-default` Composition
+([app-catalogue.md](app-catalogue.md)).
 
 | Kernel function | Default-install component | Desktop OS analogue | Standard contract exposed to apps |
 |---|---|---|---|
-| Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM | OIDC issuer, group entitlements, ReBAC graph |
+| Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM | OIDC issuer, groups that give access to apps, ReBAC graph |
 | Object storage | **MinIO** (S3) | Page cache, `/tmp`, `/var` | S3 endpoint + per-app bucket via kernel requirement |
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Redis / Memcached** | Page cache, `tmpfs` | `cache` requirement |
 | Edge routing | **Gateway API** (Envoy Gateway) | Network stack + firewall | TLS termination, HTTPRoute, tenant wildcards |
-| Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell, Start menu | `central-navigation` contract |
-| Notification surface | **Notification Gateway** | Notification daemon, Action Center | Notifications contract (future) |
+| Window manager | The **desktop** and the **administration console**, components installed for every tenant, and the **App Store app** where a store is offered ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell, Start menu, Settings | Tiles (`spec.expose[].tile`) |
 | Secret store | **OpenBao** | Keychain | Underlying store for ESO-backed Secrets |
 
-**Not kernel** — installed from the catalogue when a tenant selects them
-in `Tenant.spec.apps`:
+**Not kernel** — installed from a catalogue; what a tenant has installed
+is listed in `Tenant.spec.apps`:
 
 | Capability | Catalogue profile(s) | Contract |
 |---|---|---|

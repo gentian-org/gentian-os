@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -30,9 +24,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -274,80 +271,197 @@ var ErrStillInstalled = errors.New("the app is still installed")
 // down. Not a failure: the same request succeeds a little later.
 var ErrStillRemoving = errors.New("the app is still being removed")
 
-// purgeWait is how long a purge waits for the teardown to finish before
-// saying "not yet". Short, because the director's request to this API has a
-// deadline of its own and an answer that arrives after it is no answer; the
-// caller asks again, which is what the store's status poll does anyway.
-const purgeWait = 20 * time.Second
+// ErrBusy is a purge asked while another operation on the same app is
+// running. Not queued behind it: a request that waited its turn could outlast
+// its caller, and a purge is not something to start after the person who
+// asked has been told it did not happen.
+var ErrBusy = errors.New("another operation on this app is running")
 
-// PurgeApp deletes what an uninstalled app left behind: its databases, its
-// object storage, its secrets and the kernel's provisioning records for it.
+// ErrProfileMissing is a purge asked of an app whose ComponentProfile is not
+// on the cluster. Nothing is destroyed.
+var ErrProfileMissing = errors.New("the app's profile is missing")
+
+// ErrNotAnApp is a purge asked of a name that is not an app's.
+var ErrNotAnApp = errors.New("not an app")
+
+// purgeWait is how long a purge waits for the teardown to finish before
+// saying "not yet". Short: the person asking is better served by "still being
+// removed, ask again" than by a request that sits for minutes before it has
+// destroyed anything.
+var purgeWait = 20 * time.Second
+
+// PurgeApp destroys what an uninstalled app left behind: its database, its
+// object storage and cache user, its files, its stored credentials, its
+// access group and the kernel's provisioning records for it.
 //
 // Only ever after an uninstall. Uninstalling is a change to what the tenant
-// is, made in git by the director; this is the irreversible half, and it is
-// kept a separate act so that taking an app away never takes its data with it
-// by accident. It waits for the component to be gone, because a purge that
-// races the teardown deletes a database a pod is still writing to.
+// is, made in git by the director, and it keeps all of the above; this is the
+// irreversible half, and it is kept a separate act so that taking an app away
+// never takes its data with it by accident. It is refused while the tenant
+// still has the app, and it waits for the app to be gone from the cluster,
+// because a purge that races the teardown deletes a database a pod is still
+// writing to.
+//
+// One request, answered when it is over -- see purge.go. A purge that did not
+// complete returns a *PurgeError naming the step that failed and what was
+// already destroyed; the remedy is to ask again.
 func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor string) (*Result, error) {
-	defer s.lockApp(tenantName, profile)()
+	unlock, ok := s.tryLockApp(tenantName, profile)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s in %s; ask again when it has finished", ErrBusy, profile, tenantName)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, purgeBudget)
+	defer cancel()
 
+	// A name the platform keeps its own stores under is not an app, and
+	// "not installed" would otherwise be true of it: the desktop's database
+	// is recorded like an app's.
+	if backup.IsPlatformStore(profile) {
+		return nil, fmt.Errorf("%w: %s names stores the platform keeps for the tenant itself", ErrNotAnApp, profile)
+	}
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
 		return nil, err
 	}
+	// An app of the tenant's, or an add-on switched on inside one. An add-on
+	// has an access group of its own, and purging one that is still switched
+	// on would take that group from the people using it.
 	for _, a := range tenant.Spec.Apps {
 		if a.Profile == profile {
 			return nil, fmt.Errorf("%w: uninstall %s before purging it", ErrStillInstalled, profile)
 		}
-	}
-	if err := s.waitForComponentGone(ctx, tenantName, profile, purgeWait); err != nil {
-		return nil, err
+		for _, addon := range a.Addons {
+			if addon == profile {
+				return nil, fmt.Errorf("%w: %s is switched on in %s; switch it off before purging it",
+					ErrStillInstalled, profile, a.Profile)
+			}
+		}
 	}
 
+	// Which stores an app has is declared by its profile and by nothing
+	// else. Without it a purge could only guess -- it used to assume a
+	// PostgreSQL database and look at nothing more -- and a purge that
+	// guesses either destroys what it should not or reports as purged an
+	// app whose bucket is still there. So it is refused, with everything in
+	// place.
 	cp := &gentianov1alpha1.ComponentProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("get componentprofile %q: %w", profile, err)
 		}
-		// A profile the cluster no longer has: purge what every app has.
-		cp = nil
+		return nil, fmt.Errorf("%w: the ComponentProfile %s is not on this cluster, and what the app owns in %s "+
+			"cannot be determined without it. Nothing was destroyed. A profile is placed on the cluster when the app "+
+			"is installed from a catalogue source that serves it: make %s available again that way -- installing it "+
+			"in a tenant puts its profile back -- then uninstall it here if it was installed here, and purge",
+			ErrProfileMissing, profile, tenantName, profile)
 	}
-	if warnings := s.purge(ctx, tenant, cp, profile); len(warnings) > 0 {
-		// A purge that leaves state behind must not report success: the
-		// residue is what blocks the next install.
-		return nil, fmt.Errorf("purge of %s did not complete: %s", profile, strings.Join(warnings, "; "))
+	if err := s.waitForAppGone(ctx, tenant, profile, cp, purgeWait); err != nil {
+		return nil, err
+	}
+	// Everything that can be known beforehand about whether the purge can
+	// finish, before the first thing is destroyed.
+	recorded, err := s.provisioned(ctx, tenantName)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v. Nothing was destroyed; ask again once that is put right", ErrCannotPurgeNow, err)
+	}
+	if err := s.purgePreflight(ctx, tenant, cp, recorded[profile]); err != nil {
+		return nil, err
+	}
+
+	log.FromContext(ctx).WithName("purge").Info("purging an app", "tenant", tenantName, "app", profile, "actor", actor)
+	destroyed, err := s.purge(ctx, tenant, cp, profile, recorded[profile])
+	if err != nil {
+		return nil, err
 	}
 	return &Result{Status: "purged", Tenant: tenantName, Profile: profile, Purged: true,
-		Message: "purged by " + actor}, nil
+		Complete: ptr(true), Destroyed: destroyed, Message: "purged by " + actor}, nil
 }
 
-// waitForComponentGone blocks until no Component of the profile is left in
-// the tenant's namespace.
-func (s *Service) waitForComponentGone(ctx context.Context, tenantName, profile string, timeout time.Duration) error {
+// appRemnants names what is still on the cluster of an app's workloads: its
+// Component, and the Helm releases it was installed as.
+//
+// The Component alone is not the answer. It goes as soon as its App claim is
+// handed to the garbage collector, and the release the claim composed is
+// uninstalled after that; for a while the app has no Component and running
+// pods. Helm's own record of a release -- a Secret in the release's namespace
+// -- is there until `helm uninstall` has finished, and the release names are
+// the app's own (backup.AppRelease and its neighbours), so that record is
+// what says whether the workloads are gone.
+func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile) ([]string, error) {
+	ns := tenantNamespace(tenant)
+	var left []string
+	var list gentianov1alpha1.ComponentList
+	if err := s.client.List(ctx, &list, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("list components: %w", err)
+	}
+	for i := range list.Items {
+		if list.Items[i].Spec.ProfileRef.Name == profile {
+			left = append(left, "component "+list.Items[i].Name)
+		}
+	}
+	releases, err := s.helmReleases(ctx, ns)
+	if err != nil {
+		return nil, err
+	}
+	for _, release := range releases {
+		if ownsRelease(tenant, profile, cp, release) {
+			left = append(left, "Helm release "+release)
+		}
+	}
+	return left, nil
+}
+
+// helmReleases names the Helm releases recorded in a namespace.
+func (s *Service) helmReleases(ctx context.Context, ns string) ([]string, error) {
+	records, err := s.clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{LabelSelector: "owner=helm"})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list the Helm releases in %s: %w", ns, err)
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	for i := range records.Items {
+		rec := &records.Items[i]
+		name := rec.Labels["name"]
+		if rec.Type != helmReleaseSecretType || name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// helmReleaseSecretType is the type of the Secret Helm keeps one revision of
+// a release in.
+const helmReleaseSecretType = corev1.SecretType("helm.sh/release.v1")
+
+// waitForAppGone blocks until nothing of the app's workloads is left in the
+// tenant's namespace.
+func (s *Service) waitForAppGone(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile, timeout time.Duration) error {
+	tenantName := tenant.Name
 	deadline := time.Now().Add(timeout)
-	ns := layout.Tenant(tenantName)
 	for {
-		var list gentianov1alpha1.ComponentList
-		if err := s.client.List(ctx, &list, client.InNamespace(ns)); err != nil {
-			return fmt.Errorf("list components: %w", err)
+		left, err := s.appRemnants(ctx, tenant, profile, cp)
+		if err != nil {
+			return err
 		}
-		left := false
-		for i := range list.Items {
-			if list.Items[i].Spec.ProfileRef.Name == profile {
-				left = true
-				break
-			}
-		}
-		if !left {
+		if len(left) == 0 {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: %s in %s; purge it once it is gone", ErrStillRemoving, profile, tenantName)
+			return fmt.Errorf("%w: %s in %s (%s); nothing was destroyed — purge it once it is gone",
+				ErrStillRemoving, profile, tenantName, strings.Join(left, ", "))
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
+		if err := wait(ctx); err != nil {
+			return err
 		}
 	}
 }
@@ -383,14 +497,17 @@ func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) 
 	if !installed {
 		return nil, fmt.Errorf("%s is not installed in %s", profile, tenantName)
 	}
-	if err := s.provisionAppGroupUsers(ctx, tenantName, profile); err != nil {
+	if err := s.provisionAppGroupUsers(ctx, tenant, profile); err != nil {
 		return nil, err
 	}
 	return &Result{Status: "provisioned", Tenant: tenantName, Profile: profile}, nil
 }
 
 func (h *HTTPServer) registerAppRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/apps/status", h.handleAppStates)
+	mux.Read("GET /v1/tenants/{tenant}/apps/status", h.handleAppStates)
+	// What uninstalled apps still hold. A read: it destroys nothing and runs
+	// nothing.
+	mux.Read("GET /v1/tenants/{tenant}/apps/retained", h.handleRetainedApps)
 	// Actions, not writes. Desired state is the director's, in git; these are
 	// things done once.
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/purge-app", h.handlePurgeApp)
@@ -428,14 +545,36 @@ func (h *HTTPServer) handlePurgeApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Service.PurgeApp(r.Context(), r.PathValue("tenant"), profile, actorOf(r))
+	var incomplete *PurgeError
 	switch {
-	case errors.Is(err, ErrStillInstalled), errors.Is(err, ErrStillRemoving):
+	case errors.Is(err, ErrStillInstalled), errors.Is(err, ErrStillRemoving), errors.Is(err, ErrBusy),
+		errors.Is(err, ErrProfileMissing):
+		// Nothing was destroyed, and the request can be made again.
 		writeErr(w, http.StatusConflict, err)
+	case errors.Is(err, ErrCannotPurgeNow):
+		// Something the purge needs is not there. Nothing was destroyed.
+		writeErr(w, http.StatusServiceUnavailable, err)
+	case errors.As(err, &incomplete):
+		// A purge that began and did not finish. Not the caller's mistake,
+		// so not a 4xx; the message says what was destroyed and to retry.
+		writeErr(w, http.StatusInternalServerError, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		writeErr(w, http.StatusGatewayTimeout, fmt.Errorf(
+			"the purge ran out of the %s it is given before it destroyed anything; retry it: %w", purgeBudget, err))
 	case err != nil:
 		writeErr(w, http.StatusBadRequest, err)
 	default:
 		writeJSON(w, http.StatusOK, res)
 	}
+}
+
+func (h *HTTPServer) handleRetainedApps(w http.ResponseWriter, r *http.Request) {
+	res, err := h.Service.RetainedApps(r.Context(), r.PathValue("tenant"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *HTTPServer) handleProvisionApp(w http.ResponseWriter, r *http.Request) {

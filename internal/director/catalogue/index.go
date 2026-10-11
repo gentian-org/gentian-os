@@ -1,27 +1,20 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package catalogue
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
+	"io/fs"
 	"sort"
 	"strings"
 	"sync"
@@ -67,12 +60,9 @@ type IndexEntry struct {
 	// TrustTier is the profile's own trustTier, repeated here so the index
 	// answers without a fetch.
 	TrustTier string `json:"trustTier,omitempty"`
-	// Digest is the sha256 of the profile bundle, as the SOURCE states it.
-	//
-	// Which is why it is dropped for an entitled source before anything sees
-	// it (see Index): there the digest that governs is the one the store
-	// stated over its own TLS, and a source's own number checked against the
-	// same source's own bytes is not a check at all (AD-3).
+	// Digest is the sha256 of the profile bundle, as the SOURCE states it:
+	// the build an install from this listing asks for. The trust in it is
+	// the Cluster claim naming the source.
 	Digest string `json:"digest,omitempty"`
 }
 
@@ -101,39 +91,30 @@ type Listing struct {
 
 // Index fetches and caches one source's index, keeping only the editions a
 // cluster lists for itself.
-//
-// entitled says whether the source's entries need a grant from the store. It
-// decides one thing here: whether the digest survives into what is served.
-func (f *Fetcher) Index(ctx context.Context, catalogue string, entitled bool) (Listing, error) {
+func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 	if f == nil {
-		return Listing{}, fmt.Errorf("%w: this cluster has no catalogue sources", ErrNotFound)
+		return Listing{}, fmt.Errorf("%w: this director fetches from no catalogue", ErrNotFound)
 	}
-	base, ok := f.Sources[catalogue]
-	if !ok {
-		return Listing{}, fmt.Errorf("%w: no source for catalogue %q", ErrNotFound, catalogue)
+	// By the catalogue and by where it is read from: a catalogue removed and
+	// added again at another address, or in another directory, is another
+	// catalogue under the same name.
+	key := src.Key + "\n" + src.URL + "\n" + src.Dir
+	if cached, ok := f.cached(key); ok {
+		return serve(cached), nil
 	}
-	if cached, ok := f.cached(catalogue); ok {
-		return f.serve(cached, entitled), nil
-	}
-	fresh, err := f.fetchIndex(ctx, catalogue, base)
+	fresh, err := f.fetchIndex(ctx, src)
 	if err != nil {
 		return Listing{}, err
 	}
-	f.store(catalogue, fresh)
-	return f.serve(fresh, entitled), nil
+	f.store(key, fresh)
+	return serve(fresh), nil
 }
 
-// serve copies out what a caller may see. The cache holds the source's own
-// words; this is where the cluster's rules are applied, so a second caller
-// with different rules gets its own answer rather than the first one's.
-func (f *Fetcher) serve(c cachedIndex, entitled bool) Listing {
+// serve copies the cached index out, so a caller cannot change what the next
+// one is given.
+func serve(c cachedIndex) Listing {
 	out := Listing{Entries: make([]IndexEntry, len(c.entries)), StoreOnly: c.dropped}
 	copy(out.Entries, c.entries)
-	if entitled {
-		for i := range out.Entries {
-			out.Entries[i].Digest = ""
-		}
-	}
 	return out
 }
 
@@ -156,35 +137,17 @@ func (f *Fetcher) store(catalogue string, c cachedIndex) {
 	f.indexes[catalogue] = c
 }
 
-func (f *Fetcher) fetchIndex(ctx context.Context, catalogue, base string) (cachedIndex, error) {
-	ref, err := url.Parse(strings.TrimSuffix(base, "/") + "/index.yaml")
-	if err != nil {
-		return cachedIndex{}, fmt.Errorf("catalogue: source %q is not a URL: %w", base, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.String(), nil)
-	if err != nil {
-		return cachedIndex{}, err
-	}
-	resp, err := f.Client.Do(req)
-	if err != nil {
-		return cachedIndex{}, fmt.Errorf("catalogue: %s: %w", ref.Host, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
+func (f *Fetcher) fetchIndex(ctx context.Context, src Source) (cachedIndex, error) {
+	catalogue := src.Name
+	body, err := f.read(ctx, src, "index.yaml", "the index of "+catalogue, maxIndex)
+	if errors.Is(err, fs.ErrNotExist) {
 		// A source that publishes bundles but no index. Not an error worth
 		// failing a screen over: it means this catalogue cannot be browsed
 		// from here, which is what an empty listing says.
 		return cachedIndex{at: time.Now()}, nil
 	}
-	if resp.StatusCode != http.StatusOK {
-		return cachedIndex{}, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIndex+1))
 	if err != nil {
-		return cachedIndex{}, fmt.Errorf("catalogue: reading the index of %s: %w", catalogue, err)
-	}
-	if len(body) > maxIndex {
-		return cachedIndex{}, fmt.Errorf("catalogue: the index of %s is larger than %d bytes", catalogue, maxIndex)
+		return cachedIndex{}, err
 	}
 	var idx Index
 	if err := yaml.Unmarshal(body, &idx); err != nil {

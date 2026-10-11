@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package api is the director's HTTP surface: the one way a change reaches
@@ -25,28 +19,30 @@ limitations under the License.
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io/fs"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
-	"github.com/gentian-org/gentian-os/internal/director/record"
-	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // Authenticator establishes the caller's identity from a request.
@@ -56,26 +52,52 @@ type Authenticator interface {
 
 // Repository is the git backend.
 type Repository interface {
-	Install(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
+	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
-	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
+	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
-	Entitlements(ctx context.Context, tenant string) ([]gitops.Entitlement, error)
+	IsPlatformTenant(ctx context.Context, tenant string) (bool, error)
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
 	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
 	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
+	AdminsApproveAtCreation(ctx context.Context, req gitops.NewTenant) (bool, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
-	Tenants(ctx context.Context) ([]string, error)
-	TenantRealm(ctx context.Context, tenant string) (string, error)
+	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
+	DeclareTenant(ctx context.Context, imported gitops.ImportedTenant, meta gitops.Meta) (gitops.Result, error)
+	PendingImport(ctx context.Context, tenant string) (gitops.PendingImport, bool, error)
+	PendingImports(ctx context.Context) ([]gitops.PendingImport, error)
+	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
+	PendingPurges(ctx context.Context) ([]string, error)
+	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
+	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
+	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
+	ClusterModels(ctx context.Context) (gitops.ModelSettings, error)
+	SetClusterModels(ctx context.Context, want gitops.ModelSettings, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
-	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, meta gitops.Meta) (gitops.Result, error)
+	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta gitops.Meta) (gitops.Result, error)
+	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
+	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
+	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
+	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
+	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
+	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
+	AddClusterCatalogueSource(ctx context.Context, name, address string, meta gitops.Meta) (gitops.Result, error)
+	AddClusterCatalogueDirectory(ctx context.Context, name, dir string, meta gitops.Meta) (gitops.Result, error)
+	RemoveClusterCatalogueSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
+	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -90,23 +112,28 @@ type Repository interface {
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
+	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
+	SetPlatformClusterRoles(ctx context.Context, roles []gitops.ClusterRoleAllowance, meta gitops.Meta) (gitops.Result, error)
+	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
+	RemoveRepository(ctx context.Context, tenant, name, confirm string, meta gitops.Meta) (gitops.Result, error)
 }
 
-// Lifecycle is the operator's app-lifecycle API, read and never written: what
-// the cluster enforces for a tenant, what is committed under it, and which
-// plans the tenant may move to. See internal/director/lifecycle.
+// Lifecycle is the operator's listener as the director uses it: the commands
+// of operator-split-plan.md §4.2, and the questions a commit or a command depends on -- which plans
+// a tenant may move to, whether a restore finished, what the cluster still
+// holds of a tenant being purged. No person's read of live state passes
+// through here; those are the usher's. See internal/director/lifecycle.
 type Lifecycle interface {
 	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
+	// Stream is Get for a body that is passed through byte for byte and may
+	// be large: a bundle download. The caller closes the response body.
+	Stream(ctx context.Context, path string) (*http.Response, error)
+	// Upload is Do for a body streamed through unread: a bundle upload.
+	Upload(ctx context.Context, path, contentType string, body io.Reader) (int, []byte, error)
 	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
 	// Do asks the cluster to do something once, as the person named. Only
 	// the action routes call it.
 	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
-}
-
-// EntryBinder records the edge from a catalogue entry to the catalogue that
-// serves it. See authz.OpenFGA.BindEntryToSource.
-type EntryBinder interface {
-	BindEntryToSource(ctx context.Context, coordinate string) error
 }
 
 // Config assembles a Server.
@@ -119,101 +146,46 @@ type Config struct {
 	// screen that should have worked.
 	Viewer authz.Viewer
 	Repo   Repository
-	// Record is the durable record of who was allowed to ask for a change to
-	// a person (S7A.17). Optional: a cluster whose director database has not
-	// been provisioned keeps the log line and nothing else, which is a worse
-	// record rather than a broken director.
-	Record *record.Store
-	// Catalogue materialises a profile when a tenant installs it (AD-3). Nil
-	// on a cluster whose profiles are still synced wholesale, which is what a
-	// deployment naming no catalogue source is saying.
+	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
+	// catalogue's index when one is listed. Which catalogues there are is
+	// not its to know: they are read from git when they are needed, per
+	// tenant (catalogues.go). Nil is a director that fetches nothing, which
+	// refuses every install from a catalogue and every catalogue added.
 	Catalogue *catalogue.Fetcher
-	// Binder records which source serves a coordinate, so that a source the
-	// Cluster claim opened to this tenant admits its entries (AD-14). Nil
-	// leaves that leg unreachable, which means entitlement by signed
-	// statement and nothing else -- the right behaviour for a cluster that
-	// declares no source of its own.
-	Binder EntryBinder
-	// CatalogueSources is spec.catalogue.sources from the Cluster claim: the
-	// same list the Fetcher was built from, kept whole because the index
-	// routes need each source's access mode and the tenants it is open to.
-	CatalogueSources []gitops.CatalogueSource
 	// StoreURL is spec.catalogue.storeUrl: where a person is sent for
 	// everything this cluster does not list for itself. Empty is a cluster
 	// that belongs to no store.
 	StoreURL string
 	Log      *slog.Logger
-	// EnforceEntitlements makes an install require
-	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless
-	// a deployment turns it off explicitly, which a cluster without a store
-	// has to do — and which is then visible as a setting, not as an absence.
-	EnforceEntitlements bool
 	// Cluster is the id of the one cluster this director serves: the object
 	// cluster verbs are checked against, and the only {c} the routes accept.
 	Cluster string
-	// Store verifies and applies what the App Store signed. Nil leaves the
-	// write unregistered: a cluster with no pinned store key believes no store.
-	Store *StoreConfig
-	// TilesPath is the file the operator's tile catalogue is projected into,
-	// which is its ConfigMap mounted into this pod.
-	//
-	// Mounted rather than fetched: the director holds a git credential and no
-	// cluster credential, and reading one ConfigMap is not worth giving it a
-	// ServiceAccount token that can read the API at all. The kubelet keeps the
-	// file in step with the ConfigMap, so the file is read per request and the
-	// catalogue is never older than the projection by more than the kubelet's
-	// own refresh.
-	//
-	// Empty, or a path that does not exist, is an empty catalogue.
-	TilesPath string
-	// Lifecycle answers what only the cluster knows about a tenant's
-	// resources. Nil leaves the resources routes unregistered: a director
-	// with no operator to ask has nothing to relay and nothing to validate a
-	// plan against.
+	// Lifecycle carries out commands and answers what a commit depends on.
+	// Nil leaves those routes unregistered: a director with no operator to
+	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
-	// Identity is how this director speaks for Keycloak (S7A.17). Nil leaves
-	// the people, group and realm-settings routes unregistered, which a
-	// console shows as those screens not being here -- rather than as a
-	// screen that should have worked answering 502.
-	//
-	// It holds one credential per realm and can name no other, so what it can
-	// reach is decided by what the operator handed it rather than by what a
-	// handler remembered to check.
-	Identity Identity
-	// InviteClientID overrides the client an invitation link names. Empty
-	// derives it from the realm, which is right on every cluster but one --
-	// see inviteClientID. InviteRedirectURI is where the link lands, and is
-	// empty until the zone client accepts somewhere worth landing.
-	InviteClientID    string
-	InviteRedirectURI string
-}
-
-// Identity is the part of the Keycloak client this API uses. An interface so
-// the routes can be tested without a realm, and so nothing here can reach a
-// method that was not meant to be reachable from a request.
-type Identity interface {
-	Realm(name string) (identity.Realm, error)
-	People(ctx context.Context, r identity.Realm, search string, limit int) ([]identity.Person, error)
-	Person(ctx context.Context, r identity.Realm, id string) (identity.Person, error)
-	Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error)
-	Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error)
-	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
-	PasswordPolicy(ctx context.Context, r identity.Realm) (string, error)
-	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
-	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
-	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
-}
-
-// StoreConfig is what the entitlement write needs.
-type StoreConfig struct {
-	Verifier *entitlement.Verifier
-	Applier  *entitlement.Applier
 }
 
 // Server is the director's API.
 type Server struct {
 	cfg Config
 	mux *http.ServeMux
+	// purging holds the tenants whose purge is being finished, so a second
+	// request or a restart's resume does not start a second watcher.
+	purging sync.Map
+	// imports holds each import's progress by tenant, for the status route.
+	imports sync.Map
+	// importing holds the tenants whose import is being watched, so that a
+	// repeated request or a restart's resume starts no second watcher.
+	importing sync.Map
+	// retiring holds the unused profiles whose deletion from the cluster is
+	// being waited for, so a repeated request starts no second watcher.
+	retiring sync.Map
+	// background is the context every watcher waits under, stop ends it and
+	// watchers counts them: what Close needs to end them and know they ended.
+	background context.Context
+	stop       context.CancelFunc
+	watchers   sync.WaitGroup
 }
 
 // New returns a Server with every route registered.
@@ -225,8 +197,32 @@ func New(cfg Config) (*Server, error) {
 		cfg.Log = slog.Default()
 	}
 	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
 	return s, nil
+}
+
+// watch runs fn beside the requests, as something Close ends and waits for.
+// The context it is given ends when the server is closed.
+func (s *Server) watch(fn func(ctx context.Context)) {
+	s.watchers.Add(1)
+	go func() {
+		defer s.watchers.Done()
+		fn(s.background)
+	}()
+}
+
+// Close ends what the server does beside answering requests -- the watchers
+// of a purge, an import and a profile's deletion -- and returns when they
+// have ended. Call it once the last request has been answered.
+//
+// A watcher that is waiting stops waiting. One that is writing to the
+// repository finishes that write first: git is not interrupted half-way
+// through a commit. What a watcher had left to do is in git, and the next
+// start picks it up from there (ResumePurges, ResumeImports).
+func (s *Server) Close() {
+	s.stop()
+	s.watchers.Wait()
 }
 
 // ServeHTTP implements http.Handler.
@@ -407,16 +403,19 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
-	s.guarded("GET /v1/tenants/{t}/entitlements", "can_view", tenantObject, s.listEntitlements)
-
-	// The cluster's own catalogues (AD-14). can_view, like every other read
-	// of a tenant: whoever may see a tenant may see what it could install.
-	// Registered only where there are sources to list, so a cluster that
-	// names none answers 404 rather than an empty screen that looks broken.
-	if s.cfg.Catalogue != nil && len(s.cfg.CatalogueSources) > 0 {
-		s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
-		s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
-	}
+	// The catalogues a tenant sees (AD-14): the cluster's and its own.
+	// can_view, like every other read of a tenant: whoever may see a tenant
+	// may see what it could install.
+	s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
+	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
+	// A tenant's administrator adding a catalogue for their own tenant.
+	// can_install_app, the relation an install asks: a catalogue decides
+	// what the tenant can install, and nobody who may not install should be
+	// widening that. The relation is not the whole check -- the handler
+	// refuses unless the cluster's administrator delegated this to the
+	// tenant, and removes only what the tenant itself added.
+	s.guarded("PUT /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.addTenantCatalogue)
+	s.guarded("DELETE /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.removeTenantCatalogue)
 
 	// What the caller holds on a tenant, for the desktop: it renders from
 	// the answer -- the admin tile by can_administer, the store by
@@ -424,12 +423,10 @@ func (s *Server) routes() {
 	// Entered under can_enter, the relation that reaches the desktop at all.
 	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
 
-	// The tiles this cluster offers, for the console that shows them. What
-	// exists is the operator's projection; what this caller may open is asked
-	// here. Entered under can_audit — the widest cluster relation — then each
-	// tile is filtered by the relation it names on the object it names.
+	// No tiles here. What a person may open is the usher's to answer
+	// (internal/usher), for everybody who has a desktop and from a process
+	// that holds no git credential.
 	if s.cfg.Cluster != "" {
-		s.guarded("GET /v1/clusters/{c}/tiles", "can_audit", s.clusterObject, s.clusterTiles)
 		// The cluster's settings: what they are, and changing them.
 		//
 		// Reading is can_audit, the widest cluster relation, because a
@@ -440,6 +437,18 @@ func (s *Server) routes() {
 		// author, and the operator acts on it from there.
 		s.guarded("GET /v1/clusters/{c}/settings", "can_audit", s.clusterObject, s.clusterSettings)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
+		// The brand every page shows: read like a setting, written like one.
+		// The pages themselves read what the operator publishes from it,
+		// never this route.
+		s.guarded("GET /v1/clusters/{c}/branding", "can_audit", s.clusterObject, s.clusterBranding)
+		s.guarded("PUT /v1/clusters/{c}/branding", "can_configure", s.clusterObject, s.setClusterBranding)
+		// The models the gateway offers, which are the claim's and nobody
+		// else's: read like a setting, written like one, and under
+		// /v1/clusters only, so that no relation on a tenant reaches them --
+		// a model spends the cluster's GPUs or a provider's account, for
+		// every tenant. No provider's token is read or written here.
+		s.guarded("GET /v1/clusters/{c}/models", "can_audit", s.clusterObject, s.clusterModels)
+		s.guarded("PUT /v1/clusters/{c}/models", "can_configure", s.clusterObject, s.setClusterModels)
 		// Bringing a tenant on is the errand the console exists for, and it
 		// is one commit. Listing is can_audit because seeing which customers
 		// a cluster carries is a read; creating and retiring are
@@ -447,6 +456,46 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/tenants", "can_audit", s.clusterObject, s.listTenants)
 		s.guarded("POST /v1/clusters/{c}/tenants", "can_configure", s.clusterObject, s.createTenant)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}", "can_configure", s.clusterObject, s.retireTenant)
+		s.guarded("POST /v1/clusters/{c}/tenants/{t}/actions/purge", "can_configure", s.clusterObject, s.purgeTenant)
+		// Where a tenant is served: a custom domain instead of
+		// <tenant>.<kernel>, or none. can_configure, like creating the
+		// tenant: it moves the tenant's hosts, mail and logins.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// Where software may enter the cluster: its catalogues. Reading is
+		// can_audit, like the settings; every change is can_configure -- a
+		// catalogue for every tenant, a catalogue for one tenant, and
+		// whether a tenant's own administrators may add theirs. The last is
+		// under /v1/clusters and nowhere else, so that no relation on a
+		// tenant reaches it.
+		s.guarded("GET /v1/clusters/{c}/catalogues", "can_audit", s.clusterObject, s.listClusterCatalogues)
+		s.guarded("PUT /v1/clusters/{c}/catalogues/{s}", "can_configure", s.clusterObject, s.addClusterCatalogue)
+		s.guarded("DELETE /v1/clusters/{c}/catalogues/{s}", "can_configure", s.clusterObject, s.removeClusterCatalogue)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.addTenantCatalogueAsCluster)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.removeTenantCatalogueAsCluster)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
+		// Whether a tenant's own administrators may approve what it
+		// publishes to the internet. The same shape as the switch above and
+		// for the same reason under /v1/clusters and nowhere else: a
+		// tenant's administrator holds no relation that reaches it, so
+		// nobody gives themselves the right to publish.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/perimeter-delegation", "can_configure", s.clusterObject, s.delegatePerimeter)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/perimeter-delegation", "can_configure", s.clusterObject, s.undelegatePerimeter)
+		if s.cfg.Lifecycle != nil {
+			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
+			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
+			s.guarded("POST /v1/clusters/{c}/bundles/inspect", "can_configure", s.clusterObject, s.inspectBundle)
+			// Removing one thing the catalogue left behind: an object no
+			// bundle owns any more, or a profile nobody uses. The list is
+			// the usher's read; this deletes, one named object at a time,
+			// so it is can_configure and asks for the name again. An action
+			// even where it also commits: what the caller is answered with
+			// is what was deleted.
+			s.action("POST /v1/clusters/{c}/actions/remove-catalogue-residue", "can_configure", s.clusterObject, s.removeCatalogueResidue)
+			s.guarded("POST /v1/clusters/{c}/tenants/import", "can_configure", s.clusterObject, s.importTenant)
+			s.guarded("GET /v1/clusters/{c}/tenants/{t}/import", "can_configure", s.clusterObject, s.importStatus)
+		}
 		// Who the caller is at cluster scope: which of the cluster's verbs
 		// they hold. Identified, not guarded: a person with no cluster
 		// relation at all is answered with every verb false, because "you
@@ -463,10 +512,6 @@ func (s *Server) routes() {
 		}
 		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
-	if s.cfg.Store != nil {
-		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
-	}
-
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
@@ -489,11 +534,13 @@ func (s *Server) routes() {
 	// could ask for the cheaper approver.
 	// What this tenant publishes to the internet, and who said it could.
 	//
-	// can_expose, never admin (AD-6). The tenant's administrators hold it by
-	// default because most tenants do not staff a perimeter approver
-	// separately — but it is asked as its own relation, so putting something
-	// on the internet is always its own line in the record rather than
-	// something that happened while somebody was doing everything else.
+	// can_expose, never admin (AD-6). The members of the tenant's perimeter
+	// group hold it, and the cluster's administrators while the tenant is
+	// operated by its cluster; the tenant's own administrators only where
+	// the cluster's administrator said so (perimeter-delegation above). It
+	// is asked as its own relation, so putting something on the internet is
+	// always its own line in the record rather than something that happened
+	// while somebody was doing everything else.
 	//
 	// The READ is can_view, and it is the registry: every URL this tenant
 	// publishes, who published it and until when. "What of ours is on the
@@ -502,52 +549,65 @@ func (s *Server) routes() {
 	s.guarded("PUT /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.publishExposure)
 	s.guarded("DELETE /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.withdrawExposure)
 
+	// Where software comes from: the repositories a tenant, or the cluster,
+	// installs from. The address is configuration -- it decides what may
+	// enter -- so declaring one and removing one are commits with an author.
+	// The password is not: it is set at the custodian, for a repository that
+	// is already declared, and never passes through here.
+	//
+	// can_write_credential, on the cluster for the cluster's and on the
+	// tenant for a tenant's: the relation the custodian asked when these
+	// were its routes, so the same people may do this and nobody else. It is
+	// also the relation that then lets them set the password, which is the
+	// other half of the same errand.
+	s.guarded("PUT /v1/tenants/{t}/repositories/{name}", "can_write_credential", tenantObject, s.declareTenantRepository)
+	s.guarded("DELETE /v1/tenants/{t}/repositories/{name}", "can_write_credential", tenantObject, s.removeTenantRepository)
+	if s.cfg.Cluster != "" {
+		s.guarded("PUT /v1/clusters/{c}/repositories/{name}", "can_write_credential", s.clusterObject, s.declareClusterRepository)
+		s.guarded("DELETE /v1/clusters/{c}/repositories/{name}", "can_write_credential", s.clusterObject, s.removeClusterRepository)
+	}
+
 	s.guarded("GET /v1/tenants/{t}/privileges", "can_view", tenantObject, s.tenantPrivileges)
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
 	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)
 
-	// A tenant's resources: the ceiling the cluster enforces, what is under
-	// it, the plans it may move to, and its history. The reads are the
-	// operator's answers relayed under can_view. The one write, choosing a
-	// plan, is can_set_plan, model v1's own verb for it, and it is a commit:
-	// the operator learns the plan from git like everything else.
+	// No reads of live state here. What the cluster made of a tenant -- the
+	// state of its apps, its ceiling and usage, the plans it may move to, its
+	// backups and their schedules, the policy in force, its integrations and
+	// notices, and the cluster's own view of the same -- is the usher's to
+	// answer (internal/usher), under the relation this server asked. This
+	// process commits and commands; it does not answer for the cluster. What
+	// it reads here is what git declares.
+	//
+	// The routes below need the operator all the same: a plan is validated
+	// against the operator's answer before it is committed, and the commands
+	// are carried out by it.
 	if s.cfg.Lifecycle != nil {
-		// What the cluster made of what git says is installed, and the two
-		// acts on an app that are not desired state. Purging is whoever may
-		// install's to do, as uninstalling is; provisioning hands an app to
-		// people, which is can_grant's.
-		s.guarded("GET /v1/tenants/{t}/apps/status", "can_view", tenantObject, s.appStates)
+		// The two acts on an app that are not desired state. Purging is
+		// whoever may install's to do, as uninstalling is; provisioning hands
+		// an app to people, which is can_grant's.
 		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
 		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
+		// Removing one piece a newer build of an app left on the cluster,
+		// for the administrator of a tenant that has the app. Whoever may
+		// install's, as uninstalling and purging are -- and not that alone:
+		// the pieces are the cluster's, so the handler refuses unless this
+		// is the only user tenant the cluster carries. The cluster's own
+		// administrator removes them at
+		// /v1/clusters/{c}/actions/remove-catalogue-residue.
+		s.action("POST /v1/tenants/{t}/apps/{p}/actions/remove-residue", "can_install_app", tenantObject, s.removeAppResidue)
 
-		s.guarded("GET /v1/tenants/{t}/resources", "can_view", tenantObject, s.resourceState)
-		s.guarded("GET /v1/tenants/{t}/resources/plans", "can_view", tenantObject, s.resourcePlans)
-		s.guarded("GET /v1/tenants/{t}/resources/usage", "can_view", tenantObject, s.resourceUsage)
-		s.guarded("GET /v1/tenants/{t}/resources/report", "can_view", tenantObject, s.resourceReport)
+		// Choosing a plan is can_set_plan, model v1's own verb for it, and it
+		// is a commit: the operator learns the plan from git like everything
+		// else.
 		s.guarded("PUT /v1/tenants/{t}/resources", "can_set_plan", tenantObject, s.setResourcePlan)
-		if s.cfg.Cluster != "" {
-			// Every tenant's ceiling in one answer, for the platform
-			// operator's view. can_audit, like the tenant list it is made
-			// from.
-			s.guarded("GET /v1/clusters/{c}/resources", "can_audit", s.clusterObject, s.clusterResources)
-		}
 
-		// A tenant's backups: what exists, what each run did, the policy in
-		// force once inheritance is resolved, and when the next scheduled
-		// run is. All reads, all relayed from the operator under can_view --
-		// whoever may see a tenant may see whether its data is being kept.
-		// Changing a policy is a commit, and is not here yet.
-		s.guarded("GET /v1/tenants/{t}/backups", "can_view", tenantObject, s.tenantBackups)
-		s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
-		s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.tenantBackupPolicy)
-		s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.tenantBackupSchedules)
-		if s.cfg.Cluster != "" {
-			// The cluster's own policy, and every tenant's schedules. Read
-			// under can_audit: what the platform keeps, and for how long, is
-			// something whoever may look at the cluster may see.
-			s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", s.clusterObject, s.clusterBackupPolicy)
-			s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", s.clusterObject, s.clusterBackupSchedules)
-		}
+		// The bundle as one file, through the director and never a signed
+		// URL: a link that works without a session is a session nobody can
+		// revoke (sovereignty-concept.md §4.2). The one read of live state
+		// left here: the usher's identity at the operator lists backups and
+		// does not fetch one.
+		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_view", tenantObject, s.tenantBundleDownload)
 
 		// Writing a backup policy is writing declared state: what should be
 		// true of every run from now on. It is a commit, under
@@ -561,32 +621,27 @@ func (s *Server) routes() {
 			s.guarded("PUT /v1/clusters/{c}/backup-policy", "can_configure", s.clusterObject, s.setClusterBackupPolicy)
 		}
 
-		// What one tenant's apps consume from each other, and whether the
-		// grant permits what the binding asks for. can_view: seeing which
-		// apps are wired together is reading the tenant, not changing it.
-		s.guarded("GET /v1/tenants/{t}/integrations", "can_view", tenantObject, s.tenantIntegrations)
 		// What an app may consume is declared state, and can_grant is model
 		// v1's own verb for deciding it.
 		s.guarded("PUT /v1/tenants/{t}/grants/{app}", "can_grant", tenantObject, s.setAppGrant)
 		s.guarded("DELETE /v1/tenants/{t}/grants/{app}", "can_grant", tenantObject, s.clearAppGrant)
 		if s.cfg.Cluster != "" {
-			// What the platform permits to escape its default posture, and
-			// how much customisation the cluster carries. Both are the
-			// cluster's own state and read under can_audit.
+			// What git declares may escape the default posture: the list
+			// the PUT below replaces, read from where it is written so that
+			// an edit starts from the last commit and not from the last
+			// sync. What the cluster enforces at this moment, and which
+			// profiles ask for a waiver, is the usher's answer on the same
+			// path.
 			s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", s.clusterObject, s.platformSecurity)
 			// Changing what may escape the default posture is the cluster's
 			// own security configuration: can_set_admission, which model v1
 			// defines as exactly this.
 			s.guarded("PUT /v1/clusters/{c}/platform-security", "can_set_admission", s.clusterObject, s.setPlatformSecurity)
-			s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", s.clusterObject, s.customizations)
 		}
 
-		// The notices an administrator publishes to the people of a tenant.
-		// Reading them is can_view -- they are addressed to everyone in the
-		// tenant. Publishing is an action under can_administer: it is not a
-		// statement about how the cluster should be, it happens once, and
-		// nothing reconciles it.
-		s.guarded("GET /v1/tenants/{t}/notifications", "can_view", tenantObject, s.tenantNotifications)
+		// Publishing a notice to the people of a tenant is an action under
+		// can_administer: it is not a statement about how the cluster should
+		// be, it happens once, and nothing reconciles it.
 		s.action("POST /v1/tenants/{t}/actions/notify", "can_administer", tenantObject, s.publishNotification)
 
 		// What changed, who changed it, and what allowed them to. The
@@ -634,30 +689,10 @@ func (s *Server) routes() {
 		s.action("POST /v1/tenants/{t}/actions/delete-backup", "can_administer", tenantObject, s.deleteBackup)
 	}
 
-	// People, groups and the realm's settings (S7A.17).
-	//
-	// Registered only when this director holds a Keycloak credential. A
-	// console then shows the screens as absent rather than as broken, which
-	// is the difference between "this cluster has not provisioned it" and
-	// "this is failing".
-	//
-	// Every write is an ACTION and none is a PUT. A commit says what should
-	// be true from now on and is reviewable in git for ever; inviting
-	// somebody happens once, and people do not belong in an append-only
-	// history. can_manage_users throughout, except the password policy, which
-	// is a statement about the tenant rather than about a person and sits
-	// with can_set_policy.
-	if s.cfg.Identity != nil {
-		s.guarded("GET /v1/tenants/{t}/people", "can_manage_users", tenantObject, s.listPeople)
-		s.guarded("GET /v1/tenants/{t}/people/{id}", "can_manage_users", tenantObject, s.getPerson)
-		s.guarded("GET /v1/tenants/{t}/groups", "can_manage_users", tenantObject, s.listGroups)
-		s.guarded("GET /v1/tenants/{t}/identity", "can_manage_users", tenantObject, s.tenantIdentitySettings)
-
-		s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
-		s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
-		s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
-		s.action("POST /v1/tenants/{t}/actions/set-password-policy", "can_set_policy", tenantObject, s.setPasswordPolicy)
-	}
+	// No people, groups or realm settings here. They are the registrar's
+	// (internal/registrar), which holds the Keycloak credential they need;
+	// this process holds none, so there is nothing here that could serve
+	// them.
 }
 
 // clusterRelations are the cluster verbs a console asks about the caller: the
@@ -740,176 +775,62 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 			if addons == nil {
 				addons = []string{}
 			}
-			s.json(w, http.StatusOK, map[string]any{"profile": a.Profile, "addons": addons})
+			// The build each pinned addon is at, by name. Beside the list
+			// rather than in it, as the manifest has it: the list is names
+			// for every caller that reads it.
+			pins := a.AddonPins
+			if pins == nil {
+				pins = []gitops.AddonPin{}
+			}
+			s.json(w, http.StatusOK, map[string]any{"profile": a.Profile, "addons": addons, "addonPins": pins})
 			return
 		}
 	}
 	s.fail(w, r, http.StatusNotFound, "app not installed")
 }
 
-func (s *Server) listEntitlements(w http.ResponseWriter, r *http.Request, _ call) {
-	facts, err := s.cfg.Repo.Entitlements(r.Context(), r.PathValue("t"))
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "entitlements": facts})
-}
-
-type tileOut struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	Description string `json:"description"`
-	URL         string `json:"url"`
-	Icon        string `json:"icon"`
-}
-
-// catalogue is what the operator projected, or nothing.
-//
-// A missing file is an empty catalogue and not a failure. That is what a
-// cluster whose operator has not projected yet looks like, and it is also what
-// a cluster running an operator too old to project looks like; in both cases
-// the honest answer is that this director knows of no tiles, which a console
-// can render. An error would put a red banner on the page for a condition that
-// resolves itself on the operator's next pass.
-func (s *Server) catalogue() ([]tilecatalogue.Tile, error) {
-	if s.cfg.TilesPath == "" {
-		return nil, nil
-	}
-	data, err := os.ReadFile(s.cfg.TilesPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	c, err := tilecatalogue.Parse(data)
-	if err != nil {
-		return nil, err
-	}
-	return c.Tiles, nil
-}
-
-// clusterTiles answers with the tiles this caller may open.
-//
-// The list of what exists is the operator's: it projects the consoles it
-// routes and the exposures of installed components that declare a tile. This
-// handler adds the one thing the projection cannot know, which is who is
-// asking, and it asks the graph once per tile. A tile the caller may not open
-// is not on the page, because leaving it there and refusing the click tells a
-// person about a console they have no business knowing exists.
-func (s *Server) clusterTiles(w http.ResponseWriter, r *http.Request, c call) {
-	ctx := r.Context()
-	domain, err := s.cfg.Repo.KernelDomain(ctx)
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	catalogue, err := s.catalogue()
-	if err != nil {
-		s.cfg.Log.ErrorContext(ctx, "the tile catalogue cannot be read",
-			"request_id", reqID(ctx), "path", s.cfg.TilesPath, "error", err.Error())
-		s.fail(w, r, http.StatusServiceUnavailable, "the tile catalogue cannot be read")
-		return
-	}
-	out := []tileOut{}
-	for _, t := range catalogue {
-		shown := false
-		for _, rel := range t.AnyOf {
-			ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, rel, t.Object)
-			if err != nil {
-				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-				return
-			}
-			if ok {
-				shown = true
-				break
-			}
-		}
-		if shown {
-			out = append(out, tileOut{Name: t.Name, DisplayName: t.DisplayName, Description: t.Description, URL: t.URL, Icon: t.Icon})
-		}
-	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "kernelDomain": domain, "tiles": out})
-}
-
-type entitleRequest struct {
-	// Grant is the store's statement, a compact JWS.
-	Grant string `json:"grant"`
-}
-
-// entitle takes a statement the store signed. The signature is what is
-// believed, so it is checked first, before anything is asked of the caller.
-//
-// A grant adds access, so it also needs a person who may install in this
-// tenant to be the one delivering it: the store may trigger, it may not decide
-// for the tenant. A revocation only removes access and the store's signature is
-// all the authority it needs — requiring the tenant's own administrator to
-// deliver it would let them decline to.
-func (s *Server) entitle(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	tenant := r.PathValue("t")
-	if !gitops.ValidName(tenant) {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
-		return
-	}
-	var body entitleRequest
-	if err := decode(r, &body); err != nil || body.Grant == "" {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"grant": "<compact JWS>"}`)
-		return
-	}
-	claims, kid, err := s.cfg.Store.Verifier.Verify(body.Grant, tenant)
-	switch {
-	case errors.Is(err, entitlement.ErrNotBelieved):
-		s.cfg.Log.WarnContext(ctx, "entitlement statement refused", "request_id", reqID(ctx), "tenant", tenant, "reason", err.Error())
-		s.fail(w, r, http.StatusUnauthorized, "statement is not verifiably the store's")
-		return
-	case errors.Is(err, entitlement.ErrNotForHere):
-		s.fail(w, r, http.StatusForbidden, "statement is not for this cluster and tenant")
-		return
-	case err != nil:
-		s.fail(w, r, http.StatusBadRequest, "statement is incomplete")
-		return
-	}
-
-	meta := gitops.Meta{RequestID: reqID(ctx), Principal: "store:" + kid, Decision: "signed " + claims.ID}
-	if claims.Granted {
-		c, ok := s.authorize(w, r, "POST /v1/tenants/{t}/entitlements", "can_install_app", tenantObject)
-		if !ok {
-			return
-		}
-		// The person delivered it; the store decided it. Both are recorded.
-		meta = c.meta
-		meta.Decision += "; store:" + kid + " signed " + claims.ID
-	}
-	res, err := s.cfg.Store.Applier.Apply(ctx, tenant, claims, kid, meta)
-	if errors.Is(err, gitops.ErrStaleFact) {
-		s.fail(w, r, http.StatusConflict, "a newer statement about this entry is already recorded")
-		return
-	}
-	s.written(w, r, res, err)
-}
-
 type installRequest struct {
-	// Coordinate is the store coordinate <catalogue>/<app> the profile was
-	// offered under; the entitlement is recorded against it.
-	Coordinate string `json:"coordinate"`
-	// Digest is the content digest of the profile bundle, as the store's
-	// index gives it: "sha256:<hex>".
+	// Coordinate is <catalogue>/<app>: which catalogue the profile comes
+	// from. It is what materialising fetches, and its catalogue must be a
+	// source the cluster declares; without it the install is of a profile
+	// the cluster already has, and carries no digest.
+	Coordinate string `json:"coordinate,omitempty"`
+	// Digest is the content digest of the profile bundle, "sha256:<hex>":
+	// the exact build being installed.
 	//
-	// From the store, over TLS, and not from the source that serves the
-	// bytes. That separation is the point: the source could be a customer's
-	// own web server, and what protects the install is that only one set of
-	// bytes hashes to what the store named (AD-3).
+	// It is the caller's to state -- the App Store's confirmation carries it,
+	// and the cluster's own listing of a source gives it -- and it is not
+	// signed. What it does is pin: only one set of bytes hashes to it, so the
+	// source that serves the bundle can fail an install and cannot change
+	// what is installed (AD-3). It is recorded with the install in git.
 	Digest string `json:"digest,omitempty"`
+	// DefaultGrant installs the app for everyone: every member of the tenant
+	// has access to it by default. It is written on the app's entry in the
+	// same commit, and the operator grants it once the app's group exists.
+	// Absent leaves an installed app's entry as it is; false states that
+	// access is given per person.
+	DefaultGrant *bool `json:"defaultGrant,omitempty"`
 }
 
+// install commits an app to a tenant's manifest.
+//
+// The question asked is the route's own: may this person install apps in
+// this tenant (can_install_app). Nothing here decides whether the tenant is
+// licensed for the app. That is not the platform's to gate: whether the app
+// arrives is decided where its artefacts are pulled, by whether the tenant
+// holds a credential for the repository they come from.
+//
+// An install for everyone asks a second one. It gives people access to the
+// app, which is what can_grant on the tenant guards wherever else that is
+// done, so the request must pass both -- and is refused before anything is
+// fetched or written when it does not.
 func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
-	// Read once. The coordinate is what the entitlement check asks about and
-	// what materialising fetches, and decoding twice would read an empty body
-	// the second time.
+	if s.refusedInPlatformTenant(w, r, tenant) {
+		return
+	}
+	// Read once: decoding twice would read an empty body the second time.
 	var body installRequest
 	if r.ContentLength != 0 {
 		if err := decode(r, &body); err != nil {
@@ -917,122 +838,582 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 	}
-	if s.cfg.EnforceEntitlements {
-		entry, err := authz.CatalogueEntry(body.Coordinate)
+	if body.Digest != "" {
+		digest, err := catalogue.CanonicalDigest(body.Digest)
 		if err != nil {
-			s.fail(w, r, http.StatusBadRequest, "coordinate is required: <catalogue>/<app>")
+			s.fail(w, r, http.StatusBadRequest, "digest must be sha256:<64 hex characters>")
 			return
 		}
-		// An entry's source is part of the question: a catalogue the Cluster
-		// claim opened to this tenant admits its entries without a statement
-		// from the store, and the graph reaches that through the entry's
-		// source tuple. Recording it is a fact about the coordinate, not a
-		// decision -- the decision is the claim's, and it is checked below.
-		if cat, _, _ := strings.Cut(body.Coordinate, "/"); s.cfg.Binder != nil && s.cfg.Catalogue.Known(cat) {
-			if err := s.cfg.Binder.BindEntryToSource(ctx, body.Coordinate); err != nil {
-				s.cfg.Log.ErrorContext(ctx, "could not record which catalogue serves an entry",
-					"request_id", reqID(ctx), "coordinate", body.Coordinate, "error", err)
-				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-				return
-			}
-		}
-		// The second question is about the tenant, not the person: is this
-		// tenant entitled to this entry, now.
-		ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), authz.Tenant(tenant), "can_install", entry)
+		body.Digest = digest
+	}
+	// Where the build comes from, settled before anything is asked, fetched
+	// or written: a pin is recorded only for a bundle this director fetched
+	// from a source the cluster declares and saw hash to the digest.
+	source, entry, ok := s.pinOrigin(w, r, tenant, body.Coordinate, body.Digest)
+	if !ok {
+		return
+	}
+	catalogueName := ""
+	if source != nil {
+		catalogueName = source.Name
+	}
+	if source != nil && entry != profile {
+		// The bundle fetched is the coordinate's and the entry written is the
+		// path's. Two names would commit one profile and install another.
+		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
+		return
+	}
+	if body.DefaultGrant != nil && *body.DefaultGrant {
+		target := authz.Tenant(tenant)
+		ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, "can_grant", target)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 			return
 		}
 		if !ok {
-			s.fail(w, r, http.StatusForbidden, "tenant is not entitled to this catalogue entry")
+			s.fail(w, r, http.StatusForbidden,
+				"installing an app for everyone gives people access to it, which needs can_grant on the tenant; "+
+					"install it without defaultGrant, or ask somebody who may grant")
 			return
 		}
+		c.meta.Decision += " and can_grant " + target
 	}
-	// The profile itself, if this cluster materialises on reference (AD-3).
+	// The profile itself (AD-3).
 	//
 	// Before the app entry, not after: an entry naming a profile the cluster
 	// does not have is a tenant whose app never appears, with the composition
 	// failing on a ComponentProfile that is not there. Fetching first means an
 	// install either has everything it needs or changed nothing.
-	if s.cfg.Catalogue != nil && body.Coordinate != "" {
-		if res, ok := s.materialise(w, r, c, body); !ok {
+	//
+	// A request with neither coordinate nor digest fetches nothing and pins
+	// nothing: it installs a profile the cluster already holds, or states
+	// who an installed app is for. The profile has to be there -- nothing
+	// puts profiles on a cluster ahead of an install any more -- and it has
+	// to be one this tenant may have.
+	//
+	// And it may not take an address name the platform depends on
+	// (internal/hostnames): asked of the bundle once it is fetched and
+	// before it is committed, or of the profile the cluster already holds.
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if source != nil {
+		fetched, ok := s.fetchEntry(w, r, *source, entry, body.Digest)
+		if !ok {
 			return
-		} else if res.Changed {
+		}
+		if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
+			s.refuseReservedAddress(w, r, tenant, "app "+profile, why)
+			return
+		}
+		res, ok := s.commitEntry(w, r, c, tenant, *source, fetched)
+		if !ok {
+			return
+		}
+		if res.Changed {
 			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
-				"request_id", reqID(ctx), "coordinate", body.Coordinate, "commit", res.Commit)
+				"request_id", reqID(ctx), "coordinate", body.Coordinate, "origin", source.origin(tenant), "commit", res.Commit)
+		}
+	} else {
+		if !s.onClusterFor(w, r, tenant, profile, "") {
+			return
+		}
+		why, err := s.onClusterTakesReservedAddress(ctx, profile, zone)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if why != "" {
+			s.refuseReservedAddress(w, r, tenant, "app "+profile, why)
+			return
 		}
 	}
 
-	res, err := s.cfg.Repo.Install(ctx, tenant, profile, c.meta)
+	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
 	s.written(w, r, res, err)
 }
 
-// materialise fetches the entry being installed and commits it, so the
-// cluster has the profile the tenant's manifest is about to name.
+// refusedInPlatformTenant answers an app or an add-on asked for in the
+// platform tenant, and reports that it did.
 //
-// The digest comes from the STORE's index, over TLS. The bytes come from the
-// SOURCE, which is not trusted: if they do not hash to that digest the install
-// is refused and nothing is written. That is the whole of AD-3's "the store
-// never supplies the artefact" — the store says WHAT, the source says the
-// bytes, and only agreement produces an install.
-func (s *Server) materialise(
-	w http.ResponseWriter, r *http.Request, c call, body installRequest,
-) (gitops.Result, bool) {
+// Asked first, before the request is read any further: nothing is fetched
+// from a catalogue and no profile is committed for an install that will not
+// happen. The caller is already known to hold can_install_app on the tenant,
+// so this is not a question of who is asking -- the platform tenant takes
+// apps from nobody -- and the answer is 409 with the reason, the same
+// sentence whichever client shows it.
+func (s *Server) refusedInPlatformTenant(w http.ResponseWriter, r *http.Request, tenant string) bool {
+	platform, err := s.cfg.Repo.IsPlatformTenant(r.Context(), tenant)
+	if err != nil {
+		s.repoError(w, r, err)
+		return true
+	}
+	if platform {
+		s.fail(w, r, http.StatusConflict, gitops.ErrPlatformTenant.Error())
+		return true
+	}
+	return false
+}
+
+// onClusterFor answers whether a profile named with no coordinate is one
+// this tenant can be given: the cluster's catalogue directory holds it, and
+// it is not another tenant's own. When it is not, it writes the refusal and
+// answers false.
+//
+// base is the app an add-on is being switched on in, or "" for an app. The
+// two refusals differ in what they warn of: an app that is not there never
+// appears, and an add-on that is not there is a selection that switches
+// nothing on while every screen shows it selected.
+//
+// One answer for "not there" and for "there, but another tenant's": the
+// profile object is visible to anybody who can read the cluster, but this
+// service is not where one tenant learns what another published.
+func (s *Server) onClusterFor(w http.ResponseWriter, r *http.Request, tenant, name, base string) bool {
+	if !gitops.ValidName(name) {
+		// Not a profile's name, so not a profile; said as the write says it.
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return false
+	}
+	have, err := s.cfg.Repo.ProfileOnCluster(r.Context(), name)
+	if err != nil {
+		s.repoError(w, r, err)
+		return false
+	}
+	if have.Present && profilebundle.UsableBy(have.Origin, tenant) {
+		return true
+	}
+	how := fmt.Sprintf(`give it with its coordinate and digest, {"coordinate": "<catalogue>/%s", "digest": "sha256:<hex>"}, `+
+		`so that it is fetched and checked ('kubectl gentian apps list --tenant %s --available' lists both). %s`,
+		name, tenant, s.declaredSources(r.Context(), tenant))
+	if base != "" {
+		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"add-on %s is named without a build, and no profile of that name is on this cluster for this tenant: "+
+				"switching it on would activate nothing in %s. Nothing was changed; %s", name, base, how))
+		return false
+	}
+	s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+		"%s is named without a build, and no profile of that name is on this cluster for this tenant: "+
+			"profiles are not on a cluster ahead of an install. Nothing was installed; %s", name, how))
+	return false
+}
+
+// pinOrigin answers which catalogue a coordinate names for this tenant, and
+// refuses a request whose build nothing here could verify.
+//
+// An install comes from a catalogue the tenant sees: one of the cluster's,
+// or one of its own. So:
+//
+//   - A coordinate whose catalogue the tenant does not see is refused --
+//     whether nobody declares it or another tenant does, in the same words.
+//   - A digest with no coordinate is refused: there is nowhere to fetch the
+//     bytes it is the digest of.
+//   - A coordinate with no digest is refused, because a fetch from a source
+//     is pinned to the build the request names.
+//   - Neither is not a pin at all, and answers no source.
+//
+// It writes the refusal itself and answers false.
+func (s *Server) pinOrigin(
+	w http.ResponseWriter, r *http.Request, tenant, coordinate, digest string,
+) (source *visibleSource, name string, ok bool) {
 	ctx := r.Context()
-	cat, _, _ := strings.Cut(body.Coordinate, "/")
-	if !s.cfg.Catalogue.Known(cat) {
-		// A catalogue this cluster has no source for. Not an error: a cluster
-		// may name a source for one catalogue and sync another wholesale, and
-		// the install proceeds against whatever is already there.
-		return gitops.Result{}, true
+	if coordinate == "" {
+		if digest != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity,
+				"a digest is checked against the bundle its coordinate names, and this request names none: "+
+					"state the coordinate, <catalogue>/<app>, with the digest. "+s.declaredSources(ctx, tenant))
+			return nil, "", false
+		}
+		return nil, "", true
 	}
-	if body.Digest == "" {
+	catalogueName, name, cut := strings.Cut(coordinate, "/")
+	if !cut || catalogueName == "" || name == "" || strings.Contains(name, "/") {
+		s.fail(w, r, http.StatusBadRequest, "coordinate must be <catalogue>/<app>")
+		return nil, "", false
+	}
+	found, known, err := s.resolveSource(ctx, tenant, catalogueName)
+	if err != nil {
+		s.repoError(w, r, err)
+		return nil, "", false
+	}
+	if !known || s.cfg.Catalogue == nil {
+		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"%q is not a catalogue this tenant installs from, so nothing can be fetched from it or verified; "+
+				"nothing was installed. %s", catalogueName, s.declaredSources(ctx, tenant)))
+		return nil, "", false
+	}
+	if digest == "" {
 		s.fail(w, r, http.StatusBadRequest,
-			"installing from a catalogue source needs the entry's digest, which the store's index gives")
-		return gitops.Result{}, false
+			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
+		return nil, "", false
 	}
-	profile, err := s.cfg.Catalogue.Fetch(ctx, body.Coordinate, body.Digest)
+	return &found, name, true
+}
+
+// declaredSources says which catalogues a tenant sees, for a refusal that
+// has to tell the caller what it could have asked for.
+func (s *Server) declaredSources(ctx context.Context, tenant string) string {
+	if s.cfg.Catalogue == nil {
+		return "This director fetches from no catalogue."
+	}
+	sources, _, err := s.visibleSources(ctx, tenant)
+	if err != nil || len(sources) == 0 {
+		return "This tenant has no catalogue to install from."
+	}
+	names := make([]string, 0, len(sources))
+	for _, src := range sources {
+		names = append(names, src.Name)
+	}
+	return "This tenant's catalogues: " + strings.Join(names, ", ") + "."
+}
+
+// fetchEntry reads one bundle from its source and checks it against the
+// digest. It writes nothing.
+//
+// The digest comes with the REQUEST. The bytes come from the SOURCE, which is
+// not trusted: if they do not hash to that digest the request is refused and
+// nothing is written. The request says WHAT, the source says the bytes, and
+// only agreement produces an install.
+//
+// The caller has settled, with pinOrigin, that the tenant sees the catalogue
+// and that a digest was stated.
+func (s *Server) fetchEntry(
+	w http.ResponseWriter, r *http.Request, source visibleSource, name, digest string,
+) (*catalogue.Profile, bool) {
+	ctx := r.Context()
+	coordinate := source.Name + "/" + name
+	profile, err := s.cfg.Catalogue.Fetch(ctx, source.Source, name, digest)
 	switch {
 	case errors.Is(err, catalogue.ErrDigestMismatch):
 		// Said plainly and logged, because this is the one failure here that
-		// is not a mistake: the source served something other than the entry
-		// the store named.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the entry the store named",
-			"request_id", reqID(ctx), "coordinate", body.Coordinate)
+		// is not a mistake: the source served something other than the build
+		// that was asked for.
+		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the build requested",
+			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key)
 		s.fail(w, r, http.StatusBadGateway,
-			"the catalogue source served a bundle that is not this entry; nothing was installed")
-		return gitops.Result{}, false
+			"the catalogue source served a bundle for "+coordinate+" that is not this entry; nothing was installed")
+		return nil, false
 	case errors.Is(err, catalogue.ErrNotFound):
-		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve this entry")
-		return gitops.Result{}, false
+		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve "+coordinate)
+		return nil, false
+	case errors.Is(err, catalogue.ErrAddressRefused):
+		// The address was a public one when the catalogue was added and is
+		// not one now. Logged with what it was, answered without.
+		s.cfg.Log.ErrorContext(ctx, "a catalogue's address is no longer one that is fetched from",
+			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
+			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
+		return nil, false
+	case errors.Is(err, gitops.ErrCatalogueDirectoryRefused):
+		// The directory was one a catalogue is read from when it was added,
+		// and what is there now is not: a symbolic link, or a name that is
+		// not a plain file's.
+		s.cfg.Log.ErrorContext(ctx, "a catalogue's directory is not one a catalogue is read from",
+			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the directory of catalogue "+source.Name+
+			" in the deployments repository is not one a catalogue is read from: "+refusedDirectory(err)+"; nothing was installed")
+		return nil, false
+	case errors.Is(err, profilebundle.ErrRefused):
+		// The build that was asked for, and not something this cluster
+		// applies: a kind a bundle may not hold, an object that is not this
+		// profile's, a companion from a tenant's own catalogue. Said with
+		// what was found, because whoever publishes the catalogue has to
+		// change it; logged, because it is also what an attempt looks like.
+		s.cfg.Log.WarnContext(ctx, "a catalogue entry was refused for what its bundle holds",
+			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key, "error", err.Error())
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+coordinate+
+			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
+		return nil, false
 	case err != nil:
 		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
-		return gitops.Result{}, false
+		return nil, false
 	}
-	res, err := s.cfg.Repo.MaterialiseProfile(ctx, profile.Name, profile.Digest, profile.Body, c.meta)
-	if err != nil {
+	return profile, true
+}
+
+// commitEntry commits a fetched and verified bundle beside its profile,
+// recorded as coming from the catalogue it was fetched from.
+//
+// ComponentProfiles are cluster-scoped, so a name is one profile for every
+// tenant. A profile from a tenant's own catalogue never takes a name another
+// origin holds, and nothing takes a name a tenant's own catalogue holds: the
+// install is refused, with who has to rename.
+func (s *Server) commitEntry(
+	w http.ResponseWriter, r *http.Request, c call, tenant string, source visibleSource, profile *catalogue.Profile,
+) (gitops.Result, bool) {
+	res, err := s.cfg.Repo.MaterialiseProfile(r.Context(), profile.Name, profile.Digest, profile.Body, source.origin(tenant), c.meta)
+	var taken *gitops.ErrProfileNameTaken
+	switch {
+	case errors.Is(err, gitops.ErrBundleTooLarge):
+		// Refused rather than installed unverifiable: the operator checks a
+		// pinned install against the bundle, and one it cannot be given
+		// would be held at rollout for good.
+		s.fail(w, r, http.StatusUnprocessableEntity,
+			"the catalogue entry "+profile.Name+" is too large to be installed at a digest; nothing was installed")
+		return gitops.Result{}, false
+	case errors.Is(err, gitops.ErrProfileStatesOrigin):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
+			" carries an annotation only the platform writes (its bundle or its origin); nothing was installed")
+		return gitops.Result{}, false
+	case errors.Is(err, profilebundle.ErrRefused):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
+			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
+		return gitops.Result{}, false
+	case errors.As(err, &taken):
+		s.cfg.Log.WarnContext(r.Context(), "a profile's name is taken by a profile of another origin",
+			"request_id", reqID(r.Context()), "profile", taken.Name, "origin", taken.Origin, "holder", taken.Holder)
+		s.fail(w, r, http.StatusConflict, nameTakenMessage(taken, tenant, source))
+		return gitops.Result{}, false
+	case err != nil:
 		s.repoError(w, r, err)
 		return gitops.Result{}, false
 	}
 	return res, true
 }
 
+// refusedFor is what a refused bundle was found to hold, without the words
+// every such refusal begins with.
+func refusedFor(err error) string {
+	_, found, cut := strings.Cut(err.Error(), profilebundle.ErrRefused.Error()+": ")
+	if !cut {
+		return err.Error()
+	}
+	return found
+}
+
+// nameTakenMessage says that a profile's name is taken and who has to rename.
+// It names no other tenant: whose the other profile is, is in the log.
+func nameTakenMessage(taken *gitops.ErrProfileNameTaken, tenant string, source visibleSource) string {
+	name := taken.Name
+	suggestion := fmt.Sprintf("publish it as %s-%s in the catalogue %s and install that", tenant, name, source.Name)
+	switch {
+	case taken.Platform:
+		if source.scope == scopeTenant {
+			return fmt.Sprintf("the name %s is taken on this cluster by a component the platform ships, and a profile is "+
+				"one object for the whole cluster. Nothing was installed; %s", name, suggestion)
+		}
+		return fmt.Sprintf("the name %s is taken on this cluster by a component the platform ships. Nothing was installed; "+
+			"the catalogue %s has to publish its entry under another name", name, source.Name)
+	case source.scope == scopeTenant:
+		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from another catalogue, and a profile "+
+			"is one object for the whole cluster. Nothing was installed; %s", name, suggestion)
+	default:
+		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from a tenant's own catalogue, so "+
+			"the entry of the cluster's catalogue %s cannot be installed under it. Nothing was installed. The tenant that "+
+			"published it has to rename its profile (<tenant>-%s) and install that instead; the cluster's administrator "+
+			"can see whose it is", name, source.Name, name)
+	}
+}
+
+// uninstallNote is said with every uninstall that took an app away. The
+// app's data stays, and a backup taken afterwards holds it, as an
+// uninstalled app's; deleting the tenant, or purging the app, destroys it.
+const uninstallNote = "The app's data is kept, and backups taken from now on go on including it, as an uninstalled app's. " +
+	"Deleting the tenant, or purging the app, destroys it."
+
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
 	res, err := s.cfg.Repo.Uninstall(r.Context(), r.PathValue("t"), r.PathValue("p"), c.meta)
-	s.written(w, r, res, err)
+	if err != nil || !res.Changed {
+		s.written(w, r, res, err)
+		return
+	}
+	s.json(w, http.StatusAccepted, map[string]any{"status": res.Status, "commit": res.Commit, "note": uninstallNote})
 }
 
 type addonsRequest struct {
-	Addons []string `json:"addons"`
+	Addons []addonEntry `json:"addons"`
 }
 
+// addonEntry is one addon of the selection: a name, or the build to install
+// it at.
+//
+// A string is the addon's name, as it has always been. An object is
+// {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"} -- an item
+// of the store's confirmation, sent on -- and the addon it names is the
+// second half of the coordinate.
+type addonEntry struct {
+	Name       string
+	Coordinate string
+	Digest     string
+}
+
+func (a *addonEntry) UnmarshalJSON(raw []byte) error {
+	if len(raw) > 0 && raw[0] == '"' {
+		return json.Unmarshal(raw, &a.Name)
+	}
+	var pinned struct {
+		Coordinate string `json:"coordinate"`
+		Digest     string `json:"digest"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&pinned); err != nil {
+		return err
+	}
+	a.Coordinate, a.Digest = pinned.Coordinate, pinned.Digest
+	return nil
+}
+
+// setAddons commits which addons are activated inside an installed app, and
+// the build of each that is pinned.
+//
+// A pinned addon is installed with the guarantees of a pinned app, by the
+// same steps: its coordinate must name a catalogue source the cluster
+// declares, its bundle is fetched from there and checked against the digest,
+// the verified bundle is committed beside the profile, and only then is the
+// pin written on the entry. Every bundle is fetched and checked before the
+// first is committed, so a selection one of whose builds does not verify
+// changes nothing.
+//
+// A pinned addon is accepted only for an app whose own entry carries a
+// digest. Names inside an app that carries none are set as before.
 func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
-	var body addonsRequest
-	if err := decode(r, &body); err != nil || body.Addons == nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"addons": [...]}`)
+	ctx := r.Context()
+	tenant, profile := r.PathValue("t"), r.PathValue("p")
+	if s.refusedInPlatformTenant(w, r, tenant) {
 		return
 	}
-	res, err := s.cfg.Repo.SetAddons(r.Context(), r.PathValue("t"), r.PathValue("p"), body.Addons, c.meta)
+	var body addonsRequest
+	if err := decode(r, &body); err != nil || body.Addons == nil {
+		s.fail(w, r, http.StatusBadRequest,
+			`body must be {"addons": [...]}, each a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
+		return
+	}
+	names := make([]string, 0, len(body.Addons))
+	seen := map[string]bool{}
+	var pinned []addonEntry
+	var sources []visibleSource
+	var bare []string
+	var pins []gitops.AddonPin
+	for _, entry := range body.Addons {
+		name := entry.Name
+		if entry.Coordinate != "" || entry.Digest != "" {
+			if entry.Digest != "" {
+				digest, err := catalogue.CanonicalDigest(entry.Digest)
+				if err != nil {
+					s.fail(w, r, http.StatusBadRequest, "digest must be sha256:<64 hex characters>")
+					return
+				}
+				entry.Digest = digest
+			}
+			// The rule an app's pin is under: a declared source, and a
+			// digest only beside the coordinate it is the digest of.
+			from, addon, ok := s.pinOrigin(w, r, tenant, entry.Coordinate, entry.Digest)
+			if !ok {
+				return
+			}
+			if from == nil {
+				// An object with neither: not a build, and not a name.
+				s.fail(w, r, http.StatusBadRequest,
+					`an addon is a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
+				return
+			}
+			name = addon
+			entry.Name = addon
+			pinned = append(pinned, entry)
+			sources = append(sources, *from)
+			pins = append(pins, gitops.AddonPin{Name: addon, Digest: entry.Digest, Catalogue: from.Name})
+		} else if name != "" {
+			bare = append(bare, name)
+		}
+		if name == "" {
+			s.fail(w, r, http.StatusBadRequest,
+				`an addon is a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
+			return
+		}
+		if seen[name] {
+			s.fail(w, r, http.StatusBadRequest, "addon "+name+" is listed twice")
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+
+	// An add-on named with no build is one whose profile the cluster must
+	// already hold. Nothing puts profiles on a cluster ahead of an install,
+	// so a name that matches none is refused here: written to the manifest
+	// it would be a selection every screen shows and nothing acts on.
+	//
+	// And an add-on is under the rule an app is under: no entry of its own
+	// on an address name the platform depends on.
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	for _, name := range bare {
+		if !s.onClusterFor(w, r, tenant, name, profile) {
+			return
+		}
+		why, err := s.onClusterTakesReservedAddress(ctx, name, zone)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if why != "" {
+			s.refuseReservedAddress(w, r, tenant, "add-on "+name, why)
+			return
+		}
+	}
+
+	if len(pinned) > 0 {
+		// Nothing is fetched or committed for an app the tenant does not
+		// have: the answer is the one the write itself would give.
+		apps, err := s.cfg.Repo.Apps(ctx, tenant)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		installed, basePinned := false, false
+		for _, a := range apps {
+			if a.Profile == profile {
+				installed, basePinned = true, a.Digest != ""
+			}
+		}
+		if !installed {
+			s.written(w, r, gitops.Result{Status: "not_installed"}, nil)
+			return
+		}
+		// An addon is pinned only inside a pinned app. An addon takes effect
+		// in the release of its base, so a stated build of an addon inside a
+		// base at no stated build pins half of what runs; and the licence
+		// report lists an addon under its app, which it does not list
+		// without a digest. Refused before anything is fetched.
+		if !basePinned {
+			s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+				"an addon is installed at a stated build only inside an app that is: %s is installed "+
+					"with no digest. Install %s at a stated build first -- "+
+					"`kubectl gentian apps install %s --tenant %s` pins it -- and set its addons again. "+
+					"Addons given by name need no pin. Nothing was fetched or written.",
+				profile, profile, profile, tenant))
+			return
+		}
+		bundles := make([]*catalogue.Profile, 0, len(pinned))
+		for i, entry := range pinned {
+			bundle, ok := s.fetchEntry(w, r, sources[i], entry.Name, entry.Digest)
+			if !ok {
+				return
+			}
+			if why := fetchedTakesReservedAddress(bundle.Definition, sources[i].origin(tenant), zone); why != "" {
+				s.refuseReservedAddress(w, r, tenant, "add-on "+entry.Name, why)
+				return
+			}
+			bundles = append(bundles, bundle)
+		}
+		for i, bundle := range bundles {
+			res, ok := s.commitEntry(w, r, c, tenant, sources[i], bundle)
+			if !ok {
+				return
+			}
+			if res.Changed {
+				s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
+					"request_id", reqID(ctx), "coordinate", pinned[i].Coordinate, "commit", res.Commit)
+			}
+		}
+	}
+
+	res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, profile, names, pins, c.meta)
 	s.written(w, r, res, err)
 }
 
@@ -1088,7 +1469,8 @@ func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {
 func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}`)
+		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}`)
 		return
 	}
 	if !gitops.ValidName(body.Name) {
@@ -1096,9 +1478,95 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
 		return
 	}
+	// Whether its administrators approve its public addresses is the
+	// request's to say. Unsaid it is off, except for the user tenant of a
+	// single-tenancy cluster (gitops.AdminsApproveAtCreation). Settled here
+	// and written as settled, so that the answer states what the manifest
+	// holds.
+	adminsApprove, err := s.cfg.Repo.AdminsApproveAtCreation(r.Context(), body)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	body.Perimeter = &gitops.NewTenantPerimeter{AdminsApprove: &adminsApprove}
 	res, err := s.cfg.Repo.CreateTenant(r.Context(), body, c.meta)
 	if errors.Is(err, gitops.ErrTenantExists) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
+		return
+	}
+	if errors.Is(err, gitops.ErrSingleTenancy) {
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	s.json(w, http.StatusAccepted, answer)
+}
+
+// clusterBranding answers the cluster's brand; an empty one when it sets
+// none and the pages show the platform's own.
+func (s *Server) clusterBranding(w http.ResponseWriter, r *http.Request, _ call) {
+	spec, found, err := s.cfg.Repo.ClusterBranding(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if !found {
+		spec = &gentianov1alpha1.BrandingSpec{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"set": found, "branding": spec})
+}
+
+// setClusterBranding commits the cluster's brand, refused when the pages
+// could not show it.
+func (s *Server) setClusterBranding(w http.ResponseWriter, r *http.Request, c call) {
+	var spec gentianov1alpha1.BrandingSpec
+	if err := decode(r, &spec); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a Branding spec: identity, tokens, hideVendorPromotions")
+		return
+	}
+	res, err := s.cfg.Repo.SetClusterBranding(r.Context(), spec, c.meta)
+	if errors.Is(err, gitops.ErrInvalidBranding) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// setTenantDomain binds a tenant to a custom domain: one commit of its
+// TenantDomain, which the operator acts on.
+func (s *Server) setTenantDomain(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Domain string `json:"domain"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Domain) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"domain": "<hostname>"}; DELETE removes one`)
+		return
+	}
+	s.writeTenantDomain(w, r, c, body.Domain)
+}
+
+// clearTenantDomain puts the tenant back on its default address. It is
+// refused to no tenant, under either tenancy mode.
+func (s *Server) clearTenantDomain(w http.ResponseWriter, r *http.Request, c call) {
+	s.writeTenantDomain(w, r, c, "")
+}
+
+func (s *Server) writeTenantDomain(w http.ResponseWriter, r *http.Request, c call, domain string) {
+	res, err := s.cfg.Repo.SetTenantDomain(r.Context(), r.PathValue("t"), domain, c.meta)
+	// The three refusals of a bind, each worded for a person: the domain
+	// itself, the platform tenant, and a single-tenancy cluster.
+	if errors.Is(err, gitops.ErrInvalidDomain) || errors.Is(err, gitops.ErrPlatformTenantDomain) ||
+		errors.Is(err, gitops.ErrSingleTenancy) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	s.written(w, r, res, err)
@@ -1138,6 +1606,10 @@ func (s *Server) setClusterSettings(w http.ResponseWriter, r *http.Request, c ca
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	if errors.Is(err, gitops.ErrSingleTenancy) || errors.Is(err, gitops.ErrSingleRefused) {
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
 	s.written(w, r, res, err)
 }
 
@@ -1170,9 +1642,25 @@ func (s *Server) started(w http.ResponseWriter, r *http.Request, status int, bod
 }
 
 func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
+	var refusal *schemacheck.Refusal
 	switch {
+	case errors.As(err, &refusal):
+		// 503: the request was fine and nothing was written. The cluster's
+		// resource definitions are older than this software and would drop
+		// part of the change when Argo CD applied it -- or that could not be
+		// ruled out. The message names the definition, the fields and what
+		// to do; it holds nothing of git's, so it goes to the caller whole.
+		s.cfg.Log.WarnContext(r.Context(), "write refused: the cluster's definitions would drop part of it",
+			"request_id", reqID(r.Context()), "unconfirmed", refusal.Unconfirmed,
+			"kind", refusal.Kind, "fields", refusal.Fields)
+		if refusal.Unconfirmed {
+			w.Header().Set("Retry-After", "15")
+		}
+		s.fail(w, r, http.StatusServiceUnavailable, refusal.Message)
 	case errors.Is(err, gitops.ErrTenantNotFound):
 		s.fail(w, r, http.StatusNotFound, "tenant not found")
+	case errors.Is(err, gitops.ErrPlatformTenant):
+		s.fail(w, r, http.StatusConflict, gitops.ErrPlatformTenant.Error())
 	case errors.Is(err, gitops.ErrNoClusterClaim):
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):
@@ -1187,6 +1675,14 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 			"this cluster has no credential to write to its deployments repository: "+
 				"the change was prepared and could not be pushed. Supply the token "+
 				"(GENTIAN_DEPLOYMENTS_GIT_TOKEN) and apply the deployments Repository claim.")
+	case errors.Is(err, gitops.ErrNoSigningKey):
+		// 503 for the same reason: the request was fine, and the key is
+		// something the vault and External Secrets owe this process.
+		s.cfg.Log.ErrorContext(r.Context(), "no key to sign with",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this director has no signing key yet, and Argo CD syncs only signed commits: "+
+				"nothing was pushed. Check the ExternalSecret gentian-director-signing.")
 	case errors.Is(err, gitops.ErrPushContended):
 		w.Header().Set("Retry-After", "2")
 		s.fail(w, r, http.StatusConflict, "repository is contended; retry")

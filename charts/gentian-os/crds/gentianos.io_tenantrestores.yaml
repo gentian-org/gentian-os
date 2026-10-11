@@ -63,8 +63,15 @@ spec:
             properties:
               apps:
                 description: |-
-                  Apps limits the restore to these profiles. Empty restores every app the
-                  bundle contains that is also installed.
+                  Apps limits the restore to these profiles.
+
+                  Empty restores every app the bundle's manifest lists that can be
+                  restored here, and names the rest, with the reason, in
+                  status.notRestored. An app the bundle does not list is never touched.
+
+                  An app named here has to be restorable: if the bundle does not hold it,
+                  the tenant does not have it installed, or its build cannot take the
+                  data, the whole restore is refused before anything is changed.
                 items:
                   type: string
                 type: array
@@ -157,14 +164,36 @@ spec:
                   the ordinary path: the export already knows its bucket, prefix and how it
                   was encrypted.
                 type: string
+              intoNewTenant:
+                description: |-
+                  IntoNewTenant says the tenant restored into was made new for this
+                  bundle: an import. It changes two things, and nothing else.
+
+                  The data of an app the bundle holds as uninstalled with its data kept
+                  is brought with stores made for it, as retained. Without this such
+                  data is put back only where the tenant still holds it: an app purged
+                  since the bundle was taken stays purged.
+
+                  And the rights the bundle records as granted beyond the defaults are
+                  not granted: a right somebody granted in one tenant is not carried
+                  into another by a file. The restore names each in its result. What the
+                  bundle records as withdrawn is withdrawn here too.
+
+                  The same holds, whatever this says, when the bundle was taken of a
+                  tenant of another name or on another cluster.
+                type: boolean
               skipVersionCheck:
                 description: |-
-                  SkipVersionCheck permits restoring a bundle produced by newer app
-                  versions than are installed.
+                  SkipVersionCheck permits restoring an app's data into a build of the
+                  app older than the one that wrote it, or one whose version cannot be
+                  compared with it.
 
-                  Off by default because the failure is silent: an older app reading data
-                  written by a newer schema usually starts, serves, and corrupts. Set it
-                  only when you know the specific migration is reversible.
+                  The bundle's manifest records the chart version each app was running.
+                  The same version is restored; a newer installed version is restored
+                  too, because an app upgrades older data when it starts. An older one is
+                  not, unless this is set: the failure is silent -- an older app reading
+                  data written by a newer schema usually starts, serves, and corrupts.
+                  Set it only when you know the specific migration is reversible.
                 type: boolean
             required:
             - confirmTenant
@@ -178,6 +207,81 @@ spec:
                 items:
                   description: AppExportStatus reports the capture of one app.
                   properties:
+                    artefacts:
+                      description: |-
+                        Artefacts lists each artefact captured for this app, or planned to be
+                        restored for it: what the bundle's manifest says the bundle holds. An
+                        export writes them into the manifest; a restore reads them from it.
+                      items:
+                        description: |-
+                          BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+                          archive, a volume's archive.
+                        properties:
+                          claim:
+                            description: |-
+                              Claim is the volume claim a volume was captured from, as far as making
+                              it again takes. Recorded for the volumes of an app that was uninstalled
+                              with its data kept: where such an app's data is brought into a tenant
+                              that never had it, the claim is not there and is made from this.
+                            properties:
+                              accessModes:
+                                description: AccessModes are the claim's.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  Labels and Annotations are the ones that say whose the claim is: the
+                                  release it records is how the next install and a purge find it.
+                                type: object
+                              size:
+                                description: Size is the storage the claim asked for.
+                                type: string
+                              storageClass:
+                                description: StorageClass is the class the claim named,
+                                  empty for the default.
+                                type: string
+                            required:
+                            - size
+                            type: object
+                          kind:
+                            description: |-
+                              Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
+                              secrets; for what is the tenant's own also identity, mailboxes or
+                              rights.
+                            type: string
+                          name:
+                            description: |-
+                              Name is what the artefact was captured from: the database, bucket or
+                              volume claim, by its name in the tenant the bundle was taken of; for
+                              secrets, the app.
+                            type: string
+                          path:
+                            description: Path is the artefact's place in the bundle.
+                            type: string
+                          release:
+                            description: Release is the Helm release a captured volume
+                              claim recorded.
+                            type: string
+                          target:
+                            description: |-
+                              Target is where a restore puts the artefact: the database, bucket or
+                              claim of that kind in the tenant being restored into, which is named
+                              differently when the tenant is. Set by a restore only.
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
                     attempts:
                       description: |-
                         Attempts counts capture Jobs run for this app. Bounded, because the
@@ -196,13 +300,17 @@ spec:
                         CompletedUnits records each capture Job that finished, by Job name.
 
                         This is the durable completion record; the Job object is not one. A
-                        finished Job can be TTL-collected or swept by the kernel Job GC while a
+                        finished Job can be TTL-collected while a
                         sibling unit is still running, and inferring completion from the Job's
                         existence made the controller re-run a dump it had already uploaded.
                       items:
                         type: string
                       type: array
                       x-kubernetes-list-type: atomic
+                    digest:
+                      description: Digest is the pinned digest of the app's build,
+                        when the tenant pins one.
+                      type: string
                     lastFailure:
                       description: |-
                         LastFailure is what the capture container actually said, from the last
@@ -253,15 +361,148 @@ spec:
                         export costs a tenant, and the evidence that the pause is per app.
                       format: date-time
                       type: string
+                    retained:
+                      description: |-
+                        Retained says the app is not installed: it was uninstalled and its
+                        data kept. An export captures that data as it captures an installed
+                        app's, without pausing anything; a restore puts it back as retained and
+                        installs nothing.
+                      type: boolean
+                    secrets:
+                      description: |-
+                        Secrets says what was done with the app's own secrets: which an
+                        export put into the bundle, and which a restore set from it. Names
+                        only; no value is ever in a status.
+                      properties:
+                        appliedAt:
+                          description: AppliedAt is when the vault held the bundle's
+                            values.
+                          format: date-time
+                          type: string
+                        deliveredAt:
+                          description: |-
+                            DeliveredAt is when the app's Secrets held them too and its releases
+                            had been upgraded with them.
+                          format: date-time
+                          type: string
+                        names:
+                          description: |-
+                            Names are the secrets an export captured, or the ones a restore sets:
+                            those the bundle holds and the app's profile here declares.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        notDeclared:
+                          description: |-
+                            NotDeclared are the secrets the bundle holds that the app's profile
+                            here does not declare. A restore writes none of them.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        notHeld:
+                          description: |-
+                            NotHeld are the secrets the app's profile here declares that the
+                            bundle holds no value for. A restore leaves them as they are.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        planned:
+                          description: |-
+                            Planned says Replaced and Releases are final: the stored values were
+                            compared with the bundle's.
+                          type: boolean
+                        releases:
+                          description: |-
+                            Releases are the Helm releases that are handed a replaced secret as a
+                            value, each with the revision it was at before the secret was
+                            replaced. The restore waits for each to have been upgraded.
+                          items:
+                            description: |-
+                              SecretsRelease is one Helm release a restore waits for after replacing a
+                              secret the release is handed as a value.
+                            properties:
+                              name:
+                                description: Name is the Release object's.
+                                type: string
+                              revision:
+                                description: Revision is the revision the release
+                                  was at before.
+                                format: int64
+                                type: integer
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        replaced:
+                          description: |-
+                            Replaced are the secrets the app was handed anew: those whose stored
+                            value was another than the bundle's and was replaced by it, and those
+                            the vault held already while a Secret of the app did not. Restore
+                            only.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
                     stores:
                       description: |-
                         Stores lists the kinds captured for this app (postgres, mariadb, s3,
-                        volumes), derived from the profile's kernelRequirements.
+                        volumes), derived from the profile's requires.services.
                       items:
                         type: string
                       type: array
                   type: object
                 type: array
+              archivedMailboxes:
+                description: |-
+                  ArchivedMailboxes are the archived mailboxes the bundle holds: the
+                  mailboxes of people who had been removed from the bundle's tenant with
+                  their mail kept. They are put back as archived ones, and each is put
+                  on record (MailboxRemoval) so that it is listed and can be deleted.
+                items:
+                  description: |-
+                    RestoredArchive is one archived mailbox a restore puts back, or a record
+                    states was put back.
+                  properties:
+                    address:
+                      description: |-
+                        Address is the address the removed person received at, in the domain
+                        of the tenant restored into.
+                      maxLength: 320
+                      type: string
+                    archive:
+                      description: Archive is the archived mailbox's name in the domain's
+                        archive.
+                      maxLength: 128
+                      type: string
+                    archivedAt:
+                      description: |-
+                        ArchivedAt is when it was archived, where the bundle was taken; By who
+                        chose that, as they were shown there.
+                      format: date-time
+                      type: string
+                    by:
+                      maxLength: 256
+                      type: string
+                    domain:
+                      description: Domain is the mail domain whose archive it is in.
+                      maxLength: 253
+                      type: string
+                    messages:
+                      format: int64
+                      type: integer
+                    sizeBytes:
+                      format: int64
+                      type: integer
+                  required:
+                  - archive
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               bundle:
                 description: Bundle is the bundle actually used, resolved from exportRef
                   or spec.
@@ -297,6 +538,17 @@ spec:
                       it.
                     type: string
                 type: object
+              bundleSchemaVersion:
+                description: |-
+                  BundleSchemaVersion is the format version of the manifest this restore
+                  read.
+                type: integer
+              complete:
+                description: |-
+                  Complete says whether everything the bundle holds -- or, with
+                  spec.apps, everything asked for -- was put back. It is set when the
+                  restore ends. False is always explained by notRestored.
+                type: boolean
               completedAt:
                 format: date-time
                 type: string
@@ -361,6 +613,50 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              importRemoved:
+                description: |-
+                  ImportRemoved records that the uploaded bundle this restore read was
+                  removed from the import bucket, which happens once the restore has run
+                  to its end. Never set for a restore of a tenant's own backup.
+                type: boolean
+              nameDerivation:
+                description: |-
+                  NameDerivation says where the restore took the names of what it
+                  restores from. "manifest": the bundle's manifest names each artefact
+                  and what it was captured from (format 2 and later). "derived": the
+                  manifest is of format 1, which names apps and kinds only, so the
+                  database, bucket and claim names were derived from the tenant the
+                  manifest records and from the claims the tenant has now.
+                type: string
+              notRestored:
+                description: |-
+                  NotRestored names every app the bundle holds that this restore did not
+                  put back, and why. Decided before anything is changed.
+                items:
+                  description: RestoreOmission is one app a bundle holds that a restore
+                    did not put back.
+                  properties:
+                    app:
+                      description: App is the app's name in the bundle's manifest.
+                      type: string
+                    reason:
+                      description: Reason says why, in a sentence a person can act
+                        on.
+                      type: string
+                  required:
+                  - app
+                  - reason
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              notes:
+                description: |-
+                  Notes are what a restore does not bring back by design, which whoever
+                  ran it has to act on.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               observedGeneration:
                 format: int64
                 type: integer
@@ -390,6 +686,55 @@ spec:
                 items:
                   type: string
                 type: array
+              rights:
+                description: |-
+                  Rights is what this restore does with the entries of the rights store
+                  the bundle holds: the ones it grants, the ones it withdraws, and the
+                  ones it does not bring. Decided before anything is changed.
+                properties:
+                  applied:
+                    description: Applied says the store holds what Grant and Withdraw
+                      say.
+                    type: boolean
+                  grant:
+                    description: |-
+                      Grant are written to the store: rights the bundle's tenant had been
+                      granted beyond what follows from its entry in git.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  notBrought:
+                    description: |-
+                      NotBrought are entries the bundle holds that this restore does not
+                      write, each with the reason.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  waitingSince:
+                    description: |-
+                      WaitingSince is when the restore began to wait for the operator to
+                      attach the tenant in the rights store, which has to come first.
+                    format: date-time
+                    type: string
+                  withdraw:
+                    description: |-
+                      Withdraw are removed from the store: defaults the bundle's tenant no
+                      longer held.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                type: object
+              sourceTenant:
+                description: |-
+                  SourceTenant is the tenant the bundle was taken of, as its manifest
+                  records it. When it is not the tenant restored into, the bundle's names
+                  are another tenant's: databases an app made for itself and the
+                  platform's groups are put back under this tenant's names, and the
+                  bundle's sign-in clients are not imported.
+                type: string
               startedAt:
                 format: date-time
                 type: string

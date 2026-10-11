@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package gitops is the director's git backend: the only code in the platform
@@ -61,6 +55,12 @@ type GitOps struct {
 	signArgs []string
 	// signingKey is the fingerprint those flags name, for reporting.
 	signingKey string
+	// keyFile and keyHome are where the key is read from and imported to,
+	// set by SignFrom. A named keyFile means every commit is signed.
+	keyFile, keyHome string
+	// definitions refuses a commit the cluster would drop part of, set by
+	// GuardDefinitions. Nil checks nothing.
+	definitions *definitionsGuard
 }
 
 // Result is the outcome of a write.
@@ -145,7 +145,8 @@ func (m Meta) trailers() []string {
 	return []string{"Gentian-Authz: " + strings.Join(parts, " ")}
 }
 
-// ErrPushContended is returned when every retry lost the race to another writer.
+// ErrPushContended is returned when a write lost the race to other writers
+// for as long as it was prepared to keep trying.
 var ErrPushContended = errors.New("push rejected after retries: another writer keeps winning")
 
 // ErrNoPushCredential is a push refused because this process has nothing to
@@ -159,8 +160,37 @@ var ErrPushContended = errors.New("push rejected after retries: another writer k
 // somebody looking for a broken repository instead of a missing Secret.
 var ErrNoPushCredential = errors.New("no credential to push to the deployments repository")
 
-// maxPushAttempts bounds the sync-edit-push loop.
-const maxPushAttempts = 8
+// pushContentionBudget is for how long a write keeps starting over while other
+// writers keep landing first.
+//
+// It is a length of time and not a number of attempts because losing is not
+// independent from one attempt to the next. A writer that has just landed
+// starts its next change at once; the one it beat has first to learn that it
+// lost and put its checkout back, so it starts later, takes as long, and loses
+// again -- every time, for as long as the other has something to write. A
+// count is used up by one such run: two writers with four changes each were
+// enough to refuse a third after eight attempts. What a loser needs is to
+// still be trying when the run ends.
+//
+// Shorter than the server's write timeout, so a caller who waited this long
+// is still told why.
+const pushContentionBudget = time.Minute
+
+// retryPush is what a write does between a rejected push and starting over:
+// it answers ErrPushContended once the budget that began at started is spent,
+// and otherwise waits a random moment, so that several losers do not all
+// start over in step.
+func retryPush(ctx context.Context, started time.Time, attempt int) error {
+	if time.Since(started) >= pushContentionBudget {
+		return ErrPushContended
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(rand.Int63n(int64(min(attempt, 8)) * int64(40*time.Millisecond)))):
+		return nil
+	}
+}
 
 // NewGitOps returns a GitOps helper. Path must be a local git checkout.
 func NewGitOps(path, repo, cluster string, committer Person) *GitOps {
@@ -189,11 +219,28 @@ func (g *GitOps) requirePath() error {
 // not release either.
 const gitTimeout = 5 * time.Minute
 
+// inForeground keeps git's housekeeping inside the command that set it off.
+//
+// A fetch, a commit and a merge each end by asking whether the repository
+// wants repacking, and when it does git does the work in a process it
+// detaches and does not wait for. The command has returned and something is
+// still writing under .git: the next reset or clean runs beside it, nothing
+// that waits for the director's git waits for that, and the process is an
+// orphan of a director that reaps nobody. How often is up to git -- 2.55
+// repacks from a hundred loose objects where earlier versions wanted
+// thousands, so there it happens within a few writes.
+//
+// The checkout still gets its housekeeping, which a clone that lives as long
+// as the director needs. It is done before the command returns, under the
+// lock and the timeout the command already has. maintenance.autoDetach is
+// the setting since git 2.47 and gc.autoDetach the one before it.
+var inForeground = []string{"-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"}
+
 // gitCmd builds a git invocation bounded by both the caller's context and
 // gitTimeout, whichever ends first.
 func (g *GitOps) gitCmd(ctx context.Context, args ...string) (*exec.Cmd, context.CancelFunc) {
 	cctx, cancel := context.WithTimeout(ctx, gitTimeout)
-	return exec.CommandContext(cctx, "git", args...), cancel
+	return exec.CommandContext(cctx, "git", append(append([]string{}, inForeground...), args...)...), cancel
 }
 
 // readFreshness is how stale the checkout may be when answering a read.
@@ -354,7 +401,7 @@ func (g *GitOps) apply(ctx context.Context, tenant, message string, meta Meta, f
 func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, meta Meta, fn edit) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
+	for started, attempt := time.Now(), 1; ; attempt++ {
 		file, err := g.tenantFile(ctx, tenant)
 		if err != nil {
 			return Result{}, err
@@ -383,34 +430,170 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 		if !errors.Is(err, errPushRejected) {
 			return Result{}, err
 		}
-		// Back off by a random amount so writers that collided once do not
-		// collide again in step.
-		select {
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
-		case <-time.After(time.Duration(rand.Int63n(int64(attempt) * int64(40*time.Millisecond)))):
+		if err := retryPush(ctx, started, attempt); err != nil {
+			return Result{}, err
 		}
 	}
-	return Result{}, ErrPushContended
 }
 
-// Install adds profile to the tenant's manifest.
-func (g *GitOps) Install(ctx context.Context, tenant, profile string, meta Meta) (Result, error) {
+// digestPattern is the one spelling of a content digest a manifest carries.
+var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// Install adds profile to the tenant's manifest, pinned to digest when one is
+// given. It is InstallFrom with no catalogue to record.
+func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
+	return g.InstallFrom(ctx, tenant, profile, digest, "", nil, meta)
+}
+
+// InstallFrom adds profile to the tenant's manifest, pinned to digest when one
+// is given, and records the catalogue the build was fetched from when the
+// caller vouches for one.
+//
+// The digest is the build the install was asked for, and it is recorded as a
+// field of the entry rather than in the profile's name: the name is what the
+// app is, across every build of it, and everything that addresses the app --
+// its group, its object in the authorization store, its route -- is spelled
+// from the name.
+//
+// The catalogue is the first half of the coordinate the build was fetched
+// under, and with the name it is the coordinate. It is recorded only beside a
+// digest, and only by a caller that fetched the bundle from that catalogue's
+// source and saw it hash to the digest: the entry then says where the pinned
+// build came from, which nothing else in the cluster does.
+//
+// defaultGrant is whether every member of the tenant has access to the app
+// by default (Tenant.spec.apps[].defaultGrant). It is part of the install, so
+// it is written in the same commit: the operator grants the app once its
+// group exists, and no caller has to wait for the app and ask again. nil
+// leaves an entry as it is, so that moving a pin does not also change who
+// may open the app; true writes the key, false removes it.
+//
+// Installing an app that is already there at another digest moves the pin and
+// reports "updated", and so does stating a default grant the entry does not
+// already have; with neither, nothing changes. A pin moved with no catalogue
+// named loses the one it had, because that one described the build it no
+// longer points at.
+func (g *GitOps) InstallFrom(
+	ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta Meta,
+) (Result, error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
-	profileLine := regexp.MustCompile(`(?m)^\s*-\s*profile:\s*` + regexp.QuoteMeta(profile) + `\s*$`)
+	if digest != "" && !digestPattern.MatchString(digest) {
+		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
+	}
+	if catalogue != "" && (digest == "" || !ValidName(catalogue)) {
+		return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, catalogue)
+	}
 	msg := fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, meta.actor())
+	if digest != "" {
+		msg = fmt.Sprintf("feat(%s): install %s at %s (via %s)", tenant, profile, shortDigest(digest), meta.actor())
+	}
+	forEveryone := defaultGrant != nil && *defaultGrant
+	if forEveryone {
+		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
+	}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
-		if profileLine.MatchString(text) {
+		// The platform tenant takes no apps, whoever asks and by whichever
+		// route: refused on the manifest about to be edited, so no caller
+		// can forget to ask first.
+		if adoptsAnotherRealm(text, tenant) {
+			return "", "", false, ErrPlatformTenant
+		}
+		lines := strings.Split(text, "\n")
+		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
+			out, ok := insertComponentProfile(text, profile, digest, catalogue, forEveryone)
+			if !ok {
+				return "", "", false, errors.New("failed to update apps list")
+			}
+			return out, "installed", true, nil
+		}
+		changed := false
+		if digest != "" {
+			var moved bool
+			lines, moved = setAppEntryKey(lines, profile, "digest", digest, "")
+			if catalogue != "" || moved {
+				var recorded bool
+				lines, recorded = setAppEntryKey(lines, profile, "catalogue", catalogue, "digest")
+				moved = moved || recorded
+			}
+			changed = moved
+		}
+		if defaultGrant != nil {
+			value := ""
+			if forEveryone {
+				value = "true"
+			}
+			// Below what says which build this is, wherever that ends.
+			after := "digest"
+			if appEntryHasKey(lines, profile, "catalogue") {
+				after = "catalogue"
+			}
+			var stated bool
+			lines, stated = setAppEntryKey(lines, profile, appDefaultGrantKey, value, after)
+			changed = changed || stated
+		}
+		if !changed {
 			return text, "already_installed", false, nil
 		}
-		out, ok := insertAppProfile(text, profile)
-		if !ok {
-			return "", "", false, errors.New("failed to update apps list")
-		}
-		return out, "installed", true, nil
+		return strings.Join(lines, "\n"), "updated", true, nil
 	})
+}
+
+// appDefaultGrantKey is the key of an app's entry that says every member of
+// the tenant has access to it by default.
+const appDefaultGrantKey = "defaultGrant"
+
+// appEntryHasKey reports whether an app's entry carries a scalar key.
+func appEntryHasKey(lines []string, profile, key string) bool {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return false
+	}
+	for i := start + 1; i < end; i++ {
+		if indentOf(lines[i]) == keyIndent && strings.HasPrefix(strings.TrimSpace(lines[i]), key+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// setAppEntryKey makes one scalar key of an app's entry equal to value, and
+// reports whether that changed anything. An empty value removes the key. A
+// key the entry does not have yet is written under the key named after, or
+// directly under the entry's name when after is empty or absent.
+func setAppEntryKey(lines []string, profile, key, value, after string) ([]string, bool) {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return lines, false
+	}
+	has := func(i int, k string) bool {
+		return indentOf(lines[i]) == keyIndent && strings.HasPrefix(strings.TrimSpace(lines[i]), k+":")
+	}
+	want := strings.Repeat(" ", keyIndent) + key + ": " + value
+	at := start
+	for i := start + 1; i < end; i++ {
+		if after != "" && has(i, after) {
+			at = i
+		}
+		if !has(i, key) {
+			continue
+		}
+		switch {
+		case value == "":
+			return append(append([]string{}, lines[:i]...), lines[i+1:]...), true
+		case lines[i] == want:
+			return lines, false
+		}
+		out := append([]string{}, lines...)
+		out[i] = want
+		return out, true
+	}
+	if value == "" {
+		return lines, false
+	}
+	out := append(append(append([]string{}, lines[:at+1]...), want), lines[at+1:]...)
+	return out, true
 }
 
 // Uninstall removes profile from the tenant's manifest.
@@ -431,17 +614,39 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 	})
 }
 
-func insertAppProfile(text, profile string) (string, bool) {
+// emptyAppsList is the tenant's app list written in flow form with nothing in
+// it, as a new tenant's manifest has it.
+var emptyAppsList = regexp.MustCompile(`^  apps:\s*\[\s*\]\s*$`)
+
+func insertComponentProfile(text, profile, digest, catalogue string, defaultGrant bool) (string, bool) {
+	entry := []string{"  - profile: " + profile}
+	if digest != "" {
+		entry = append(entry, "    digest: "+digest)
+	}
+	if catalogue != "" {
+		entry = append(entry, "    catalogue: "+catalogue)
+	}
+	if defaultGrant {
+		entry = append(entry, "    "+appDefaultGrantKey+": true")
+	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
+		// A tenant is written with an empty list, `apps: []`, and that line
+		// is the head of the list as much as the block form is. Appending a
+		// second `apps:` beside it is a duplicate key, which no tool that
+		// builds the tenant will read.
+		if emptyAppsList.MatchString(line) {
+			lines[i] = "  apps:"
+			line = lines[i]
+		}
 		if line == "  apps:" {
 			out := append([]string{}, lines[:i+1]...)
-			out = append(out, "  - profile: "+profile)
+			out = append(out, entry...)
 			out = append(out, lines[i+1:]...)
 			return strings.Join(out, "\n"), true
 		}
 	}
-	return strings.TrimRight(text, "\n") + "\n  apps:\n  - profile: " + profile + "\n", true
+	return strings.TrimRight(text, "\n") + "\n  apps:\n" + strings.Join(entry, "\n") + "\n", true
 }
 
 func (g *GitOps) commit(ctx context.Context, file, message string, meta Meta) error {
@@ -473,6 +678,15 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 	defer diffCancel()
 	if err := diff.Run(); err == nil {
 		return nil
+	}
+
+	// Before anything is committed: what is staged is what would be pruned.
+	if err := g.checkDefinitions(ctx); err != nil {
+		return err
+	}
+
+	if err := g.loadSigningKey(ctx); err != nil {
+		return err
 	}
 
 	full := message

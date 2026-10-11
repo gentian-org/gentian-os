@@ -11,9 +11,9 @@
 # installer's disk.
 #
 # It was also unsatisfiable until now. Its guard requires a proven OIDC login,
-# and with no D-03 there was no auth/oidc/config for anybody to log in
+# and with no D-04 there was no auth/oidc/config for anybody to log in
 # through — so even a migrated version of this step would have correctly
-# refused on every run. D-03 is what makes it reachable.
+# refused on every run. D-04 is what makes it reachable.
 
 # Every read below names a namespace only through GENTIAN_SYSTEM_NAMESPACE or
 # OPENBAO_NAMESPACE, both defaulting to v4's names, so exporting them is most
@@ -59,7 +59,7 @@ _revoke_export_layout() {
 # one; the recovery is re-initialising OpenBao.
 #
 # A shell script cannot perform an interactive login, so it cannot produce the
-# proof. But it does not have to: the credential manager performs exactly this
+# proof. But it does not have to: the custodian performs exactly this
 # exchange on every request it serves, and records the first cluster-admin
 # success in the gentian-handover ConfigMap. That record IS the proof, made by
 # the component that was going to do it anyway, and this step reads it.
@@ -71,17 +71,18 @@ _revoke_export_layout() {
 # _handover_proven — has anyone actually authenticated and been given the
 # cluster-admin policy?
 #
-# Written by the credential manager on the first successful exchange. Read from
+# Written by the custodian the first time a cluster administrator reaches it
+# and it can log in to the vault. Read from
 # Kubernetes, not from OpenBao, so --status can answer it with no token — which
 # is the whole reason it is a ConfigMap and not a fact only OpenBao knows.
 _handover_proven() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)" == "true" ]]
 }
 
 _handover_proof_detail() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.provenBy} at {.data.provenAt}' 2>/dev/null || true
 }
@@ -96,13 +97,13 @@ _handover_proof_detail() {
 # reads its own fact, from Kubernetes rather than from OpenBao, so --status
 # can answer it with no token.
 _kit_exported() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null || true)" == "true" ]]
 }
 
 _kit_exported_detail() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.recoveryKitExportedAt}' 2>/dev/null || true
 }
@@ -110,7 +111,7 @@ _kit_exported_detail() {
 # _revoked_at_detail — when, if the record says so. Formatted for the middle of
 # a sentence, and empty rather than "unknown" when the record is not there.
 _revoked_at_detail() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" at
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" at
     at="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.revokedAt}' 2>/dev/null || true)"
     [[ -n "${at}" ]] && printf ' at %s' "${at}"
@@ -188,15 +189,14 @@ _token_is_root() {
     grep -qx "root" <<<"${policies}"
 }
 
-# _credential_manager_ready — is the thing that records the proof actually there?
+# _custodian_ready — is the thing that records the proof actually there?
 #
-# The proof this step waits for is written by the credential manager, on the
-# first cluster-admin exchange it performs (e80a2193). It holds no token of its
-# own: it takes the caller's Keycloak token and exchanges it for a short-lived
-# OpenBao one. So if it is not deployed, no sign-in can be recorded, and no
-# amount of waiting will produce the record.
+# The proof this step waits for is written by the custodian, the first time a
+# cluster administrator the authorization store allows reaches it and it logs
+# in to OpenBao as itself. So if it is not deployed, no sign-in can be
+# recorded, and no amount of waiting will produce the record.
 #
-# That is not hypothetical. credentialManager.enabled defaults to false, and a
+# That is not hypothetical. custodian.enabled defaults to false, and a
 # cluster installed without overriding it reaches this step with the whole write
 # path absent — no Service on the credential port, no OIDC discovery URL, no
 # Keycloak client. The operator was asked to sign in, did, and watched a silent
@@ -207,13 +207,13 @@ _token_is_root() {
 # endpoint behind it, and /healthz answers through the API server's proxy. The
 # last one is what distinguishes "deployed" from "working", and it needs no
 # in-cluster pod and no credential.
-_credential_manager_ready() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+_custodian_ready() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local svc port
 
     svc="$(kubectl get svc -n "${ns}" \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-        | grep -E -- '-credentials$' | head -1 || true)"
+        | grep -E -- '-custodian$' | head -1 || true)"
     [[ -n "${svc}" ]] || return 1
 
     kubectl get endpoints "${svc}" -n "${ns}" \
@@ -225,7 +225,17 @@ _credential_manager_ready() {
 
     kubectl get --raw \
         "/api/v1/namespaces/${ns}/services/${svc}:${port}/proxy/healthz" \
-        >/dev/null 2>&1
+        >/dev/null 2>&1 && return 0
+
+    # The API server's proxy opens that connection from the API server, which
+    # is no pod. The control namespace admits the custodian's callers by name
+    # (kernel/security/network-policies), so on a cluster whose API server is
+    # not on the custodian's node the proxy is refused while the custodian is
+    # perfectly well. A port-forward enters the pod itself and is refused by
+    # no policy; it asks the same question.
+    local addr
+    addr="$(gentian_service_addr "${svc}" "${ns}" "${port}" http 2>/dev/null)" || return 1
+    curl -sf -o /dev/null --max-time 5 "${addr}/healthz" 2>/dev/null
 }
 
 # _oidc_write_path_ready — every link between a human and an OpenBao token.
@@ -237,8 +247,8 @@ _oidc_write_path_ready() {
 
     # First, because every other link is pointless without it: the component
     # that performs the exchange and records it.
-    _credential_manager_ready ||
-        missing+=("the credential manager is not running (credentialManager.enabled)")
+    _custodian_ready ||
+        missing+=("the custodian is not running (custodian.enabled)")
 
     local discovery
     discovery="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
@@ -260,7 +270,7 @@ _oidc_write_path_ready() {
     local ns
     ns="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
         -o jsonpath='{.items[0].spec.openbao.namespace}' 2>/dev/null || true)"
-    # v4's namespace, and wrong here for the reason D-03 documents: the claim
+    # v4's namespace, and wrong here for the reason D-04 documents: the claim
     # rarely carries the field, and on v5 the secret is in the secrets
     # namespace.
     ns="${ns:-$(ns_kernel secrets)}"
@@ -357,7 +367,7 @@ check() {
 # `./install.sh --only E-03` finishes from. A timeout is the same state.
 _wait_for_sign_in() {
     local timeout="${GENTIAN_HANDOVER_WAIT_SECS:-1800}"
-    local url="https://console.${KERNEL_DOMAIN:-<kernel-domain>}/"
+    local url="https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/"
     local waited=0 interval=10
 
     echo ""
@@ -377,7 +387,7 @@ _wait_for_sign_in() {
     # so this names the file E-02 actually wrote.
     local kit_path
     kit_path="$(kubectl get configmap gentian-handover \
-        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+        -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
         -o jsonpath='{.data.recoveryKitPath}' 2>/dev/null || true)"
 
     warn "  1. MOVE THE RECOVERY KIT SOMEWHERE SAFE"
@@ -390,39 +400,46 @@ _wait_for_sign_in() {
     warn "     this cluster cannot be rebuilt as itself, and there is no way"
     warn "     back into OpenBao if its login path ever breaks."
     echo ""
-    warn "  2. SIGN IN as the cluster administrator"
+    # The platform desktop's own name has to be PUBLISHED before anyone is
+    # sent to it.
+    # Its record appears only once the platform desktop's routes exist and
+    # external-dns has run its next cycle, which can be after the activation
+    # link is ready -- and a browser that looks the name up in between gets a
+    # "does not exist" its resolver (and the router behind it) keeps for the
+    # zone's negative TTL, half an hour on Cloudflare. The link worked, the
+    # password was set, and the console said "Server Not Found" for 30 minutes.
+    local console_host="platform.${KERNEL_DOMAIN:-}" waited=0
+    if [[ -n "${KERNEL_DOMAIN:-}" ]] && ! gentian_dns_resolves "${console_host}" "${KERNEL_DOMAIN}"; then
+        info "  Waiting for ${console_host} to be published in DNS before handing over (up to 10 min)..."
+        until gentian_dns_resolves "${console_host}" "${KERNEL_DOMAIN}"; do
+            if (( waited >= 600 )); then
+                warn "  ${console_host} is still not published; external-dns may not have run yet."
+                warn "    Look it up only once it is, or your resolver remembers that it is"
+                warn "    missing for up to 30 minutes:  dig +short ${console_host} @1.1.1.1"
+                break
+            fi
+            sleep 10; waited=$(( waited + 10 ))
+        done
+    fi
+
+    warn "  2. SIGN IN as the platform admin"
     echo ""
 
-    # The credentials, here, rather than a pointer to them.
+    # What to sign in with, here, rather than a pointer to it -- and not a
+    # password. The account has none until its holder sets one through a
+    # single-use, expiring link, the same practice as every member and tenant
+    # administrator: mailed to a recovery address when there is one, shown
+    # here once when there is not. An account already activated is left alone.
     #
-    # This said "credentials are in the summary above" — and the summary is
-    # printed AFTER the steps, so at this moment there is no summary above.
-    # D-02 printed them, several hundred lines and many minutes earlier. An
-    # instruction to sign in that does not say what to sign in with sends the
-    # operator scrolling, which is the opposite of what a step that has stopped
-    # to wait for them should do.
-    #
-    # print_portal_login_summary is where this already lives and derives the
-    # password the same way the account was created with. Its library is not in
-    # load.sh's set, so source it the way print_summary_cp does.
-    #
-    # Its output is captured rather than printed directly, because it returns
-    # silently when KERNEL_DOMAIN is unset or the password cannot be derived —
-    # reasonable for a summary that has other things to say, useless for a
-    # prompt whose entire purpose is to tell the operator what to sign in with.
-    # A step that has stopped to wait must never go quiet.
-    local creds=""
+    # Its library is not in load.sh's set, so source it the way
+    # print_summary_cp does.
+    warn "  ${url}"
+    warn "  User: admin@${KERNEL_DOMAIN:-<kernel-domain>}"
     if [[ -f "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh" ]]; then
         # shellcheck source=scripts/lib/portal-login-bootstrap.sh
         source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
-        creds="$(print_portal_login_summary 2>/dev/null || true)"
-    fi
-    if [[ -n "${creds}" ]]; then
-        printf '%s\n' "${creds}"
-    else
-        warn "  ${url}"
-        warn "  User: admin@${KERNEL_DOMAIN:-<kernel-domain>}"
-        warn "  Password: derived — print it with ./install.sh --verify-only"
+        issue_platform_admin_activation ||
+            warn "  No activation link could be issued; re-run ./install.sh to try again."
     fi
     echo ""
 
@@ -443,19 +460,31 @@ _wait_for_sign_in() {
     # naming them here, on the screen that has stopped, is the most it can do.
     warn "  3. SUPPLY THE RUNTIME CREDENTIALS"
     warn "     Once signed in, open the Credentials tab and fill in what the"
-    warn "     cluster is still missing. Do the SMTP relay FIRST."
+    warn "     cluster is still missing."
+    # The relay only where there is one. Under system mail the cluster runs
+    # its own and derives that password itself, so there is nothing to supply
+    # -- and "do the relay first" there sent people looking for a credential
+    # that does not apply.
     local mail_mode
     mail_mode="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
         -o jsonpath='{.items[0].spec.mail.serviceMode}' 2>/dev/null || true)"
-    if [[ "${mail_mode}" == "external" ]]; then
-        warn "     This cluster's mail.serviceMode is 'external', so nothing"
-        warn "     sends until the relay is set — and any tenant app that asks"
-        warn "     for SMTP will not install at all: its credentials never"
-        warn "     reach OpenBao, so its secret never syncs."
-    else
-        warn "     Without it no realm can send, so you cannot invite anyone,"
-        warn "     and tenant apps that ask for SMTP will not install."
-    fi
+    case "${mail_mode}" in
+        external)
+            warn "     Do the SMTP relay FIRST. This cluster's mail.serviceMode is"
+            warn "     'external', so nothing sends until the relay is set — and any"
+            warn "     tenant app that asks for SMTP will not install at all: its"
+            warn "     credentials never reach OpenBao, so its secret never syncs."
+            ;;
+        system)
+            info "     Mail is the cluster's own (mail.serviceMode system): there is"
+            info "     no relay to supply."
+            ;;
+        *)
+            warn "     The claim's mail.serviceMode could not be read. If this cluster"
+            warn "     relays mail externally, do the SMTP relay first: until it is set"
+            warn "     no realm can send and tenant apps that ask for SMTP will not install."
+            ;;
+    esac
     echo ""
     info "  Signing in proves someone other than the installer can write"
     info "  credentials. Until it happens the installer's own credential has to"
@@ -469,19 +498,19 @@ _wait_for_sign_in() {
     # The loop checks two different things, and the difference matters.
     #
     # _handover_proven is the proof, and the only thing that unlocks the revoke:
-    # the credential manager recorded a cluster-admin exchange, which means a
+    # the custodian recorded a cluster-admin exchange, which means a
     # human signed in AND the write path carried them. Nothing weaker is
     # accepted, because revoking on weaker evidence is changing the locks and
     # posting the old key through the letterbox without trying the new one.
     #
-    # _credential_manager_ready asks whether that proof can arrive at all. It
+    # _custodian_ready asks whether that proof can arrive at all. It
     # never unlocks anything; it decides what this screen says while it waits.
     # Waiting for a human who has not got to it yet is the normal case, and the
     # loop keeps going. Waiting for a recorder that does not exist is not
     # waiting, it is hanging, and an operator deserves to be told which of the
     # two they are in rather than watching a silent counter.
     #
-    # Re-checked every minute rather than once up front, so a credential manager
+    # Re-checked every minute rather than once up front, so a custodian
     # enabled part-way through the wait is picked up without restarting the step.
     local announced=0
     while (( waited < timeout )); do
@@ -492,9 +521,9 @@ _wait_for_sign_in() {
         fi
 
         if (( waited % 60 == 0 )); then
-            if _credential_manager_ready; then
+            if _custodian_ready; then
                 if (( announced == 1 )); then
-                    success "  The credential manager is answering again — a sign-in will record now."
+                    success "  The custodian is answering again — a sign-in will record now."
                     announced=0
                 fi
                 (( waited > 0 )) && info "  still waiting for the sign-in ($(( waited / 60 ))m of $(( timeout / 60 ))m)..."
@@ -515,7 +544,7 @@ _wait_for_sign_in() {
                     warn ""
                     warn "  Ctrl-C is safe. The cluster is installed and stays as it"
                     warn "  is; only the installer's own credential is left live."
-                    warn "  To finish, enable the credential manager and re-run:"
+                    warn "  To finish, enable the custodian and re-run:"
                     warn "    ./install.sh --only E-03"
                     echo ""
                     announced=1
@@ -571,7 +600,7 @@ apply() {
         warn ""
 
         if (( proven != 0 )); then
-            warn "  Sign in to the portal as the cluster administrator; the sign-in"
+            warn "  Sign in at https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/ as the platform admin; the sign-in"
             warn "  performs the exchange and records it. Then:"
             warn "    ./install.sh --only E-03"
             warn ""
@@ -682,7 +711,7 @@ apply() {
     # an operator asks about a cluster are "can my admin write" and "is the
     # installer's key gone" — and a cluster that answers yes to the first and no
     # to the second is unfinished rather than broken.
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     gentian_run kubectl patch configmap gentian-handover -n "${ns}" --type=merge \
         -p "{\"data\":{\"bootstrapCredentialRevoked\":\"true\",\"revokedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}" \
         2>/dev/null || warn "Could not record the revocation in ${ns}/gentian-handover."

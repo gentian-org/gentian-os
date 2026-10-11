@@ -1,0 +1,17 @@
+# A cluster serving models whose claim switches the model gateway's console
+# on.
+#
+# The console is off unless the claim says this: llm.<kernelDomain> has no
+# route, and the gateway's NetworkPolicy has no rule for the edge. This is the
+# claim that asks for both.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-llm-console
+  namespace: default
+spec:
+  kernelDomain: example.org
+  llm:
+    enabled: true
+    console:
+      enabled: true

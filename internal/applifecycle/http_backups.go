@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -24,6 +18,7 @@ import (
 	"net/http"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/licencereport"
 )
 
 // What the cluster knows about backups, for the director to relay.
@@ -36,12 +31,16 @@ import (
 // next scheduled run is — and that is what this serves.
 func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// Reads of state.
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backups", h.handleBackups)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)
-	mux.HandleFunc("GET /v1/backup-policy", h.handleClusterBackupPolicy)
-	mux.HandleFunc("GET /v1/backup-schedules", h.handleAllBackupSchedules)
+	mux.Read("GET /v1/tenants/{tenant}/backups", h.handleBackups)
+	mux.Read("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
+	// The bundle itself, as one file. Not JSON: a tar of the artefacts, for
+	// the person who wants their data in their hands. The director's alone:
+	// the reader's identity lists backups and does not fetch one.
+	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}/download", h.handleBundleDownload)
+	mux.Read("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
+	mux.Read("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)
+	mux.Read("GET /v1/backup-policy", h.handleClusterBackupPolicy)
+	mux.Read("GET /v1/backup-schedules", h.handleAllBackupSchedules)
 
 	// Actions. Under /actions/ and always POST, because they are neither a
 	// read nor a change to what the cluster should be: they make something
@@ -170,9 +169,22 @@ func (h *HTTPServer) handleAllBackupSchedules(w http.ResponseWriter, r *http.Req
 // the operator chart's, and a customisation record is written where the
 // customisation is.
 func (h *HTTPServer) registerPlatformRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
-	mux.HandleFunc("GET /v1/platform-security", h.handlePlatformSecurity)
-	mux.HandleFunc("GET /v1/customizations", h.handleCustomizationDebt)
+	mux.Read("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
+	mux.Read("GET /v1/platform-security", h.handlePlatformSecurity)
+	mux.Read("GET /v1/customizations", h.handleCustomizationDebt)
+	// What this cluster last told the receiving endpoint about itself, and
+	// what became of it. Open to the reader because it is the cluster's own
+	// statement, shown to whoever may audit the cluster.
+	mux.Read("GET /v1/licence-report", h.handleLicenceReport)
+}
+
+func (h *HTTPServer) handleLicenceReport(w http.ResponseWriter, r *http.Request) {
+	view, err := licencereport.Read(r.Context(), h.Service.client, h.Service.opts.OperatorNamespace, h.Service.opts.LicenceReport)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (h *HTTPServer) handleIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +221,7 @@ func (h *HTTPServer) handleCustomizationDebt(w http.ResponseWriter, r *http.Requ
 // it because the operator already resolves that database, and a console that
 // kept its own copy would be a second place a notice could exist.
 func (h *HTTPServer) registerNotificationRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/notifications", h.handleNotifications)
+	mux.Read("GET /v1/tenants/{tenant}/notifications", h.handleNotifications)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/notify", h.handlePublishNotification)
 }
 

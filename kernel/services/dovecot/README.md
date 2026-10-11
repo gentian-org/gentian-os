@@ -8,8 +8,15 @@ with a self-contained `dovecot.conf` in a ConfigMap.
 
 ## Authentication
 
-IMAP users authenticate with a Keycloak access token (XOAUTH2), not a password.
-The `passwd-file` passdb is deliberately empty and serves as the final deny.
+IMAP users authenticate with a Keycloak access token (XOAUTH2), or with an app
+password minted per user and client type. The `passwd-file` passdb is
+deliberately empty and serves as the final deny.
+
+A token is accepted only if it names `gentian-dovecot` in its audience and
+carries the scope `mailbox` (`scope = mailbox` in each realm's settings). Both
+come from the realm's `mailbox` client scope, which only the client of an app
+that declares `requires.services.mail.imap.tokenSignIn` may ask for. The kernel
+realm has no such scope, so its block accepts no token.
 
 One `oauth2` passdb exists per Keycloak realm whose users have mailboxes — the
 kernel realm for the cluster admin, plus one per tenant using selfhosted mail —
@@ -33,11 +40,10 @@ because `result_failure = continue` moves on to the next realm.
 | Item | Value |
 | ------ | ------- |
 | Manifests | `kernel/services/dovecot/manifests/` (env-parameterised) |
-| Namespace | `platform-kernel` — the operator's `SERVICES_NAMESPACE` |
+| Namespace | `system-mail` — where the operator addresses mail |
 | Deployment / Service | `dovecot-<env>` (e.g. `dovecot-dev`) |
-| LMTP DNS | `dovecot-dev.platform-kernel.svc.cluster.local:24` |
-| Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
+| LMTP DNS | `dovecot-dev.system-mail.svc.cluster.local:24` |
+| Argo CD | ApplicationSet `gentian-mail`, composed only when the claim's `mail.serviceMode` is `system` |
 
 ## Image
 

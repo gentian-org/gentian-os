@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run director-dev: the real director API with local stand-ins for Keycloak,
-# OpenFGA, gentian-deployments and the App Store, for building a UI against it
-# without a cluster. See cmd/director-dev/main.go.
+# OpenFGA and gentian-deployments, for building a UI against it without a
+# cluster. See cmd/director-dev/main.go.
 #
-#   scripts/dev/director-dev.sh [-entitlements] [-cors http://localhost:5173]
+#   scripts/dev/director-dev.sh [-cors http://localhost:5173]
 #
 # Serves on 127.0.0.1:8090. Uses a local `go` when there is one, the golang
 # image under docker otherwise.

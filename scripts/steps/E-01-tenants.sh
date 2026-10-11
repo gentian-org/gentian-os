@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: E-01-tenants
 # phase: handover
-# requires: D-02-portal-login
+# requires: D-03-portal-login
 # provides: nothing at install time — tenants are created after installation
 # mutates: Tenant, Component and App CRs, on teardown only
 

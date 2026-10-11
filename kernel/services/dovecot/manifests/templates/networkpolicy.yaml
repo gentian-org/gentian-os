@@ -1,0 +1,117 @@
+{{- /*
+  Who may open a connection to Dovecot.
+
+  Dovecot serves five ports, and no connection from outside the cluster
+  reaches any of them directly: its Services are ClusterIP, and the load
+  balancer for IMAPS is in front of the proxy in the mail DMZ.
+
+  From the mail DMZ's proxy, and from nothing else:
+
+    imaps-edge (10993)  IMAPS, which the proxy took on 993: mail clients
+                        outside, and the apps that declared `mail.imap`,
+                        which are handed the public name
+                        (mail_reconciler.go). The listener reads a
+                        PROXY-protocol header and believes the client
+                        address in it, so who may reach it is exactly who
+                        may say what a client's address is: the pods of the
+                        proxy, by the namespace's name and the pods' labels.
+                        Rendered only when Dovecot serves TLS
+                        (tls.secretName).
+
+  From the pods of a tenant, with no PROXY header:
+
+    imaps (993)   the same service for a pod that uses Dovecot by its
+    imap (143)    Service's name. The operator hands that name to nobody, and
+                  which pods use it cannot be read from this repository; the
+                  two ports are kept for them as they were, narrowed from
+                  "any source" to the namespaces apps run in. Both ask for
+                  the same credential and 143 refuses it outside TLS.
+
+  Restricted to their callers:
+
+    lmtp (24)     delivery. It takes mail for any hosted domain from whoever
+                  connects, with no credential: Postfix alone, which is in
+                  this namespace (virtual_transport in the Postfix chart).
+    sasl (12345)  the authentication service Postfix asks about a submission
+                  credential (smtpd_sasl_path): Postfix alone. Anything else
+                  that reached it could try passwords without the limits
+                  Postfix puts in front of it.
+
+  Postfix's pods are named by the labels the upstream chart gives them --
+  the ones the edge Service of the Postfix chart selects on.
+
+  The installer's check of this Deployment (verify_dovecot_installation)
+  opens 143 and 24 from a short-lived pod. It runs that pod in this namespace
+  and labels it gentianos.io/purpose=verify, and is admitted to both as such.
+
+  The kubelet's probes open 24 from the pod's own node, which is not subject
+  to a NetworkPolicy. Dovecot's own calls -- a token to Keycloak -- are
+  egress, and nothing is said about egress.
+
+  Sync wave -1: before the Deployment (9), so the server is never up without
+  it.
+*/ -}}
+{{- if ne (toString .Values.networkPolicy.enabled) "false" }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dovecot-ingress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: mail
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dovecot
+      app.kubernetes.io/instance: dovecot-{{ .Values.env }}
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if .Values.tls.secretName }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.edge.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mail-edge
+              app.kubernetes.io/instance: mail-edge-{{ .Values.env }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.edge.ports.imaps }}
+    {{- end }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+      ports:
+        {{- if .Values.tls.secretName }}
+        - protocol: TCP
+          port: {{ $np.ports.imaps }}
+        {{- end }}
+        - protocol: TCP
+          port: {{ $np.ports.imap }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mail
+              app.kubernetes.io/instance: postfix-{{ .Values.env }}
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.lmtp }}
+        - protocol: TCP
+          port: {{ $np.ports.sasl }}
+    - from:
+        - podSelector:
+            matchLabels:
+              gentianos.io/purpose: verify
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.lmtp }}
+        - protocol: TCP
+          port: {{ $np.ports.imap }}
+{{- end }}

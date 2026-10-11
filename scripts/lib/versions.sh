@@ -12,8 +12,8 @@
 #   bash scripts/lib/versions.sh crossplane cli
 #
 # Deliberately self-contained: no colour helpers, no scripts/lib/common.sh, no
-# SCRIPT_DIR from the caller. That is the whole point — scripts/bootstrap/install-argocd.sh
-# and the Makefile need pins without loading the install library, and a
+# SCRIPT_DIR from the caller. That is the whole point — the Makefile and
+# standalone scripts need pins without loading the install library, and a
 # dependency here would put the version inventory behind the very thing it
 # configures.
 #

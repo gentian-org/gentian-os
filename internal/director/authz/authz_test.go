@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authz
@@ -38,9 +32,6 @@ func TestIdentifiersCrossIntoOpenFGAThroughOneMapping(t *testing.T) {
 	if got, _ := User("f:ldap-1:jdoe"); got != "user:f/ldap-1/jdoe" {
 		t.Errorf("User = %q", got)
 	}
-	if got, _ := CatalogueEntry("main/nextcloud"); got != "catalogue_entry:main/nextcloud" {
-		t.Errorf("CatalogueEntry = %q", got)
-	}
 }
 
 // Two different names must never become the same id, and nothing may smuggle a
@@ -52,11 +43,6 @@ func TestWhatCannotBeRepresentedIsRefused(t *testing.T) {
 		}
 		if _, err := User(bad); !errors.Is(err, ErrInvalidID) {
 			t.Errorf("User(%q): %v", bad, err)
-		}
-	}
-	for _, bad := range []string{"", "nextcloud", "main/", "/x", "main:nextcloud", "a/b/c", "main/x#can_install"} {
-		if _, err := CatalogueEntry(bad); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("CatalogueEntry(%q): %v", bad, err)
 		}
 	}
 }

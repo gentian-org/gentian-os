@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -32,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
@@ -48,11 +43,10 @@ import (
 //
 // So this reconciler owns them, and the director is left with read access.
 //
-// What it does NOT own, yet: membership, which arrives as signed Keycloak
-// events and is still applied by the director, and session revocation, which
-// belongs with the edge authorization service that reads it. Both are
-// event-driven rather than projections of declared state, and both move on
-// their own step.
+// What it does NOT own: membership, which arrives as signed Keycloak events
+// and is applied by the operator's membership listener
+// (membership_listener.go), and session revocation, which belongs with the
+// edge authorization service that reads it and which nothing writes yet.
 //
 // Declarative, like the functions it calls: a role whose group the claim no
 // longer names loses its tuple, so authority over a cluster is taken away by
@@ -106,7 +100,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("project cluster roles: %w", err)
 	}
 
-	tenants, err := r.tenantNames(ctx)
+	tenants, err := r.tenantRights(ctx)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list tenants: %w", err)
 	}
@@ -114,16 +108,19 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("project tenants: %w", err)
 	}
 
-	sources, err := r.openCatalogueSources(ctx)
+	// What each tenant has installed, so that an app's tile and its route can
+	// be asked about: the app attached to its tenant, and entitled by the
+	// Keycloak group the identity reconciler creates for it.
+	apps, err := r.installedApps(ctx)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("read catalogue sources from the Cluster claim: %w", err)
+		return ctrl.Result{}, fmt.Errorf("list installed apps: %w", err)
 	}
-	if err := r.Graph.ReconcileCatalogueSources(ctx, tenants, sources); err != nil {
-		return ctrl.Result{}, fmt.Errorf("project catalogue sources: %w", err)
+	if err := r.Graph.ReconcileApps(ctx, apps); err != nil {
+		return ctrl.Result{}, fmt.Errorf("project installed apps: %w", err)
 	}
 
 	logger.V(1).Info("authorization structure projected",
-		"cluster", r.Cluster, "roles", len(roles), "tenants", len(tenants), "openCatalogues", len(sources))
+		"cluster", r.Cluster, "roles", len(roles), "tenants", len(tenants))
 	return ctrl.Result{RequeueAfter: authzProjectionRequeue}, nil
 }
 
@@ -157,70 +154,61 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 	return out, nil
 }
 
-// openCatalogueSources is spec.catalogue.sources from the Cluster claim,
-// reduced to what each OPEN source is open to (AD-14).
+// installedApps is what every tenant has installed, by profile name, with the
+// addons activated inside each. A tenant being deleted is listed with nothing,
+// so its apps leave the graph with it.
 //
-// An entitled source -- the store's -- contributes nothing here: its entries
-// are admitted by a signed statement, which is a different relation written
-// by a different path. Only a source a platform administrator declares open,
-// to named tenants, produces a tuple, and it is that declaration being a
-// commit on the claim rather than an environment variable that makes opening
-// a catalogue something one can review after the fact.
-func (r *AuthzProjectionReconciler) openCatalogueSources(ctx context.Context) (map[string][]string, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
-	})
-	if err := r.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
-		return nil, err
-	}
-	out := map[string][]string{}
-	for i := range list.Items {
-		sources, found, err := unstructured.NestedSlice(list.Items[i].Object, "spec", "catalogue", "sources")
-		if err != nil || !found {
-			continue
-		}
-		for _, raw := range sources {
-			entry, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			name, _ := entry["name"].(string)
-			access, _ := entry["access"].(string)
-			if name == "" || access != "open" {
-				continue
-			}
-			tenants, _, err := unstructured.NestedStringSlice(entry, "tenants")
-			if err != nil || len(tenants) == 0 {
-				// Open to nobody is the default and is not a mistake: it is
-				// a source declared before anyone is let into it.
-				continue
-			}
-			out[name] = append(out[name], tenants...)
-		}
-	}
-	for name := range out {
-		sort.Strings(out[name])
-	}
-	return out, nil
-}
-
-// tenantNames is every tenant this cluster has, excluding those being deleted:
-// a tenant on its way out should lose its attachment before its namespace
-// goes, not after.
-func (r *AuthzProjectionReconciler) tenantNames(ctx context.Context) ([]string, error) {
+// From spec.apps, which is the same list the identity reconciler creates the
+// apps' groups from: an app has a group exactly when it has an object here.
+// An entry whose profile cannot be named is skipped rather than failing the
+// projection, because one unresolvable install must not stop every other
+// tenant's rights from being written.
+func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[string][]authz.InstalledApp, error) {
 	list := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, list); err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(list.Items))
+	out := map[string][]authz.InstalledApp{}
 	for i := range list.Items {
-		if list.Items[i].DeletionTimestamp != nil {
+		tenant := &list.Items[i]
+		out[tenant.Name] = nil
+		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		out = append(out, list.Items[i].Name)
+		for _, app := range tenant.Spec.Apps {
+			profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
+			if err != nil {
+				log.FromContext(ctx).Info("installed app not projected: its profile cannot be named",
+					"tenant", tenant.Name, "error", err.Error())
+				continue
+			}
+			out[tenant.Name] = append(out[tenant.Name], authz.InstalledApp{Profile: profile, Addons: app.Addons})
+		}
 	}
-	sort.Strings(out)
+	return out, nil
+}
+
+// tenantRights is every tenant this cluster has, excluding those being
+// deleted: a tenant on its way out should lose its attachment before its
+// namespace goes, not after. With each, what its manifest says about who
+// approves its public addresses (spec.perimeter.adminsApprove).
+func (r *AuthzProjectionReconciler) tenantRights(ctx context.Context) ([]authz.TenantRights, error) {
+	list := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, list); err != nil {
+		return nil, err
+	}
+	out := make([]authz.TenantRights, 0, len(list.Items))
+	for i := range list.Items {
+		tenant := &list.Items[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		out = append(out, authz.TenantRights{
+			Name:          tenant.Name,
+			AdminsApprove: tenant.Spec.Perimeter != nil && tenant.Spec.Perimeter.AdminsApprove,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -19,16 +21,34 @@ package v1alpha1
 import "strings"
 
 const (
-	// TenancyModeMulti is the default: many tenants on one cluster; app URLs use
-	// {sub}.{tenant}.{kernelDomain} unless spec.domain is set.
+	// TenancyModeMulti is the default: the platform tenant plus any number of
+	// user tenants, each at {label}.{tenant}.{kernelDomain} unless a
+	// TenantDomain binds a custom domain.
 	TenancyModeMulti = "multi"
 
-	// TenancyModeSingle is for dedicated single-tenant clusters: one Tenant CR
-	// named "default", flat app URLs on {sub}.{kernelDomain}.
+	// TenancyModeSingle is a cluster for one organisation: the platform
+	// tenant plus exactly one user tenant, named SingleUserTenantName, which
+	// lives on the cluster's own addresses -- {label}.{kernelDomain}, with no
+	// tenant name in between. A second user tenant is refused.
 	TenancyModeSingle = "single"
 
-	// SingleTenantName is the required Tenant metadata.name in single-tenancy mode.
-	SingleTenantName = "default"
+	// PlatformTenantName is the tenant every install scaffolds for the
+	// cluster's administrators: the one that adopts the kernel realm. It is
+	// in every cluster under either mode and is never counted as a user
+	// tenant. Its desktop is {PlatformTenantName}.{kernelDomain} and its
+	// other components one label below that.
+	PlatformTenantName = "platform"
+
+	// SingleUserTenantName is the one user tenant of a single-tenancy
+	// cluster. Under TenancyModeMulti it is an ordinary tenant name.
+	SingleUserTenantName = "user"
+
+	// SingleUserAdminLocalPart is the local part of the administrator of a
+	// tenant whose domain is the cluster's own. The platform administrator is
+	// admin@{kernelDomain} in the kernel realm, and its password derivation
+	// and recovery depend on that name; the user tenant's administrator has
+	// an address on the same domain and must not be the same one.
+	SingleUserAdminLocalPart = "user-admin"
 )
 
 // NormalizeTenancyMode returns TenancyModeSingle or TenancyModeMulti.
@@ -37,6 +57,14 @@ func NormalizeTenancyMode(mode string) string {
 		return TenancyModeSingle
 	}
 	return TenancyModeMulti
+}
+
+// OnClusterDomain reports whether this tenant's base domain is the cluster's
+// own under the given mode: the one user tenant of a single-tenancy cluster,
+// and nobody else. The platform tenant is never it, whatever the mode.
+func (t *Tenant) OnClusterDomain(tenancyMode string) bool {
+	return t != nil && t.Name == SingleUserTenantName &&
+		NormalizeTenancyMode(tenancyMode) == TenancyModeSingle
 }
 
 // NamespaceName is the namespace a tenant's workloads run in.

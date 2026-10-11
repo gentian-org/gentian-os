@@ -1,0 +1,164 @@
+# SPDX-License-Identifier: Apache-2.0
+# The name every object derives from. Left empty it is <release>-<chart>; a
+# ComponentProfile pins it in extraValues so that the Services it routes to
+# have a name known before the release exists.
+fullnameOverride: ""
+
+# This app's own public host: store.<the tenant's base domain>. No scheme, no
+# port, no path, lower case, and its first label is `store` -- that is the host
+# label of the component, and a store's issuer accepts exactly one redirect
+# address per tenant, which it computes from the tenant's address:
+#
+#   https://store.<host of the tenant's URL>/oauth/callback
+#
+# The app spells both from this value: the redirect address is
+# https://<host>/oauth/callback, and the tenant's URL it states at sign-in is
+# https://<host without its first label>. Left empty, browsing and installed
+# apps work and nobody can sign in to a store; the app says so.
+host: ""
+
+api:
+  image:
+    repository: ghcr.io/gentian-org/app-store-api
+    tag: "develop-9c4d6bb"
+  # One, and the schema refuses more. The API keeps three things in memory
+  # and nowhere else: a pending sign-in to a store (state and PKCE verifier),
+  # a person's store token for as long as it lasts, and a repository
+  # credential between a store's confirmation and the custodian's answer. A
+  # second replica would not see the first one's: the callback of a sign-in
+  # would land on a replica that never started it. Running two needs either
+  # that state shared between them or every request of one cluster session
+  # routed to the same replica; neither is built, and no database is added
+  # for it. A restart loses the state and nothing else: people sign in to the
+  # store again, and an install continues from where the store and the
+  # cluster say it stands.
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # securityContext merged into the container (see docs/SECURITY.md)
+  securityContext: {}
+  env:
+    ENVIRONMENT: local
+
+web:
+  image:
+    repository: ghcr.io/gentian-org/app-store-web
+    tag: "develop-9c4d6bb"
+  replicaCount: 1
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  securityContext: {}
+  env: {}
+
+gateway:
+  # Off under a ComponentProfile. The component reconciler writes one HTTPRoute
+  # and one SecurityPolicy per gateway entry in the profile's spec.expose, on
+  # the zone's Gateway, behind the zone's session; a route this chart wrote
+  # beside them would be a second, unguarded way in. Turn it on only for a
+  # deployment nothing reconciles, such as a developer's own cluster. The
+  # route's hostname is `host` above.
+  enabled: false
+  parentGatewayName: tenant-demo-gateway
+
+existingSecret:
+  # Empty, and deliberately: this app keeps no state and holds no credential
+  # of its own. It has no database, no bucket and no cache, so the platform
+  # writes no Secret for it, and naming one that will never exist is what
+  # leaves the API pod in CreateContainerConfigError.
+  name: ""
+
+auth:
+  # Local development only; the backend refuses to start with this true in
+  # production.
+  disabled: false
+  # pkce: the bundle runs the code flow as a public client and keeps the
+  # token. edge: the platform's Gateway holds the session with the zone's
+  # confidential client and forwards the zone's token to the API on routes
+  # whose exposure says forwardToken; the bundle runs no code flow, holds no
+  # token and no client secret, and what the caller may do is the director's
+  # answer. A component behind the platform's edge runs this way, and the
+  # operator sets everything below from the profile's platform mapping.
+  mode: pkce
+  # The issuer the forwarded token is verified against: the zone's realm on
+  # the identity provider.
+  issuer: ""
+  # The client whose tokens the API accepts: the bundle's own under pkce, the
+  # zone's under edge.
+  clientId: ""
+  # The audience the forwarded token must carry under edge: the director's,
+  # because that is who the zone's token is minted for.
+  audience: ""
+  # Scopes the bundle requests under pkce. Only scopes the realm defines.
+  scopes: openid profile email
+
+# Facts of the cluster this component runs in. None is chosen here: the
+# operator fills each from the profile's valueMapping.platform, and a component
+# deployed outside the platform leaves them empty.
+platform:
+  # The tenant the component runs in: the {t} of the director's routes, and
+  # one of the two strings a store repository's name on the cluster is
+  # computed from.
+  tenant: ""
+  # The cluster's bare domain. The brand is served from it, and it is the one
+  # origin besides the app's own that the pages' content security policy
+  # allows.
+  kernelDomain: ""
+  # The name of the zone's realm.
+  realm: ""
+  # "kernel" for the platform's own zone, "tenant" for a customer's.
+  zoneKind: ""
+
+# The cluster's services this app asks, each with the caller's own token and
+# nothing else. Naming one in the profile's mapping is also what opens the
+# component's egress to it.
+
+# Asked who may install, what is installed, and to declare a repository,
+# install an app and pin its add-ons. `cluster` is the cluster's id, as the
+# platform states it; no route of this app is at cluster scope today, and it
+# is never sent to a store.
+director:
+  url: ""
+  cluster: ""
+
+# Asked to store a repository's credential: the custodian exchanges the
+# person's token for one the vault accepts.
+custodian:
+  url: ""
+
+# Asked what the cluster has made of the tenant's apps, and whether the
+# cluster offers an App Store at all.
+usher:
+  url: ""
+
+# The store: a service outside the cluster. `url` is the base address of its
+# API -- what the Cluster claim names as catalogue.storeUrl -- https, with no
+# trailing slash. Empty means the cluster names no store: the app then says
+# that no App Store is configured and that apps are installed by command.
+#
+# Besides this address the API reaches two kinds of address the store's own
+# GET /v1/meta names, both https and both outside the cluster: its issuer
+# (to exchange a sign-in code) and its media origins (to fetch pictures,
+# which the app serves from its own origin). Egress to them is the tenant
+# namespace's policy to allow.
+store:
+  url: ""
+
+# Optional supplemental NetworkPolicy (platform provides tenant isolation)
+networkPolicy:
+  create: false
+
+podSecurity:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532

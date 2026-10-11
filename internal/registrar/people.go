@@ -1,0 +1,996 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package registrar
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gentian-org/gentian-os/internal/registrar/identity"
+	"github.com/gentian-org/gentian-os/internal/registrar/record"
+)
+
+// People and groups — the registrar speaking for
+// Keycloak on a caller's behalf (S7A.17).
+//
+// The rule is the same as for git and for the authorization graph: a write
+// into a source of truth is admissible when it is authenticated, evaluated and
+// recorded. People cannot be derived from the state of a cluster and cannot go
+// into git, so managing them is an ACTION here rather than a commit — which is
+// why every write below is a POST under /actions/ and none is a PUT.
+//
+// Two things make "indirect" a rule rather than a description:
+//
+//   - The realm is never taken from the request. It is resolved from the
+//     tenant whose object the caller was just checked against, and the
+//     identity client refuses a realm it holds no credential for. So a
+//     handler cannot be talked into another tenant's realm.
+//   - A check that cannot be made is a refusal. The route helpers already do
+//     that; nothing here falls back.
+
+// tenantFor reads the tenant in the request path from the cluster. On
+// failure it has already answered, and ok is false.
+func (s *Server) tenantFor(w http.ResponseWriter, r *http.Request) (Tenant, bool) {
+	tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.tenantError(w, r, err)
+		return Tenant{}, false
+	}
+	return tenant, true
+}
+
+// tenantError maps a failed read of the cluster's tenants onto what the
+// caller should hear.
+func (s *Server) tenantError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrTenantNotFound):
+		s.fail(w, r, http.StatusNotFound, "tenant not found")
+	case errors.Is(err, errInvalidName):
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+	default:
+		// The request was fine and the caller is allowed; the cluster did
+		// not answer. 503, and the detail goes to the log only.
+		s.cfg.Log.ErrorContext(r.Context(), "the cluster's tenants could not be read",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable, "the cluster's tenants could not be read")
+	}
+}
+
+// realmFor resolves the realm of the tenant in the request path, and returns a
+// realm token only if this registrar holds a credential for it.
+//
+// Both failures answer differently on purpose. A tenant the cluster does not
+// have is a 404 about the tenant. A realm this registrar was given no
+// credential for is a 503 about the platform: the caller may well hold the
+// relation, and telling them they are forbidden would send them to the wrong
+// person.
+func (s *Server) realmFor(w http.ResponseWriter, r *http.Request) (identity.Realm, bool) {
+	tenant, ok := s.tenantFor(w, r)
+	if !ok {
+		return identity.Realm{}, false
+	}
+	token, err := s.cfg.Identity.Realm(tenant.Realm)
+	if err != nil {
+		s.cfg.Log.WarnContext(r.Context(), "no Keycloak credential for realm",
+			"request_id", reqID(r.Context()), "tenant", tenant.Name, "realm", tenant.Realm)
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this registrar holds no credential for the realm "+tenant.Realm+
+				": the operator writes one per realm, and this one has not arrived yet")
+		return identity.Realm{}, false
+	}
+	// A tenant that has a realm to itself is confined by the credential. A
+	// tenant that shares the kernel realm is not, and there the group subtree
+	// is the only boundary left -- so it is stated rather than assumed.
+	//
+	// Except the platform tenant, which does not share the kernel realm but
+	// owns it: its people are the kernel realm's administrators and its groups
+	// are gentian:platform:*, so confining it to gentian:tenant:platform:
+	// showed it none of its own groups.
+	if tenant.Realm != tenant.Name && tenant.Name != platformTenant {
+		token = token.Scoped(tenantGroupPrefix(tenant.Name))
+	}
+	return token, true
+}
+
+// identityContext carries the request id into the admin calls, which is what
+// joins Keycloak's record of the change to the registrar's record of the
+// authority.
+func identityContext(r *http.Request) context.Context {
+	return identity.WithRequestID(r.Context(), reqID(r.Context()))
+}
+
+// identityError maps what the realm said onto what the caller should hear.
+func (s *Server) identityError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, identity.ErrNotFound):
+		s.fail(w, r, http.StatusNotFound, "not found in this tenant's realm")
+	case errors.Is(err, identity.ErrConflict):
+		s.fail(w, r, http.StatusConflict, "somebody with that address is already here")
+	case errors.Is(err, identity.ErrOutOfScope):
+		// Not 403. The caller holds the relation; what they named is outside
+		// what this tenant may touch, and saying "forbidden" would send them
+		// to ask for a permission that would not help.
+		s.fail(w, r, http.StatusBadRequest, "that group does not belong to this tenant")
+	case errors.Is(err, identity.ErrNoCredential):
+		s.fail(w, r, http.StatusServiceUnavailable, "this registrar holds no credential for that realm")
+	case errors.Is(err, identity.ErrProtected):
+		// Whoever asks. The caller holds the relation the route requires, and
+		// this is refused all the same: who holds a platform role is not
+		// changed through the registrar (identity/guard.go).
+		s.cfg.Log.WarnContext(r.Context(), "refused: the holders of the platform's roles are not managed here",
+			"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
+		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
+			". Who holds a platform role is not changed through the registrar.")
+	case errors.Is(err, identity.ErrApproversOnly):
+		// The caller manages this tenant's people and does not approve its
+		// public addresses: they do not decide who does (identity/guard.go).
+		s.cfg.Log.WarnContext(r.Context(), "refused: the caller may not approve public addresses, and so not say who does",
+			"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
+		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
+			". The members of the tenant's perimeter group approve what it publishes to the internet; "+
+			"the cluster's administrator names them, or whoever may already approve.")
+	case errors.Is(err, identity.ErrGuardUnavailable):
+		s.cfg.Log.ErrorContext(r.Context(), "the platform role groups could not be read; nothing was written",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"the platform role groups could not be read from the Cluster claim, so nothing was changed")
+	case errors.Is(err, identity.ErrUnguarded):
+		s.cfg.Log.ErrorContext(r.Context(), "a write the registrar has no rule for was refused",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusInternalServerError, "this registrar does not make that change")
+	default:
+		s.cfg.Log.ErrorContext(r.Context(), "keycloak call failed",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the realm could not be reached")
+	}
+}
+
+// listPeople answers who is in this tenant.
+func (s *Server) listPeople(w http.ResponseWriter, r *http.Request, _ call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	people, err := s.cfg.Identity.People(identityContext(r), realm,
+		strings.TrimSpace(r.URL.Query().Get("search")), limit)
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	// Who of them has a mailbox on the cluster's own mail server.
+	if tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t")); err == nil {
+		for i := range people {
+			people[i].Mailbox = mailboxOf(tenant, people[i])
+		}
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "people": people})
+}
+
+// realmUserCount is one realm's line in the cluster's count.
+type realmUserCount struct {
+	Realm   string   `json:"realm"`
+	Tenants []string `json:"tenants"`
+	// Users is absent when the realm could not be counted.
+	Users *int `json:"users,omitempty"`
+}
+
+// clusterUserCount answers how many people hold an account on this cluster.
+//
+// Counted per realm, because a realm is where an account exists: tenants that
+// share a realm share its people, and adding up per tenant would count those
+// people once for every tenant. A realm that could not be counted is listed
+// without a number and the answer says it is incomplete, rather than passing
+// a smaller total off as the whole.
+func (s *Server) clusterUserCount(w http.ResponseWriter, r *http.Request, _ call) {
+	tenants, err := s.cfg.Tenants.All(r.Context())
+	if err != nil {
+		s.tenantError(w, r, err)
+		return
+	}
+	realms := []*realmUserCount{}
+	byName := map[string]*realmUserCount{}
+	for _, t := range tenants {
+		entry, ok := byName[t.Realm]
+		if !ok {
+			entry = &realmUserCount{Realm: t.Realm, Tenants: []string{}}
+			byName[t.Realm] = entry
+			realms = append(realms, entry)
+		}
+		entry.Tenants = append(entry.Tenants, t.Name)
+	}
+	total, complete := 0, true
+	for _, entry := range realms {
+		realm, err := s.cfg.Identity.Realm(entry.Realm)
+		if err == nil {
+			var n int
+			if n, err = s.cfg.Identity.UserCount(identityContext(r), realm); err == nil {
+				entry.Users = &n
+				total += n
+				continue
+			}
+		}
+		complete = false
+		s.cfg.Log.WarnContext(r.Context(), "realm not counted",
+			"request_id", reqID(r.Context()), "realm", entry.Realm, "error", err.Error())
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"cluster": s.cfg.Cluster, "users": total, "complete": complete, "realms": realms,
+	})
+}
+
+// getPerson answers one person and the groups they hold.
+func (s *Server) getPerson(w http.ResponseWriter, r *http.Request, _ call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	person, err := s.cfg.Identity.Person(identityContext(r), realm, r.PathValue("id"))
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	if tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t")); err == nil {
+		person.Mailbox = mailboxOf(tenant, person)
+	}
+	s.json(w, http.StatusOK, person)
+}
+
+// listGroups answers the groups this tenant may put somebody in.
+func (s *Server) listGroups(w http.ResponseWriter, r *http.Request, _ call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	groups, err := s.cfg.Identity.Groups(identityContext(r), realm)
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "groups": groups})
+}
+
+// tenantIdentitySettings answers what the member screens need to know about
+// a tenant's realm. How strong a password has to be is not here: it is
+// declared in git and the director answers it.
+func (s *Server) tenantIdentitySettings(w http.ResponseWriter, r *http.Request, _ call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	// The domain a login is composed under, so the invitation form can show
+	// "@<domain>" beside the part a person types. Empty when it cannot be
+	// read, and the form then asks for a whole address.
+	domain := ""
+	if tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t")); err == nil {
+		domain = tenant.LoginDomain
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":      r.PathValue("t"),
+		"realm":       realm.Name(),
+		"loginDomain": domain,
+		"templates":   s.cfg.DesktopAPI != "",
+	})
+}
+
+// invitePerson creates somebody and sends them the link that lets them set a
+// password.
+func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		// Email is where the invitation goes.
+		Email string `json:"email"`
+		// Username is the part before @<login domain>; empty makes the
+		// address the login, as before.
+		Username         string   `json:"username"`
+		FirstName        string   `json:"firstName"`
+		LastName         string   `json:"lastName"`
+		RequireTOTP      bool     `json:"requireTotp"`
+		SettingsTemplate string   `json:"settingsTemplate"`
+		Groups           []string `json:"groups"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	login := ""
+	if local := strings.ToLower(strings.TrimSpace(body.Username)); local != "" {
+		if !localPart.MatchString(local) {
+			s.fail(w, r, http.StatusBadRequest, "a username is letters, digits, dots, dashes and underscores")
+			return
+		}
+		tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t"))
+		if err != nil || tenant.LoginDomain == "" {
+			s.fail(w, r, http.StatusServiceUnavailable, "this tenant's login domain cannot be read")
+			return
+		}
+		login = local + "@" + tenant.LoginDomain
+	}
+	ctx := identityContext(r)
+	client := s.inviteClientID(realm)
+	// Where they land, from the zone client itself. A configured value wins,
+	// for a deployment that lands people somewhere else on purpose.
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	person, err := s.cfg.Identity.Invite(ctx, realm, identity.Invitation{
+		Email:       body.Email,
+		Username:    login,
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+		RequireTOTP: body.RequireTOTP,
+		Groups:      body.Groups,
+		ClientID:    client,
+		RedirectURI: redirect,
+	})
+	if err != nil {
+		// A person who exists with a mail that did not go is reported as
+		// exactly that, because the repair is to re-send rather than to
+		// invite again.
+		if person.ID != "" {
+			s.json(w, http.StatusAccepted, map[string]any{
+				"person":  person,
+				"mailed":  false,
+				"warning": err.Error(),
+			})
+			return
+		}
+		if isAddressError(err) {
+			s.fail(w, r, http.StatusBadRequest, "that is not an address")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "invite", realm, person.Username)
+	out := map[string]any{"person": person, "mailed": true}
+	// The desktop's settings, copied from a template before they first sign
+	// in. Not fatal: the person exists and the invitation went, and saying
+	// the template did not apply is a repair somebody can make on the
+	// template screen, where failing the invitation would not be.
+	if body.SettingsTemplate != "" {
+		if err := s.applyTemplate(r, body.SettingsTemplate, person.ID); err != nil {
+			out["templateApplied"] = false
+			out["warning"] = "the settings template was not applied: " + err.Error()
+		} else {
+			out["templateApplied"] = true
+		}
+	}
+	s.json(w, http.StatusAccepted, out)
+}
+
+// localPart is what a person may type before @<login domain>.
+var localPart = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// tenantGroupPrefix is the subtree a tenant's own groups live in.
+func tenantGroupPrefix(tenant string) string {
+	if tenant == platformTenant {
+		return "gentian:platform:"
+	}
+	return "gentian:tenant:" + tenant + ":"
+}
+
+// groupLabel is the part of a custom group's name an administrator types.
+// No colon, so a label can never reach into the names the platform composes
+// (":app:<profile>", ":admin").
+var groupLabel = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+
+// reservedGroupLabels are names the platform composes itself.
+var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true, "perimeter": true}
+
+// updatePerson changes somebody's names, delivery address or whether they may
+// sign in.
+func (s *Server) updatePerson(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person    string  `json:"person"`
+		FirstName *string `json:"firstName"`
+		LastName  *string `json:"lastName"`
+		Enabled   *bool   `json:"enabled"`
+		Email     *string `json:"email"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	person, err := s.cfg.Identity.UpdatePerson(identityContext(r), realm, body.Person, identity.PersonUpdate{
+		FirstName: body.FirstName, LastName: body.LastName, Enabled: body.Enabled, Email: body.Email,
+	})
+	if err != nil {
+		if isAddressError(err) {
+			s.fail(w, r, http.StatusBadRequest, "that is not an address")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "update-person", realm, body.Person)
+	s.json(w, http.StatusOK, person)
+}
+
+// removePerson deletes somebody from the tenant's realm.
+//
+// Where the person has a mailbox on the cluster's own mail server, the
+// request has to say what becomes of it: "mailbox" is "archive" or "delete".
+// There is no default, and a request without the answer is refused with
+// nothing changed -- neither keeping a person's mail nor destroying it is
+// something to do because nobody said. Where the person has no mailbox
+// there, nothing is asked and the field is not read.
+//
+// Switching a person off (update-person, enabled: false) is not this: it
+// asks nothing and their mailbox stays theirs.
+func (s *Server) removePerson(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person  string `json:"person"`
+		Mailbox string `json:"mailbox"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	// Nobody removes themselves: the screen they are on would be the last
+	// thing they could do, and a tenant whose only administrator did it has
+	// nobody left to undo it.
+	if body.Person != "" && body.Person == c.subject {
+		s.fail(w, r, http.StatusBadRequest, "you cannot remove yourself")
+		return
+	}
+	tenant, ok := s.tenantFor(w, r)
+	if !ok {
+		return
+	}
+	ctx := identityContext(r)
+
+	// The mailbox, if there is one, and the answer about it.
+	mailbox, decision := "", ""
+	if tenant.MailboxDomain != "" {
+		person, err := s.cfg.Identity.Person(ctx, realm, body.Person)
+		if err != nil {
+			s.identityError(w, r, err)
+			return
+		}
+		mailbox = mailboxOf(tenant, person)
+	}
+	if mailbox != "" {
+		if body.Mailbox != MailboxArchive && body.Mailbox != MailboxDelete {
+			s.fail(w, r, http.StatusBadRequest, "this person has a mailbox, "+mailbox+
+				": say what becomes of it. \"mailbox\" is \"archive\" (the mail is kept, and nobody receives or signs in at the address) "+
+				"or \"delete\" (the mail is destroyed, which cannot be undone). Nothing was changed.")
+			return
+		}
+		if s.cfg.Mailboxes == nil {
+			s.fail(w, r, http.StatusServiceUnavailable,
+				"this person has a mailbox, and this registrar cannot write down what is to become of it. Nothing was changed.")
+			return
+		}
+		id, err := s.cfg.Mailboxes.Decide(r.Context(), MailboxDecision{
+			Tenant: tenant.Name, Address: mailbox, Choice: body.Mailbox,
+			Subject: c.subject, Name: c.name, RequestID: reqID(r.Context()),
+		})
+		if err != nil {
+			s.cfg.Log.ErrorContext(r.Context(), "the decision about a mailbox could not be written down; nobody was removed",
+				"request_id", reqID(r.Context()), "tenant", tenant.Name, "error", err.Error())
+			s.fail(w, r, http.StatusServiceUnavailable,
+				"what is to become of the mailbox could not be written down, so the person was not removed. Nothing was changed.")
+			return
+		}
+		decision = id
+	}
+
+	if err := s.cfg.Identity.RemovePerson(ctx, realm, body.Person); err != nil {
+		if decision != "" {
+			// The person is still there: the answer is taken back. Not the
+			// request's context, which may be the reason the removal failed.
+			undo, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			if werr := s.cfg.Mailboxes.Withdraw(undo, decision); werr != nil {
+				// Left behind, it is acted on by nobody while the person
+				// exists, and refused by the operator after that.
+				s.cfg.Log.ErrorContext(r.Context(), "a decision about a mailbox could not be taken back after the removal failed",
+					"request_id", reqID(r.Context()), "tenant", tenant.Name, "record", decision, "error", werr.Error())
+			}
+			cancel()
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "remove-person", realm, body.Person)
+	out := map[string]any{"person": body.Person, "removed": true}
+	if decision != "" {
+		// Who chose what for whose mail: the same record, under its own verb.
+		s.recordIdentityAction(r, c, "mailbox-"+body.Mailbox, realm, mailbox)
+		out["mailbox"] = map[string]any{"address": mailbox, "choice": body.Mailbox, "id": decision, "state": "pending"}
+	}
+	s.json(w, http.StatusOK, out)
+}
+
+// requireTOTP makes somebody enrol an authenticator, and mails them the link
+// when asked to.
+func (s *Server) requireTOTP(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+		Mail   bool   `json:"mail"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	ctx := identityContext(r)
+	client := s.inviteClientID(realm)
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" && body.Mail {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	if err := s.cfg.Identity.RequireTOTP(ctx, realm, body.Person, body.Mail, client, redirect); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "require-totp", realm, body.Person)
+	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "totpRequired": true, "mailed": body.Mail})
+}
+
+// removeTOTP deletes somebody's authenticators, for a lost device.
+func (s *Server) removeTOTP(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	if err := s.cfg.Identity.RemoveTOTP(identityContext(r), realm, body.Person); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "remove-totp", realm, body.Person)
+	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "totpRequired": false, "totpConfigured": false})
+}
+
+// createGroup makes a custom group in the tenant's subtree.
+func (s *Server) createGroup(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	label := strings.ToLower(strings.TrimSpace(body.Name))
+	if !groupLabel.MatchString(label) || reservedGroupLabels[label] {
+		s.fail(w, r, http.StatusBadRequest, "a group name is lower-case letters, digits and dashes, and not one the platform uses")
+		return
+	}
+	group, err := s.cfg.Identity.CreateGroup(identityContext(r), realm, tenantGroupPrefix(r.PathValue("t"))+label)
+	if err != nil {
+		if errors.Is(err, identity.ErrConflict) {
+			s.fail(w, r, http.StatusConflict, "that group already exists")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "create-group", realm, group.Path)
+	s.json(w, http.StatusCreated, group)
+}
+
+// deleteGroup removes a custom group.
+func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Group string `json:"group"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	if err := s.cfg.Identity.DeleteGroup(identityContext(r), realm, body.Group); err != nil {
+		if errors.Is(err, identity.ErrNotCustom) {
+			s.fail(w, r, http.StatusBadRequest, "this group is the platform's: it is removed with the app or tenant it belongs to")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "delete-group", realm, body.Group)
+	s.json(w, http.StatusOK, map[string]any{"group": body.Group, "deleted": true})
+}
+
+// renameGroup gives a custom group a new label within the tenant's subtree.
+func (s *Server) renameGroup(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Group string `json:"group"`
+		Name  string `json:"name"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	label := strings.ToLower(strings.TrimSpace(body.Name))
+	if !groupLabel.MatchString(label) || reservedGroupLabels[label] {
+		s.fail(w, r, http.StatusBadRequest, "a group name is lower-case letters, digits and dashes, and not one the platform uses")
+		return
+	}
+	group, err := s.cfg.Identity.RenameGroup(identityContext(r), realm, body.Group, tenantGroupPrefix(r.PathValue("t"))+label)
+	if err != nil {
+		switch {
+		case errors.Is(err, identity.ErrNotCustom):
+			s.fail(w, r, http.StatusBadRequest, "this group is the platform's, and keeps its name")
+		case errors.Is(err, identity.ErrConflict):
+			s.fail(w, r, http.StatusConflict, "a group with that name already exists")
+		default:
+			s.identityError(w, r, err)
+		}
+		return
+	}
+	s.recordIdentityAction(r, c, "rename-group", realm, group.Path)
+	s.json(w, http.StatusOK, group)
+}
+
+// activateAdmin hands a tenant's administrator account to its holder.
+//
+// The account has no password (the operator creates it without one). This
+// issues the single-use, expiring link that sets one -- and enrols a second
+// factor unless the tenant opts out -- mailed to the recovery address when
+// one is given now or the account already has one, and otherwise returned
+// for the caller to show once. Called again, it is how an administrator who
+// lost access is let back in: a new link, never a password anybody else saw.
+func (s *Server) activateAdmin(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		RecoveryEmail string `json:"recoveryEmail"`
+	}
+	if r.ContentLength != 0 && !s.decode(w, r, &body) {
+		return
+	}
+	tenant, ok := s.tenantFor(w, r)
+	if !ok {
+		return
+	}
+	realm, err := s.cfg.Identity.Realm(tenant.Realm)
+	if err != nil {
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this registrar holds no credential for the realm "+tenant.Realm+" yet: the tenant is still being provisioned")
+		return
+	}
+	if tenant.LoginDomain == "" {
+		s.fail(w, r, http.StatusServiceUnavailable, "this tenant's login domain cannot be read")
+		return
+	}
+	ctx := identityContext(r)
+	admin, err := s.cfg.Identity.FindUser(ctx, realm, "admin@"+tenant.LoginDomain)
+	if err != nil {
+		if errors.Is(err, identity.ErrNotFound) {
+			s.fail(w, r, http.StatusConflict, "the administrator account does not exist yet: the tenant is still being provisioned")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	client := s.inviteClientID(realm)
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	activation, err := s.cfg.Identity.ActivateAccount(ctx, realm, admin.ID, body.RecoveryEmail, tenant.AdminRequiresMFA, client, redirect)
+	if err != nil {
+		if isAddressError(err) {
+			s.fail(w, r, http.StatusBadRequest, "that is not an address")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "activate-admin", realm, admin.Username)
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":     tenant.Name,
+		"username":   admin.Username,
+		"activation": activation,
+	})
+}
+
+// listGroupMembers answers who is in one group.
+func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, _ call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	group := r.URL.Query().Get("group")
+	people, err := s.cfg.Identity.GroupMembers(identityContext(r), realm, group)
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"group": group, "people": people})
+}
+
+// listTemplates answers the desktop's settings templates for this tenant.
+//
+// They live in the desktop, which keeps a person's settings; the registrar
+// relays the caller's own token there rather than holding a copy, so the
+// desktop's own check -- is this a tenant administrator -- still decides.
+func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request, _ call) {
+	if s.cfg.DesktopAPI == "" {
+		s.json(w, http.StatusOK, map[string]any{"templates": []any{}})
+		return
+	}
+	resp, err := s.desktop(r, http.MethodGet, "/prefs/templates", nil)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the desktop could not be reached")
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		s.fail(w, r, http.StatusBadGateway, fmt.Sprintf("the desktop answered %d", resp.StatusCode))
+		return
+	}
+	var raw []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&raw); err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the desktop's answer could not be read")
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"templates": raw})
+}
+
+// applyTemplate copies one template onto a person's desktop settings.
+func (s *Server) applyTemplate(r *http.Request, template, personID string) error {
+	if s.cfg.DesktopAPI == "" {
+		return errors.New("this registrar reaches no desktop")
+	}
+	body, _ := json.Marshal(map[string]string{"target_user_sub": personID})
+	resp, err := s.desktop(r, http.MethodPost, "/prefs/templates/"+url.PathEscape(template)+"/apply", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("the desktop answered %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// desktop calls the tenant's desktop API with the caller's own token.
+func (s *Server) desktop(r *http.Request, method, path string, body []byte) (*http.Response, error) {
+	base := fmt.Sprintf(s.cfg.DesktopAPI, r.PathValue("t"))
+	var rd io.Reader
+	if body != nil {
+		rd = strings.NewReader(string(body))
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, rd)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	req.Header.Set("Authorization", r.Header.Get("Authorization"))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = cancelOnClose{resp.Body, cancel}
+	return resp, nil
+}
+
+// cancelOnClose releases a request's context when its body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
+// inviteClientID is the client the invitation link is for.
+//
+// Keycloak validates an action token against a client, so the link has to name
+// one that exists in the realm. The zone's own client is the right one: it is
+// what the person will sign in through the moment they have a password.
+//
+// Derived from the realm rather than configured per tenant, because a
+// configured value would be one more thing to write per tenant and one more
+// thing to get wrong. The composition names the zone client
+// gentian-edge-<zone>, and the zone is the realm's own name in every case but
+// one: a cluster whose kernel realm was renamed keeps the zone called "kernel"
+// while the realm is called something else. Such a cluster sets the override.
+//
+// No redirect by default. A redirect must be on the client's valid redirect
+// URIs, and the composition lists only each host's /oauth2/callback there --
+// which is the OIDC callback and not a page to land on. Sending none leaves
+// Keycloak's own "your account has been updated" page, which works and says
+// nothing useful; giving the person a way back is the decision recorded
+// against M3 rather than one taken here by widening what the zone client
+// accepts.
+func (s *Server) inviteClientID(realm identity.Realm) string {
+	if s.cfg.InviteClientID != "" {
+		return s.cfg.InviteClientID
+	}
+	return "gentian-edge-" + realm.Name()
+}
+
+// setMembership adds or removes one person from one group.
+func (s *Server) setMembership(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+		Group  string `json:"group"`
+		Member *bool  `json:"member"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	if body.Member == nil {
+		s.fail(w, r, http.StatusBadRequest, "say whether they are a member: true or false")
+		return
+	}
+	if err := s.cfg.Identity.SetMembership(identityContext(r), realm,
+		body.Person, body.Group, *body.Member); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "set-membership", realm, body.Group)
+	s.json(w, http.StatusOK, map[string]any{
+		"person": body.Person, "group": body.Group, "member": *body.Member,
+	})
+}
+
+// sendPasswordReset mails somebody a link to set a new password.
+//
+// An administrator acting for somebody who cannot act for themselves, which is
+// why it is guarded like every other write here. Self-service reset is
+// Keycloak's own login page and needs nothing from the registrar: a locked-out
+// person holds no token, so there is no caller to check, and an endpoint that
+// skipped the check would be the one unauthenticated write into a source of
+// truth.
+func (s *Server) sendPasswordReset(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	ctx := identityContext(r)
+	client := s.inviteClientID(realm)
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	if err := s.cfg.Identity.SendPasswordReset(ctx, realm, body.Person, client, redirect); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "send-password-reset", realm, body.Person)
+	s.json(w, http.StatusAccepted, map[string]any{"person": body.Person, "mailed": true})
+}
+
+// recordIdentityAction writes the registrar's half of the record: the caller,
+// the relation and the object that permitted the call, and the request id that
+// joins it to Keycloak's admin event for the same change.
+//
+// Keycloak's event is the better record of WHAT changed, because it is written
+// whether the change came through here or through Keycloak's own console.
+// This is the better record of the AUTHORITY, because Keycloak sees only this
+// registrar's service account. Neither is sufficient alone, which is why the
+// request id matters.
+//
+// The fields, not the values: what changed and who was allowed to change it,
+// never the old and new address. A log that carried those would become the
+// problem the decision to keep people out of git avoided.
+// recordIdentityAction records WHO WAS ALLOWED to ask for this, which is the
+// half of the record Keycloak cannot write: its own admin event sees the
+// registrar's service account and nothing about the person who asked or what
+// permitted the call. The two join on the request id (S7A.17).
+//
+// The log line stays. It is what a person reads while watching a deployment,
+// and it is the only record on a cluster whose database has not been
+// provisioned yet.
+//
+// A failure to record does not undo what was done. The caller has already
+// invited somebody; refusing to have done it because the record could not be
+// written would be the worse outcome, and the gap is visible anyway — a
+// Keycloak event with no partner is exactly what an audit looks for.
+func (s *Server) recordIdentityAction(r *http.Request, c call, action string, realm identity.Realm, target string) {
+	ctx := r.Context()
+	// A component that was admitted by its own key is recorded as itself.
+	principal := c.subject
+	if c.component != "" {
+		principal = c.component
+	}
+	s.cfg.Log.InfoContext(ctx, "identity action",
+		"request_id", reqID(ctx),
+		"action", action,
+		"realm", realm.Name(),
+		"tenant", r.PathValue("t"),
+		"target", target,
+		"principal", principal,
+		"decision", c.decision,
+	)
+	if s.cfg.Record == nil {
+		return
+	}
+	// Not the request's context: it is cancelled the moment the response is
+	// written, and the record must not be lost to the caller hanging up.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := s.cfg.Record.Write(writeCtx, record.Action{
+		RequestID: reqID(ctx),
+		Action:    action,
+		Realm:     realm.Name(),
+		Tenant:    r.PathValue("t"),
+		Target:    target,
+		Principal: principal,
+		Decision:  c.decision,
+	})
+	if err != nil {
+		s.cfg.Log.ErrorContext(ctx, "the authority for an identity action was not recorded",
+			"request_id", reqID(ctx), "action", action, "error", err.Error())
+	}
+}
+
+// decode reads a JSON body, refusing anything unreasonable rather than
+// letting it reach Keycloak.
+func (s *Server) decode(w http.ResponseWriter, r *http.Request, out any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "the request body could not be read")
+		return false
+	}
+	return true
+}
+
+func isAddressError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not an address")
+}

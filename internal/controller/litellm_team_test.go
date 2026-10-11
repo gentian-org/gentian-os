@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -22,6 +16,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 // withLiteLLM points the package's proxy URL at a stub for the duration of a test.
@@ -139,5 +140,103 @@ func TestEnsureLiteLLMTeamSurfacesFailure(t *testing.T) {
 	err := ensureLiteLLMTeam(context.Background(), "sk-master", "acme")
 	if err == nil {
 		t.Fatal("expected an error when /team/new fails")
+	}
+}
+
+// Deleting a tenant with its data removes what the model gateway holds for
+// it: the key of every app on record, and of every app it has now, and its
+// team. With Retain, or without a gateway, nothing is touched; a gateway
+// that does not answer fails the deletion.
+func TestTenantDeleteRemovesTheModelKeysAndTheTeam(t *testing.T) {
+	keys := map[string]bool{"demo-wiki": true, "demo-drive": true, "other-wiki": true}
+	teams := map[string]string{"demo": "t-1", "other": "t-2"}
+	down := false
+	withLiteLLM(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		var body struct {
+			KeyAliases []string `json:"key_aliases"`
+			TeamIDs    []string `json:"team_ids"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/key/list":
+			out := []string{}
+			if keys[r.URL.Query().Get("key_alias")] {
+				out = append(out, "hash")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": out})
+		case "/key/delete":
+			for _, a := range body.KeyAliases {
+				delete(keys, a)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted_keys": body.KeyAliases})
+		case "/team/list":
+			out := []map[string]any{}
+			for alias, id := range teams {
+				out = append(out, map[string]any{"team_alias": alias, "team_id": id})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case "/team/delete":
+			for _, id := range body.TeamIDs {
+				for alias, have := range teams {
+					if have == id {
+						delete(teams, alias)
+					}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted_teams": body.TeamIDs})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	scheme := deleteGapsScheme()
+	// wiki was uninstalled long ago and is on record; drive is installed.
+	record := backup.NewProvisionedRecord("demo")
+	if _, err := backup.RecordProvisioned(record, "wiki", backup.Provisioned{ModelKey: "demo-wiki"}); err != nil {
+		t.Fatal(err)
+	}
+	masterKey := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: litellmMasterKeySecret, Namespace: litellmMasterKeyNS},
+		Data:       map[string][]byte{litellmMasterKeySecKey: []byte("sk-master")},
+	}
+	tenant := planTenant("demo", "drive")
+	ctx := context.Background()
+
+	// No gateway on the cluster: nothing to do, and no error.
+	bare := &TenantReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(record.DeepCopy()).Build(), Scheme: scheme}
+	tenant.Spec.DeletionPolicy = gentianov1alpha1.DeletionPolicyDelete
+	if err := bare.deleteModelAccess(ctx, tenant); err != nil {
+		t.Fatalf("no gateway: %v", err)
+	}
+
+	r := &TenantReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(record, masterKey).Build(), Scheme: scheme}
+
+	tenant.Spec.DeletionPolicy = gentianov1alpha1.DeletionPolicyRetain
+	if err := r.deleteModelAccess(ctx, tenant); err != nil || len(keys) != 3 || len(teams) != 2 {
+		t.Fatalf("deletionPolicy Retain: err = %v, keys = %v, teams = %v", err, keys, teams)
+	}
+
+	tenant.Spec.DeletionPolicy = gentianov1alpha1.DeletionPolicyDelete
+	down = true
+	if err := r.deleteModelAccess(ctx, tenant); err == nil {
+		t.Fatal("a gateway that does not answer was passed over")
+	}
+	down = false
+	if err := r.deleteModelAccess(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if keys["demo-wiki"] || keys["demo-drive"] || !keys["other-wiki"] {
+		t.Errorf("keys = %v, want the tenant's two gone and the other tenant's kept", keys)
+	}
+	if _, there := teams["demo"]; there || teams["other"] != "t-2" {
+		t.Errorf("teams = %v", teams)
+	}
+	// Asked again, with nothing left: still no error.
+	if err := r.deleteModelAccess(ctx, tenant); err != nil {
+		t.Fatalf("a second pass: %v", err)
 	}
 }

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package keycloak
@@ -35,6 +29,13 @@ func TenantMembersGroup(tenant string) string {
 // TenantAdminsGroup is the Keycloak group for tenant administrators.
 func TenantAdminsGroup(tenant string) string {
 	return tenantPrefix(tenant) + "admins"
+}
+
+// TenantPerimeterGroup is the Keycloak group whose members approve what the
+// tenant publishes to the internet (tenant#perimeter_approver). It exists
+// from the day the tenant does, empty: who is in it is somebody's decision.
+func TenantPerimeterGroup(tenant string) string {
+	return tenantPrefix(tenant) + "perimeter"
 }
 
 // TenantAppGroup is the Keycloak group for users entitled to an app profile.
@@ -61,11 +62,13 @@ func CollectTenantGroupNames(tenant *gentianov1alpha1.Tenant, additionalProfiles
 		TenantMembersGroup(tenant.Name):   {},
 		TenantAdminsGroup(tenant.Name):    {},
 		TenantAppAdminsGroup(tenant.Name): {},
+		TenantPerimeterGroup(tenant.Name): {},
 	}
 	names := []string{
 		TenantMembersGroup(tenant.Name),
 		TenantAdminsGroup(tenant.Name),
 		TenantAppAdminsGroup(tenant.Name),
+		TenantPerimeterGroup(tenant.Name),
 	}
 	add := func(group string) {
 		if group == "" {
@@ -94,4 +97,18 @@ func GroupsJobName(tenantName string) string {
 // ShellWordList formats values for POSIX sh word-splitting in Job env vars.
 func ShellWordList(values []string) string {
 	return strings.Join(values, " ")
+}
+
+// RealmName is the Keycloak realm a tenant's people, groups and clients are
+// in: spec.isolation.keycloakRealm when the tenant names one, and otherwise
+// the tenant's own name. The platform tenant names the kernel realm this way.
+//
+// The one place this is decided. Everything that talks to the identity
+// provider about a tenant asks here; taking the tenant's name for its realm
+// is right only for a tenant that did not say otherwise.
+func RealmName(tenant *gentianov1alpha1.Tenant) string {
+	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm != "" {
+		return tenant.Spec.Isolation.KeycloakRealm
+	}
+	return tenant.Name
 }

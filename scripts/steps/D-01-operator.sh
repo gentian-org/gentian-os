@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # step: D-01-operator
-# phase: platform
+# phase: applications
 # requires: C-02-appsets
 # provides: the gentian-os operator AND the director in the control namespace, the CRDs and webhook, and the kernel Gateway the operator reconciles in the edge namespace
 # mutates: the gentian-os Application in the gitops namespace; the operator's and the director's Deployments, RBAC and webhook; the Gateway and its routes
@@ -47,6 +47,10 @@ apply() {
     info "waiting for gentian-os to be Synced and Healthy"
     t=$((SECONDS + 900))
     until _v5_delivered "${ns}" gentian-os; do
+        # As C-02: an Application whose retries are spent is asked again,
+        # not waited on.
+        unstick_argo_hook_job "${ns}" gentian-os
+        request_argo_sync_if_stalled "${ns}" gentian-os
         if (( SECONDS > t )); then
             error "gentian-os is not Synced and Healthy after 15m:"
             kubectl get application gentian-os -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null

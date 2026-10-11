@@ -29,14 +29,11 @@ set -euo pipefail
 #   authz/openfga
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
-#   storage/registry              (optional, requires args 2+3)
 # =============================================================================
 
 MASTER_PASSWORD="${1:-}"
 SMTP_RELAY_USER="${2:-}"
 SMTP_RELAY_PASS="${3:-}"
-REGISTRY_USER="${REGISTRY_USER:-}"
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -366,18 +363,6 @@ kv_put "mail/smtp" "$(jq -n \
     "username": $username
   }')"
 
-# --- Registry (OCI pull credentials) — only if provided ---
-if [ -n "$REGISTRY_USER" ] && [ -n "$REGISTRY_PASSWORD" ]; then
-    kv_put_once "storage/registry" "$(jq -n \
-        --arg username "${REGISTRY_USER}" \
-        --arg password "${REGISTRY_PASSWORD}" \
-        '{"username": $username, "password": $password}')"
-else
-    echo ""
-    echo "  Skipping registry credentials (not provided)."
-    echo "  To add them later: bao kv put gentian-os/kernel/storage/registry username=<u> password=<p>"
-fi
-
 # --- Provider credentials (DNS zone host, edge ingress) ---
 # Each under the path its provider owns in kernel/platforms.yaml.
 #
@@ -419,7 +404,10 @@ fi
 # --- LLM serving (LiteLLM / vLLM credentials) ---
 KERNEL_REALM="${KERNEL_REALM:-kernel}"
 LITELLM_UI_USERNAME="admin@${KERNEL_DOMAIN}"
-LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
+# LiteLLM's own fallback login, beside its Keycloak SSO. Its own derivation:
+# it was the platform administrator's derived password, which no longer
+# exists -- that account is activated by link and its password is its holder's.
+LITELLM_UI_PASSWORD=$(derive_password "llm" "ui_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 # sk- prefixed, because LiteLLM requires it of a master key and refuses
 # anything else outright: "LiteLLM Virtual Key expected. Received=a364****5827,
@@ -435,6 +423,38 @@ VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 LITELLM_MASTER_KEY="sk-$(derive_password "llm" "litellm_master_key")"
 LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
 LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
+# With SECRET_MODE=random the five values above are drawn anew on every run,
+# and the write below replaces the whole path on every run -- it has to, the
+# addresses beside them follow install.env. So what the path already holds
+# stands, and a drawn value is used only for a field the path does not have.
+# Without this a second run handed the proxy a master key and a database
+# password that nothing else had been given.
+#
+# Derived values need none of it: they come out the same each time.
+#
+# A path that cannot be read is not the same as a path that is not there, and
+# only the second may be filled with new values.
+if [ "${SECRET_MODE}" = "random" ]; then
+    _llm_read=$(curl -k -s -w "\n%{http_code}" -H "X-Vault-Token: ${BAO_TOKEN}" \
+        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/llm" 2>/dev/null || true)
+    _llm_code=$(echo "${_llm_read}" | tail -1)
+    case "${_llm_code}" in
+        200) _llm_have=$(echo "${_llm_read}" | head -n -1 | jq -c '.data.data // {}') ;;
+        404) _llm_have='{}' ;;
+        *)
+            echo "Error: gentian-os/kernel/llm could not be read (HTTP ${_llm_code:-none})." >&2
+            echo "  With SECRET_MODE=random its keys cannot be made again, so they are not replaced unread." >&2
+            exit 1
+            ;;
+    esac
+    _llm_kept() { echo "${_llm_have}" | jq -r --arg f "$1" '.[$f] // empty'; }
+    _kept=$(_llm_kept vllm_api_key);           [ -n "${_kept}" ] && VLLM_API_KEY="${_kept}"
+    _kept=$(_llm_kept litellm_master_key);     [ -n "${_kept}" ] && LITELLM_MASTER_KEY="${_kept}"
+    _kept=$(_llm_kept litellm_db_password);    [ -n "${_kept}" ] && LITELLM_DB_PW="${_kept}"
+    _kept=$(_llm_kept litellm_redis_password); [ -n "${_kept}" ] && LITELLM_REDIS_PW="${_kept}"
+    _kept=$(_llm_kept litellm_ui_password);    [ -n "${_kept}" ] && LITELLM_UI_PASSWORD="${_kept}"
+    unset _llm_read _llm_have _kept
+fi
 # Admin console SSO (platform-admin only; see docs/design/llms.md and the
 # litellm-dashboard Keycloak client provisioned by portal-login-bootstrap.sh).
 LITELLM_PROXY_BASE_URL="https://llm.${KERNEL_DOMAIN}"

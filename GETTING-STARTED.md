@@ -13,13 +13,25 @@ already done, so a second run continues rather than restarting.
 ```
 
 It then waits for the things only you can do: move the kit somewhere safe, sign
-in at `https://console.<your-domain>/`, and supply the runtime credentials the
+in at `https://platform.<your-domain>/`, and supply the runtime credentials the
 console asks for. It sees the sign-in, finishes handover itself, and prints
 `Install Complete`.
 
 For flags, troubleshooting and the non-default installs — internal domains,
 mirrors, uninstalling — see
 [docs/install-reference.md](docs/install-reference.md).
+
+The steps, in the order you do them:
+
+| | Step | You are done when |
+|---|---|---|
+| — | [What you need](#what-you-need-before-you-start), and [on a machine that installed before](#on-a-machine-that-installed-before) | pre-flight passes |
+| 1–3 | Clone the deployments repository, write `install.env`, have the credentials ready | the two stage files are pushed and you hold the token and the master password |
+| 4 | `./install.sh` | it prints `Almost There: 1 step left` |
+| 5 | Handover: keep the kit, sign in | it prints `Install Complete` |
+| 6 | Check | [the cluster is ready for a tenant](#the-cluster-is-ready-for-a-tenant) |
+| 7 | Multi-tenancy: create the first tenant. Either mode: open the tenant's App Store | the App Store lists apps |
+| 8 | Only for a cluster that runs your own services from a private repository | your service answers at its public address |
 
 ---
 
@@ -33,9 +45,9 @@ steps within it. Five phases, in this order:
 |---|---|---|---|
 | **A** | `control-plane` | A-01 … A-09 | Namespaces, cert-manager, External Secrets, Crossplane, Envoy Gateway, Argo CD, metrics-server, pre-pulled images, cluster issuers |
 | **B** | `secrets` | B-01 … B-10 | The kernel bootstrap Applications, the transit seal and OpenBao, Crossplane providers and definitions, the seeded credentials, the deployment signing keys |
-| **C** | `platform` | C-01 … C-06 | The Cluster claim, the ApplicationSets, the wildcard certificate, DNS, the credential catalogue, the repository hand-off |
-| **D** | `applications` | D-01 … D-04 | The operator and the director, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
-| **E** | `handover` | E-01 … E-03 | The recovery kit, then revoking the installer's own credential |
+| **C** | `platform` | C-01 … C-05 | The Cluster claim, the ApplicationSets, the wildcard certificate, the credential catalogue, the repository hand-off |
+| **D** | `applications` | D-01 … D-05 | The operator and the director, the kernel hostnames resolving, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
+| **E** | `handover` | E-01 … E-04 | The recovery kit, then revoking the installer's own credential; on a single-tenancy cluster, the user tenant after that |
 
 `./install.sh --explain` prints every step with what it provides and what it
 mutates, straight from the step files, so it cannot drift from what runs.
@@ -72,12 +84,35 @@ until it is done.
 
 ## What you need before you start
 
-- **A Kubernetes cluster you are an admin on.** The installer does not create
-  one. It runs 100+ pods, so a laptop-sized node pool will be tight.
+- **A Kubernetes cluster you are an admin on, version 1.33 or newer.** The
+  installer does not create one, and pre-flight refuses an older one: the
+  edge it installs, Envoy Gateway 1.9, is tested on Kubernetes 1.33 to 1.36.
+  `kubectl version` shows the server's. It runs 100+ pods, so a laptop-sized
+  node pool will be tight.
+
+  - It needs cluster DNS, RBAC and a default StorageClass. On MicroK8s those
+    are the add-ons `dns`, `rbac` and `hostpath-storage` (or a StorageClass
+    of your own, named at the `storageClass` question in step 4). The
+    installer raises MicroK8s's limit of 110 pods per node to 220 itself,
+    which restarts MicroK8s once and asks for `sudo`.
+  - **An older MicroK8s is upgraded one minor version at a time**, never
+    across several — Kubernetes supports no other way. From 1.31, for
+    example, wait for the node to be `Ready` after each of:
+
+    ```bash
+    sudo snap refresh microk8s --channel=1.32/stable && microk8s status --wait-ready
+    sudo snap refresh microk8s --channel=1.33/stable && microk8s status --wait-ready
+    kubectl get nodes        # VERSION reads v1.33.x
+    ```
+  - Use a `kubectl` no more than one minor version away from the cluster's.
+    An older one still works for most things and prints a warning about
+    version skew on every call.
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
   crossplane python3 age age-keygen`. Pre-flight checks and names any that are
-  missing, and refuses to start without them. `bao` (the OpenBao CLI) installs
-  itself to `~/.local/bin`.
+  missing, and refuses to start without them. `bao` (the OpenBao CLI) is the
+  one tool the installer fetches itself when it is missing: to `~/.local/bin`,
+  for Linux and macOS on x86_64 and arm64, and only after the archive matches
+  the release's own checksum list. On any other machine install `bao` first.
 
   - `git` and `gpg` are needed before the cluster is touched: step 0 commits
     this cluster's definition to `gentian-deployments`, and every commit to
@@ -95,11 +130,115 @@ until it is done.
   it as a QR code, which is what you keep on paper. Pre-flight warns if it is
   missing, since the kit is written near the end of a long install.
 - **A domain**, for example `platform.example.com`. It does not have to be
-  publicly resolvable.
+  publicly resolvable. On a public one, these names have to reach the
+  cluster, and their certificates are issued over DNS (step 3):
+
+  | Name | What answers there |
+  |---|---|
+  | `<domain>`, `www.<domain>` | the page that sends each person to their tenant |
+  | `platform.<domain>` | the platform admin's desktop |
+  | `admin.platform.<domain>` | the platform admin's console |
+  | `id.<domain>` | the identity provider, for every tenant |
+  | `*.<tenant>.<domain>` | multi-tenancy, one tenant: `desktop.`, `admin.`, `store.` and each app |
+  | `desktop.<domain>`, `admin.<domain>`, `store.<domain>`, `<app>.<domain>` | single-tenancy: the one tenant for users, which has no label of its own (step 7) |
+
+  With a DNS provider named in step 4 (Cloudflare by default) and its token
+  supplied, the cluster publishes these records itself and the install waits
+  for them. Without one you maintain them: `<domain>`, `*.<domain>`,
+  `*.platform.<domain>` and, on a multi-tenancy cluster, one
+  `*.<tenant>.<domain>` per tenant, pointing at the cluster.
+- **A way for traffic to reach the cluster**, which is the `networkMode`
+  question of step 4. The installer sets up neither:
+
+  - `tunnel` (the default) is a Cloudflare Tunnel. Create the tunnel in your
+    Cloudflare account and run `cloudflared` for it **in the cluster** before
+    the install: the platform does neither, and the tunnel's routes point at a
+    Service name only a pod in the cluster can resolve. The installer needs
+    the tunnel's id and has one source for it, the Secret `cloudflared` runs
+    with, in the namespace `default`:
+
+    ```bash
+    kubectl create secret generic cf-tunnel -n default \
+        --from-literal=token=<the tunnel's token>
+    # or, for a tunnel run from a credentials file:
+    kubectl create secret generic tunnel-credentials -n default \
+        --from-file=<tunnel-id>.json=<the tunnel's credentials file>
+    ```
+
+    The pre-flight stops the install when it finds neither, with these two
+    commands. Step `B-08` stores `<tunnel-id>.cfargotunnel.com` with the
+    Cloudflare DNS credential, so a tunnel cluster needs Cloudflare as its DNS
+    provider (`acme-dns01`, `cloudflare`). The operator then writes the
+    tunnel's routes itself and publishes every hostname as a record pointing at
+    the tunnel, through external-dns, which is installed on a tunnel cluster
+    too.
+    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay.
+  - `static-ip` needs a fixed address that DNS points at and something that
+    answers a `LoadBalancer` Service with it: MetalLB on your own machines
+    (on MicroK8s the add-on `metallb`, given that address), or the cloud's
+    load balancer. The platform's own mail needs this mode.
 - **A token with write access to `gentian-deployments`.** The installer pushes
   this cluster's definition with it, and the director on the cluster pushes
   every later change — tenants, app installs — with it too. The installer asks
   for it.
+
+### On a machine that installed before
+
+The installer renders the cluster from the files on this machine and reads
+back whatever an earlier install left. Five things carry over, and each of
+them quietly gives you the earlier cluster instead of the one you mean:
+
+1. **This checkout.** Bring it to the commit you want to install, and
+   reinstall the CLI from it:
+
+   ```bash
+   git pull --ff-only && git log --oneline -1
+   make install-plugin
+   ```
+2. **A pinned image in `install.env`.** A line `GENTIAN_OS_IMAGE_TAG=…` left
+   from an earlier run is used as it stands: the cluster runs that older
+   build under today's manifests. The installer warns only when the value is
+   a tag that moves (`develop`), not when it is an old build. Delete the line
+   (step 2).
+3. **A list of default profiles in `install.env`.** A line
+   `GENTIAN_DEFAULT_PROFILES=…` (or `GENTIAN_STORE_CATALOGUE_URL=…`) is used
+   in place of the default too, an empty value included. An entry that is a
+   local file — the form earlier installs used — is now refused and **stops
+   step 0**, and so does one whose catalogue lists no digest for it; one whose
+   catalogue cannot be reached is a warning, and the cluster then comes
+   without the profile. Delete the line; unset, step 0 places the Operations
+   Console from `https://catalogue.aluvian.io`, only if the file hashes to the
+   digest that catalogue's index lists
+   ([install-reference.md §4](docs/install-reference.md)).
+4. **The cluster's definition in the deployments repository.** If
+   `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
+   nothing: the domain, the tenancy mode, the catalogue and the store are the
+   ones in `kernel/claims/cluster.yaml`, and every tenant directory under
+   `tenants/` comes back with the cluster. Read the claim before you start.
+   To change a setting, edit it in your deployments checkout and let
+   `./install.sh` commit it (never commit there yourself once the signing
+   keys exist). In particular, a claim written by an earlier installer may
+   name a store and a catalogue that never served anything; the installer
+   warns about both, and the App Store stays empty until they read as a new
+   claim's do:
+
+   ```yaml
+   catalogue:
+     storeUrl: https://store-service.aluvian.io
+     sources:
+       - name: gentian
+         url: https://gentian-org.github.io/gentian-apps/develop   # without /develop when installing a release
+   ```
+5. **The signing keys and the wildcard certificate** in `~/.gentian`. Keep
+   them: the keys are the ones the repository's history is signed with, and
+   the certificate saves one of the five a week Let's Encrypt issues for a
+   set of names. The installer looks the break-glass key up by the id the
+   repository records for this cluster (`signing/keys.env`). On a machine
+   whose keyring does not hold that key it **refuses to install**, before
+   writing anything: run `./install.sh --recover <kit>` there first, or
+   install from the machine that has the key. Only when the key is lost for
+   good, `./install.sh --rotate-break-glass-key` records a new one
+   ([install-reference.md §9](docs/install-reference.md)).
 
 ---
 
@@ -115,8 +254,23 @@ git clone <your-gentian-deployments-url> ~/.gentian/gentian-deployments
 To keep it somewhere else, set `GENTIAN_DEPLOYMENTS_PATH` in step 2.
 
 The repository needs `profiles/_base.yaml` and `profiles/<stage>.yaml` for the
-stage you are about to use. Step 0 warns if either is missing and carries on,
-but the cluster's stage-tier policy has no home until they exist.
+stage you are about to use, committed and pushed. Each may be empty (`{}`
+under a comment). Argo CD reads both as values files of the platform's own
+chart and renders nothing when one is missing: step 0 warns and carries on,
+and the install then stops at `D-01` with no operator. In a new repository:
+
+```bash
+cd ~/.gentian/gentian-deployments && mkdir -p profiles
+for f in _base dev; do [ -f profiles/$f.yaml ] || echo '{}' > profiles/$f.yaml; done   # dev: your stage
+git add profiles && git commit -m "Stage values" && git push
+```
+
+Make every commit of your own now. Once a cluster is installed from the
+repository, Argo CD syncs it only while its newest commit is signed by one of
+that cluster's keys
+([below](#a-commit-to-the-deployments-repository-is-not-synced)). A catalogue
+of your own profiles that must not be public is one more directory to commit
+here (step 8).
 
 ## 2. Write `install.env`
 
@@ -128,19 +282,28 @@ Edit it. These are the values that matter for a first install:
 
 | Variable | Set it to |
 |---|---|
-| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 4, which pushes the tree it names |
-| `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` |
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
-| `GENTIAN_APPS_REPO` / `_BRANCH` | The app catalogue |
+| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 4, which pushes the tree it names |
+| `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` — the one whose `profiles/<stage>.yaml` you committed in step 1 |
+| `GENTIAN_OS_BRANCH` | Leave it unset to follow the branch this checkout is on (`git branch --show-current`). Set it to follow a release tag (`v1.2.3`): a checked-out tag has no branch to read, and the install stops and asks |
+| `GENTIAN_DEPLOYMENTS_AUTH` | `basic`, the default: a user name and a token, which a private repository needs. `none` for a public one |
 
-Leave the rest at their defaults. The repository URLs, branches and auth modes
-below them are already filled in — they are defaults for a fork or a mirror, not
-questions.
+Leave `GENTIAN_OS_IMAGE_TAG` and `GENTIAN_DEFAULT_PROFILES` unset, and remove
+either line if an earlier install left it
+([above](#on-a-machine-that-installed-before)). The installer then runs the
+build of exactly the commit you are installing from, and pre-flight says so
+if that build has not been published yet.
 
-**Nothing about the cluster itself is set here.** Its domain, network and
-routing modes, certificate issuer, mail mode and storage class live on the
-Cluster claim, which the install asks for in step 4. `install.env` says how to
-run the install; the claim says what the cluster is.
+Leave the rest as it is. Everything below those lines in the template is
+optional and commented out, with its default.
+
+**Nothing about the cluster itself is set here.** Its domain, network mode,
+certificate issuer, mail mode, tenancy mode, secret mode, storage class and
+models live on the Cluster claim, which the install asks for in step 4.
+`install.env` says how to run the install; the claim says what the cluster is.
+A cluster setting written into `install.env` (`TENANCY_MODE`, `SECRET_MODE`,
+`NETWORK_MODE`, `MAIL_SERVICE_MODE` and the others the template lists at its
+end) overrides the claim on every later run, and the installer warns about it.
 
 ## 3. Have the credentials ready
 
@@ -151,9 +314,21 @@ stops before touching the cluster if any fail.
 |---|---|---|
 | `deployments-repository` | yes | Write access to the repository from step 1 |
 | `master-password` | yes | At least 16 characters |
-| `infra-chart-registry` | no | Only for a private chart registry |
-| `gentian-os-repository`, `gentian-apps-repository`, `gentian-ui-repository` | no | Only when the matching `GENTIAN_*_AUTH` in `install.env` is not `none` |
-| Cloudflare API token | under `acme-dns01` | `CF_API_TOKEN` — needed by the default issuer, see below |
+| `gentian-os-repository`, `gentian-ui-repository` | no | Only when the matching `GENTIAN_*_AUTH` in `install.env` is not `none` |
+| DNS provider credential | under `acme-dns01` | For the provider named in step 4. Cloudflare, the default: an API token with Zone → Zone → Read and Zone → DNS → Edit on the domain's zone — needed by the default issuer, see below |
+| Cloudflare Tunnel API token | under `networkMode: tunnel` | Account → Cloudflare One Connector: cloudflared → Edit. Not the tunnel's own token (that one is in the Secret `cloudflared` runs with). It is checked and stored in OpenBao at `gentian-os/kernel/edge/cf-tunnel`. **As installed, the operator writes the tunnel's routes with the DNS token, not with this one** — so on a tunnel cluster give the DNS token this permission too (one token with all three permissions, entered at both questions, is the simple case). To have the operator use this token instead, see below. Not asked on a `static-ip` cluster |
+
+To give the operator the tunnel token as a credential of its own, with the DNS
+token left at its two zone permissions, add this to
+`clusters/<cluster-id>/kernel/values.yaml` in the deployments repository once
+step 0 has written that file, and run `./install.sh` again:
+
+```yaml
+cloudflare:
+  tunnelAPITokenSecretRef:
+    name: cloudflare-tunnel-api-token-gentian-system
+    openbaoPath: gentian-os/kernel/edge/cf-tunnel
+```
 
 Type them when asked. Each reaches OpenBao once it exists, and a later run
 recovers it from there instead of asking again — so a resumed install does not
@@ -168,8 +343,9 @@ it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
 not just the wildcard, so an absent or rejected token leaves the cluster with no
 working TLS. Choose `acme-http01` (public DNS, port 80 reachable, no wildcards)
 or `self-signed` (internal domains) at the issuer question in step 4 if you do
-not want to supply one. On a tunnel cluster the same token needs a second
-permission for tenant routing — see
+not want to supply one. On a tunnel cluster the installer asks for the tunnel
+token as well. One Cloudflare token may hold both permissions; it is then
+entered twice, once at each question — see
 [design/routing.md](docs/design/routing.md) §3a for what to grant it.
 
 If a value is rejected, the installer names where it came from and asks for a
@@ -190,16 +366,33 @@ one. Every question shows its default; Enter takes it.
 | Kernel domain | — | Always asked; there is no default |
 | `networkMode` | `tunnel` | DNS points straight at a node — `static-ip`, which then asks for `nodeIp` |
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
-| `certificates.acmeEnv` | `staging` on a `dev` stage, else `production` | Names are settled and you want trusted certificates on dev |
+| `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot (`kernel`, needs `static-ip`) |
-| `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
+| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound. Step 0 does not ask for that address and nothing in the claim names it: the mail edge is a `LoadBalancer` Service of its own (`mail-edge-<stage>`) and cannot share the HTTPS edge's address, so the pool your load balancer hands out from (MetalLB's `IPAddressPool`, which you create) needs at least two addresses. The HTTPS edge takes `nodeIp`, or `addressRef` if you add that to the claim; mail gets whichever other address the load balancer assigns, and the operator publishes `mail.<domain>`, `imap.<domain>` and the MX, SPF, DKIM and DMARC records from it. The reverse (PTR) record of that address is yours to set at the provider. The load balancer must hand on the sender's address, by forwarding packets or with the PROXY protocol — see [mail.md §9a](docs/design/mail.md#9a-what-a-kubernetes-cluster-needs-to-host-mail) and [§9b](docs/design/mail.md#9b-the-mail-edge). The mail edge is built, not yet run on a cluster. Not asked on a tunnel cluster, which is always `external`. After step 0, set `mail.egressHost` in the claim to the name outbound mail leaves from; without it the SPF record names the inbound address |
+| `mail.host` | unset | `external` mode: the relay's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
-| `tenancyMode` | `multi` | One tenant occupies the whole cluster (`single`) |
-| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
+| `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `desktop.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`desktop.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
+| Second factor for the platform admin | `true` | The platform admin should activate the account without enrolling one |
+| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password: with `random`, the credentials the platform generates, the kernel's and each app's, are drawn at random and kept only in OpenBao; two kernel credentials stay derived. An app's own secrets are carried in the tenant's backups, encrypted, so that restored data stays readable. Choose it at the first install; a later change leaves every existing credential as it is. Tenant backups work the same in both modes, but nothing backs up OpenBao: if its storage is lost on a `random` cluster, every service and app is locked out of its store, so such a cluster has to snapshot OpenBao itself ([security.md §6](docs/design/security.md)) |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
 | `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
+| `llm.console.enabled` | `false` | Not asked; set it in the claim. Platform administrators should have the model gateway's own console at `llm.<kernel-domain>`. Off, there is no such address and the gateway is reached from inside the cluster only. A cluster installed before this setting existed has it off after its next run, and the install says so |
+| `llm.providers`, `llm.instances` | none | Not asked; set them in the claim. The models the gateway offers: external OpenAI-compatible providers' models, and the models a cluster with GPUs serves itself. A commit to the claim changes the gateway's model list, with no run of the install. A provider's token is a credential, entered in the administration console; it appears there with the run after the claim first names the provider. An instance is offered by the gateway and not started by the platform ([install-reference.md](docs/install-reference.md), [llms.md](docs/design/llms.md)) |
+
+Two common installs answer like this; everything not listed takes its
+default:
+
+| Question | A test cluster: tunnel, a mail relay, several tenants | A production cluster: its own address and mail, one tenant |
+|---|---|---|
+| Kernel domain | a domain in your Cloudflare zone | the organisation's domain |
+| `networkMode` | `tunnel` | `static-ip`, then `nodeIp` |
+| `certificates.issuerMode`, `dnsProvider` | `acme-dns01`, `cloudflare` | `acme-dns01`, and the provider that hosts the zone |
+| `mail.serviceMode` | not asked: `external`. Then `mail.host`, the relay | `system` |
+| `tenancyMode` | `multi` | `single` |
+| Credentials asked after step 0 | the deployments token, the master password, the DNS token, the tunnel token | the deployments token, the master password, the DNS provider's credential |
+| Supplied in step 5 | the relay's user name and password | nothing for mail |
+| After the handover | you create tenants (step 7) | the install creates the tenant `user` (step 5) |
 
 With the answers it writes `clusters/<cluster-id>/kernel` into your deployments
 checkout:
@@ -209,8 +402,13 @@ checkout:
 | `claims/cluster.yaml` | Everything that describes this cluster — every setting above, set or commented with the default in effect |
 | `claims/suze.yaml` | Cluster security: Keycloak and OpenFGA |
 | `claims/deployments-repository.yaml` | Where the director pushes. Without it every write answers 503: no tenant can be created and nobody can be invited |
+| `claims/gentian-os-repository.yaml`, `claims/gentian-ui-repository.yaml` | The platform's own repositories, as Argo CD may read them |
 | `values.yaml` | This cluster's Helm overlay |
 | `signing/director.asc`, `signing/break-glass.asc`, `signing/keys.env` | The two public keys Argo CD will accept commits from, and their ids |
+
+Beside `kernel` it writes `tenants/platform` (the platform tenant),
+`catalogue/` (the default profile) and, on a single-tenancy cluster,
+`tenants/user`.
 
 Then it **commits and pushes** them, signed with the break-glass key. Two keys
 are generated for this cluster in `~/.gentian/gnupg` the first time: the
@@ -265,13 +463,28 @@ the director cannot; set `GENTIAN_KIT_INCLUDE_BREAK_GLASS=0` to keep that key
 out of it.
 
 **Want to see the plan before anything runs?** Both of these change nothing —
-neither the cluster nor the deployments repository — and report a missing
-definition instead of writing one:
+not the cluster, not the deployments repository (no commit, no push), not a
+file or a key on this machine. Where the install would act, they print a line
+beginning `Would`:
 
 ```bash
-./install.sh --validate      # is this configuration coherent? No cluster needed.
+./install.sh --validate      # which settings and credentials does this configuration have, and does this machine and cluster pass the pre-flight?
 ./install.sh --dry-run       # what would the install do to THIS cluster?
 ```
+
+Neither asks for a credential and neither writes the cluster's definition.
+`--validate` checks the step files, prints a report of the configuration
+ending in a line `Result:`, and then runs the install's pre-flight: the tools
+on this machine, the cluster reachable and new enough, the operator image
+published. It asks no question and runs no step's check, so it works before
+the first install: a value the install asks for (`MASTER_PASSWORD`, the
+cluster's domain) is listed as `[PENDING]`, not as an error, and a cluster with
+no definition yet is told that the install writes one. It stops after the
+report, with exit status 1, when the report has an error. `--dry-run` goes
+further and runs every step's check. Both read the
+cluster, so it has to be reachable, and before the first install `--dry-run`
+stops at `clusters/<cluster-id>/kernel is incomplete`, which is then the
+expected answer. `./install.sh --explain` needs neither a cluster nor a definition.
 
 ## 5. Handover
 
@@ -281,23 +494,33 @@ The install pauses here and waits for you. Three things finish it:
    root and printed the path. Put it where your break-glass material already
    lives — a password manager, a sealed vault, offline media. Without it this
    cluster cannot be rebuilt as itself.
-2. **Sign in to the console** as the administrator, at
-   `https://console.<kernel-domain>/`. The installer prints the URL, the
-   username — `admin@<kernel-domain>` — and the password while it waits.
+2. **Activate the platform admin's account and sign in.** `admin@<kernel-domain>`
+   has no password: you set one through a single-use, expiring activation link,
+   which also enrols a second factor unless step 0 switched that off. Where
+   the kernel realm can already send mail, the installer mails the link to a
+   recovery address — `CLUSTER_ADMIN_RECOVERY_EMAIL` in `install.env`, or the
+   one it asks you for — or, without one, prints it here once. Where it cannot
+   yet — a cluster with a mail relay, whose credentials you supply only after
+   this sign-in — the link is printed here once, and an address from
+   `install.env` is kept as the recovery address. Open it, set the password, then sign in at
+   `https://platform.<kernel-domain>/`. Nobody else, the installer included,
+   ever knows the password.
 3. **Supply the runtime credentials.** Once signed in, open the **Credentials**
-   tab and fill in what the cluster is still missing — SMTP relay, any extra app
-   repository and its pull secret.
+   tab and fill in what the cluster is still missing — the SMTP relay's user
+   name and password on a cluster with `mail.serviceMode: external`, any extra
+   app repository and its pull secret. A cluster with its own mail
+   (`system`) has no relay to supply.
 
 Signing in is what the installer is waiting for: it proves someone other than
 the installer can write credentials. The moment it sees that, it revokes its own
 credential, deletes the temporary secret files, and prints **`Install Complete`**.
 
-**Do the SMTP relay first.** It is not only about sending mail. Any app whose
+**With a relay, do the SMTP relay first.** It is not only about sending mail. Any app whose
 profile asks for SMTP reads those credentials from OpenBao, and they are written
 there only once the relay exists — so until you supply it, those apps do not
 install at all: the tenant stays in `Provisioning` and the app's secret never
 syncs. On a cluster with `mail.serviceMode: external` this is the most common
-reason a first tenant appears to hang.
+reason a tenant appears to hang.
 
 The wait is bounded — 30 minutes, `GENTIAN_HANDOVER_WAIT_SECS` to change it —
 and interrupting it costs nothing. Sign in whenever you like, then:
@@ -305,6 +528,37 @@ and interrupting it costs nothing. Sign in whenever you like, then:
 ```bash
 ./install.sh --only E-03
 ```
+
+**On a multi-tenancy cluster the install ends here.** It has created no
+tenant for users; that is the platform admin's next step (step 7).
+
+**On a single-tenancy cluster one step follows**, `E-04-user-tenant`, in the
+same run and with nothing for you to start. The cluster's one tenant for users
+— always named `user` — has been in the deployments repository since step 0
+and was refused all along: the cluster admits no tenant but the platform's
+until the platform admin has signed in. Now that you have, the installer asks
+Argo CD to try it again, waits for the tenant to be Ready (15 minutes,
+`GENTIAN_USER_TENANT_WAIT_SECS`), and hands over its administrator's account
+the way yours was: an activation link for `user-admin@<kernel-domain>`, mailed
+when the tenant's realm can send mail and shown once otherwise. The install
+waits for nothing after that and closes by naming both roles:
+
+- the **platform admin**, in charge of the platform:
+  `https://platform.<kernel-domain>/`
+- the **user admin**, in charge of the users and the user tenant:
+  `https://desktop.<kernel-domain>/`
+
+They are two accounts in two realms, and may or may not be the same person.
+The user admin may approve what the user tenant puts on the internet: the
+install creates this one tenant with that switched on, and the platform admin
+can switch it off (`kubectl gentian tenants set user
+--admins-approve-public-addresses=false`). A user tenant that was there before
+is left as it is; one created anew with `kubectl gentian tenants create user`
+starts with it on as well.
+If the tenant is not Ready within the wait, the install says what it is
+waiting for and does not fail: `kubectl get tenant user` shows its state, and
+`./install.sh --only E-04` — or `kubectl gentian tenants activate-admin user`,
+signed in as the platform admin — issues the link once it is.
 
 ## 6. Check the status
 
@@ -314,9 +568,12 @@ and interrupting it costs nothing. Sign in whenever you like, then:
 
 Every step reads `satisfied`, except steps that do not apply to this cluster —
 those read `undefined`, and `undefined` is never a failure. `E-01-tenants`
-always reads that way (tenants are created after installation); `B-09` and
-`D-03` do so on a cluster without OIDC, `C-03` on one with no DNS provider, and
-`B-10` until the signing keys exist in the deployments repository.
+always reads that way (it only acts on an uninstall), and `E-04-user-tenant`
+does on a multi-tenancy cluster, where the install creates no tenant; `B-09` and
+`D-04` do so on a cluster without OIDC, `C-03` on one with no DNS provider, and
+`B-10` until the signing keys exist in the deployments repository. After the
+handover `B-08`, `B-09`, `B-10` and `D-04` read `undefined` too: their checks
+ask OpenBao, and the installer's token for it is revoked.
 
 ```bash
 make check-credentials
@@ -334,87 +591,431 @@ kubectl get managed
 kubectl get application,applicationset -n kernel-gitops
 ```
 
-## 7. Create your first tenant
+### The cluster is ready for a tenant
 
-The commands below use the `gentian` CLI. Install it once, on whichever machine
-you administer clusters from:
+All of these hold on a cluster you can give a tenant to. If one does not,
+that is the thing to look at before creating a tenant:
+
+1. The install printed **`Install Complete`**, and `./install.sh --status`
+   shows every step `satisfied` or `undefined`.
+2. `https://platform.<kernel-domain>/` shows the platform admin's desktop
+   after you sign in as `admin@<kernel-domain>`, and
+   `https://admin.platform.<kernel-domain>/` opens the admin console.
+3. The handover is complete:
+
+   ```bash
+   kubectl get configmap gentian-handover -n kernel-control \
+     -o jsonpath='{.data.bootstrapCredentialRevoked}{"\n"}'      # true
+   ```
+4. Every Application is `Synced` and `Healthy`, and nothing Crossplane
+   manages is unready:
+
+   ```bash
+   kubectl get application -n kernel-gitops
+   kubectl get managed | grep -w False     # prints nothing
+   ```
+5. The CLI reaches the director as you:
+
+   ```bash
+   kubectl gentian login
+   kubectl gentian tenants list       # the platform tenant, and no error
+   kubectl gentian catalogues list    # gentian, for every tenant, at an address that answers
+   ```
+6. The catalogue is published. Take the address from the line above:
+
+   ```bash
+   curl -sI <address>/index.yaml | head -1     # HTTP/2 200
+   ```
+
+## 7. Tenants
+
+A cluster's users live in a tenant of their own. The platform tenant, which
+every cluster has, holds the platform admin and the platform's own components
+and nothing else: it takes no apps, and the director says so if you try. How
+many tenants for users a cluster has is its **tenancy mode**, which step 0
+asked for (`tenancyMode` on the Cluster claim).
+
+| | Multi-tenancy (`multi`, the default) | Single-tenancy (`single`) |
+|---|---|---|
+| Tenants for users | any number; you create them | exactly one, named `user`; the install creates it (step 5) |
+| Its desktop | `https://desktop.<tenant>.<kernel-domain>/` | `https://desktop.<kernel-domain>/` |
+| Its admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
+| In charge of it | a **tenant admin**, `admin@<tenant>.<kernel-domain>` | the **user admin**, `user-admin@<kernel-domain>` |
+| `https://<kernel-domain>/` and `www.` | a page that asks for an e-mail address and sends each person to their tenant | the user tenant's desktop |
+| `desktop.<kernel-domain>` | leads to that page | the user tenant's desktop |
+| The **platform admin** | `admin@<kernel-domain>` at `https://platform.<kernel-domain>/`; admin console at `admin.platform.<kernel-domain>` | the same |
+
+**On a single-tenancy cluster your website can live at the main address.**
+Install an app that offers a public website for it, then approve that surface
+for the main address (`kubectl gentian exposures approve`, by whoever
+approves public addresses in the tenant — the user admin, the members of the
+tenant's `perimeter` group and the platform admin, step 8; it prints the rule
+for a website there and needs `--acknowledge-main-address-rule`).
+`https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
+`https://desktop.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
+always leads there.
+
+**On a single-tenancy cluster there is nothing to create.** A second tenant
+is refused, with a message that names the mode — in the console, by the CLI
+and by the cluster itself. The tenant needs no domain bound either: it is
+on the cluster's own domain already, so `tenants domain` is not part of this
+path. (Binding a domain is refused there, with the reason: it would move the
+tenant off the cluster's addresses, and the main address would not be its
+own.) The user admin installs apps for the tenant `user` exactly as
+described below for any tenant: wherever an example says `--tenant acme`,
+it is `--tenant user`. A few host names are the platform's own there (`id`,
+`platform`, `www`, `argocd`, `headlamp`, `llm`, `mail`, `imap`,
+`mail-egress`, `corp`): an app that would answer on one of them is refused
+at install, with the reason, and a component that reaches the cluster
+another way says so on its status (`HostReserved`). As in every tenant on
+every cluster, an app cannot take `desktop`, `admin`, `store`, `console`,
+`auth`, `login`, `signin`, `sign-in`, `sso`, `account` or `accounts`
+either.
+
+**On a multi-tenancy cluster** the platform admin creates tenants through the
+director — in the admin console, or with the `gentian` CLI, which is a
+command-line client of the same director. Either way the director checks that
+you may, commits the tenant to the deployments repository as you, and records
+it.
+
+**In the console:** **Tenants** → *Bring a tenant on*. Give it a name (any name
+but `default`, which is reserved for the cluster-wide backup policy), a display
+name, and optionally the administrator's recovery email; leave *second factor*
+on unless you have a reason not to. After it is committed the screen waits for
+the tenant to be provisioned and then hands the administrator account over:
+the activation link is mailed to the recovery address, or shown once if you
+gave none. **Activate administrator** on any tenant issues a new link later —
+which is also how an administrator who lost access gets back in.
+
+**With the CLI:** install it once, on whichever machine you administer clusters
+from, and sign in:
 
 ```bash
-make install-plugin      # kubectl-gentian + gtnctl into ~/.local/bin
+make install-plugin          # kubectl-gentian + gtnctl into ~/.local/bin
+kubectl gentian login        # a code to confirm in the browser, as admin@<kernel-domain>
 ```
 
-The installer does not do this for you, and `--uninstall` does not remove it:
-one CLI serves every cluster you manage. Remove it with `make uninstall-plugin`.
-Neither needs `sudo` — both write to `~/.local/bin`.
-
-Re-run `make install-plugin` after pulling. The CLI is a copy, not a link, so it
-does not follow the checkout, and `./install.sh --status` warns when the copy on
-your PATH is not the one in your tree. To see which copy answers:
+It talks to the director of the current kubectl context, so it needs no
+configuration of its own. Re-run `make install-plugin` after pulling — the CLI
+is a copy, not a link — and `gtnctl version` shows which copy answers.
 
 ```bash
-gtnctl version           # version, fingerprint, and any other copy on PATH
-```
-
-Scaffold the definition:
-
-```bash
-./install.sh --prepare-tenant acme
-```
-
-Any name but `default`. A tenant's own `BackupPolicy` has to be named after the
-tenant, and `default` is reserved for the cluster-wide one — so a tenant called
-`default` could never have a backup policy of its own.
-
-A tenant is authored, then deployed. Two directories, and the difference
-matters:
-
-- `definitions/tenants/<name>/tenant.yaml` — what the tenant is *meant to be*.
-  Yours to edit.
-- `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
-  written again by the director every time an app is installed from the store.
-
-It asks for a display name, then writes
-`clusters/<cluster-id>/definitions/tenants/acme/tenant.yaml`. Nothing is
-deployed, committed or applied.
-
-To install apps for the tenant, log in as tenant admin and open the app store,
-or see what this cluster offers:
-
-```bash
-kubectl gentian apps list
-```
-
-You can name apps in the definition, but it is recommended to **add apps with
-the tenant admin through the app store**:
-
-```yaml
-  apps:
-  - profile: nextcloud-base-ce
-    addons:
-    - nextcloud-calendar-ce
-```
-
-Quotas and mail are not in the definition. They come from this cluster's shared
-`definitions/components/tenant-defaults` component, so every tenant is sized the
-same way — override in the definition only what this tenant needs differently.
-
-Then deploy it:
-
-```bash
-kubectl gentian tenants deploy acme
-```
-
-That copies the definition into `clusters/<cluster-id>/tenants/acme/`, creates
-the defaults component if this is the cluster's first tenant, commits and
-pushes. Argo CD creates the Tenant:
-
-```bash
+kubectl gentian tenants create acme --display-name "ACME AG"   # --no-mfa to skip the second factor
+#   --admins-approve-public-addresses   its own admins may approve what it puts on the internet
+#   --admins-add-catalogues             its own admins may add catalogues to install from
+#   both are off unless given, and changed later with: kubectl gentian tenants set acme --...=true|false
+kubectl gentian tenants activate-admin acme --recovery-email owner@acme.example
 kubectl get tenant acme -w
 ```
 
-To remove one, `kubectl gentian tenants undeploy acme` — not `kubectl delete`.
-The directory is what the cluster reconciles towards, so deleting the object
-just brings it back.
+`activate-admin` waits for the tenant to be provisioned, then mails the link,
+or prints it once when you give no `--recovery-email`. The tenant is there
+when `kubectl get tenant acme` reads `Ready`; a first tenant takes several
+minutes, most of it the tenant's certificate and its realm. Then open the
+link, set the password, and sign in at
+`https://desktop.acme.<kernel-domain>/` as `admin@acme.<kernel-domain>`.
+
+### The App Store
+
+Apps are installed by the tenant's administrator from the App Store, or with
+the CLI (below). The App Store is a tile on the tenant's desktop, shown to the
+people who may install apps there — the tenant's administrators — and it
+opens `https://store.<the tenant's domain>/`. It is an app on the cluster
+that shows what a store elsewhere offers: its own server asks the store named
+on the Cluster claim (`spec.catalogue.storeUrl`,
+`https://store-service.aluvian.io` by default) for the list, with no account,
+and installs through the director as the person signed in.
+
+A tenant has the App Store while three things hold, which a default
+installation arranges: the cluster reports its licences, the claim names a
+store, and that store is not an address a cluster's own App Store app could
+have (`store.<a domain a cluster is installed under>`). The platform tenant
+never has it. The install says which it is, on a line beginning
+`App Store app:` in step `D-03`.
+
+**When the tile is missing, or the App Store lists nothing**, check in this
+order:
+
+1. *Is the app placed?* `kubectl get component -A | grep app-store` shows
+   one for the tenant. If it does not:
+
+   ```bash
+   kubectl get configmap gentian-tiles -n kernel-control -o jsonpath='{.data.tiles\.yaml}' | grep -A2 '^appStore:'
+   ```
+
+   `reason: licence-report-disabled` — the install ran with
+   `--no-licence-report` or `GENTIAN_NO_LICENCE_REPORT=1`; set it to `0` in
+   `install.env` and run `./install.sh`. `reason: no-store-configured` — the
+   claim names no store, or not an `https://` address; add
+   `spec.catalogue.storeUrl` to `claims/cluster.yaml` in your deployments
+   checkout and run `./install.sh`. `reason: store-address-is-own-host` —
+   the claim names the App Store app's own address; name the store's API
+   instead.
+2. *Are you signed in as someone who may install?* The tile is shown to the
+   tenant's administrators only.
+3. *Does the store answer?* The page says "The store could not be reached"
+   when it does not. From any machine:
+
+   ```bash
+   curl -s https://store-service.aluvian.io/v1/meta        # the address on your claim
+   curl -s 'https://store-service.aluvian.io/v1/apps?limit=5'
+   ```
+
+   Both must answer `200` with JSON, without a redirect and without a login.
+   A name that does not resolve, or any other answer, is the store's side to
+   fix: nothing on this cluster changes it, and the App Store's *Installed*
+   tab and the CLI keep working meanwhile. To use another store, change
+   `spec.catalogue.storeUrl` (`GENTIAN_STORE_URL` in `install.env` sets it
+   for a new claim).
+4. *Does the store list anything?* "The store lists nothing that matches"
+   means the second request above answered with an empty list: the store is
+   up and holds no apps yet.
+
+The App Store and the CLI are independent. Everything below works on a
+cluster with no store at all.
+
+### Installing apps with the CLI
+
+On a single-tenancy cluster the tenant is `user`: read `--tenant user` for
+`--tenant acme` below.
+
+```bash
+kubectl gentian apps list --tenant acme --available           # what the tenant's catalogues offer
+kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the catalogue lists, pinned by digest
+kubectl gentian apps list --tenant acme                       # what the tenant has
+```
+
+`install` takes the entry from a catalogue the tenant sees and pins it to the
+digest that catalogue lists; see [docs/commands.md](docs/commands.md) §6 for
+`--from` and `--digest`. A new cluster has one catalogue, `gentian`, for every
+tenant: the released one when the cluster is installed from a release, the
+development one (`…/gentian-apps/develop`) when it is installed from a branch
+([docs/custom-catalogues.md](docs/custom-catalogues.md) §3). To offer your own apps, publish a catalogue and add it for the cluster
+or for one tenant:
+
+```bash
+kubectl gentian catalogues list
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue                 # for every tenant
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant acme   # for acme only
+```
+
+A catalogue whose profiles must not be public is a directory of the
+cluster's deployments repository instead, added by the platform admin with
+`--path` in place of the address (step 8):
+
+```bash
+kubectl gentian catalogues add acme --path catalogue                       # for every tenant
+kubectl gentian catalogues add acme --path catalogues/acme --tenant acme   # for acme only
+```
+
+A catalogue for the whole cluster can also be declared before the install,
+as one more entry under `spec.catalogue.sources` in `claims/cluster.yaml`
+(a `name`, and an https `url` or a `path`).
+
+[docs/custom-catalogues.md](docs/custom-catalogues.md) explains how to build
+one, step by step.
+
+To remove a tenant, `kubectl gentian tenants retire acme` (or **Retire** in the
+console) — not `kubectl delete`: git is what the cluster reconciles towards, so
+deleting the object just brings it back. Retire keeps its data; add `--purge`
+(or choose **Purge** in the console) to delete it.
+
+A tenant's data is the tenant's. **Export** in the console (or a scheduled
+backup through the Operations Console) produces one encrypted bundle, which
+**Download** hands over as a single `.gentian` file. The way back is one
+command, on this cluster or any other:
+
+```bash
+kubectl gentian tenants import acme-export-20261001.gentian --identity-file acme-backup-key.txt
+```
+
+It declares the tenant from the bundle's own manifest, waits for the operator
+to provision it, restores the data, and says when people can sign in again
+(members need a password reset until bundles carry credentials; activate the
+administrator with `tenants activate-admin`). On a single-tenancy cluster an
+import is refused unless the tenant it makes is named `user` (`--name user`)
+and the cluster has none.
+
+## 8. A cluster that runs your own services from a private repository
+
+Everything above holds unchanged when the deployments repository is private
+and the cluster's first apps are your organisation's own services. What
+differs is listed here, in the order you meet it.
+
+1. **Point the install at the private repository.** In `install.env`:
+
+   ```bash
+   GENTIAN_DEPLOYMENTS_REPO=https://github.com/<organisation>/<deployments-repository>
+   GENTIAN_DEPLOYMENTS_BRANCH=main
+   GENTIAN_DEPLOYMENTS_AUTH=basic          # the default: a user name and a token
+   GENTIAN_DEPLOYMENTS_CLUSTER_ID=<the directory under clusters/>
+   GENTIAN_DEPLOYMENTS_STAGE=prod
+   ```
+
+   Clone it to `~/.gentian/gentian-deployments` (step 1), make sure
+   `profiles/_base.yaml` and `profiles/prod.yaml` are in it, and have a token
+   that can **write** to it: the installer pushes with it, and so does the
+   director for every tenant and app afterwards.
+
+   The installer gives that token to Argo CD as well, before anything in
+   the cluster can: the claim that hands Argo CD the repository's credential
+   from the vault is itself a file in the repository. You do nothing for it.
+   `A-06-argocd` registers the login the install collected (a Secret named
+   `argocd-repo-creds-bootstrap-deployments`, beside Argo CD), and
+   `C-05-repository-handoff` removes it once Argo CD holds the same login
+   from the vault. If `C-02-appsets` waits on `gentian-claims-prod` and Argo
+   CD reports `authentication required` for the repository, that Secret is
+   what is missing: check `GENTIAN_DEPLOYMENTS_AUTH` is not `none`, and run
+   `./install.sh --only A-06` with the token.
+2. **Install and hand over** (steps 4 to 6). On a multi-tenancy cluster,
+   then create the tenant your services run in (step 7):
+   `kubectl gentian tenants create <tenant>`. On a single-tenancy cluster
+   there is nothing to create: the tenant is `user`, step `E-04` made it
+   after the handover, and `<tenant>` below is `user`. Do
+   not commit a tenant's manifest yourself beforehand: the cluster refuses
+   every tenant until the platform admin has signed in, Argo CD gives up on
+   it after about a quarter of an hour, and the director refuses to create a
+   tenant whose directory is already there.
+3. **Make your profiles a catalogue.** A catalogue is `index.yaml` and
+   `profiles/<name>.yaml`, as
+   [docs/custom-catalogues.md](docs/custom-catalogues.md) §4 describes, with
+   the index generated by `scripts/tools/build-catalogue-index.py`. A cluster
+   reads one from two places and from nowhere else:
+
+   - *A directory of this cluster's own deployments repository*, for profiles
+     that must not be public
+     ([custom-catalogues.md §4.4](docs/custom-catalogues.md)). The director
+     reads it from the repository it already works in, with the credential it
+     has. No other repository is read, and not `clusters/<cluster-id>/catalogue`,
+     which is the director's own.
+
+     ```bash
+     cd ~/.gentian/gentian-deployments
+     python3 <gentian-os checkout>/scripts/tools/build-catalogue-index.py catalogue/
+     git add catalogue && git commit -m "Catalogue" && git push
+     ```
+
+     Commit it in step 1, with the stage files. On a cluster that is already
+     installed your commit is not signed by the cluster's keys and Argo CD
+     stops syncing the repository at it: run `./install.sh --only A-01` (or a
+     plain `./install.sh`) after the push, and step 0 puts a commit signed
+     with the break-glass key on top
+     ([below](#a-commit-to-the-deployments-repository-is-not-synced)).
+   - *A public https address*, without a login and without a redirect. The
+     raw-file address of a private repository is not one. The profiles carry
+     no secret — what is private stays in the registry (5) — so the directory
+     can be published as static files. Check it from outside:
+
+     ```bash
+     curl -sI https://<catalogue address>/index.yaml | head -1                 # 200
+     curl -sI https://<catalogue address>/profiles/<profile>.yaml | head -1    # 200
+     ```
+4. **Add the catalogue for that tenant only**, so no other tenant sees it,
+   signed in as the platform admin:
+
+   ```bash
+   kubectl gentian catalogues add <name> --path <directory> --tenant <tenant>              # a directory of the deployments repository
+   kubectl gentian catalogues add <name> https://<catalogue address> --tenant <tenant>     # or an address
+   kubectl gentian apps list --tenant <tenant> --available
+   ```
+
+   A catalogue added for one tenant brings profiles alone. A profile that
+   needs a Composition, an OIDC pack or a sign-in handler of its own has to
+   come from a catalogue added for the whole cluster (leave `--tenant` out).
+5. **Let the tenant pull your private charts and images.** Declare the
+   registry for the tenant and set its password, once: **Credentials** →
+   *Add a repository* in the tenant's admin console
+   ([docs/custom-catalogues.md](docs/custom-catalogues.md) §8). A chart whose
+   address lies inside the declared registry is then pulled with it. Without
+   this the install is committed and the app never arrives.
+6. **Install the service:**
+
+   ```bash
+   kubectl gentian apps install <profile> --tenant <tenant>
+   kubectl gentian apps list --tenant <tenant>
+   kubectl get component -A | grep <profile>        # Ready when it runs
+   ```
+7. **Its public address.** An entry a profile exposes answers at
+   `<subDomain>.<the tenant's domain>`. An entry that the public reaches
+   (`surface: perimeter` in the profile) is not reachable until the tenant's
+   approver has published it.
+
+   *On a single-tenancy cluster* the tenant's domain is the cluster's own:
+   installed on `example.com`, a service with `subDomain: api` answers at
+   `api.example.com` with nothing bound and no `tenants domain` command.
+   The wildcard record and certificate for `*.example.com` are the
+   cluster's. The names the platform keeps there cannot be a `subDomain`
+   (step 7). An entry a profile declares for the main address (`apex: true`)
+   is the cluster's website at `https://example.com/` and `www.`, approved
+   with `--acknowledge-main-address-rule` (below).
+
+   *On a multi-tenancy cluster* the tenant's domain is
+   `<tenant>.<kernel-domain>` unless the tenant is bound to a domain of its
+   own. A service that must answer at `api.example.com` therefore needs
+   three things: the tenant bound to `example.com`; `*.example.com` pointing
+   at this cluster; and the cluster's certificate issuer able to answer DNS
+   challenges for that zone (the DNS token of step 3 covering it). A domain
+   on or under the cluster's own is refused.
+
+   Binding the domain is one command, for whoever may configure the
+   cluster. It prints what moves and what has to be true first, and asks
+   for the domain typed out. Run it straight after creating the tenant (2),
+   before anything is installed: a tenant bound later moves every address
+   it already has.
+
+   ```bash
+   kubectl gentian tenants domain <tenant> example.com
+   kubectl gentian tenants domain <tenant>      # what git declares, and how to see that the cluster took it in
+   kubectl gentian tenants domain <tenant> --remove   # back to its default address
+   ```
+
+   Publishing the entry is two commands, for whoever may publish in the
+   tenant ([docs/app-customization.md](docs/app-customization.md) §2.10).
+   That is the platform admin, in every tenant the cluster operates, and any
+   member of the tenant's group `gentian:tenant:<tenant>:perimeter`. The
+   group is made with the tenant and starts empty; the platform admin adds
+   whoever approves, in the admin console. The
+   tenant's own admin does not approve, and cannot add anybody to that
+   group, unless the platform admin switched it on for the tenant. It is
+   on from the start for the user tenant of a single-tenancy cluster, and
+   for no other:
+
+   ```bash
+   kubectl gentian tenants set <tenant> --admins-approve-public-addresses=true
+   kubectl gentian tenants show <tenant>      # what is switched on for it
+   ```
+
+   Anybody else is refused with 403.
+   The first lists what the tenant's installed apps ask to have on the
+   internet: each entry's address, its paths, whether anybody signs in, and
+   whether it is approved. The second shows one entry again and approves it
+   once you type its name:
+
+   ```bash
+   kubectl gentian exposures requests --tenant <tenant>
+   kubectl gentian exposures approve <app> <entry> --tenant <tenant> [--expires <date>] [--reason "<why>"]
+   ```
+
+   An entry for the cluster's main address is approved only on a
+   single-tenancy cluster, for the tenant `user`, and only with
+   `--acknowledge-main-address-rule` added: the command prints the
+   director's rule for a website there, and the flag says the rule is true
+   of this site. `--yes` does not stand in for it.
+
+   An entry the list does not show cannot be approved: the director refuses
+   an app that is not installed in the tenant and an entry its profile does
+   not declare for the internet. The admin console shows the same entries,
+   read-only, under **Apps → Details → Public addresses**. What the tenant
+   has published, and taking an entry down again:
+
+   ```bash
+   kubectl gentian exposures list --tenant <tenant>
+   kubectl gentian exposures withdraw <app> <entry> --tenant <tenant>
+   ```
+8. **Check it from outside:** `curl -sI https://<its address>/<a path the
+   entry serves>` answers from your service. When that service is the store
+   other clusters name as `spec.catalogue.storeUrl`, the two requests under
+   *The App Store* in step 7 are the check.
 
 ---
 
@@ -425,25 +1026,43 @@ is the problem you have.
 
 ### Installing unattended
 
-Set `GENTIAN_NONINTERACTIVE=1` in `install.env`, and supply the bootstrap
-credentials through the environment instead of the prompt:
+Set `GENTIAN_NONINTERACTIVE=1` and `GENTIAN_KIT_RECIPIENT` (an age public
+key; without it `E-02` cannot encrypt the recovery kit and stops) in
+`install.env`, and supply the bootstrap credentials through the environment
+instead of the prompt:
 
 | Credential | Environment variable |
 |---|---|
 | `deployments-repository` | `GENTIAN_DEPLOYMENTS_GIT_USERNAME`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN` |
 | `master-password` | `MASTER_PASSWORD` |
-| `infra-chart-registry` | `REGISTRY_USER`, `REGISTRY_PASSWORD` |
-| `gentian-os-repository` etc. | `GENTIAN_OS_GIT_USERNAME` / `_TOKEN`, and the same for `APPS` and `UI` |
-| Cloudflare API token | `CF_API_TOKEN` |
+| `gentian-os-repository`, `gentian-ui-repository` | `GENTIAN_OS_GIT_USERNAME` / `GENTIAN_OS_GIT_TOKEN`, and the same with `UI` |
+| Cloudflare API token (DNS) | `CF_API_TOKEN` |
+| Cloudflare Tunnel API token | `CF_TUNNEL_TOKEN` |
+| Another DNS provider's credential | `GENTIAN_DNS_<FIELD>`: the field's name in `kernel/platforms.yaml`, in capitals, with `_` for `-` and `.` |
+
+The kernel namespaces' NetworkPolicies are off unless
+`KERNEL_NETWORK_POLICIES=true` is in `install.env`. Leave them off for the
+install and turn them on once it has succeeded, with
+`./install.sh --only A-01,B-01`. They restrict what may connect into a
+kernel namespace and nothing a pod connects out to
+([install-reference.md §9](docs/install-reference.md)).
 
 Step 0's questions take their defaults unattended, and an environment value
 answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
 set), `NETWORK_MODE`, `NODE_IP`, `CERT_ISSUER_MODE`, `ACME_ENV`,
 `DNS_PROVIDER`, `MAIL_SERVICE_MODE`, `EXTERNAL_SMTP_HOST`, `PLATFORM`,
-`STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `BACKUP_ESCROW_IDENTITY`,
-`LLM_SUPPORT`, `GPU_ACCELERATION`. The handover wait is skipped, so the run
-ends at `Almost There` and `--only E-03` finishes it once someone has signed
-in.
+`STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `CLUSTER_ADMIN_REQUIRE_MFA`,
+`BACKUP_ESCROW_IDENTITY`, `LLM_SUPPORT`, `GPU_ACCELERATION`. Export them
+for that first run and do not write them into `install.env`: the claim owns
+them from then on, and a value left in the file overrides it. The handover wait is skipped, so the run
+ends at `Almost There` and `--only E-03` finishes it once the platform admin
+has signed in. On a single-tenancy cluster (`TENANCY_MODE=single`) the user
+tenant is created after that sign-in and not before: `./install.sh --only
+E-04`, or a plain re-run, asks Argo CD to sync it, waits for it, and issues
+the user admin's activation link — shown in its output, or mailed when the
+tenant's realm can send mail. `kubectl gentian tenants activate-admin user
+[--recovery-email <address>]`, signed in as the platform admin, issues one
+from anywhere.
 
 The installer reads the environment first, then its cache, then OpenBao, and
 prompts for whatever is still missing — so a partly-supplied environment still
@@ -480,6 +1099,30 @@ GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
 GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
 ```
 
+### Turning the licence report off
+
+By default the cluster tells a report address once a day what it runs: its
+tenants, how many accounts each has, and the apps installed through the App
+Store — no personal data. `./install.sh --no-licence-report` (or
+`GENTIAN_NO_LICENCE_REPORT=1` in `install.env`) turns that off; nothing is then
+sent, and the App Store is not offered: no tenant has the App Store tile. What is sent, and where to read the
+last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
+
+### Which Crossplane resource types exist
+
+A fresh install creates only the provider resource types the platform uses —
+25 of the 374 the vault and Keycloak providers ship — because every installed
+type costs API-server memory on a managed control plane. `kubectl get mrap`
+shows the policy that lists them (`gentian-platform`) and `kubectl get mrd`
+every type with whether it is active. A cluster installed before this keeps
+every type: Crossplane does not take one away.
+
+If a fresh install stops in `B-05` naming a type that did not appear, or a
+composite waits on a kind the API server does not know, set
+`CROSSPLANE_ACTIVATE_ALL=true` in `install.env` and run the installer again:
+that is the old behaviour, every type installed. The list, and how to add a
+type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
+
 ### Running one step, or stopping early
 
 ```bash
@@ -499,14 +1142,20 @@ what is already done, so convergence and update are the same operation.
 
 ## Next steps
 
-- **Add more tenants** — repeat step 7. Day-to-day operations are in
-  [docs/commands.md](docs/commands.md).
+- **Add more tenants** (multi-tenancy) — repeat step 7. Day-to-day operations
+  are in [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
-  users of this cluster works once the kernel mail stack is deployed; mail to and
-  from the internet additionally needs port 25 exposed and the MX, SPF, DKIM,
-  DMARC and PTR records described in
+  users of this cluster works once the cluster's own mail stack is deployed
+  (`mail.serviceMode: system`). Mail to and from the internet arrives on the
+  load balancer of the mail edge in `system-mail-dmz` — a proxy that passes
+  ports 25, 587 and 993 on to Postfix and Dovecot with TLS untouched,
+  [§9b](docs/design/mail.md#9b-the-mail-edge) — and additionally needs the MX,
+  SPF, DKIM, DMARC and PTR records described in
   [§10 DNS for real mail](docs/design/mail.md#10-dns-for-real-mail) — including
-  the Cloudflare rule that MX records must stay DNS-only, never proxied.
+  the Cloudflare rule that MX records must stay DNS-only, never proxied. With
+  a DNS provider the cluster publishes `mail.<kernel-domain>` and
+  `imap.<kernel-domain>` from that load balancer's address, and the MX, SPF,
+  DKIM and DMARC records; the PTR is set at your provider.
 - **Change this cluster's configuration** — edit `claims/cluster.yaml` in your
   deployments checkout and run `./install.sh`: step 0 commits the edit signed
   and pushes it, and the cluster reconciles.
@@ -530,7 +1179,10 @@ Lose it and the same master password reproduces nothing.
 The kit closes that gap — the salt, the master password, the OpenBao recovery
 key, the backup key, the break-glass signing key and this cluster's identity,
 in one encrypted file. Restore it into a fresh cluster and every derived
-credential comes back byte-identical:
+credential comes back byte-identical. That holds for `secretMode: derived`.
+On a `random` cluster the kit holds none of the credentials drawn at random:
+a rebuild from it makes new ones, and OpenBao itself is yours to snapshot
+(step 4):
 
 ```bash
 ./install.sh --recover <kit>    # on the fresh cluster, before anything else
@@ -560,6 +1212,10 @@ can supply a credential to; revoking it with no recovery kit would mean that
 if the login path later breaks, there is nothing to fall back on. Either gap
 alone makes the recovery "re-initialise OpenBao from scratch", so the
 revocation waits for both. Until it happens, creating tenants is held back.
+There is no exception for the install's own: on a single-tenancy cluster the
+user tenant's manifest is committed in step 0 and the cluster refuses it like
+any other until the platform admin has signed in, which is why `E-04` comes
+after the handover and has to ask Argo CD to try the manifest again.
 
 Where a cluster stands:
 
@@ -576,50 +1232,55 @@ kubectl get configmap gentian-handover -n kernel-control -o yaml
 Open the admin console and select the Credentials tab, which performs the same
 token exchange as the login.
 
-### The console password
+### The administrator has no password
 
-It is derived from the master password, so it is not lost with the terminal
-that printed it:
+Neither the platform admin nor any tenant admin (or the user admin of a
+single-tenancy cluster) is given one.
+Each account is created without a password and handed to its holder through a
+single-use, expiring link that sets one (and enrols a second factor, unless
+switched off) — the same way every member is invited. The installer and the
+director never know it, so there is nothing to print, derive or recover.
 
-```bash
-./install.sh --verify-only
-```
-
-### The console password does not work
-
-The password in the install summary is *derived*, not read back from Keycloak.
-If `admin@<kernel domain>` is refused, ask the cluster what its inputs are and
-derive from those:
+Lost access, an expired link, or a link nobody received, for a tenant's
+administrator:
 
 ```bash
-kubectl get secret gentian-os-master-password -n kernel-provisioning \
-  -o jsonpath='{.data.password}' | base64 -d > /tmp/mp
-kubectl get secret gentian-os-master-password -n kernel-provisioning \
-  -o jsonpath='{.data.salt}' | base64 -d > /tmp/salt
-printf 'portal-bootstrap:administrator_password' |
-  openssl dgst -sha256 -hmac "$(cat /tmp/mp)$(cat /tmp/salt)" | awk '{print $2}'
-shred -u /tmp/mp /tmp/salt
+kubectl gentian tenants activate-admin acme         # a tenant administrator
 ```
 
-That is the password Keycloak was given, as long as nothing has re-run the
-realm bootstrap with different inputs since. On a cluster whose `secretMode`
-is `random` this does not apply — the password is stored, not derived, at
-`identity/portal-admin` in OpenBao.
+or **Tenants → Activate administrator** in the console. Each call issues a new
+link; earlier ones still expire on their own.
 
-To make the cluster take a new password instead, re-run the login step with
-the inputs exported, which rewrites the credential in Keycloak:
+The platform admin's own account is not handed over that way. The CLI
+and the console ask the registrar, and the registrar changes nothing about a
+member of the platform administrators' group, whoever asks: it answers 403.
+That account's link comes from the install host:
 
 ```bash
-export MASTER_PASSWORD=... DERIVATION_SALT=...
-./install.sh --force --only D-02
+./install.sh --activate-admin    # a new link for admin@<kernel-domain>, from the installer's own credential
 ```
+
+which is also the way back in when no administrator can sign in at all.
 
 ### A commit to the deployments repository is not synced
 
-Argo CD syncs that repository only for commits signed by the director or the
-break-glass key — the two ids in `clusters/<cluster-id>/kernel/signing/keys.env`.
-A commit made with your own key, or unsigned, sits at the head of the branch
-and stops every later sync. Undo it, make the change in your checkout instead,
-and run `./install.sh`: step 0 commits it signed with the break-glass key. On
-another machine, `./install.sh --recover <kit>` imports that key into
+Argo CD syncs that repository only while its newest commit is signed by the
+director or the break-glass key — the two ids in
+`clusters/<cluster-id>/kernel/signing/keys.env`. A commit made with your own
+key, or unsigned, sits at the head of the branch and stops every sync.
+
+- *A change to the cluster's own files* (`clusters/<cluster-id>/kernel`,
+  `tenants/platform`, `catalogue`): undo the commit, make the change in your
+  checkout instead, and run `./install.sh`. Step 0 commits it signed with the
+  break-glass key.
+- *A file anywhere else in the repository* — a stage profile, a catalogue
+  directory (step 8): step 0 does not commit those. Commit and push it
+  yourself and run `./install.sh` (or `./install.sh --only A-01`: step 0 runs
+  before the first step of every install run): it finds a head it does not
+  trust and puts an empty commit signed with the break-glass key on top,
+  saying `Signed the head of the deployments repository (break-glass)`. The
+  same after every later change to such a file. `--dry-run` and `--validate`
+  sign nothing.
+
+On another machine, `./install.sh --recover <kit>` imports that key into
 `~/.gentian/gnupg` first.

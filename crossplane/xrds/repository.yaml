@@ -66,16 +66,26 @@ spec:
                   default: main
                 role:
                   type: string
-                  enum: [apps, deployments, gentian-os, gentian-ui]
+                  enum:
+                    - apps
+                    - deployments
+                    - gentian-os
+                    - gentian-ui
                   description: >
-                    What this repository is for. apps is additive — a private
-                    catalogue alongside the cluster's, and removing it removes
-                    those apps. deployments is a source of truth: repointing it
+                    What this repository is for. apps is additive — a registry
+                    the tenant's or the cluster's apps pull their chart and
+                    images from, and removing it removes that access. It is
+                    meant for type oci: a git repository with role apps
+                    composes an Argo CD repository and nothing else, because
+                    profiles no longer arrive by syncing one (a catalogue is
+                    an address the director fetches from, declared on the
+                    Cluster claim or the tenant; docs/custom-catalogues.md).
+                    deployments is a source of truth: repointing it
                     changes what everything reconciles from, which is why the
                     API makes that a confirmed operation rather than an edit.
-                    gentian-os and gentian-ui are the gentian-os and gentian-ui
-                    source repositories themselves, credentialed only for a
-                    mirrored or air-gapped install.
+                    gentian-os and gentian-ui name the platform's own source
+                    repositories. They are public, so a claim for one exists
+                    only where the cluster reads a mirror that authenticates.
 
                     Required, and deliberately without a default. The two values
                     are not equally safe — apps is the weaker guard — so a
@@ -94,6 +104,12 @@ spec:
                     This is what keeps a tenant-proprietary repository's
                     credential out of every other tenant's credential list —
                     scope alone says "a tenant may see this", not which one.
+
+                    It is also where the credential may be pulled with. A
+                    tenant's registry repository yields one Secret,
+                    repository-<name>-pull, in that tenant's namespace and in
+                    no other, which the tenant's apps pull their chart and
+                    their images with.
                 writable:
                   type: boolean
                   description: >
@@ -103,9 +119,14 @@ spec:
                 namespaceSelector:
                   type: object
                   description: >
-                    Which namespaces receive the image pull Secret. A selector
-                    rather than a list, so adding a tenant does not add a Git
-                    object. OCI repositories only.
+                    Which namespaces receive the image pull Secret of a
+                    repository that belongs to the cluster. A selector rather
+                    than a list, so adding a tenant does not add a Git object.
+                    OCI repositories only.
+
+                    Not read for a repository that names a tenant: that one's
+                    pull Secret goes to its tenant's namespace, whatever is
+                    written here.
                   properties:
                     matchLabels:
                       type: object
@@ -148,20 +169,14 @@ spec:
                       type: boolean
                       default: false
                     authType:
-                      type: string
-                      enum:
-                        - basic
-                        - bearer
                       default: basic
+                      enum: [basic, bearer]
+                      type: string
                       description: >
-                        Shape of the stored credential. basic is
-                        username+password, resolved into the repository
-                        Secret's username/password fields. bearer is a single
-                        token stored under the password field, resolved into
-                        the repository Secret's bearerToken field instead —
-                        the vault path and its field names do not change, only
-                        which fields the operator is asked to supply and which
-                        Secret key the token lands under.
+                        basic is a username and a password. bearer is one
+                        token: it is stored in the password field under the
+                        same vault path, no username is asked for, and the
+                        repository Secret carries it as bearerToken.
                     validate:
                       type: object
                       properties:

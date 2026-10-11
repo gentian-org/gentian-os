@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package api_test
@@ -20,33 +14,6 @@ import (
 	"net/http"
 	"testing"
 )
-
-// What became of a tenant's apps is the operator's answer, relayed to whoever
-// may see the tenant. A member sees it too: whether the wiki is up is not an
-// administrator's secret.
-func TestWhatBecameOfATenantsAppsIsRelayed(t *testing.T) {
-	h, _ := startWithOperator(t)
-
-	for _, who := range []string{"tom", "mia"} {
-		code, body := h.do(t, "GET", "/v1/tenants/demo/apps/status", h.token(t, "tenant-demo", who), "")
-		if code != http.StatusOK {
-			t.Fatalf("%s: %d %v", who, code, body)
-		}
-		apps, _ := body["apps"].([]any)
-		if len(apps) != 2 {
-			t.Fatalf("%s: apps = %v", who, body["apps"])
-		}
-		failing, _ := apps[1].(map[string]any)
-		if failing["phase"] != "failing" || failing["failure"] == "" {
-			t.Fatalf("the failing app lost its reason on the way: %v", failing)
-		}
-	}
-
-	// Another tenant's administrator holds nothing here.
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/apps/status", h.token(t, "tenant-solo", "tina"), ""); code != http.StatusForbidden {
-		t.Fatalf("a stranger read another tenant's apps: %d", code)
-	}
-}
 
 // Purging and provisioning are actions: nothing is committed, the person is
 // named on the request, and the profile is all that travels.

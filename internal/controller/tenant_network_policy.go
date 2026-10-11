@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -35,22 +29,27 @@ import (
 )
 
 func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-	infraNS := os.Getenv("INFRA_NAMESPACE")
-	if infraNS == "" {
-		infraNS = "gentian-infra-" + stage
-	}
 	cidr := os.Getenv("KUBE_APISERVER_CIDR")
 	if cidr == "" {
 		cidr = "10.0.0.0/8"
 	}
 	return netpolicy.Config{
-		InfraNamespace:    infraNS,
 		ServicesNamespace: servicesNamespace,
-		OpenbaoNamespace:  "openbao",
 		RoutingMode:       r.RoutingMode,
 		KubeAPIServerCIDR: cidr,
+		NarrowEdge:        kernelNetworkPoliciesEnabled(),
 	}
+}
+
+// kernelNetworkPoliciesEnabled reports the cluster's switch for the kernel's
+// network rules, as the operator is told it (KERNEL_NETWORK_POLICIES, from
+// the installer through the chart). The installer applies and removes the
+// kernel namespaces' own policies by it; the operator's two rules that lean
+// on the same fact -- which pods of the edge namespace are the Gateway's --
+// follow it: a tenant's baseline admits those pods alone, and a publishing
+// proxy admits them alone. Anything but "true" is off.
+func kernelNetworkPoliciesEnabled() bool {
+	return os.Getenv("KERNEL_NETWORK_POLICIES") == "true"
 }
 
 // loadKubeAPIEndpointSlice returns the EndpointSlice backing the "kubernetes"
@@ -100,9 +99,19 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return fmt.Errorf("get AppProfile %s for network policy: %w", app.Profile, err)
+			return fmt.Errorf("get ComponentProfile %s for network policy: %w", app.Profile, err)
 		}
 		profiles[app.Profile] = profile
+	}
+
+	// An app whose chart the operator installs itself carries the labels
+	// its chart gives a release, not the app label the Composition puts on
+	// the pods it renders. A contract selects each side by what it carries.
+	selectors := map[string]map[string]string{}
+	for name, profile := range profiles {
+		if !composedDelivery(profile) {
+			selectors[name] = map[string]string{componentInstanceLabel: nsName + "-" + name}
+		}
 	}
 
 	in := netpolicy.BuildInput{
@@ -112,6 +121,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		Profiles:      profiles,
 		Bindings:      bindings,
 		Grants:        grants,
+		PodSelectors:  selectors,
 		Config:        r.tenantNetPolicyConfig(),
 		KubeAPIEndpts: r.loadKubeAPIEndpointSlice(ctx),
 	}
@@ -160,7 +170,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 			return fmt.Errorf("delete stale NetworkPolicy %s: %w", np.Name, err)
 		}
 	}
-	return nil
+	// With the way between two apps goes the means to tell who is calling,
+	// and both come and go with the grant.
+	return r.ensureContractKeys(ctx, tenant, nsName, bindings, grants)
 }
 
 func (r *TenantReconciler) loadAppGrantsByConsumer(ctx context.Context, nsName string) (map[string]*gentianov1alpha1.AppGrant, error) {

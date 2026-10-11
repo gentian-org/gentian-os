@@ -36,7 +36,7 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
-            # Reads the gentian-kernel-services ConfigMap from gentian-system to make
+            # Reads the gentian-kernel-services ConfigMap (the control namespace) to make
             # cluster-specific infrastructure endpoints available for extraValues
             # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
             # The ConfigMap is published by the gentian-os Helm chart via kernelServices values.
@@ -50,7 +50,7 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: kernel-services
-            # Reads the gentian-cluster-config ConfigMap (crossplane-system) to supply
+            # Reads the gentian-cluster-config ConfigMap (the provisioning namespace) to supply
             # cluster-specific identity URLs and secret generation mode to
             # app init Jobs emitted by this Composition.
             - kind: ConfigMap
@@ -111,13 +111,41 @@ spec:
             {{- $observed := .observed }}
             {{- $spec   := $xr.spec }}
             {{- $xrName := $xr.metadata.name }}
-            {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
-                 and ExternalSecret name so both resources are discoverable by
-                 app label without needing to know the generated XR name. */}}
+            {{- /* App claim name (e.g. "demo-app"). The Helm release and the
+                 ExternalSecret are named from it, so both are found by the app's
+                 name without knowing the generated XR name. */}}
             {{- $app    := $spec.claimRef.name }}
+            {{- /* The Helm release of this app in this tenant: one name for as
+                 long as the app is the tenant's, across every install of it.
+
+                 It was the Release object's own name, which carries the
+                 composite's generated suffix, so each install was a different
+                 Helm release. Everything a chart names after its release --
+                 workloads, Services, and the volume claims it templates --
+                 was renamed by a reinstall, and a volume kept from the install
+                 before could not be found again, nor taken over: Helm adopts an
+                 existing object only when it records the same release name and
+                 namespace.
+
+                 The namespace is the tenant's, so the app's name is enough to
+                 make it unique. The Release OBJECT keeps the composite's name:
+                 it is cluster-scoped and has to differ between tenants. */}}
+            {{- $release := printf "%s-release" $app }}
+            {{- /* What makes uninstalling keep the app's files: see the
+                 ConfigMap emitted beside the Release. */}}
+            {{- $keepVolumes := printf "%s-keep-volumes" $release }}
             {{- $ns     := $spec.tenantNamespace }}
             {{- /* Derive tenant name from namespace convention "tenant-{name}". */}}
             {{- $tenant := trimPrefix "tenant-" $ns }}
+            {{- /* The Keycloak realm the tenant's people, groups and clients are
+                 in. The operator passes it (keycloak.RealmName): a tenant may
+                 name a realm that is not called what the tenant is, as the
+                 platform tenant names the kernel realm. A claim that carries
+                 none is a tenant with a realm of its own name. This is the
+                 one place the Composition decides it; every realmId below
+                 reads it, so the group the operator purges and the client
+                 this composes are in the same realm. */}}
+            {{- $realm := default $tenant $spec.realm }}
             {{- /* Tenant domain — used for substitution in extraValues AND in
                  Keycloak client redirect URIs. Computed once at top level so
                  both blocks share the same value. */}}
@@ -143,12 +171,22 @@ spec:
             {{- $chart     := dig "chart" nil $package }}
 
             {{- $kr := dig "requires" "services" dict $pSpec }}
+            {{- /* Whether the profile declares the model gateway. Present is the
+                 declaration: the requirement carries no field. */}}
+            {{- $llmDeclared := hasKey $kr "llm" }}
 
             {{- /* ── Load cluster-config ConfigMap ──────────────────────────────── */}}
             {{- /* Provides infra endpoints (e.g. node IP, SMTP host) for rendering. */}}
             {{- $ccRes      := dig "clusterConfig" list $extraRes }}
             {{- $ccCM       := default dict (index $ccRes 0) }}
             {{- $ccData     := dig "data" dict $ccCM }}
+            {{- /* The namespace Crossplane and its providers run in, where the
+                 seed Secrets below are written and read back by provider-vault.
+                 Taken from where the cluster composition put this ConfigMap
+                 rather than named: v4 wrote crossplane-system here, a namespace
+                 the v5 layout does not have, so every app with an internal
+                 secret composed an Object that could never be created. */}}
+            {{- $provNs     := dig "metadata" "namespace" "kernel-provisioning" $ccCM }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
 
             {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR.
@@ -261,6 +299,21 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Model gateway. Mapped only for a profile that declares
+                 requires.services.llm: the record below is written by the
+                 operator for a declaring app and for no other, and an
+                 ExternalSecret naming a path that is never written fails on
+                 every refresh. */}}
+            {{- if and $vm.llm $llmDeclared }}
+            {{- $llmPath := printf "gentian-os/tenants/%s/apps/%s/llm" $tenant $app }}
+            {{- if $vm.llm.baseUrlKey }}
+            {{- $esData = append $esData (dict "secretKey" "llm-base-url" "remoteRef" (dict "key" $llmPath "property" "base-url")) }}
+            {{- end }}
+            {{- if $vm.llm.apiKeyKey }}
+            {{- $esData = append $esData (dict "secretKey" "llm-api-key"  "remoteRef" (dict "key" $llmPath "property" "api-key")) }}
+            {{- end }}
+            {{- end }}
+
             {{- /* SMTP */}}
             {{- if $vm.smtp }}
             {{- $smtpPath := printf "gentian-os/tenants/%s/apps/%s/smtp" $tenant $app }}
@@ -316,7 +369,7 @@ spec:
 
             {{- /* ── Emit OpenBao KV seeders for each app-internal secret ──────── */}}
             {{- /* For each appSecret we emit two composed resources:               */}}
-            {{- /*   1. A k8s Secret in crossplane-system holding a deterministic   */}}
+            {{- /*   1. A k8s Secret in the provisioning namespace, holding a seed  */}}
             {{- /*      seed value (SHA-256 of the XApp name + secret name).        */}}
             {{- /*   2. A provider-vault SecretV2 (Observe+Create, Orphan delete)   */}}
             {{- /*      that creates the OpenBao KV path on first reconcile and     */}}
@@ -341,7 +394,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: {{ $seedName }}
-                    namespace: crossplane-system
+                    namespace: {{ $provNs }}
                   type: Opaque
                   stringData:
                     data.json: '{"value":"{{ $seedVal }}"}'
@@ -378,7 +431,7 @@ spec:
                 name: {{ $kvPath }}
                 dataJsonSecretRef:
                   name: {{ $seedName }}
-                  namespace: crossplane-system
+                  namespace: {{ $provNs }}
                   key: data.json
               providerConfigRef:
                 name: openbao
@@ -477,6 +530,17 @@ spec:
             {{- if $vm.cache.passwordKey }}
             {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if and $vm.llm $llmDeclared }}
+            {{- if $vm.llm.baseUrlKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.llm.baseUrlKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "llm-base-url"))) }}
+            {{- end }}
+            {{- if $vm.llm.apiKeyKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.llm.apiKeyKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "llm-api-key"))) }}
             {{- end }}
             {{- end }}
 
@@ -695,6 +759,15 @@ spec:
             {{- if eq (len $imagePull) 0 }}
             {{- $imagePull = list "registry-credentials" }}
             {{- end }}
+            {{- /* The pull Secrets of the repositories this tenant declared, named
+                 by the operator on the claim. After the cluster's own, by the
+                 same two values, so a chart that takes one takes the other.
+                 They are Secrets in this namespace; nothing here can name one
+                 anywhere else. */}}
+            {{- $pullSecrets := default dict $spec.pullSecrets }}
+            {{- range $name := (default list $pullSecrets.images) }}
+            {{- if not (has $name $imagePull) }}{{- $imagePull = append $imagePull $name }}{{- end }}
+            {{- end }}
             {{- $profileMeta := default dict (dig "metadata" dict $profile) }}
             {{- $profileAnnos := default dict (dig "annotations" dict $profileMeta) }}
             {{- $standardPull := eq (dig "gentianos.io/standard-image-pull-secrets" "false" $profileAnnos) "true" }}
@@ -863,7 +936,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ printf "gentian:tenant:%s:app:%s" $tenant $app | quote }}
                 {{- if $gAttrs }}
                 attributes:
@@ -883,6 +956,57 @@ spec:
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
             {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
             {{- end }}
+            {{- /* ── Where the realm tells the app that a person signed out ───────
+                 requires.services.identity.oidc.backchannelLogout: a path, and
+                 which of the profile's entries it belongs to. The address the
+                 realm posts its logout token to is built here and nowhere
+                 else:
+
+                   http://<the entry's backend Service>.<this namespace>.svc.cluster.local:<its port><path>
+
+                 The app's own Service, inside the cluster. Not the app's public
+                 address: every path there is behind a session, and the realm
+                 has none, so its request would be answered with a redirect to
+                 the sign-in and never arrive.
+
+                 A profile states no address, because the realm sends a request
+                 to whatever is registered here -- so what is registered is
+                 only ever the Service this component's own entry routes to.
+                 Each part is held to what it has to be, here as in the
+                 definition's own rules (a profile reaches this Composition
+                 only through them, and this does not rely on that):
+
+                   - the entry is one of this profile's, by name, and routes to
+                     this component's own Service (no backend.component);
+                   - the Service's name is a name: one DNS label, so nothing in
+                     it can end the host or begin a path;
+                   - the namespace is this install's, from the claim;
+                   - the path is a plain path: segments of letters, digits,
+                     "_", "~" and "-" with single dots inside them, so no
+                     query, no fragment, no "..", no "//".
+
+                 Anything else registers no address at all, which is a client
+                 the realm tells nothing: the app's session then lasts as long
+                 as the app keeps it.
+
+                 The old free-form backchannelLogoutUrl is not read. */}}
+            {{- $signOutNotice := "" }}
+            {{- $bcl := default dict $oidcCl.backchannelLogout }}
+            {{- $bclPath := default "" $bcl.path }}
+            {{- $bclBackend := dict }}
+            {{- if $bcl.exposure }}
+            {{- range $e := (dig "expose" list $pSpec) }}
+              {{- if and (eq (dig "name" "" $e) $bcl.exposure) (not (dig "backend" "component" "" $e)) }}
+                {{- $bclBackend = dig "backend" dict $e }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- $bclService := dig "service" "" $bclBackend }}
+            {{- $bclPort := dig "port" 0 $bclBackend | int }}
+            {{- $dnsLabel := "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }}
+            {{- if and (regexMatch $dnsLabel $bclService) (regexMatch $dnsLabel $ns) (gt $bclPort 0) (le $bclPort 65535) (le (len $bclPath) 256) (regexMatch "^(/[A-Za-z0-9_~-]+(\\.[A-Za-z0-9_~-]+)*)+/?$" $bclPath) (not (contains ".." $bclPath)) (not (contains "//" $bclPath)) }}
+            {{- $signOutNotice = printf "http://%s.%s.svc.cluster.local:%d%s" $bclService $ns $bclPort $bclPath }}
+            {{- end }}
             {{- /* provider-keycloak Client reads clientSecretSecretRef from this Secret;
                  it must match the OpenBao path XWiki consumes via ExternalSecret. */}}
             {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
@@ -901,7 +1025,7 @@ spec:
                   kind: ExternalSecret
                   metadata:
                     name: {{ $xrName }}-oidc-client-creds
-                    namespace: crossplane-system
+                    namespace: {{ $provNs }}
                   spec:
                     refreshInterval: 1h
                     secretStoreRef:
@@ -946,7 +1070,7 @@ spec:
               forProvider:
                 clientId: {{ $oidcCl.clientId | quote }}
                 name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
@@ -964,14 +1088,14 @@ spec:
                 validPostLogoutRedirectUris:
                   {{ toYaml $postLogout | nindent 18 }}
                 {{- end }}
-                {{- if and $oidcCl.backchannelLogoutUrl (ne $oidcCl.backchannelLogoutUrl "") }}
-                backchannelLogoutUrl: {{ $oidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
+                {{- if $signOutNotice }}
+                backchannelLogoutUrl: {{ $signOutNotice | quote }}
                 backchannelLogoutSessionRequired: true
                 {{- end }}
                 {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
                 clientSecretSecretRef:
                   name: {{ $xrName }}-oidc-client-creds
-                  namespace: crossplane-system
+                  namespace: {{ $provNs }}
                   key: client-secret
                 {{- end }}
               providerConfigRef:
@@ -987,13 +1111,71 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
                   policy:
                     resolve: Always
                 defaultScopes:
                   {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the mail server accepts this app's sign-in tokens ──────────
+                 requires.services.mail.imap.tokenSignIn: the app opens a
+                 person's mailbox with that person's token. What grants it is
+                 the realm's client scope "mailbox" (tenant-default composes
+                 it and says how it works) as an OPTIONAL scope of this app's
+                 own client: the app's tokens name the mail server only when
+                 it asked for "mailbox" at that sign-in.
+
+                 Two things have to say so. The profile, read here, is the
+                 declaration; the claim's mailboxTokenSignIn is the operator's
+                 answer that this cluster and tenant serve it (own mail
+                 server, mailboxes, a realm of the tenant's own -- the scope
+                 exists nowhere else). Either alone grants nothing.
+
+                 The list is replaced wholesale on reconcile, as the default
+                 scopes above are, so it names the five optional scopes
+                 Keycloak gives every client as well as the one this is about;
+                 naming only "mailbox" would take offline_access from the
+                 client.
+
+                 An app that stops declaring keeps this object, without
+                 "mailbox": that is what takes the scope off its client.
+                 Dropping the object would not -- it is Orphan, because
+                 deleting it detaches the listed scopes from a client that
+                 an uninstall has already removed, and that fails. So it is
+                 rendered for as long as it has been observed. */}}
+            {{- $mailboxDeclared := dig "mail" "imap" "tokenSignIn" false $kr }}
+            {{- $mailboxServed := and $mailboxDeclared (default false $spec.mailboxTokenSignIn) }}
+            {{- $optionalScopesObserved := hasKey (default dict $observed.resources) (printf "%s-keycloak-optional-scopes" $app) }}
+            {{- if or $mailboxServed $optionalScopesObserved }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientOptionalScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-optional-scopes
+              name: {{ $tenant }}-{{ $app }}-keycloak-optional-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                optionalScopes:
+                  - address
+                  - microprofile-jwt
+                  - offline_access
+                  - organization
+                  - phone
+                  {{- if $mailboxServed }}
+                  - mailbox
+                  {{- end }}
               providerConfigRef:
                 name: keycloak
             {{- end }}
@@ -1026,7 +1208,7 @@ spec:
               deletionPolicy: Orphan
               managementPolicies: ["Observe"]
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ $pack.scopeName | quote }}
                 description: {{ default "" $pack.scopeDescription | quote }}
               providerConfigRef:
@@ -1070,7 +1252,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ $kcName | quote }}
                 protocol: openid-connect
                 protocolMapper: {{ $tmpl.protocolMapper | quote }}
@@ -1145,7 +1327,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
                   policy:
@@ -1177,7 +1359,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 exhaustive: false
                 groupIdRef:
                   name: {{ $entGroup }}
@@ -1208,9 +1390,11 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     refreshInterval: 1h
+                    {{- /* The tenant's own store (tenant-default.yaml): the
+                         kernel's is not usable from a tenant's namespace. */}}
                     secretStoreRef:
                       kind: ClusterSecretStore
-                      name: openbao
+                      name: openbao-tenant-{{ $tenant }}
                     target:
                       name: {{ $secretName }}
                       creationPolicy: Owner
@@ -1249,16 +1433,269 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── The sign-in sidecar's client (requires.services.identity.sidecar)
+                 For an app that can do neither OIDC nor SAML itself. A small
+                 program beside the app is a SAML service provider towards the
+                 tenant's realm and runs the app's handler, which makes a
+                 session in the app for the person the realm vouches for.
+
+                 What is composed here is the sidecar's registration at the
+                 realm, as the OIDC client of an app that signs people in
+                 itself is composed above. The sidecar, its settings, its
+                 network paths and its routes are the operator's
+                 (internal/controller/signin_sidecar.go).
+
+                 Composed only where two things meet: the profile declares the
+                 sidecar, and the operator put on the claim where the app
+                 answers -- which it does only for an install pinned to a
+                 digest whose bundle, from a catalogue of the whole cluster,
+                 brings the handler. Either alone composes nothing, and a
+                 profile that stops declaring it loses the client with the
+                 sidecar: it is deleted from the realm.
+
+                 Nothing here is the profile's to choose. The client's name
+                 and the one address the realm may post its answer to follow
+                 from where the app answers. */}}
+            {{- $signIn := default dict $spec.signInSidecar }}
+            {{- $signInDeclared := hasKey (dig "identity" dict $kr) "sidecar" }}
+            {{- if and $signInDeclared $signIn.host }}
+            {{- $signInEntity := printf "https://%s/sso" $signIn.host }}
+            {{- $signInACS := printf "https://%s/sso/acs" $signIn.host }}
+            {{- /* Where the realm tells the sidecar that a person signed out:
+                 the sidecar's own Service inside the cluster, which the
+                 operator names "<app>-sign-in" in this namespace. The claim
+                 says the port and nothing else of the address, so no claim
+                 makes the realm call anything but this app's sidecar; a claim
+                 that says none is an operator that runs a sidecar without a
+                 sign-out path, and the realm is then told to call nothing. */}}
+            {{- $signInLogoutPort := default 0 $signIn.logoutPort | int }}
+            {{- $signInLogout := "" }}
+            {{- $signInLabel := "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }}
+            {{- if and (gt $signInLogoutPort 0) (le $signInLogoutPort 65535) (regexMatch $signInLabel (printf "%s-sign-in" $app)) (regexMatch $signInLabel $ns) }}
+            {{- $signInLogout = printf "http://%s-sign-in.%s.svc.cluster.local:%d/sso/logout" $app $ns $signInLogoutPort }}
+            {{- end }}
+            ---
+            apiVersion: samlclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-client
+              name: {{ $tenant }}-{{ $app }}-sign-in-client
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                clientId: {{ $signInEntity | quote }}
+                name: {{ printf "Sign-in sidecar of %s" $app | quote }}
+                enabled: true
+                {{- /* The response and the assertion in it are both signed by
+                     the realm; the sidecar accepts nothing less. */}}
+                signDocuments: true
+                signAssertions: true
+                signatureAlgorithm: RSA_SHA256
+                encryptAssertions: false
+                {{- /* The sidecar's requests are not signed: it holds no key.
+                     What the realm answers goes to the one address below
+                     whoever asked, and the sidecar accepts an answer only to
+                     a request it sent itself. */}}
+                clientSignatureRequired: false
+                forcePostBinding: true
+                {{- /* The person is named by e-mail address, whatever a
+                     request asks for: it is the one thing the sidecar reads. */}}
+                forceNameIdFormat: true
+                nameIdFormat: email
+                includeAuthnStatement: true
+                {{- /* Sign-out: the realm posts a signed LogoutRequest to the
+                     sidecar itself, server to server, and asks the browser
+                     for nothing (frontChannelLogout false). The sidecar
+                     accepts it only signed by the realm and addressed to
+                     exactly this address. Not a public address: /sso/logout
+                     is on none of the app's routes. */}}
+                frontChannelLogout: false
+                {{- if $signInLogout }}
+                logoutServicePostBindingUrl: {{ $signInLogout | quote }}
+                {{- end }}
+                fullScopeAllowed: false
+                validRedirectUris:
+                  - {{ $signInACS | quote }}
+                assertionConsumerPostUrl: {{ $signInACS | quote }}
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* ── Who administers the app ──────────────────────────────────
+                 An app that is signed in to this way has no claim of its own
+                 to read, so the realm tells the sidecar, in the answer it
+                 signs, whether the person holds the platform's App Admin
+                 role: membership of the tenant's group
+                 gentian:tenant:<tenant>:app-admins (internal/keycloak/groups.go),
+                 which a tenant's administrator gives in the admin console.
+
+                 Three resources, and the same projection an OIDC client's
+                 entitlement uses above -- a client role granted to a group:
+
+                   - one role at the sidecar's client;
+                   - that role granted to the tenant's app administrators'
+                     group. exhaustive: false, as for the entitlement: this
+                     adds one mapping and leaves the group's others alone;
+                   - a mapper that lists a person's roles at this client in
+                     the assertion. fullScopeAllowed is false above, so the
+                     client's own role is the only one in scope: the list is
+                     that role or nothing, and it names no group and no role
+                     of anything else.
+
+                 The attribute is named Role, as the list the realm gives
+                 every SAML client by default is: a realm applies one such
+                 list per answer, and whichever it applies the sidecar reads
+                 the same name. The sidecar takes it from the signed assertion
+                 and from nowhere else, and tells the app's handler, which
+                 gives the app's own administrator role to that person and
+                 takes it from anybody else (docs/app-customization.md §2.3a).
+
+                 The group is tenant-default's, found by the name that
+                 Composition gives it.
+
+                 deletionPolicy: Orphan on all three, and nothing is left
+                 behind by it: the client above is deleted from the realm when
+                 the profile stops declaring the sidecar, and the realm
+                 removes a client's roles, their grants and its mappers with
+                 the client. Deleting them one by one beside it would only be
+                 a race to delete what is already gone. */}}
+            {{- $appAdminsGroup := printf "gentian:tenant:%s:app-admins" $tenant | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            ---
+            apiVersion: role.keycloak.crossplane.io/v1alpha1
+            kind: Role
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-admin-role
+              name: {{ $tenant }}-{{ $app }}-sign-in-admin-role
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                samlClientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-sign-in-client
+                  policy:
+                    resolve: Always
+                name: gentian-app-admin
+                description: {{ printf "Administers %s: held by the tenant's app administrators" $app | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Roles
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-admin-grant
+              name: {{ $tenant }}-{{ $app }}-sign-in-admin-grant
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                exhaustive: false
+                groupIdRef:
+                  name: {{ $appAdminsGroup }}
+                  policy:
+                    resolve: Always
+                roleIdsRefs:
+                  - name: {{ $tenant }}-{{ $app }}-sign-in-admin-role
+                    policy:
+                      resolve: Always
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-admin-mapper
+              name: {{ $tenant }}-{{ $app }}-sign-in-admin-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                samlClientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-sign-in-client
+                  policy:
+                    resolve: Always
+                name: app-admin
+                protocol: saml
+                protocolMapper: saml-role-list-mapper
+                config:
+                  attribute.name: Role
+                  attribute.nameformat: Basic
+                  single: "true"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
             {{- $extraVals = $extraVals | toJson | fromJson }}
 
             {{- /* ── Emit Helm Release ────────────────────────────────────────── */}}
+            {{- /* ── Uninstalling keeps the app's files ───────────────────────── */}}
+            {{- /* A chart that templates a PersistentVolumeClaim has it deleted by
+                 `helm uninstall` with everything else in the release, and with it
+                 the files the app wrote. Uninstalling an app takes its workloads
+                 away and keeps its data; destroying the data is a purge, a
+                 separate act. So every claim a release renders is marked for Helm
+                 to leave in place.
+
+                 Done here, for every chart, as a patch the provider applies to
+                 what the chart rendered (forProvider.patchesFrom, a Kustomize
+                 patch run as Helm's post-renderer). The annotation is therefore
+                 part of the manifest Helm records, which is what `helm uninstall`
+                 reads to decide what to leave. No chart has to carry it, and one
+                 that already does is unchanged.
+
+                 A claim kept this way still names this release, which is why the
+                 release name above is stable: the next install of the app in this
+                 tenant takes the claim over instead of failing on it.
+
+                 The target names no object, so it matches every claim; the name
+                 inside the patch is required by the format and is not applied. A
+                 chart that renders no claim is rendered unchanged. Claims made
+                 from a StatefulSet's volumeClaimTemplates are not in the release
+                 at all and were always left behind. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keep-volumes
+              name: {{ $xrName }}-keep-volumes
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $keepVolumes }}
+                    namespace: {{ $ns }}
+                  data:
+                    patch.yaml: |
+                      patches:
+                        - target:
+                            version: v1
+                            kind: PersistentVolumeClaim
+                          patch: |-
+                            apiVersion: v1
+                            kind: PersistentVolumeClaim
+                            metadata:
+                              name: every-claim-of-the-release
+                              annotations:
+                                helm.sh/resource-policy: keep
+              providerConfigRef:
+                name: kubernetes
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
+                # The Helm release name. Without it the provider uses this
+                # object's name, generated suffix and all.
+                crossplane.io/external-name: {{ $release }}
               name: {{ $xrName }}-release
             spec:
               rollbackLimit: 3
@@ -1267,6 +1704,16 @@ spec:
                   repository: {{ $chart.repository }}
                   name: {{ $chart.name }}
                   version: {{ $chart.version | quote }}
+                  {{- /* A chart inside a repository the tenant declared is pulled
+                       with that repository's credential. The namespace is this
+                       app's own and is not taken from the claim. */}}
+                  {{- range $c := (default list $pullSecrets.charts) }}
+                  {{- if eq $c.repository $chart.repository }}
+                  pullSecretRef:
+                    name: {{ $c.secretName }}
+                    namespace: {{ $ns }}
+                  {{- end }}
+                  {{- end }}
                 namespace: {{ $ns }}
                 # Wait for the release's workloads, not just for Helm to have
                 # applied the manifests.
@@ -1291,6 +1738,14 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # Not optional: a release that could not read the rule would be
+                # installed without it, and uninstalling it would delete files.
+                patchesFrom:
+                  - configMapKeyRef:
+                      name: {{ $keepVolumes }}
+                      namespace: {{ $ns }}
+                      key: patch.yaml
+                      optional: false
                 {{- if gt (len $extraVals) 0 }}
                 values:
                   {{ toYaml $extraVals | nindent 18 }}
@@ -1303,7 +1758,7 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
-            {{- /* The chart creates services named <xrName>-release-<component>.   */}}
+            {{- /* The chart creates services named <app>-release-<component>.      */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}
             {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
@@ -1345,7 +1800,7 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/instance: {{ $release }}
                       app.kubernetes.io/component: {{ $component }}
                     ports:
                     - name: http
@@ -1374,7 +1829,7 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/instance: {{ $release }}
                       app.kubernetes.io/component: api
                     ports:
                     - name: http
@@ -1446,6 +1901,10 @@ spec:
             {{- if $vm.cache.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PORT" "key" "cache-port") }}{{ end }}
             {{- if $vm.cache.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_USER" "key" "cache-user") }}{{ end }}
             {{- if $vm.cache.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PASSWORD" "key" "cache-password") }}{{ end }}
+            {{- end }}
+            {{- if and $vm.llm $llmDeclared }}
+            {{- if $vm.llm.baseUrlKey }}{{ $pijEnv = append $pijEnv (dict "name" "LLM_BASE_URL" "key" "llm-base-url") }}{{ end }}
+            {{- if $vm.llm.apiKeyKey }}{{ $pijEnv = append $pijEnv (dict "name" "LLM_API_KEY" "key" "llm-api-key") }}{{ end }}
             {{- end }}
             {{- if $vm.smtp }}
             {{- if $vm.smtp.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_HOST" "key" "smtp-host") }}{{ end }}
@@ -1666,7 +2125,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: {{ $scSeedName }}
-                    namespace: crossplane-system
+                    namespace: {{ $provNs }}
                   type: Opaque
                   stringData:
                     data.json: '{"value":"{{ $scSeedVal }}"}'
@@ -1693,7 +2152,7 @@ spec:
                 name: {{ $scKvPath }}
                 dataJsonSecretRef:
                   name: {{ $scSeedName }}
-                  namespace: crossplane-system
+                  namespace: {{ $provNs }}
                   key: data.json
               providerConfigRef:
                 name: openbao
@@ -1720,7 +2179,7 @@ spec:
                     refreshInterval: 1h
                     secretStoreRef:
                       kind: ClusterSecretStore
-                      name: openbao
+                      name: openbao-tenant-{{ $tenant }}
                     target:
                       name: {{ $scSecretName }}
                       creationPolicy: Owner
@@ -1768,6 +2227,8 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-release
+                # Stable for the same reason as the app's own release name.
+                crossplane.io/external-name: {{ $app }}-{{ $sc.name }}-release
               name: {{ $xrName }}-{{ $sc.name }}-release
             spec:
               rollbackLimit: 3
@@ -1776,6 +2237,13 @@ spec:
                   repository: {{ $sc.chart.repository }}
                   name: {{ $sc.chart.name }}
                   version: {{ $sc.chart.version | quote }}
+                  {{- range $c := (default list $pullSecrets.charts) }}
+                  {{- if eq $c.repository $sc.chart.repository }}
+                  pullSecretRef:
+                    name: {{ $c.secretName }}
+                    namespace: {{ $ns }}
+                  {{- end }}
+                  {{- end }}
                 namespace: {{ $ns }}
                 # Wait for the release's workloads, not just for Helm to have
                 # applied the manifests.
@@ -1800,6 +2268,14 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # The app's rule, for the sidecar's release as well: its files
+                # are the app's and are kept on uninstall like the rest.
+                patchesFrom:
+                  - configMapKeyRef:
+                      name: {{ $keepVolumes }}
+                      namespace: {{ $ns }}
+                      key: patch.yaml
+                      optional: false
                 {{- if gt (len $scExtraVals) 0 }}
                 values:
                   {{ toYaml $scExtraVals | nindent 18 }}
@@ -1830,7 +2306,7 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-{{ $sc.name }}-release
+                      app.kubernetes.io/instance: {{ $app }}-{{ $sc.name }}-release
                     ports:
                     - name: http
                       port: {{ $scSvcPort }}

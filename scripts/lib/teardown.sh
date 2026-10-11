@@ -9,11 +9,6 @@
 [[ -n "${GENTIAN_TEARDOWN_LOADED:-}" ]] && return 0
 GENTIAN_TEARDOWN_LOADED=1
 
-_has_pvc() {
-    local ns="$1"
-    [[ "$(kubectl get pvc -n "${ns}" --no-headers 2>/dev/null | wc -l)" -gt 0 ]]
-}
-
 # Strip all custom resource finalizers in a namespace so it can terminate.
 # Uses kubectl get all + any remaining resources from a targeted list rather
 # than iterating every api-resource (which hangs when CRDs are mid-deletion).
@@ -28,7 +23,10 @@ _clear_ns_finalizers() {
     # Then try a fixed list of custom resource types we know may linger.
     for rt in \
         externalsecrets.external-secrets.io \
+        pushsecrets.external-secrets.io \
         clusterexternalsecrets.external-secrets.io \
+        applications.argoproj.io \
+        applicationsets.argoproj.io \
         secretstores.external-secrets.io \
         terraforms.infra.contrib.fluxcd.io \
         releases.helm.crossplane.io \
@@ -41,7 +39,7 @@ _clear_ns_finalizers() {
         issuers.cert-manager.io; do
         kubectl get "${rt}" -n "${ns}" -o name 2>/dev/null \
             | xargs_r -I%% kubectl patch %% -n "${ns}" \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                --type=merge -p='{"metadata":{"finalizers":null}}' \
                 2>/dev/null || true
     done
 }
@@ -203,7 +201,7 @@ _delete_pvs_for_namespace() {
 
 # _reclaim_orphaned_pvs — every Gentian PV the per-namespace pass did not reach.
 #
-# The pass above walks gentian_kernel_namespaces, which does not include
+# The pass above walks the kernel namespaces, which do not include
 # tenant-<name>. So a tenant's volumes were never reclaimed: on one cluster the
 # leftovers included two tenant-<name>/nextcloud-nextcloud PVs, and three for
 # platform-kernel/postgres-1 — one per rebuild, because each cycle leaked a
@@ -224,26 +222,21 @@ _delete_pvs_for_namespace() {
 #   every Released volume it can see would take that with it.
 #
 #   That last case is not hypothetical: a bare ^gentian- prefix matched
-#   gentian-server and gentian-corp on a real machine — an unrelated product's
+#   gentian-server and one other namespace on a real machine — an unrelated product's
 #   namespaces that happen to share the string, not anything this installer
 #   ever created — and force-patched their live, Bound Postgres PVs to
 #   persistentVolumeReclaimPolicy: Delete before pv-protection blocked the
-#   deletes. gentian-infra-<env> (stage-suffixed) and gentian-system (exact)
-#   are the only gentian-* namespaces this installer actually creates, so
-#   those are what the regex matches now — not everything spelled the same
-#   way by coincidence.
+#   deletes. The kernel and system namespaces kernel/namespaces.yaml names
+#   are the ones this installer or the Cluster claim creates, so those are
+#   what the regex matches, each exactly — not everything spelled the same
+#   way by coincidence. tenant-<name> is dynamic and has no list to be read
+#   from, so it is covered by its prefix.
 _gentian_pv_namespaces_regex() {
     local ns out=""
-    for ns in $(gentian_kernel_namespaces); do
-        # gentian-infra-<env> is stage-suffixed, so matching it exactly would
-        # miss a volume left by an install at a different stage — exactly the
-        # kind of leftover this exists to collect. tenant-<name> is dynamic
-        # and never appears in gentian_kernel_namespaces at all. Both are
-        # covered by the prefixes below instead of an exact anchor.
-        case "${ns}" in gentian-infra-*|tenant-*) continue ;; esac
+    for ns in $(ns_kernel_all) $(ns_system_all); do
         out="${out}|^${ns}$"
     done
-    printf '%s' "^tenant-|^gentian-infra-${out}"
+    printf '%s' "^tenant-${out}"
 }
 
 _reclaim_orphaned_pvs() {
@@ -341,8 +334,8 @@ _delete_gentianos_api_scaffold() {
     kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator \
         --ignore-not-found=true 2>/dev/null || true
 
-    if helm status gentian-os -n gentian-system >/dev/null 2>&1; then
-        helm uninstall gentian-os -n gentian-system --wait --timeout=3m 2>/dev/null || true
+    if helm status gentian-os -n "$(ns_kernel control)" >/dev/null 2>&1; then
+        helm uninstall gentian-os -n "$(ns_kernel control)" --wait --timeout=3m 2>/dev/null || true
         success "gentian-os Helm release uninstalled."
     fi
 
@@ -397,10 +390,12 @@ _delete_gentianos_api_scaffold() {
 # is why they are collected after the reverse pass rather than during it.
 # =============================================================================
 
-# purge_release_volumes — drain PVCs while their namespaces still exist.
+# purge_release_volumes — what a purge clears before the reverse pass.
 #
-# Runs before the reverse pass: a PVC whose pods are gone releases cleanly,
-# and pvc-protection finalizers are the usual reason a namespace delete hangs.
+# No kernel namespace's PVCs are drained here: the vault and the kernel's
+# database stay up through the reverse pass. Their claims go with their
+# namespaces (A-01's destroy), and purge_delete_volumes reclaims the volumes
+# afterwards.
 # =============================================================================
 # Crossplane's finalizers, cleared before anything that waits on them
 # =============================================================================
@@ -552,16 +547,9 @@ purge_tenant_namespaces() {
 }
 
 purge_release_volumes() {
-    local ns
     # Before the volumes, because the reverse pass that follows deletes the Argo
     # Applications that these finalizers block.
     _purge_strip_crossplane_finalizers
-    banner "Purge — releasing volumes"
-    for ns in $(gentian_kernel_namespaces); do
-        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
-        _has_pvc "${ns}" || continue
-        _drain_pvcs "${ns}"
-    done
 }
 
 # purge_delete_volumes — delete the PVs the drain released.
@@ -571,7 +559,7 @@ purge_release_volumes() {
 purge_delete_volumes() {
     local ns
     banner "Purge — deleting released volumes"
-    for ns in $(gentian_kernel_namespaces); do
+    for ns in $(ns_kernel_all); do
         _delete_pvs_for_namespace "${ns}"
     done
     # Then everything the namespace list does not cover — tenant namespaces
@@ -631,12 +619,12 @@ purge_sweep_api_scaffold() {
 # resolving. Scaled rather than deleted, so a teardown that stops halfway
 # leaves an object Argo CD can restore rather than a missing Deployment.
 teardown_freeze_edge_dns() {
-    kubectl get deploy external-dns -n external-dns >/dev/null 2>&1 || return 0
+    kubectl get deploy external-dns -n "$(ns_kernel edge)" >/dev/null 2>&1 || return 0
     info "Stopping external-dns before its sources are removed, so published"
     info "  records survive this teardown. Certificate issuance is rate-limited"
     info "  per domain, so deleting and recreating them has a cost that outlives"
     info "  the cluster. --purge --cluster-infra removes them deliberately."
-    kubectl scale deploy external-dns -n external-dns --replicas=0 >/dev/null 2>&1 ||
+    kubectl scale deploy external-dns -n "$(ns_kernel edge)" --replicas=0 >/dev/null 2>&1 ||
         warn "  Could not scale external-dns down; records may be pruned as sources go."
 }
 
@@ -652,6 +640,11 @@ purge_local_state() {
         [[ -e "${f}" ]] || continue
         rm -f "${f}" && success "Removed ${f}."
     done
+    # The kept kernel wildcard outlives a purge for the reason the DNS records
+    # do (rate limits outlive the cluster), and goes with them.
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" == "1" ]]; then
+        purge_kernel_wildcard_cache
+    fi
 }
 
 # purge_report_remaining — what a purge does not touch, said out loud.
@@ -721,10 +714,10 @@ _cluster_infra_namespaces() {
         # teardown no longer has.
         ns="$(awk '/^  destination:/{f=1; next} f && /namespace:/{print $2; exit}' "${tmpl}")"
         [[ -n "${ns}" ]] || continue
-        # Namespaces owned by a step are that step's to remove, and A-03 already
+        # Namespaces owned by a step are that step's to remove, and A-01 already
         # does. Only the ones nothing else claims belong here.
         case "${ns}" in
-            argocd|openbao|platform-kernel|gentian-system|gentian-*) continue ;;
+            kernel-*) continue ;;
         esac
         echo "${ns}"
     done | sort -u
@@ -817,6 +810,12 @@ purge_report_remaining() {
     info "  clusters/${cluster}/kernel in gentian-deployments — this cluster's"
     info "    configuration. Remove it with a commit if the cluster is gone for good."
     info "  Anything another workload put on this cluster."
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" != "1" && -n "${KERNEL_DOMAIN:-}" \
+          && -f "$(gentian_wildcard_cache_file)" ]]; then
+        info "  $(gentian_wildcard_cache_file) — the kernel wildcard, so the next"
+        info "    install reuses it instead of spending a Let's Encrypt order."
+        info "    --purge --cluster-infra removes it."
+    fi
 }
 
 # purge_confirm — the one prompt in the teardown path.

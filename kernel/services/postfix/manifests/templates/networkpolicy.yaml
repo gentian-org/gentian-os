@@ -1,0 +1,87 @@
+{{- /*
+  Who may open a connection to Postfix.
+
+  Postfix listens on four ports, of two kinds, and no connection from outside
+  the cluster reaches any of them directly: its Services are ClusterIP, and
+  the load balancer for mail is in front of the proxy in the mail DMZ.
+
+  From the mail DMZ's proxy, and from nothing else:
+
+    edge smtp (10025)        inbound mail, which the proxy took on 25.
+    edge submission (10587)  submission, which the proxy took on 587: mail
+                             clients outside, and the apps and Keycloak
+                             realms that are handed the public name
+                             (mail_reconciler.go, keycloak_tenant_smtp.go).
+
+  Both read a PROXY-protocol header and believe the client address in it
+  (templates/configmap.yaml, postfix-<env>-edge-listeners). Postfix cannot say
+  who may send one, so this rule is what says it: the pods of the proxy, in
+  the mail DMZ, by the namespace's name and the pods' labels. Any other pod
+  that reached these ports could give itself any address.
+
+  From the pods of a tenant, with no PROXY header:
+
+    submission (587)   an app that uses Postfix by its Service's name. The
+                       operator hands out the public name wherever the
+                       cluster has a domain, so this is the fallback and an
+                       override (MAIL_SMTP_HOST); it is kept because it is
+                       what worked before, and what Postfix sees on it is
+                       the pod's own address.
+
+  Closed, though Postfix listens on it:
+
+    smtp (25)          mail from outside arrives on the edge port now, and
+                       nothing inside the cluster is handed 25.
+
+  The DKIM signer runs inside the same container and Postfix reaches it
+  there. Postfix's own calls -- LMTP and the authentication service of
+  Dovecot, the mail it sends -- are egress, and nothing is said about egress
+  here. Its probes run inside the container.
+
+  The pods are built by the upstream chart the Release installs, which labels
+  them with its own name and the release's; the edge Service selects on the
+  same two.
+
+  Sync wave -1: before the Release (9), so the server is never up without it.
+*/ -}}
+{{- if ne (toString .Values.networkPolicy.enabled) "false" }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postfix-ingress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: mail
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mail
+      app.kubernetes.io/instance: postfix-{{ .Values.env }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.edge.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mail-edge
+              app.kubernetes.io/instance: mail-edge-{{ .Values.env }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.edge.ports.smtp }}
+        - protocol: TCP
+          port: {{ .Values.edge.ports.submission }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.submission }}
+{{- end }}

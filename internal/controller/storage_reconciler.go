@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -29,28 +23,17 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
 	conditionStorageReady = "StorageReady"
-	// quay.io, not Docker Hub, and a tag that still exists.
-	//
-	// MinIO retired the older mc tags from Docker Hub: pulling
-	// minio/mc:RELEASE.2025-04-03T17-07-56Z now fails with
-	//   pull access denied, repository does not exist or may require authorization
-	// which reads as a credentials problem and is not one — the tag is simply gone.
-	// The Job then sits in ImagePullBackOff, and because tenant provisioning waits
-	// on that Job, the whole tenant stops short of Ready: storage never finishes, so
-	// the stages behind it never run. Both tenants on this cluster were stuck there.
-	//
-	// quay.io is where MinIO publishes now, so it is the registry to track.
-	minioProvisionerImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
-	minioAdminSecret      = "minio-admin"
+	minioAdminSecret      = backup.MinIOAdminSecret
 	storageRequeueAfter   = 2 * time.Second
 )
 
-// ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
+// ensureStorage provisions per-app MinIO S3 buckets declared via ComponentProfile
 // ServiceRequirements.Storage.S3.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
@@ -91,7 +74,7 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) ([]string, error) {
 	return r.collectKernelApps(ctx, tenant, mode, matchS3Profile, func(tenantName string) string {
 		return s3BucketJobName(tenantName, "")
-	})
+	}, func(p backup.Provisioned) bool { return p.Has(backup.KindObjectStorage) })
 }
 
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
@@ -107,8 +90,21 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 	if err != nil {
 		return err
 	}
+	// The backup bucket goes with the rest. It is not an app's, so it is
+	// never in the inventory a profile can reach, and it is named here as
+	// its own unit: a purge that leaves the backups behind has not purged.
+	// keepBundles is the one exception, for a tenant handed a copy whose
+	// provider keeps one under contract.
+	if !tenant.KeepsBundles() {
+		s3Apps = append(s3Apps, backupBucketUnit)
+	}
 	return r.ensureDeleteJobs(ctx, s3Namespace, tenant, s3Apps, s3BucketDeleteJobName, makeS3BucketDeleteJob)
 }
+
+// backupBucketUnit is the pseudo-app name the backup bucket's delete Job
+// carries. backup.BackupBucket and backup.S3Bucket agree on the bucket this
+// names, which is what lets one Job constructor serve both.
+const backupBucketUnit = "gentian-backup"
 
 // makeS3BucketJob builds a kernel-namespace Job that creates the per-app bucket
 // and, when accessKey/secretKey are supplied (Seeder enabled), a scoped MinIO
@@ -118,14 +114,10 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secretKey string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	bucket := s3BucketName(tenant, appName)
-	container := minioContainer("create-bucket", bucket, minioSetupScript(bucket))
-	if accessKey != "" && secretKey != "" {
-		container.Env = append(container.Env,
-			corev1.EnvVar{Name: "APP_ACCESS_KEY", Value: accessKey},
-			corev1.EnvVar{Name: "APP_SECRET_KEY", Value: secretKey},
-		)
-	}
+	// The container that makes a bucket, its user and its policy is the
+	// inventory's: a restore runs the same one before it writes a bucket's
+	// objects back.
+	container := backup.ObjectStorageProvisionContainer("create-bucket", s3BucketName(tenant, appName), accessKey, secretKey)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketJobName(tenant.Name, appName),
@@ -160,95 +152,10 @@ func (r *TenantReconciler) minioEndpoint(ctx context.Context) string {
 	return string(secret.Data["endpoint"])
 }
 
+// makeS3BucketDeleteJob removes a bucket with the user and policy made for
+// it: the Job the purge of one app runs too.
 func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	bucket := s3BucketName(tenant, appName)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      s3BucketDeleteJobName(tenant.Name, appName),
-			Namespace: s3Namespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						minioContainer("delete-bucket", bucket, minioDeleteScript(bucket)),
-					},
-				},
-			},
-		},
-	}
-}
-
-func minioContainer(name, bucket, script string) corev1.Container {
-	return corev1.Container{
-		Name:    name,
-		Image:   minioProvisionerImage,
-		Command: []string{"/bin/sh", "-c", script},
-		Env: []corev1.EnvVar{
-			{
-				Name: "MINIO_ENDPOINT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: minioAdminSecret},
-						Key:                  "endpoint",
-					},
-				},
-			},
-			{
-				Name: "MINIO_ACCESS_KEY",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: minioAdminSecret},
-						Key:                  "accessKey",
-					},
-				},
-			},
-			{
-				Name: "MINIO_SECRET_KEY",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: minioAdminSecret},
-						Key:                  "secretKey",
-					},
-				},
-			},
-			{Name: "BUCKET_NAME", Value: bucket},
-		},
-	}
-}
-
-func minioSetupScript(bucket string) string {
-	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc mb --ignore-existing "gentian/%[1]s"
-mc anonymous set none "gentian/%[1]s"
-if [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
-  mc admin user remove gentian "${APP_ACCESS_KEY}" >/dev/null 2>&1 || true
-  mc admin user add gentian "${APP_ACCESS_KEY}" "${APP_SECRET_KEY}"
-  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%[1]s","arn:aws:s3:::%[1]s/*"]}]}' > /tmp/policy.json
-  mc admin policy rm gentian "${APP_ACCESS_KEY}-policy" >/dev/null 2>&1 || true
-  mc admin policy create gentian "${APP_ACCESS_KEY}-policy" /tmp/policy.json
-  mc admin policy attach gentian "${APP_ACCESS_KEY}-policy" --user "${APP_ACCESS_KEY}"
-  echo "minio user for bucket %[1]s ready"
-fi
-echo "bucket %[1]s ready"`, bucket)
-}
-
-func minioDeleteScript(bucket string) string {
-	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc rb --force "gentian/%s" 2>/dev/null || echo "bucket %s already gone"
-echo "bucket %s removed"`, bucket, bucket, bucket)
+	return backup.ObjectStorageDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 func s3BucketName(tenant *gentianov1alpha1.Tenant, appName string) string {
@@ -260,5 +167,34 @@ func s3BucketJobName(tenantName, appName string) string {
 }
 
 func s3BucketDeleteJobName(tenantName, appName string) string {
-	return fmt.Sprintf("s3-delete-%s-%s", tenantName, appName)
+	return backup.ObjectStorageDestroyJobName(tenantName, appName)
+}
+
+// seedObjectStorage seeds the key pair an app reads its bucket with, and
+// returns it. Empty when the operator has no vault: the bucket is then made
+// without a user, as it always was there.
+func (r *TenantReconciler) seedObjectStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (accessKey, secretKey string, err error) {
+	if r.Seeder == nil {
+		return "", "", nil
+	}
+	creds, err := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
+		Endpoint: r.minioEndpoint(ctx),
+		Bucket:   s3BucketName(tenant, appName),
+		Region:   "us-east-1",
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("seed s3 for %s: %w", appName, err)
+	}
+	return creds.AccessKey, creds.SecretKey, nil
+}
+
+// objectStorageProvisioner is the container that makes an app's bucket, its
+// user and its policy, holding the key pair the vault holds for the app:
+// what install's bucket Job runs, for a restore to run first.
+func (r *TenantReconciler) objectStorageProvisioner(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName, name string) (corev1.Container, error) {
+	accessKey, secretKey, err := r.seedObjectStorage(ctx, tenant, appName)
+	if err != nil {
+		return corev1.Container{}, err
+	}
+	return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), accessKey, secretKey), nil
 }

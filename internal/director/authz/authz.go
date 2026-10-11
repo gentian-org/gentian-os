@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package authz asks OpenFGA whether a caller may do something, and records
@@ -97,7 +91,7 @@ func GroupFromPath(path string) (string, error) {
 	return Group(strings.TrimPrefix(path, "/"))
 }
 
-// Tenant, Cluster, Session and CatalogueEntry name the objects the director
+// Tenant, Cluster and Session name the objects the director
 // checks against. Tenant and cluster names are DNS labels and need no
 // encoding; they are validated where they enter.
 func Tenant(name string) string  { return "tenant:" + name }
@@ -110,16 +104,6 @@ func Session(sid string) (string, error) {
 		return "", err
 	}
 	return "session:" + id, nil
-}
-
-// CatalogueEntry returns the object for a store coordinate <catalogue>/<app>.
-// The coordinate's own '/' is the one place the separator is legitimate.
-func CatalogueEntry(coordinate string) (string, error) {
-	cat, app, ok := strings.Cut(coordinate, "/")
-	if !ok || cat == "" || app == "" || strings.ContainsAny(coordinate, ":# \t\r\n") || strings.Contains(app, "/") {
-		return "", fmt.Errorf("%w: coordinate %q", ErrInvalidID, coordinate)
-	}
-	return "catalogue_entry:" + coordinate, nil
 }
 
 // OpenFGA is a Checker backed by an OpenFGA server.
@@ -178,13 +162,10 @@ type checkRequest struct {
 		Relation string `json:"relation"`
 		Object   string `json:"object"`
 	} `json:"tuple_key"`
-	AuthorizationModelID string         `json:"authorization_model_id"`
-	Context              map[string]any `json:"context,omitempty"`
+	AuthorizationModelID string `json:"authorization_model_id"`
 }
 
-// Check implements Checker. The current time is always supplied as context:
-// it is a runtime fact, the one thing conditions such as grant_valid need that
-// the store cannot hold.
+// Check implements Checker.
 //
 // An error is a denial. The caller gets (false, err) and must not proceed;
 // there is no mode in which an unreachable OpenFGA lets a write through.
@@ -205,7 +186,6 @@ func (c *OpenFGA) Check(ctx context.Context, requestID, user, relation, object s
 	var body checkRequest
 	body.TupleKey.User, body.TupleKey.Relation, body.TupleKey.Object = user, relation, object
 	body.AuthorizationModelID = c.modelID
-	body.Context = map[string]any{"current_time": c.now().UTC().Format(time.RFC3339)}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return false, err
@@ -241,15 +221,6 @@ type Tuple struct {
 	User     string `json:"user"`
 	Relation string `json:"relation"`
 	Object   string `json:"object"`
-	// Condition makes the tuple hold only while a model condition does.
-	Condition *Condition `json:"condition,omitempty"`
-}
-
-// Condition names a model condition and the part of its context that is stored
-// with the tuple; the rest arrives with each Check.
-type Condition struct {
-	Name    string         `json:"name"`
-	Context map[string]any `json:"context,omitempty"`
 }
 
 // Read returns the stored tuples matching a filter. Any field may be empty,

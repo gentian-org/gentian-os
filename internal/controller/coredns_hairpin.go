@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -45,7 +39,11 @@ const (
 func kernelHTTPSHairpinHosts(kernelDomain string) map[string]struct{} {
 	hosts := []string{
 		kernelDomain,
-		consoleHost(kernelDomain),
+		// Both desktops a kernel host can be: the platform's, and
+		// desktop.<kernel>, which is the user tenant's on a single-tenancy
+		// cluster and an alias of the bare domain otherwise.
+		desktopHost(kernelDomain),
+		platformDesktopHost(kernelDomain),
 		"id." + kernelDomain,
 		"argocd." + kernelDomain,
 	}
@@ -213,8 +211,9 @@ func sortedHairpinHosts(kernelDomain string) []string {
 	return []string{
 		kernelDomain,
 		"argocd." + kernelDomain,
-		consoleHost(kernelDomain),
+		desktopHost(kernelDomain),
 		"id." + kernelDomain,
+		platformDesktopHost(kernelDomain),
 	}
 }
 

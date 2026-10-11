@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -21,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -28,6 +23,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,7 +32,9 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -58,6 +56,15 @@ import (
 // public internet with no session in front of it does not belong in the same
 // blast radius as the tenant's application and its database.
 
+// The publishing proxy is a Deployment this operator creates and removes, so
+// it has to be allowed to: without create the proxy never starts, the route
+// is never written, and a published host answers 404 from the Gateway with
+// the listener in place and nothing behind it. The markers are a
+// free-floating block: controller-gen ignores one that is part of a
+// declaration's doc comment.
+//
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+
 // perimeterEnablement is one live enablement paired with the profile entry it
 // enables. Both are needed and they come from different people: the profile
 // says which paths this surface is, the enablement says it may be published,
@@ -66,6 +73,22 @@ type perimeterEnablement struct {
 	spec *gentianov1alpha1.ExposureSpec
 	on   *gentianov1alpha1.ExposureEnablement
 	host string
+	// website marks a tenant's surface on the cluster's main address: its
+	// proxy refuses the platform's paths there (main_address.go).
+	website bool
+	// stepsBack marks the platform's own surface on the bare domain while a
+	// tenant's website holds it: routed for the platform's paths only.
+	stepsBack bool
+}
+
+// perimeterMainAddress is what the main address means for one component's
+// perimeter, decided by mainAddressHolder before anything is published.
+type perimeterMainAddress struct {
+	// entry is this component's entry that holds the main address, and host
+	// the address; both empty when none does.
+	entry, host string
+	// held says a tenant's website holds the main address, whoever's it is.
+	held bool
 }
 
 // livePerimeterExposures are the enablements in force right now.
@@ -76,7 +99,7 @@ type perimeterEnablement struct {
 // that it was once published.
 func livePerimeterExposures(
 	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
-	zone edgeZone, now time.Time,
+	zone edgeZone, now time.Time, main perimeterMainAddress,
 ) []perimeterEnablement {
 	byName := map[string]*gentianov1alpha1.ExposureSpec{}
 	for i := range profile.Spec.Expose {
@@ -95,14 +118,31 @@ func livePerimeterExposures(
 			// wrote down.
 			continue
 		}
-		if !now.Before(on.ExpiresAt.Time) {
+		if !spec.ApprovedAs(on.Kind) {
+			// Approved as something else than the entry declares now: as a
+			// plain public address, and the profile has since asked to have
+			// the caller's credential passed on, or the other way round; or
+			// in a mode the platform does not serve. What was approved is
+			// not what would be published, so nothing is, until the entry
+			// is approved as what it is.
 			continue
 		}
-		host := on.Host
-		if host == "" {
-			host = exposureHost(zone, comp, spec)
+		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
+			continue
 		}
-		out = append(out, perimeterEnablement{spec: spec, on: on, host: host})
+		// Where it answers, by the rule the director shows an approver the
+		// address with (addresses.PerimeterHost): the main address takes the
+		// profile's author and the approver both saying so.
+		host, website := addresses.PerimeterHost(zone.shared(), comp.Name, spec, on.Apex, main.entry, main.host)
+		if host == "" {
+			// An entry with nowhere to answer in this zone: the bare domain,
+			// asked for by a tenant that does not hold it.
+			continue
+		}
+		out = append(out, perimeterEnablement{
+			spec: spec, on: on, host: host, website: website,
+			stepsBack: zone.kernel && spec.Apex && main.held,
+		})
 	}
 	return out
 }
@@ -118,10 +158,13 @@ func perimeterName(comp *gentianov1alpha1.Component, entry string) string {
 	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
 }
 
+// perimeterProxyAppName labels every object of a publishing proxy.
+const perimeterProxyAppName = "perimeter-proxy"
+
 func perimeterLabels(comp *gentianov1alpha1.Component, entry string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by": managedByValue,
-		"app.kubernetes.io/name":       "perimeter-proxy",
+		"app.kubernetes.io/name":       perimeterProxyAppName,
 		"gentianos.io/component":       comp.Name,
 		"gentianos.io/exposure":        entry,
 	}
@@ -133,7 +176,11 @@ func (r *ComponentReconciler) ensurePerimeter(
 	ctx context.Context, comp *gentianov1alpha1.Component,
 	profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone,
 ) (int, error) {
-	live := livePerimeterExposures(comp, profile, zone, time.Now())
+	main, err := r.mainAddressFor(ctx, comp, profile, tenant)
+	if err != nil {
+		return 0, fmt.Errorf("main address: %w", err)
+	}
+	live := livePerimeterExposures(comp, profile, zone, time.Now(), main)
 	dmz := layout.TenantDMZ(tenant.Name)
 
 	if err := r.prunePerimeter(ctx, comp, dmz, live); err != nil {
@@ -184,7 +231,12 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	labels := perimeterLabels(comp, p.spec.Name)
 
 	upstream := fmt.Sprintf("%s.%s.svc.cluster.local", p.spec.Backend.Service, comp.Namespace)
-	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port)
+	// Whether the caller's Authorization header goes on to the app is the
+	// approval's word as well as the profile's: livePerimeterExposures let
+	// this entry through only because the two agree.
+	passCredential := p.spec.AuthMode == gentianov1alpha1.AuthModeApp &&
+		p.on.Kind == gentianov1alpha1.ExposureKindPublicAppCredential
+	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, passCredential, perimeterLimitsFromEnv(edgeClientAddressHeader(ctx, r.Client)))
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
@@ -320,7 +372,8 @@ func perimeterDeployment(name, dmz string, labels map[string]string, configHash 
 	}
 }
 
-// ensurePerimeterPolicies bound the DMZ in both directions.
+// ensurePerimeterPolicies bound the DMZ in both directions, and who may
+// reach the proxy.
 //
 // Out: the proxy may reach exactly one Service in the tenant's namespace, and
 // DNS. Not the tenant's database, not its other applications, not the kernel.
@@ -339,6 +392,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 	udp := corev1.ProtocolUDP
 	dns := intstr.FromInt32(53)
 	port := intstr.FromInt32(p.spec.Backend.Port)
+	proxyPort := intstr.FromInt32(perimeterProxyPort)
 
 	egress := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name + "-egress", Namespace: dmz, Labels: labels},
@@ -368,6 +422,47 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 			return false
 		}
 		existing.Spec = egress.Spec
+		return true
+	}); err != nil {
+		return err
+	}
+
+	// In, to the proxy itself: the Gateway's Envoy pods and nobody else.
+	//
+	// The proxy takes the caller's address from what the Gateway appended
+	// to X-Forwarded-For, limits each address by it and tells the
+	// application that address. That is only the Gateway's word if the
+	// Gateway is the only thing that can open a connection here; a pod of
+	// another tenant that could would choose its own address, and step
+	// round the route's host and the limits with it. Under the cluster's
+	// switch for the kernel's network rules (kernelNetworkPoliciesEnabled).
+	edge := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-ingress", Namespace: dmz, Labels: labels},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: labels},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": layout.Namespace(layout.Edge),
+					}},
+					PodSelector: &metav1.LabelSelector{MatchLabels: netpolicy.EdgeProxyPodLabels()},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &proxyPort}},
+			}},
+		},
+	}
+	if !kernelNetworkPoliciesEnabled() {
+		// The cluster's switch for the kernel's network rules is off, and
+		// this rule rests on the same fact as they do: gone with them.
+		if err := r.Delete(ctx, edge); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	} else if err := upsert(ctx, r.Client, edge, func(existing *networkingv1.NetworkPolicy) bool {
+		if equality.Semantic.DeepEqual(existing.Spec, edge.Spec) {
+			return false
+		}
+		existing.Spec = edge.Spec
 		return true
 	}); err != nil {
 		return err
@@ -413,9 +508,10 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	gwName := gatewayv1.ObjectName(PerimeterGatewayName)
 	svcKind := gatewayv1.Kind("Service")
 	port := gatewayv1.PortNumber(perimeterProxyPort)
+	section := gatewayv1.SectionName(perimeterListenerName(p.host))
 
 	var rules []gatewayv1.HTTPRouteRule
-	for _, prefix := range perimeterPrefixes(p.spec) {
+	for _, prefix := range perimeterRoutePrefixes(p) {
 		pathType := gatewayv1.PathMatchPathPrefix
 		value := prefix
 		rules = append(rules, gatewayv1.HTTPRouteRule{
@@ -433,8 +529,12 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
 		Spec: gatewayv1.HTTPRouteSpec{
+			// The host's own listener, by name. Without it the route attaches
+			// to every listener of the Gateway that admits its hostname, and
+			// the :80 listener admits any: the surface would then be served
+			// in clear text instead of being redirected to https.
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{{
-				Name: gwName, Namespace: &edge,
+				Name: gwName, Namespace: &edge, SectionName: &section,
 			}}},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(p.host)},
 			Rules:     rules,
@@ -447,6 +547,105 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 		existing.Spec = route.Spec
 		return true
 	})
+}
+
+// perimeterRoutePrefixes are the prefixes one published surface is routed
+// for: what its profile declared.
+//
+// One exception. The platform's own surface on the bare domain steps back
+// while a tenant's website holds that address: it is then routed for the
+// platform's paths only (mainAddressPlatformPrefixes), as far as it declared
+// them, so that the website's whole-host route has no equal to tie with.
+func perimeterRoutePrefixes(p *perimeterEnablement) []string {
+	declared := perimeterPrefixes(p.spec)
+	if !p.stepsBack {
+		return declared
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(prefix string) {
+		if _, dup := seen[prefix]; !dup {
+			seen[prefix] = struct{}{}
+			out = append(out, prefix)
+		}
+	}
+	for _, kept := range mainAddressPlatformPrefixes() {
+		for _, d := range declared {
+			switch {
+			case pathWithin(kept, d):
+				add(kept)
+			case pathWithin(d, kept):
+				add(d)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// mainAddressFor decides what the cluster's main address means for this
+// component, and writes the answer on its MainAddress condition (in memory:
+// the caller's status update carries it).
+//
+// Asked only of a component whose profile has an apex entry, or one of whose
+// surfaces was published for the main address. Every other component has
+// nothing to do with it and reads nothing.
+func (r *ComponentReconciler) mainAddressFor(
+	ctx context.Context, comp *gentianov1alpha1.Component,
+	profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant,
+) (perimeterMainAddress, error) {
+	concerned := false
+	for i := range profile.Spec.Expose {
+		e := &profile.Spec.Expose[i]
+		concerned = concerned || (e.Surface == gentianov1alpha1.SurfacePerimeter && e.Apex)
+	}
+	for i := range comp.Spec.Exposures {
+		concerned = concerned || comp.Spec.Exposures[i].Apex
+	}
+	if !concerned {
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionMainAddress)
+		return perimeterMainAddress{}, nil
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return perimeterMainAddress{}, err
+	}
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return perimeterMainAddress{}, err
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
+	profiles[comp.Name] = profile
+	in := mainAddressInputs{
+		Tenants: tenants.Items, Profiles: profiles,
+		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
+		Now: time.Now(),
+	}
+	main := perimeterMainAddress{held: mainAddressHolder(in) != nil}
+	if tenantAdoptsKernelRealm(tenant, r.kernelRealm()) {
+		// The platform's own page: it is on the bare domain either way, and
+		// has no decision to report.
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionMainAddress)
+		return main, nil
+	}
+	verdict, applies := mainAddressVerdictFor(in, tenant, comp.Name)
+	if !applies {
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionMainAddress)
+		return main, nil
+	}
+	status := metav1.ConditionFalse
+	if verdict.Entry != "" {
+		status = metav1.ConditionTrue
+		main.entry, main.host = verdict.Entry, r.KernelDomain
+	}
+	apimeta.SetStatusCondition(&comp.Status.Conditions, metav1.Condition{
+		Type: ConditionMainAddress, Status: status, Reason: verdict.Reason, Message: verdict.Message,
+		ObservedGeneration: comp.Generation,
+	})
+	return main, nil
 }
 
 // prunePerimeter removes what the enablements no longer say.
@@ -462,7 +661,7 @@ func (r *ComponentReconciler) prunePerimeter(
 	for i := range live {
 		keep[perimeterName(comp, live[i].spec.Name)] = struct{}{}
 	}
-	selector := client.MatchingLabels{"gentianos.io/component": comp.Name, "app.kubernetes.io/name": "perimeter-proxy"}
+	selector := client.MatchingLabels{"gentianos.io/component": comp.Name, "app.kubernetes.io/name": perimeterProxyAppName}
 
 	routes := &gatewayv1.HTTPRouteList{}
 	if err := r.List(ctx, routes, client.InNamespace(dmz), selector); err == nil {

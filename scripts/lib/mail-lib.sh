@@ -6,7 +6,7 @@
 #
 # MAIL_SERVICE_MODE:
 #   external — apps (Keycloak, etc.) send mail via EXTERNAL_SMTP_HOST directly
-#   kernel   — deploy in-cluster Postfix + Dovecot; Keycloak uses Postfix
+#   system   — deploy in-cluster Postfix + Dovecot; Keycloak uses Postfix
 # =============================================================================
 
 # Guard against double-sourcing.

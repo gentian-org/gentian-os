@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package netpolicy
@@ -23,6 +17,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -50,9 +45,13 @@ type BuildInput struct {
 	// baseline is a privilege somebody has to have answered (AD-5), and this
 	// is where the answer is: an app installed through Tenant.spec.apps has
 	// no Component to hang a grant on.
-	Privileges    []gentianov1alpha1.TenantPrivilegeGrant
-	Bindings      []*gentianov1alpha1.IntegrationBinding
-	Grants        map[string]*gentianov1alpha1.AppGrant
+	Privileges []gentianov1alpha1.TenantPrivilegeGrant
+	Bindings   []*gentianov1alpha1.IntegrationBinding
+	Grants     map[string]*gentianov1alpha1.AppGrant
+	// PodSelectors are the labels each app's pods carry, for an app whose
+	// delivery does not put the app label on them. A contract's two sides
+	// are selected by these.
+	PodSelectors  map[string]map[string]string
 	Config        Config
 	KubeAPIEndpts *discoveryv1.EndpointSlice
 }
@@ -86,9 +85,7 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		if in.Grants != nil {
 			grant = in.Grants[binding.Spec.Consumer.App]
 		}
-		if np := ContractAllowNetworkPolicy(in.TenantName, binding, grant); np != nil {
-			out = append(out, np)
-		}
+		out = append(out, ContractNetworkPolicies(in.TenantName, binding, grant, in.PodSelectors)...)
 	}
 
 	cacheApps := cacheAppNames(in)
@@ -106,7 +103,9 @@ func cacheAppNames(in BuildInput) []string {
 	seen := map[string]struct{}{}
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
-		if profile == nil || profile.Services() == nil || profile.Services().Cache == nil {
+		// Memcached only: it is the cache that lives in the tenant's own
+		// namespace. A Redis app has no business with it.
+		if provisioner.CacheEngineOf(profile) != gentianov1alpha1.CacheEngineMemcached {
 			continue
 		}
 		if _, ok := seen[app.Profile]; ok {
@@ -118,6 +117,17 @@ func cacheAppNames(in BuildInput) []string {
 	return names
 }
 
+// anyProfileUnknown reports whether an installed app's profile could not be
+// read, so that what it declares is not known.
+func (in BuildInput) anyProfileUnknown() bool {
+	for _, app := range in.Apps {
+		if in.Profiles[app.Profile] == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ManagedPolicyNames returns the set of operator-owned policy names (excluding baseline).
 func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	names := map[string]struct{}{
@@ -125,17 +135,38 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 		exportPolicyName(): {},
 	}
 	for _, app := range in.Apps {
-		names[kernelPolicyName(app.Profile)] = struct{}{}
+		// Kept while it is built, and while the profile cannot be read:
+		// what an unknown profile opens is unknown, and its app keeps what
+		// it had. A profile that is known to open nothing here loses the
+		// policy that opened what it used to.
+		profile := in.Profiles[app.Profile]
+		if profile == nil || KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config) != nil {
+			names[kernelPolicyName(app.Profile)] = struct{}{}
+		}
 		names[appInternalPolicyName(app.Profile)] = struct{}{}
 
 		if len(in.grantedEgress(app.Profile, in.Profiles[app.Profile])) > 0 {
 			names[appEgressPolicyName(app.Profile)] = struct{}{}
 		}
 	}
+	// Only the policies of a contract somebody granted: one that lost its
+	// grant loses its policies, and with them the way between the two apps.
 	for _, binding := range in.Bindings {
-		names[contractPolicyName(binding.Name)] = struct{}{}
+		var grant *gentianov1alpha1.AppGrant
+		if in.Grants != nil {
+			grant = in.Grants[binding.Spec.Consumer.App]
+		}
+		for _, np := range ContractNetworkPolicies(in.TenantName, binding, grant, in.PodSelectors) {
+			names[np.Name] = struct{}{}
+		}
 	}
-	names[tenantCacheEgressPolicyName()] = struct{}{}
-	names[tenantCacheIngressPolicyName()] = struct{}{}
+	// Only while there is a Memcached app to build them for: named
+	// unconditionally they were never removed, and a tenant whose last such
+	// app had gone kept the policies that app had needed. As above, an app
+	// whose profile cannot be read keeps what it had.
+	if len(cacheAppNames(in)) > 0 || in.anyProfileUnknown() {
+		names[tenantCacheEgressPolicyName()] = struct{}{}
+		names[tenantCacheIngressPolicyName()] = struct{}{}
+	}
 	return names
 }

@@ -45,7 +45,7 @@ _kit_export_layout() {
 
 check() {
     _kit_export_layout
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null || true)" == "true" ]]
 }

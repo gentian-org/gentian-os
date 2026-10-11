@@ -1,0 +1,114 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package applifecycle
+
+import (
+	"archive/tar"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/minio/minio-go/v7"
+	"k8s.io/apimachinery/pkg/types"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bundlestore"
+	"github.com/gentian-org/gentian-os/internal/layout"
+)
+
+// A bundle, downloaded: the artefacts under its S3 prefix streamed as one tar,
+// which is the single-file container of sovereignty-concept.md §1.3. The
+// artefacts are age-encrypted already, so what leaves here is what sits in
+// the bucket; nothing is decrypted and nothing is re-packed.
+//
+// Streamed rather than staged: a bundle can be tens of gigabytes, and a copy
+// made first would need somewhere to put it. The tar is written as the
+// objects are read, and a reader that stops stops the reads.
+
+// errBundleNotReady is a download asked for before the export finished: the
+// manifest is written last, and a tar without it is not a bundle.
+var errBundleNotReady = errors.New("the export has not finished; its bundle is not complete")
+
+// bundleClient reaches the store a bundle sits in (bundlestore.Store).
+func (s *Service) bundleClient(ctx context.Context, bundle *gentianov1alpha1.BundleRef) (*minio.Client, error) {
+	return s.bundles().Minio(ctx, bundle)
+}
+
+func (s *Service) bundles() *bundlestore.Store { return &bundlestore.Store{Client: s.client} }
+
+// StreamBundle writes one export's bundle to w as a tar whose entries are the
+// artefact names under the bundle's prefix.
+func (s *Service) StreamBundle(ctx context.Context, tenantName, name string, w io.Writer) error {
+	var export gentianov1alpha1.TenantExport
+	if err := s.client.Get(ctx, types.NamespacedName{Name: name, Namespace: layout.Tenant(tenantName)}, &export); err != nil {
+		return fmt.Errorf("export %q: %w", name, err)
+	}
+	if export.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || export.Status.Bundle == nil {
+		return errBundleNotReady
+	}
+	bundle := export.Status.Bundle
+	mc, err := s.bundleClient(ctx, bundle)
+	if err != nil {
+		return err
+	}
+	prefix := strings.TrimSuffix(bundle.Prefix, "/") + "/"
+	tw := tar.NewWriter(w)
+	for obj := range mc.ListObjects(ctx, bundle.Bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if obj.Err != nil {
+			return fmt.Errorf("listing the bundle: %w", obj.Err)
+		}
+		rel := strings.TrimPrefix(obj.Key, prefix)
+		if rel == "" || strings.HasSuffix(rel, "/") {
+			continue
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: rel, Mode: 0o644, Size: obj.Size, ModTime: obj.LastModified}); err != nil {
+			return err
+		}
+		body, err := mc.GetObject(ctx, bundle.Bucket, obj.Key, minio.GetObjectOptions{})
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", obj.Key, err)
+		}
+		_, err = io.Copy(tw, body)
+		_ = body.Close()
+		if err != nil {
+			return fmt.Errorf("streaming %s: %w", obj.Key, err)
+		}
+	}
+	return tw.Close()
+}
+
+func (h *HTTPServer) handleBundleDownload(w http.ResponseWriter, r *http.Request) {
+	tenant, name := r.PathValue("tenant"), r.PathValue("name")
+	// Headers go out before the first byte, so the phase check is made
+	// first and separately: a refusal has to be a JSON answer, not a
+	// truncated tar.
+	var export gentianov1alpha1.TenantExport
+	if err := h.Service.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: layout.Tenant(tenant)}, &export); err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("backup %q not found for tenant %q", name, tenant))
+		return
+	}
+	if export.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || export.Status.Bundle == nil {
+		writeErr(w, http.StatusConflict, errBundleNotReady)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.gentian"`, tenant, name))
+	w.WriteHeader(http.StatusOK)
+	if err := h.Service.StreamBundle(r.Context(), tenant, name, w); err != nil {
+		// Too late for a status: the download is simply cut short, and the
+		// log says why.
+		ctrllog.FromContext(r.Context()).Error(err, "bundle download failed", "tenant", tenant, "export", name)
+	}
+}

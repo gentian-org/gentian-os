@@ -41,9 +41,9 @@ server:
   #   2. Run scripts/bootstrap/init-openbao-transit.sh  (creates k8s Secret openbao-transit-token).
   #   3. Let ArgoCD reconcile this values.yaml (or force: `argocd app sync openbao`).
   #   4. Delete the primary pod to trigger restart with new config:
-  #        kubectl delete pod -n openbao openbao-0
+  #        kubectl delete pod -n kernel-secrets openbao-0
   #   5. Unseal once with the Shamir key + migration flag (this is the LAST manual unseal):
-  #        kubectl exec -n openbao openbao-0 -- bao operator unseal -migrate <shamir-key>
+  #        kubectl exec -n kernel-secrets openbao-0 -- bao operator unseal -migrate <shamir-key>
   #   6. Verify: bao status should show  Seal Type: transit  /  Sealed: false
   standalone:
     config: |
@@ -64,7 +64,7 @@ server:
       # Token is read from the AUTOUNSEAL_TOKEN environment variable which is
       # populated from the openbao-transit-token Kubernetes Secret.
       seal "transit" {
-        address    = "http://openbao-transit.openbao.svc.cluster.local:8200"
+        address    = "http://openbao-transit.kernel-seal.svc.cluster.local:8200"
         key_name   = "autounseal"
         mount_path = "transit/"
       }

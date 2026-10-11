@@ -9,6 +9,9 @@ WORKDIR /workspace
 
 # Cache module downloads
 COPY go.mod go.sum ./
+# The API is a module of its own that this one replaces with ./api, so its
+# go.mod has to be here before anything can be resolved.
+COPY api/go.mod api/go.sum api/
 RUN go mod download
 
 # Copy source
@@ -24,9 +27,23 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o manager ./cmd
 # credential. Which binary runs is the Deployment's command.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o director ./cmd/director
 
-# The ext-auth shim ships the same way: the edge's one enforcement point, run
+# The ext-auth bouncer ships the same way: the edge's one enforcement point, run
 # in the edge namespace from this image with its own command.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o edge-authz ./cmd/edge-authz
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o bouncer ./cmd/bouncer
+
+# The usher beside it: the reads a signed-in person's desktop asks for, from a
+# process that holds nothing but the two things the bouncer holds.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o usher ./cmd/usher
+
+# The custodian: what sets a credential in the vault for the person entitled
+# to. Its own process and ServiceAccount, so the identity that can write a
+# secret is not shared with anything that can read one.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o custodian ./cmd/custodian
+
+# The registrar: what keeps the list of people at Keycloak. Its own process
+# and ServiceAccount, so the credential that manages who may sign in is not
+# held by the process that pushes to git.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o registrar ./cmd/registrar
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -41,7 +58,10 @@ RUN apt-get update \
 
 COPY --from=builder /workspace/manager /manager
 COPY --from=builder /workspace/director /director
-COPY --from=builder /workspace/edge-authz /edge-authz
+COPY --from=builder /workspace/bouncer /bouncer
+COPY --from=builder /workspace/usher /usher
+COPY --from=builder /workspace/custodian /custodian
+COPY --from=builder /workspace/registrar /registrar
 
 USER 65532:65532
 

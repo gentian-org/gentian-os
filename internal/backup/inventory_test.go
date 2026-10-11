@@ -1,22 +1,17 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
 
 import (
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -165,20 +160,97 @@ func TestPVCBelongsToApp(t *testing.T) {
 	}
 }
 
-func TestOwnedByOtherRelease(t *testing.T) {
-	cases := []struct {
-		name        string
-		annotations map[string]string
-		app         string
-		wantOther   bool
-	}{
-		{"no helm annotation", nil, "nextcloud-base-ce", false},
-		{"own release", map[string]string{"meta.helm.sh/release-name": "nextcloud-base-ce-release"}, "nextcloud-base-ce", false},
-		{"sibling release", map[string]string{"meta.helm.sh/release-name": "openproject-ce-release"}, "nextcloud-base-ce", true},
+// A release is named after its app, with nothing generated in the name: that
+// is what lets a volume claim kept by an uninstall be recognised, and taken
+// over, by the next install. Which releases are an app's is exact when its
+// extensions are known, and only then.
+func TestAnAppsReleasesAreNamedAfterIt(t *testing.T) {
+	if got := AppRelease("odoo-base-ce"); got != "odoo-base-ce-release" {
+		t.Errorf("AppRelease = %q", got)
 	}
-	for _, tc := range cases {
-		if _, got := OwnedByOtherRelease(tc.annotations, tc.app); got != tc.wantOther {
-			t.Errorf("%s: OwnedByOtherRelease = %v, want %v", tc.name, got, tc.wantOther)
+	if got := ExtensionRelease("odoo-base-ce", "mcp"); got != "odoo-base-ce-mcp-release" {
+		t.Errorf("ExtensionRelease = %q", got)
+	}
+	if got := DirectRelease("tenant-demo", "desktop"); got != "tenant-demo-desktop" {
+		t.Errorf("DirectRelease = %q", got)
+	}
+	cases := []struct {
+		release    string
+		extensions []string
+		known      bool
+		want       bool
+	}{
+		{"wiki-release", nil, true, true},
+		{"tenant-demo-wiki", nil, true, true},
+		{"wiki-mcp-release", []string{"mcp"}, true, true},
+		// Another app whose name begins with this one's.
+		{"wiki-pro-release", []string{"mcp"}, true, false},
+		// With the extensions unknown the same release counts, so that an
+		// app is never taken to be gone while something that may be its
+		// own is still running.
+		{"wiki-pro-release", nil, false, true},
+		{"drive-release", nil, false, false},
+		{"tenant-other-wiki", nil, false, false},
+	}
+	for _, c := range cases {
+		if got := IsAppRelease(c.release, "tenant-demo", "wiki", c.extensions, c.known); got != c.want {
+			t.Errorf("IsAppRelease(%q, extensions %v known=%v) = %v, want %v", c.release, c.extensions, c.known, got, c.want)
 		}
+	}
+	if !IsPlatformStore(DesktopStore) || IsPlatformStore("wiki") {
+		t.Error("the desktop's store is the platform's, and an app's is not")
+	}
+}
+
+// One rule says where a tenant's workloads are, and it is the Tenant's own.
+// Export, restore, purge and the retained-data read used to spell
+// "tenant-<name>" for themselves while provisioning honoured the override.
+func TestTheTenantNamespaceIsTheTenantsOwnRule(t *testing.T) {
+	plain := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	if got := TenantNamespace(plain); got != "tenant-demo" || got != plain.NamespaceName() {
+		t.Errorf("TenantNamespace = %q, want tenant-demo", got)
+	}
+	placed := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       gentianov1alpha1.TenantSpec{Isolation: &gentianov1alpha1.TenantIsolation{Namespace: "elsewhere"}},
+	}
+	if got := TenantNamespace(placed); got != "elsewhere" || got != placed.NamespaceName() {
+		t.Errorf("TenantNamespace = %q, want the namespace the tenant names", got)
+	}
+	// The directly delivered release carries the namespace, so it follows.
+	inv := InventoryOf(placed, "desktop", nil)
+	if !slices.Contains(inv.Releases, "elsewhere-desktop") {
+		t.Errorf("releases = %v, want the direct release named after the tenant's namespace", inv.Releases)
+	}
+}
+
+// An export copies by the rule a purge deletes by: a claim on record as
+// another release's is not this app's, however much its name resembles it.
+func TestAppVolumesLeavesASiblingsVolume(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{Apps: []gentianov1alpha1.TenantApp{
+			{Profile: "wiki"}, {Profile: "wiki-pro"},
+		}},
+	}
+	claim := func(name, release string) corev1.PersistentVolumeClaim {
+		return corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Annotations: map[string]string{"meta.helm.sh/release-name": release},
+		}}
+	}
+	claims := []corev1.PersistentVolumeClaim{
+		claim("wiki-data", "wiki-release"),
+		claim("wiki-pro-data", "wiki-pro-release"),
+		claim("wiki-direct", "tenant-demo-wiki"),
+		{ObjectMeta: metav1.ObjectMeta{Name: "wiki-unrecorded"}},
+	}
+	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"}}
+	own, vetoed := AppVolumes(claims, tenant, "wiki", profile)
+	slices.Sort(own)
+	if want := []string{"wiki-data", "wiki-direct", "wiki-unrecorded"}; !slices.Equal(own, want) {
+		t.Errorf("own = %v, want %v", own, want)
+	}
+	if vetoed["wiki-pro-data"] != "wiki-pro-release" || len(vetoed) != 1 {
+		t.Errorf("vetoed = %v, want only the sibling's claim", vetoed)
 	}
 }

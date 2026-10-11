@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package secrets
@@ -21,6 +15,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -218,7 +213,11 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 	return fmt.Errorf("openbao put %s: HTTP %d: %s", logicalPath, resp.StatusCode, string(payload))
 }
 
-// Get reads the secret data at logicalPath.
+// ErrNotFound is a path that holds nothing.
+var ErrNotFound = errors.New("not found")
+
+// Get reads the secret data at logicalPath. A path that holds nothing is
+// ErrNotFound.
 func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]string, error) {
 	tok, err := c.authToken(ctx)
 	if err != nil {
@@ -236,7 +235,7 @@ func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]stri
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("openbao get %s: not found", logicalPath)
+		return nil, fmt.Errorf("openbao get %s: %w", logicalPath, ErrNotFound)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

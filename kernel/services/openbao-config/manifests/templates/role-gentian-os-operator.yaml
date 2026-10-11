@@ -1,7 +1,7 @@
 ---
 # provider-vault AuthBackendRole MR: gentian-os-operator
 #
-# Binds the gentian-os ServiceAccount in gentian-system to the operator-write
+# Binds the gentian-os ServiceAccount in kernel-control to the operator-write
 # policy via the Kubernetes auth backend.  Used by the gentian-os orchestrator
 # to read and write kernel secrets at reconcile time.
 #
@@ -12,7 +12,7 @@ apiVersion: kubernetes.vault.upbound.io/v1alpha1
 kind: AuthBackendRole
 metadata:
   name: openbao-role-gentian-os-operator
-  namespace: crossplane-system
+  namespace: kernel-provisioning
   annotations:
     argocd.argoproj.io/sync-wave: "3"
 spec:
@@ -24,7 +24,7 @@ spec:
     boundServiceAccountNames:
       - gentian-os
     boundServiceAccountNamespaces:
-      - gentian-system
+      - kernel-control
     tokenPolicies:
       - operator-write
     tokenTtl: 3600

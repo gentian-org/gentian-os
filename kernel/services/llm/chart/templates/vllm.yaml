@@ -13,12 +13,12 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: vllm-{{ $i.name }}-model-cache
-  namespace: platform-kernel
+  namespace: system-llm
   annotations:
     # Kept when an instance is removed. A cached model is tens of GB and many
     # minutes to redownload, so re-adding the same instance id picks the cache
     # back up. Delete by hand to reclaim the disk:
-    #   kubectl delete pvc -n platform-kernel -l gentianos.io/vllm-instance=<id>
+    #   kubectl delete pvc -n system-llm -l gentianos.io/vllm-instance=<id>
     helm.sh/resource-policy: keep
   labels:
     app.kubernetes.io/component: vllm-instance
@@ -35,7 +35,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vllm-{{ $i.name }}-inference
-  namespace: platform-kernel
+  namespace: system-llm
   labels:
     app.kubernetes.io/component: vllm-instance
     gentianos.io/vllm-instance: "{{ $i.name }}"
@@ -136,7 +136,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: vllm-{{ $i.name }}-inference
-  namespace: platform-kernel
+  namespace: system-llm
   labels:
     app.kubernetes.io/component: vllm-instance
     gentianos.io/vllm-instance: "{{ $i.name }}"

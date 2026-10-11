@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -92,6 +86,7 @@ func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
 	headlamp := tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example")
 	argocd := tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example")
 	identity := tileFixtureRoute(kernelRouteKeycloakAdmin, servicesNamespace, "id.k.example")
+	models := tileFixtureRoute(kernelRouteLiteLLM, servicesNamespace, "llm.k.example")
 
 	cases := map[string]struct {
 		routes []client.Object
@@ -100,6 +95,10 @@ func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
 		"every console routed": {
 			routes: []client.Object{headlamp, argocd, identity},
 			want:   "[headlamp argocd keycloak]",
+		},
+		"the claim switches the model gateway's console on": {
+			routes: []client.Object{headlamp, argocd, identity, models},
+			want:   "[headlamp argocd keycloak llm]",
 		},
 		"no kernel zone, so no console is routed": {
 			routes: nil,
@@ -127,15 +126,17 @@ func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 		tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example"),
 		tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example"),
 		tileFixtureRoute(kernelRouteKeycloakAdmin, servicesNamespace, "id.k.example"),
+		tileFixtureRoute(kernelRouteLiteLLM, servicesNamespace, "llm.k.example"),
 	)
 	want := map[string]struct {
 		url   string
 		icon  string
 		anyOf string
 	}{
-		"headlamp": {"https://headlamp.k.example/", "cluster", "[can_configure can_operate_system can_audit]"},
-		"argocd":   {"https://argocd.k.example/auth/login", "sync", "[can_configure can_operate_system can_audit]"},
-		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "identity", "[can_configure]"},
+		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system can_audit]"},
+		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system can_audit]"},
+		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "key", "[can_configure]"},
+		"llm":      {"https://llm.k.example/", "analytics", "[can_configure]"},
 	}
 	for _, tile := range got {
 		w, ok := want[tile.Name]

@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 23 more'
+      gentian-cluster-config, and 26 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -34,7 +34,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         clusterResourceWhitelist:
         - group: ""
@@ -45,7 +45,7 @@ spec:
         destinations:
         - namespace: tenant-*
           server: https://kubernetes.default.svc
-        - namespace: argocd
+        - namespace: kernel-gitops
           server: https://kubernetes.default.svc
         sourceRepos:
         - https://github.com/gentian-org/gentian-os
@@ -77,6 +77,14 @@ spec:
       metadata:
         name: openbao
       spec:
+        conditions:
+        - namespaceSelector:
+            matchExpressions:
+            - key: gentianos.io/tier
+              operator: In
+              values:
+              - kernel
+              - system
         provider:
           vault:
             auth:
@@ -85,14 +93,14 @@ spec:
                 role: eso
                 serviceAccountRef:
                   name: external-secrets
-                  namespace: external-secrets
+                  namespace: kernel-secrets
             caProvider:
               key: tls.crt
               name: openbao-tls
               namespace: kernel-secrets
               type: Secret
             path: secret
-            server: https://openbao.openbao.svc.cluster.local:8200
+            server: https://openbao.kernel-secrets.svc.cluster.local:8200
             version: v2
   providerConfigRef:
     name: kubernetes
@@ -118,16 +126,25 @@ spec:
       apiVersion: v1
       data:
         certificates.trustAnchorSecret: ""
+        eso.namespace: kernel-secrets
+        eso.serviceAccount: external-secrets
         identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth
         identity.kernelRealm: ""
+        identity.namespace: kernel-authentication
         kernel.controlNamespace: kernel-control
-        kernel.gitopsNamespace: argocd
+        kernel.gitopsNamespace: kernel-gitops
+        llm.console.enabled: "false"
         llm.enabled: "false"
         mail.egressHost: ""
         mail.serviceMode: ""
         mail.smtpHost: ""
         network.edgeNamespace: kernel-edge
         node.ip: ""
+        openbao.authMount: kubernetes
+        openbao.kvMount: secret
+        openbao.namespace: kernel-secrets
+        openbao.server: https://openbao.kernel-secrets.svc.cluster.local:8200
+        secretMode: derived
         tenancyMode: multi
         tenant.limitRange.default.cpu: 500m
         tenant.limitRange.default.memory: 512Mi
@@ -477,6 +494,35 @@ apiVersion: kubernetes.vault.upbound.io/v1alpha1
 kind: AuthBackendRole
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-custodian
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-custodian
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - gentian-os-custodian
+    boundServiceAccountNamespaces:
+    - kernel-control
+    roleName: gentian-os-custodian
+    tokenPolicies:
+    - custodian-write
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-auth-role-eso
   labels:
     crossplane.io/composite: dev-cluster
@@ -494,7 +540,7 @@ spec:
     boundServiceAccountNames:
     - external-secrets
     boundServiceAccountNamespaces:
-    - external-secrets
+    - kernel-secrets
     roleName: eso
     tokenPolicies:
     - eso-read
@@ -767,6 +813,35 @@ apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-kv-platform-desktop-database
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-platform-desktop-database
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-tenants-platform-apps-shell-database
+      namespace: kernel-provisioning
+    mount: secret
+    name: gentian-os/tenants/platform/apps/shell/database
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-kv-storage-minio
   labels:
     crossplane.io/composite: dev-cluster
@@ -789,6 +864,30 @@ spec:
   managementPolicies:
   - Observe
   - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-custodian-write
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-custodian-write
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: custodian-write
+    policy: |
+      path "secret/data/gentian-os/*"     { capabilities = ["create","update","patch"] }
+      path "secret/metadata/gentian-os/*" { capabilities = ["create","read","update"] }
   providerConfigRef:
     name: openbao
 ---
@@ -912,23 +1011,5 @@ spec:
       path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
       path "auth/token/create"                    { capabilities = ["update"] }
       path "auth/token/lookup-self"               { capabilities = ["read"] }
-
-      # Per-tenant JWT auth mounts. A tenant member authenticates in
-      # their own Keycloak realm — that is where their apps' OIDC
-      # clients live — so their portal token is signed by that realm
-      # and the kernel realm's mount cannot verify it. One mount per
-      # realm is what makes the exchange possible.
-      #
-      # Deliberately NOT one mount trusting many keys, which would be
-      # fewer objects and a privilege escalation: a tenant
-      # administrator holds realm-admin in their own realm, so they
-      # can mint a token carrying any groups claim, the cluster admin
-      # group included. Isolation belongs at the mount boundary,
-      # because claim values are precisely what they control.
-      #
-      # Glob, not the + segment wildcard: OpenBao's + matches one
-      # whole path segment, so "oidc-+" matches nothing at all.
-      path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
-      path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
   providerConfigRef:
     name: openbao

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -33,7 +27,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newPostgresProfile creates a minimal AppProfile that requires a PostgreSQL database.
+// newPostgresProfile creates a minimal ComponentProfile that requires a PostgreSQL database.
 func newPostgresProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -97,7 +91,6 @@ func TestDB_NoPostgresApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nodb"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No DB Co",
-			Domain:      "nodb.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -140,7 +133,6 @@ func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "cpgdb"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Crossplane DB Co",
-			Domain:      "cpgdb.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "element"}},
 		},
 	}
@@ -171,7 +163,6 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbcreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Create Co",
-			Domain:      "dbcreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app1"}},
 		},
 	}
@@ -228,7 +219,6 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "rolejob"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Role Job Co",
-			Domain:      "rolejob.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app2"}},
 		},
 	}
@@ -286,7 +276,6 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Ready Co",
-			Domain:      "dbready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app3"}},
 		},
 	}
@@ -351,7 +340,6 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbdelete"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "dbdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app4"}},
 		},
@@ -380,8 +368,13 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteDatabase; mark its jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-dbdelete-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs. The purge
+	// drops the database and role through a Job before the CR goes.
 	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", layout.Namespace(layout.Authentication))
+	go markJobCompleteWhenReady("pg-delete-dbdelete-pg-app4", "system-postgresql")
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -407,7 +400,6 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dborphan"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "dborphan.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app5"}},
 		},
@@ -450,7 +442,13 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-dborphan-gentian-backup", "system-s3")
 	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", layout.Namespace(layout.Authentication))
+	// The purge drops every database a CR records, the orphan's included.
+	go markJobCompleteWhenReady("pg-delete-dborphan-pg-app5", "system-postgresql")
+	go markJobCompleteWhenReady("pg-delete-dborphan-legacy-app", "system-postgresql")
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}

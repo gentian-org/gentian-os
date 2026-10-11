@@ -20,8 +20,8 @@ why the system-tier engines needed their admin Secrets found one at a time.
 | Repository | Catalogue entries | Other |
 |---|---|---|
 | `gentian-apps` | 33 `profiles/*/*/profile.yaml` | 2 templates, 3 `composition.yaml` |
-| `gentian-pro` | 5 `profiles/*/profile.yaml` | 3 `composition.yaml` |
-| `gentian-corp` | 0 | mentions in prose only |
+| a second, private catalogue repository | 5 `profiles/*/profile.yaml` | 3 `composition.yaml` |
+| the vendor's repository | 0 | mentions in prose only |
 | `gentian-os` | — | the CRD, `app-default.yaml`, the AppProject, the catalogue-sync path list |
 
 `gentian-ui` has 7 mentions, all prose or dead after S7A.6.
@@ -161,9 +161,18 @@ become `expose[].tile`, and an addon's exposure keeps the base's subdomain so
 
 `tile_projection_reconciler.go` mentions addons nowhere, so v5 shows none of
 these 23 tiles today. That is implementation, not design, and it is the second
-of the three gaps below.
+of the three gaps below. *(Since built: the tile projection resolves an
+addon's tile against its base's route.)*
 
 ## What is left, from the design's own list
+
+**Status 2026-10-09**: all eight items below are done, and the list stands as
+it was written, as the record of the order. `AppProfile` no longer exists in
+the API package or as a CRD; `Tenant.spec.apps[].profile` names a
+`ComponentProfile`; the component reconciler has an addon path and reads
+`backend.component`; the egress and waiver readers named in item 4 are now
+`internal/controller/component_network_policy.go`, `internal/security` and
+`internal/controller/mac_waiver_reconciler.go`.
 
 1. `Tenant.spec.apps` resolves `AppProfile` only. Until a `ComponentProfile`
    can be installed into a tenant by naming it there, the catalogue cannot
@@ -197,6 +206,27 @@ of the three gaps below.
    `categories`).
 8. **Delete `AppProfile`**: the Go types, the CRD, the composition's old path,
    and the references in the AppProject and the sync path list.
+
+## The instance: every installed app is a Component
+
+Done after the catalogue moved. `Tenant.spec.apps` is what git declares; the
+tenant reconciler makes each entry, and each addon activated inside one, a
+`Component` of class `app`, and removes it when the entry leaves. The
+Component is the unit everything hangs off: delivery, routes and the question
+asked at them, the tile, granted privileges, published surfaces.
+
+A chart is delivered one of two ways, by what the profile needs and never by
+which profile it is (`composedDelivery`). What the component reconciler renders
+itself it releases itself. Anything more — an identity provider client,
+generated secrets, a database, cache or mail account mapped into values key by
+key, a post-install job, a sidecar — is still rendered by `app-default`, and
+the Component writes and owns the `App` claim that Composition answers. The
+tenant Composition no longer emits claims.
+
+What is left of §13.6 is therefore one thing, and it is measurable: port what
+`app-default` renders into the component reconciler until `composedDelivery`
+cannot be true, then delete the `App` claim and its Composition. The render
+goldens are the proof, as they were for the conversion.
 
 ## How each step is proved
 

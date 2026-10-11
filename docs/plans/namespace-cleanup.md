@@ -5,20 +5,23 @@ and the target namespace of every workload running today.
 
 Terms: a *profile* is a `ComponentProfile` catalogue entry and an *instance*
 is a `Component` deployed from it, as defined in
-[target-component-structure.md](target-component-structure.md). Today's
-`AppProfile` is the profile until that rename lands. The decisions behind the layout are
+[target-component-structure.md](target-component-structure.md). The decisions behind the layout are
 [architectural-decisions.md](architectural-decisions.md) AD-7 to AD-11.
+
+The *Today* column in §2 is the layout this plan started from, kept as the
+record of what moved; a fresh install has the *Target* names. The list as
+built is `kernel/namespaces.yaml`.
 
 ## 1. Categories
 
 | Category | Contains | Installed by | Authority | Compromise guarantee |
 | --- | --- | --- | --- | --- |
 | `kernel-<function>` | services the OS is made of, including the tier-0 operators | `install.sh`, then Argo CD | break-glass platform admin only | none — this is the trust root |
-| `system-<function>` | instances with `tenancy: system`, fulfilling `requires.contracts` of other components; no public route | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
+| `system-<function>` | instances with `class: service`, fulfilling `requires.services` of other components; no public route | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
 | `system-<function>-dmz` | the internet-facing edge of a system service whose protocol needs one: a stateless listener holding one credential to its backend, no data | kernel services, from the Cluster claim | platform admin through the director | the service's backend; every tenant |
-| `shared-<app>` | one instance with `tenancy: shared`, serving several tenants; the profile must certify `shared` and carry `trustTier: platform` | director, from a Component whose profile certifies `shared` | platform admin through the director | only what the component's own code enforces |
-| `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop (frontend and BFF) | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
-| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry a perimeter approver has enabled, each with its own least-privilege credential and the entry's mandatory `authMode` | operator, from the tenant's enabled perimeter entries | perimeter approver through the director, within cluster policy — held by the tenant's admins by default (roles §1) | the tenant's own instances |
+| `shared-<app>` | one instance with `class: shared-app`, serving several tenants; the profile must list `shared-app` in `spec.classes` and carry `trustTier: platform` | director, from a Component whose profile lists `shared-app` | platform admin through the director | only what the component's own code enforces |
+| `tenant-<t>` | the tenant's instances with `class: app`, including its desktop (frontend and BFF) | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
+| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry a perimeter approver has enabled, each with the entry's mandatory `authMode` (`none` or `app`, §2.6) | operator, from the tenant's enabled perimeter entries | perimeter approver through the director, within cluster policy: the members of the tenant's `perimeter` group and the cluster's administrator; the tenant's admins only where `spec.perimeter.adminsApprove` is on, which is the default only for the `user` tenant of a single-tenancy cluster (roles §1) | the tenant's own instances |
 
 A new namespace inside a category needs a different exposure, credential
 set, upgrade owner or quota than its neighbour. None of the four → same
@@ -53,10 +56,10 @@ the catalogue.
 | External Secrets Operator | `external-secrets` | `kernel-secrets` | |
 | Reloader | `stakater-system` | `kernel-secrets` | part of the rotation path |
 | Keycloak, `keycloak-idp` config (theme, SMTP ExternalSecret), realm script | `platform-kernel` | `kernel-authentication` | Suze claim `idpNamespace`; apart from OpenFGA because it has a public route and different credential holders |
-| Keycloak event listener (SPI provider pushing signed membership events to the director) | — | `kernel-authentication` | new; the director is its only receiver; holds only its signing key |
+| Keycloak event listener (SPI provider pushing signed membership events to the operator) | — | `kernel-authentication` | new; the operator is its only receiver; holds only its signing key. **Changed 2026-10-09** from "to the director": the operator writes the authorization store (AD-12) |
 | OpenFGA | `platform-kernel` | `kernel-authorization` | reachable from enforcement points only |
-| gentian-os operator, credential manager, `job-gc` CronJob | `gentian-system` | `kernel-control` | the director joins here |
-| Director API endpoint (called by the external App Store) | — | `kernel-control`, route on the kernel gateway, bearer only | the App Store runs outside the cluster, operated by Gentian Technologies |
+| gentian-os operator, custodian | `gentian-system` | `kernel-control` | the director joins here |
+| Director API endpoint | — | `kernel-control`, route on the kernel gateway, bearer only | its callers are on the cluster or are the command line; the store outside the cluster never calls it (AD-3) |
 | `kernel-admin` admin credentials | `platform-kernel` | `kernel-control` | |
 | `kernel-admin` `portal-shell` database | `platform-kernel` | `kernel-data` | |
 | CNPG `kernel-postgres` for Keycloak, Keycloak extensions, OpenFGA | — (Bitnami `infra-postgresql` in `gentian-infra-<stage>`) | `kernel-data` | kernel identity does not share a data plane with tenants |
@@ -69,7 +72,7 @@ the catalogue.
 | Platform-admin console | part of `gentian-portal`, `platform-kernel` | `tenant-platform` — see §2.5 | a UI with no authority is not kernel (AD-10); the platform is a tenant whose realm is the kernel realm |
 | Headlamp | — | `kernel-observability` | new; the cluster as the administrator sees it, with their own identity (OIDC against the kernel realm; a kubectl in a browser is kernel, not system). The namespace is where metrics and logs go when they come |
 | metrics-server | `kube-system` | stays, labelled | API-aggregation convention |
-| MetalLB, Kyverno exception for it | `metallb-system` | stays, labelled | platform-provided, not installed by gentian-os |
+| MetalLB | `metallb-system` | stays, labelled `tier: kernel`, `function: load-balancer` | platform-provided, not installed by gentian-os, so the name is the platform's. The label is its exemption from the baseline policies and replaces the PolicyException it once had; `platformParams.metallb: "false"` on the claim withholds it |
 
 ### 2.2 System
 
@@ -86,7 +89,7 @@ the catalogue.
 | LiteLLM proxy, `litellm-db` (CNPG), `redis-llm` | `platform-kernel` | `system-llm` | public route removed |
 | vLLM instances, mock backend | `platform-kernel` via installer step D-05 | `system-llm`, composed by the Cluster claim | D-05 retired; its input is `Cluster.spec.llm.instances` |
 
-One namespace per engine, named by the function a `requires.contracts`
+One namespace per engine, named by the function a `requires.services`
 entry declares: quotas, backup policies and future managed-service claims
 differ per engine, and separating stateful services later is a data
 migration. The stage suffix is dropped: a cluster has one stage.
@@ -97,13 +100,13 @@ None today. The first candidate:
 
 | Workload | Today | Target | Note |
 | --- | --- | --- | --- |
-| Collabora | sidecar and extra ingress of `nextcloud-base-ce`, per tenant | `shared-collabora` once a platform admin chooses `shared` | the profile certifies `tenancy: [tenant, shared]` once the WOPI source is verified per tenant; the instance stays `tenant` until then |
+| Collabora | sidecar and extra ingress of `nextcloud-base-ce`, per tenant | `shared-collabora` once a platform admin chooses `shared-app` | the profile lists `classes: [app, shared-app]` once the WOPI source is verified per tenant; the instance stays `app` until then |
 
 ### 2.4 Not in the cluster
 
 | Workload | Today | Target |
 | --- | --- | --- |
-| App Store (`app-store-me` profile, per tenant) | `tenant-<t>` | external service; the cluster keeps the director's endpoint (§2.1) and, per tenant, only the installed profiles |
+| App Store (`app-store-me` profile, per tenant) | `tenant-<t>` | retired. Its data moves to a store outside the cluster; its interface is the App Store app, a platform UI per tenant with no ServiceAccount (AD-3). The cluster holds, per tenant, only the installed profiles |
 
 ### 2.5 Tenant
 
@@ -118,7 +121,7 @@ listener on them is created by the operator, not by the tenant.
 **`tenant-platform` is one of these.** The platform is a tenant whose realm
 is the kernel realm (`Tenant/platform`, `isolation.keycloakRealm: kernel`,
 AD-10): its desktop is the platform-admin console, its tiles are the admin
-apps (console, credential-manager UI, Headlamp when opted in), its members
+apps (console, custodian UI, Headlamp when opted in), its members
 are the platform admins. It runs under the same quota, policy and authority
 model as any tenant and holds nothing the others do not — a compromised
 platform desktop yields platform-admin *sessions*, bounded by OpenFGA and
@@ -131,33 +134,41 @@ the realm is adopted rather than created, and the tenant cannot be deleted
 
 Catalogue apps today, by family: activepieces, docmost, element (with
 Matrix), mathesar, nextcloud (base-ce, base-od, nine addons), odoo (base,
-twelve addons), openproject, open-webui, xwiki, litellm-me (API profile),
-gentian-subscriptions (API profile). All tenant-scoped.
+twelve addons), openproject, open-webui, xwiki, gentian-subscriptions (API
+profile). All tenant-scoped.
 
 ### 2.6 Tenant DMZ
 
 `tenant-<t>-dmz` holds one publishing proxy per perimeter surface the
-perimeter approver has enabled — a role the tenant's admins hold by
-default (roles-and-authorizations.md §1). The profile declares the surface and its
+perimeter approver has enabled — the members of the tenant's perimeter
+group, the cluster's administrator, and the tenant's admins only where the
+cluster's administrator switched that on (roles-and-authorizations.md §1). The profile declares the surface and its
 `authMode`; the tenant's enablement, constrained by cluster policy, creates
 the proxy; nothing is published by default. Shared and public are
-independent: a `shared` instance is published through a tenant's DMZ only
+independent: a `shared-app` instance is published through a tenant's DMZ only
 where that tenant enabled it, with that tenant's credential.
 
-The column *authMode* is the field's enum — `oidc | jwt | bearer | basic |
-signature | none` — so this table and the schema cannot drift. Entries
-present in today's profiles, each to be confirmed against the app before it
-is written as an `expose[]` entry:
+A perimeter entry is `authMode: none` or `authMode: app`, and the schema
+refuses any other (`api/v1alpha1/componentprofile_types.go`). The publishing
+proxy checks no caller under either. `none` publishes the declared paths to
+anyone and passes no credential on. `app` passes the caller's own
+`Authorization` header to the app, which alone checks it. The plan had the
+proxy check `basic`, `bearer` and `signature` itself; that is withdrawn, and
+those values, which the field's enum still lists, name nothing the platform
+does.
+
+What the entries of the first profiles come to under that, each to be
+confirmed against the app before it is written as an `expose[]` entry:
 
 | Component | Paths | authMode |
 | --- | --- | --- |
 | nextcloud | `/s/*` share links, `/public.php/*`, `/.well-known/*` | `none` — capability in the URL |
-| nextcloud | `/remote.php/dav/*` (WebDAV, CalDAV, CardDAV) | `basic` — app passwords from the broker |
+| nextcloud | `/remote.php/dav/*` (WebDAV, CalDAV, CardDAV) | `app` — the app checks its own app passwords |
 | nextcloud | Collabora WOPI callbacks | `none`, source-restricted to the Collabora instance |
-| element | Matrix client API (today `browserProxy` `forward-bearer`) | `bearer` |
+| element | Matrix client API | `app` — the app checks its own tokens |
 | element | `/.well-known/matrix/*` | `none` |
-| element | Matrix federation | `signature` |
-| openproject | API (today `browserProxy` `forward-bearer`) | `bearer` |
+| element | Matrix federation | `app` — the app checks the signature of each request |
+| openproject | API | `app` — the app checks its own API keys |
 | odoo-website | public website pages | `none` |
 | docmost | public sharing | `none` |
 

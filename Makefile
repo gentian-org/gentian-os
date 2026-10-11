@@ -8,7 +8,7 @@ CONTROLLER_GEN ?= controller-gen
 KUBECONFORM ?= kubeconform
 
 CRD_OPTIONS ?= crd
-BOILERPLATE := hack/boilerplate.go.txt
+BOILERPLATE := api/hack/boilerplate.go.txt
 
 IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings
 
 all: generate build test
 
@@ -56,7 +56,7 @@ uninstall-plugin:
 # internal/controller uses envtest whose watch goroutines conflict with -race;
 # all other packages are tested with the race detector enabled.
 test:
-	go test $$(go list ./... | grep -v 'internal/controller') -race
+	go test $$(go list ./... ./api/... | grep -v 'internal/controller') -race
 	# -timeout, because envtest waits are bounded at 3 minutes each: enough
 	# simultaneous failures would exceed Go's 10-minute default and replace
 	# readable per-test failures with a whole-package panic dump.
@@ -78,6 +78,15 @@ manifests:
 		case "$$f" in *_apps.yaml|*_xtenants.yaml) continue ;; esac; \
 		cp "$$f" charts/gentian-os/crds/; \
 	done
+	@# The operator applies the ComponentProfile schema's defaults to a profile
+	@# bundle before it compares it with the profile in the cluster, so it
+	@# carries the schema it was built with (internal/profilebundle).
+	cp config/crd/gentianos.io_componentprofiles.yaml internal/profilebundle/componentprofiles.crd.yaml
+	@# Both binaries carry every definition they were built with -- the chart's
+	@# CRDs and the Crossplane XRDs -- to compare with what a cluster serves
+	@# (internal/schemacheck). Copied here, and the names the operator may
+	@# read written as an rbac marker, so before the rbac run below.
+	python3 scripts/gen/gen-definitions.py
 	@# RBAC is generated from the +kubebuilder:rbac markers, which live in
 	@# ./internal/... — NOT ./api/..., where the CRD run above looks. Scanning
 	@# only ./api/... is what let the chart's hand-written ClusterRole drift from
@@ -108,12 +117,16 @@ gen-cluster-setting-defaults:
 	python3 scripts/gen/gen-cluster-setting-defaults.py
 
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-authz-model
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-authz-model gen-kernel-network-policies
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
 	python3 scripts/gen/gen-credential-requirements.py --check
-	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	@# git diff does not see a file that was never added. A definition copied
+	@# for the first time is exactly that, and a build without it would not
+	@# check the kind at all.
+	@test -z "$$(git status --porcelain --untracked-files=all internal/schemacheck/definitions/ | grep '^??')" || (echo "A newly embedded definition is not committed: git add internal/schemacheck/definitions/" && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
@@ -137,6 +150,8 @@ verify: verify-gen lint validate-steps test test-unit
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 lint-go:
 	golangci-lint run ./...
+	@# The API module carries its own license header and its own config for it.
+	cd api && golangci-lint run ./...
 
 ## Run yamllint over the repo, as .github/workflows/ci.yaml does
 lint-yaml:
@@ -146,7 +161,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-provider-activation test-default-profile-digest
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -168,6 +183,144 @@ test-cert-manager-dns01-args:
 test-step0-sync:
 	@bash scripts/tests/test-step0-sync.sh
 
+## The bootstrap chart's phase switches render as the installer passes them
+## (--set-string, so "false" is a string). Needs helm, no cluster.
+## test-user-tenant-scaffold: what step 0 writes for the user tenant of a
+## single-tenancy cluster, and that it writes nothing under multi. The one
+## tenant the installer ever creates: held to the Tenant CRD, admitted by
+## nothing before the handover, never rewritten, never brought back.
+test-user-tenant-scaffold:
+	@bash scripts/tests/test-user-tenant-scaffold.sh
+
+## test-catalogue-default: which of gentian-apps's two catalogues a new Cluster
+## claim names -- the released one for a release tag or main, the development
+## one for any other branch, GENTIAN_CATALOGUE_URL over both -- and that an
+## existing claim is left alone. No cluster, no network.
+test-catalogue-default:
+	@bash scripts/tests/test-catalogue-default.sh
+
+## test-kubectl-gentian: the CLI's commands for a tenant's own domain and for
+## what a tenant has on the internet -- the request each sends, that a change
+## is confirmed before it is sent, and that a refusal is the director's own
+## words. The plugin runs against stand-ins for kubectl and curl. No cluster,
+## no network.
+test-kubectl-gentian:
+	@bash scripts/tests/test-kubectl-gentian.sh
+
+test-bootstrap-switches:
+	@bash scripts/tests/test-bootstrap-switches.sh
+
+## The NetworkPolicy on the operator's pods lists every port the operator
+## serves and opens the listener's to the director and the usher alone.
+## Needs helm, no cluster.
+test-operator-network-policy:
+	@bash scripts/tests/test-operator-network-policy.sh
+
+## The NetworkPolicy on each shared store -- PostgreSQL, MariaDB, Redis, MinIO --
+## selects that server's pods, lists or records as closed every port they
+## declare, and admits every client of scripts/tests/store-clients.yaml and
+## nobody it says to refuse. Needs helm, no cluster.
+test-store-network-policies:
+	@bash scripts/tests/test-store-network-policies.sh
+
+## The models the gateway offers are the Cluster claim's spec.llm: the
+## gateway's chart writes them into its configuration file from the claim the
+## LLM ApplicationSet hands it, a provider's token stays in its Secret, and
+## the gateway takes models from nowhere else. Needs helm, no cluster.
+test-llm-models:
+	@bash scripts/tests/test-llm-models.sh
+
+## The kernel namespaces refuse an ingress nothing lists, and the list is
+## internal/kernel/kernelnet/inventory.yaml. Holds what the repository deploys
+## into a kernel namespace to that list (every port, every webhook, every
+## pinned version), and the installer's switch to what it says. Rendered with
+## helm, no cluster.
+test-kernel-network-policies:
+	@bash scripts/tests/test-kernel-network-policies.sh
+
+## Write the kernel namespaces' NetworkPolicies from the inventory.
+gen-kernel-network-policies:
+	@go run ./internal/kernel/kernelnet/gen kernel/security/network-policies/kernel-network-policies.yaml
+
+## The mail edge in front of the real Postfix and Dovecot, in local
+## containers: the client's address through the proxy, TLS ending at the
+## servers, the PROXY-protocol ports refusing anything without a header, the
+## limits. Needs docker, helm and the network, so it is its own target and
+## not part of verify.
+test-mail-edge-lab:
+	@bash scripts/tests/test-mail-edge-lab.sh
+
+test-wildcard-cache:
+	@bash scripts/tests/test-wildcard-cache.sh
+
+test-dns-credential-single-writer:
+	@bash scripts/tests/test-dns-credential-single-writer.sh
+
+## Argo CD's credential for the repositories it reads before the vault can
+## serve one (gentian-os, deployments): what A-06 registers and for which auth
+## mode, what its check() asks, that C-05 removes the bridge only once the
+## claim's Secret carries a login, and that no token is printed or passed as
+## an argument. kubectl is a stand-in; no cluster.
+test-argocd-repo-credentials:
+	@bash scripts/tests/test-argocd-repo-credentials.sh
+
+## --dry-run and --validate change nothing. Runs install.sh in both modes in a
+## sandbox: stand-ins for git, gpg, kubectl, helm, curl and bao that fail the
+## test on anything that would change something, and a HOME -- deployments
+## checkout included -- that must be byte-identical afterwards. The only way a
+## test ever executes install.sh. No cluster, no network; about a minute.
+test-dry-run-changes-nothing:
+	@bash scripts/tests/test-dry-run-changes-nothing.sh
+
+## test-install-settings: where a setting comes from when more than one place
+## could say -- the environment before install.env before the claim, the issuer
+## mode read back from the claim, one default each for the gentian-os and
+## gentian-ui refs, and no default for the deployments repository.
+test-install-settings:
+	@bash scripts/tests/test-install-settings.sh
+
+## The break-glass key is found by the id clusters/<id>/kernel/signing/keys.env
+## records, whether or not the kernel domain has been read; no second key is
+## generated beside it; a stray key under the placeholder address is never
+## the answer; and a head signed by one is covered by a commit signed with the
+## recorded key. When keys.env records a key this keyring does not hold the
+## installer refuses, and --rotate-break-glass-key replaces it only after a
+## person confirmed at a terminal. A real gpg with a keyring in a temporary
+## directory; skips when gpg is absent.
+test-signing-key-lookup:
+	@bash scripts/tests/test-signing-key-lookup.sh
+
+## secretMode: the installer makes a credential once and keeps it, in both
+## modes. seed-openbao.sh runs for real against a stand-in for the vault's KV
+## API: derived gives values written down in the test, on every run; random
+## gives others and the same ones on the second run, the model gateway's path
+## included, which that script rewrites every time. The client secrets the
+## installer makes are read back from the vault or from the Secret their
+## reader mounts before a new one is drawn. No cluster.
+test-secret-mode:
+	@bash scripts/tests/test-secret-mode.sh
+
+## The default profile step 0 places (the Operations Console) is written only
+## when it hashes to the digest the catalogue's index lists, or to a pin given
+## in GENTIAN_DEFAULT_PROFILES; a mismatch stops, an unreachable catalogue
+## warns, an existing definition is kept. curl is a stand-in catalogue; no
+## network. That the files are the director's, byte for byte, is a Go test
+## (internal/director/gitops/installer_profiles_test.go).
+test-default-profile-digest:
+	@bash scripts/tests/test-default-profile-digest.sh
+
+## The OpenBao CLI archive's name for every host the installer supports, and
+## that an archive which does not match the release's checksum list installs
+## nothing. curl and uname are stand-ins; no network.
+test-openbao-cli-download:
+	@bash scripts/tests/test-openbao-cli-download.sh
+
+## The same, and that each address answers for the version versions.yaml pins.
+## Queries the release, so it needs network and is not part of the offline
+## lint set. Run it when the pin moves.
+verify-openbao-cli-release:
+	@GENTIAN_TEST_ONLINE=1 bash scripts/tests/test-openbao-cli-download.sh
+
 ## Report which declared credentials are satisfied. --source picks where to look:
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
 check-credentials:
@@ -178,6 +331,13 @@ check-credentials:
 ## the offline lint set.
 lint-image-digests:
 	@bash scripts/lint/lint-image-digests.sh
+
+## Assert no image under kernel/, charts/ or crossplane/ is tagged latest, and
+## that the images which must be exact (the model gateway) are named by tag
+## and digest, in the files and in what the gateway's chart renders. Reads only
+## the repository; lint-image-digests is the half that asks the registry.
+lint-image-pins:
+	@bash scripts/lint/lint-image-pins.sh
 
 ## Assert every function call in every shell file resolves. Catches deleting a
 ## function whose last caller was not checked — the most repeated mistake here.
@@ -318,6 +478,26 @@ lint-eso-readable-paths:
 lint-provider-rbac:
 	@python3 scripts/lint/lint-provider-rbac.py
 
+## Fail when a provider resource type in use -- in a Composition, a render
+## fixture, a kernel chart, Go or a script, here or in the gentian-apps checkout
+## beside this one -- is not in crossplane/providers/activation.yaml, or when
+## that list names a type the pinned provider packages do not ship. Crossplane
+## installs only the listed types, so an unlisted one never appears on a cluster.
+lint-provider-activation:
+	@python3 scripts/lint/lint-provider-activation.py
+
+## A-04 passes an empty default activation list and B-05 applies ours before
+## the providers; the lint above fails on what it should. kubectl and helm are
+## stand-ins; no cluster.
+test-provider-activation:
+	@bash scripts/tests/test-provider-activation.sh
+
+## Re-read every provider package's resource types at the versions
+## crossplane/providers/providers.yaml pins, into crossplane/providers/types/.
+## Needs the crossplane CLI and the network; run it when a provider pin moves.
+refresh-provider-types:
+	python3 scripts/gen/gen-provider-types.py
+
 ## Shell placeholders in Helm templates, which nothing expands
 lint-template-placeholders:
 	@python3 scripts/lint/lint-template-placeholders.py
@@ -341,12 +521,19 @@ lint-bootstrap-apps:
 ## Assert every scripts/steps/*.sh declares its contract and defines apply(),
 ## and that none of them names a kernel namespace by hand. Reads only the step
 ## files — no cluster, no kubeconfig.
-validate-steps: lint-namespace-layout
+validate-steps: lint-namespace-layout lint-retired-namespaces
 	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
 	@bash scripts/lint/lint-step-contracts.sh
 
 lint-namespace-layout:
 	@bash scripts/lint/lint-namespace-layout.sh
+
+## Assert no tracked file names a namespace the layout no longer has -- as a
+## variable's default, a template's fallback or a literal in a manifest. The
+## lint above reads the steps and the bootstrap chart; this reads everything,
+## and what it leaves alone is listed in it with the reason.
+lint-retired-namespaces:
+	@python3 scripts/lint/lint-retired-namespaces.py
 
 ## Build the operator container image
 docker-build:
@@ -366,6 +553,8 @@ check-render-fixtures:
 
 ## Run crossplane render golden-file tests for all test cases in crossplane/tests/unit/render/
 ## Skip directories without an expected.yaml (run 'make test-unit-render-update' to generate them)
+## A directory with an expected-error.txt holds a claim the Composition must
+## refuse: the render has to fail, and with the one line that file holds.
 test-unit-render: check-render-fixtures
 	@echo "=== crossplane render golden tests ==="
 	@failed=0; \
@@ -375,7 +564,7 @@ test-unit-render: check-render-fixtures
 			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
 			continue; \
 		fi; \
-		if [ ! -f "$$dir/expected.yaml" ]; then \
+		if [ ! -f "$$dir/expected.yaml" ] && [ ! -f "$$dir/expected-error.txt" ]; then \
 			echo "SKIP: $$name (no expected.yaml — run 'make test-unit-render-update' to generate)"; \
 			continue; \
 		fi; \
@@ -391,7 +580,19 @@ test-unit-render: check-render-fixtures
 		fi; \
 		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args $$obs_args 2>&1); \
 		rc=$$?; \
-		if [ $$rc -ne 0 ]; then \
+		if [ -f "$$dir/expected-error.txt" ]; then \
+			want=$$(cat "$$dir/expected-error.txt"); \
+			if [ $$rc -eq 0 ]; then \
+				echo "FAIL: $$name (rendered, and must be refused)"; \
+				failed=1; \
+			elif ! printf '%s' "$$actual" | grep -qF -- "$$want"; then \
+				echo "FAIL: $$name (refused, but not with the sentence in expected-error.txt)"; \
+				echo "$$actual"; \
+				failed=1; \
+			else \
+				echo "PASS: $$name (refused)"; \
+			fi; \
+		elif [ $$rc -ne 0 ]; then \
 			echo "FAIL: $$name (crossplane render exited $$rc)"; \
 			echo "$$actual"; \
 			failed=1; \
@@ -415,6 +616,10 @@ test-unit-render-update:
 		name=$$(basename "$$dir"); \
 		if [ ! -f "$$dir/xr.yaml" ] || [ ! -f "$$dir/composition.yaml" ] || [ ! -f "$$dir/functions.yaml" ]; then \
 			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
+			continue; \
+		fi; \
+		if [ -f "$$dir/expected-error.txt" ]; then \
+			echo "KEPT: $$name (a refusal; expected-error.txt is written by hand)"; \
 			continue; \
 		fi; \
 		req_args=""; \
@@ -567,36 +772,7 @@ install-tools:
 	@echo "crossplane: $$(crossplane version 2>&1 | head -1)"
 	@echo "kubeconform: $$(kubeconform -v)"
 
-## P0 — Install Crossplane core on the dev cluster and verify it is Ready
-e2e-p0:
-	@crossplane/tests/e2e/scripts/p0-crossplane-install.sh
-
-## P0 rollback — uninstall Crossplane core from the dev cluster
-e2e-p0-clean:
-	@echo "Uninstalling Crossplane core..."
-	helm uninstall crossplane -n crossplane-system 2>/dev/null || true
-	kubectl delete ns crossplane-system --ignore-not-found=true
-	kubectl delete clusterrole crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
-	kubectl delete clusterrolebinding crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
-	@echo "Done."
-
-## P1 — Kernel provisioning via Cluster XR (dev cluster)
-e2e-p1:
-	@crossplane/tests/e2e/scripts/p1-kernel-dev.sh
-
-## P2 — Pattern B kernel Helm Releases (dev cluster)
-e2e-p2:
-	@crossplane/tests/e2e/scripts/p2-pattern-b.sh
-
-## P3 — Tenant shadow deployment (Crossplane graph verification)
-e2e-p3:
-	@crossplane/tests/e2e/scripts/p3-tenant-shadow.sh
-
-## P4 — Cutover verification for an existing tenant
-e2e-p4:
-	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh
-
-## P5 — Keycloak + Dovecot install smoke (requires Stage 1 install on cluster)
+## Keycloak + Dovecot install smoke (requires an installed cluster)
 e2e-p5-keycloak-dovecot:
 	@crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
 

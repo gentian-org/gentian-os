@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package netpolicy
@@ -20,13 +14,15 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const tenantCachePolicyPrefix = "tenant-cache-"
 
-// TenantCacheEgressNetworkPolicy allows app workloads that declare a cache
-// kernel requirement to reach the shared tenant Memcached instance.
+// TenantCacheEgressNetworkPolicy allows app workloads that declare a
+// Memcached cache to reach the tenant's Memcached instance, on its port. An
+// app that declared Redis is not among them: its cache is the shared Redis.
 func TenantCacheEgressNetworkPolicy(tenantName, nsName string, cacheAppNames []string) *networkingv1.NetworkPolicy {
 	if len(cacheAppNames) == 0 {
 		return nil
@@ -51,7 +47,10 @@ func TenantCacheEgressNetworkPolicy(tenantName, nsName string, cacheAppNames []s
 				}},
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress:      []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{cachePeer}}},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To:    []networkingv1.NetworkPolicyPeer{cachePeer},
+				Ports: []networkingv1.NetworkPolicyPort{tcpPort(provisioner.MemcachedPort)},
+			}},
 		},
 	}
 }
@@ -81,7 +80,10 @@ func TenantCacheIngressNetworkPolicy(tenantName, nsName string, cacheAppNames []
 				MatchLabels: map[string]string{meta.ComponentLabel: meta.TenantCacheComponentValue},
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-			Ingress:     []networkingv1.NetworkPolicyIngressRule{{From: appPeers}},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From:  appPeers,
+				Ports: []networkingv1.NetworkPolicyPort{tcpPort(provisioner.MemcachedPort)},
+			}},
 		},
 	}
 }

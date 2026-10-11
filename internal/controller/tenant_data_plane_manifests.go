@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -27,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
@@ -38,7 +33,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	if err != nil {
 		return nil, err
 	}
-	pgProfileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	pgProfileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +44,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
 				Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
-				Port: "5432",
+				Port: fmt.Sprint(provisioner.PostgresPort),
 				Name: dbName,
 				User: roleUserName(tenant.Name, appName),
 			})
@@ -79,7 +74,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
 				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", mariadbNamespace),
-				Port: "3306",
+				Port: fmt.Sprint(provisioner.MariaDBPort),
 				Name: databaseName(tenant, appName),
 				User: mariadbUserName(tenant.Name, appName),
 			})
@@ -96,17 +91,9 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	for _, appName := range s3Apps {
-		accessKey, secretKey := "", ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-				Endpoint: r.minioEndpoint(ctx),
-				Bucket:   s3BucketName(tenant, appName),
-				Region:   "us-east-1",
-			})
-			if seedErr != nil {
-				return nil, fmt.Errorf("seed s3 for %s: %w", appName, seedErr)
-			}
-			accessKey, secretKey = creds.AccessKey, creds.SecretKey
+		accessKey, secretKey, seedErr := r.seedObjectStorage(ctx, tenant, appName)
+		if seedErr != nil {
+			return nil, seedErr
 		}
 		jobs = append(jobs, *makeS3BucketJob(tenant, appName, accessKey, secretKey))
 	}

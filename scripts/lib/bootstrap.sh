@@ -32,7 +32,7 @@ GENTIAN_BOOTSTRAP_LOADED=1
 bootstrap_openbao_for_crossplane() {
     banner "OpenBao bootstrap for Crossplane (mount, policy, token)"
 
-    if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
+    if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
@@ -186,8 +186,9 @@ POLICY
 #
 # File scope because it has callers outside the step that first needed it.
 # Nested inside create_crossplane_secrets it existed only while B-06 ran, and
-# `declare -F _derive` — which _keycloak_smtp_settings tests before deriving the
-# Postfix password — was therefore false everywhere else. On every
+# `declare -F _derive` — which _keycloak_smtp_settings tested before deriving the
+# Postfix password, as it now tests _derived below — was therefore false
+# everywhere else. On every
 # MAIL_SERVICE_MODE=system cluster that test failed, so Keycloak realm SMTP was
 # skipped with "SMTP credentials incomplete" and the realm could not send an
 # invitation or a password reset, while the credentials it needed existed.
@@ -196,9 +197,22 @@ _derive() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
         openssl rand -hex 32
     else
-        echo -n "${1}:${2}" | openssl dgst -sha256 \
-            -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
+        _derived "${1}" "${2}"
     fi
+}
+
+# _derived <context> <purpose> — the derivation itself, whatever the mode.
+#
+# _derive answers a different value on every call under secretMode random, so
+# it only suits a caller that offers the value to a path created once and
+# keeps what the path already held. A caller that hands the value straight to
+# its users, and is called more than once, needs the same answer each time:
+# the kernel realm's own mail login is asked for twice in one run, and under
+# random the realm was configured with one password while the Secret the mail
+# server learns it from held another. That one is derived in both modes.
+_derived() {
+    echo -n "${1}:${2}" | openssl dgst -sha256 \
+        -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
 }
 
 create_crossplane_secrets() {
@@ -293,6 +307,17 @@ create_crossplane_secrets() {
             || warn "  ${path}: could not add the missing keys"
     }
 
+    # _kv_held <kv path> <key> — the value the vault holds there, or nothing:
+    # no bao, no token, no such path and no such key all answer nothing. It
+    # looks for no access of its own: _kv_add_missing has resolved the token
+    # and the address by the time this is asked, where they can be had.
+    _kv_held() {
+        command -v bao >/dev/null 2>&1 || return 0
+        [[ -n "${BAO_TOKEN:-}" && -n "${BAO_ADDR:-}" ]] || return 0
+        bao kv get -mount="${KV_MOUNT:-secret}" -format=json "$1" 2>/dev/null \
+            | jq -r --arg k "$2" '.data.data[$k] // empty' 2>/dev/null || true
+    }
+
     # master-password Secret (referenced by spec.masterPasswordSecretRef in the Cluster claim)
     kubectl create secret generic gentian-os-master-password \
         -n "${CROSSPLANE_NAMESPACE}" \
@@ -308,10 +333,30 @@ create_crossplane_secrets() {
             --arg b "$(_derive postgres keycloak_user)" \
             --arg c "$(_derive postgres keycloak_extensions_user)" \
             --arg h "$(_derive postgres openfga_user)" \
-            --arg p "$(_derive postgres portal_shell_user)" \
-            --arg d "$(_derive postgres director_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p,director_user_password:$d}')" \
+            --arg d "$(_derive postgres registrar_user)" \
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,registrar_user_password:$d}')" \
         "gentian-os/kernel/database/postgresql"
+
+    # ── the platform tenant's desktop database ────────────────────────────────
+    # A role of its own on the kernel's PostgreSQL, owning the one database
+    # the desktop uses. Its credential is the platform tenant's and is kept
+    # under that tenant's paths, laid out as any tenant's desktop database
+    # credential is, so the desktop reads it through its tenant's own store
+    # and needs no kernel path (kernel/data/kernel-postgres reads the same
+    # path for the role's password).
+    #
+    # The password was a property of the kernel's database path before. A
+    # cluster that has it there keeps that value: the role is set to it, and
+    # under secretMode random nothing else could reproduce it.
+    local desktop_db_password
+    desktop_db_password="$(_kv_held "gentian-os/kernel/database/postgresql" portal_shell_user_password)"
+    [[ -n "${desktop_db_password}" ]] || desktop_db_password="$(_derive postgres portal_shell_user)"
+    _kv_secret "gentian-os-tenants-platform-apps-shell-database" \
+        "$(jq -nc \
+            --arg h "kernel-postgres-rw.$(ns_kernel data).svc.cluster.local" \
+            --arg p "${desktop_db_password}" \
+            '{host:$h,port:"5432",name:"portal_shell",user:"portal_shell_user",password:$p}')" \
+        "gentian-os/tenants/platform/apps/shell/database"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \
@@ -645,11 +690,11 @@ apply_cluster_xr() {
     local xr_name=""
     local deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
             error "Claim ${claim_name} was never bound to a composite after 60s."
-            error "  kubectl describe cluster.gentianos.io ${claim_name} -n ${CROSSPLANE_NAMESPACE:-crossplane-system}"
+            error "  kubectl describe cluster.gentianos.io ${claim_name} -n ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}"
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
@@ -668,7 +713,7 @@ apply_cluster_xr() {
 
 # =============================================================================
 # seed_secrets_remaining — Seed the KV paths that the Cluster XR does not
-# manage: internal/master-password, storage/registry, dns/cloudflare,
+# manage: internal/master-password, dns/cloudflare,
 # database/cnpg, and other kernel paths.
 # Delegates to the existing seed-openbao.sh (uses kv_put_once for safety).
 # =============================================================================
@@ -679,6 +724,52 @@ seed_secrets_remaining() {
     # kv_put_once and writes only the paths the Cluster XR does not cover.
     seed_secrets
     seed_repository_credentials
+    seed_licence_report_key
+}
+
+# =============================================================================
+# seed_licence_report_key — the key this cluster signs its licence reports with
+# =============================================================================
+# 32 random bytes, as hex, under their own path. The operator derives an
+# Ed25519 key pair from them (internal/licencereport): the private half signs
+# each report and the public half travels in it, so the address the reports go
+# to can tell one cluster's reports from anybody else's without having been
+# given anything first.
+#
+# Random and not derived from the master password, because it must not be
+# reproducible from anything else the cluster holds. Written once and never
+# again: a new seed is a new identity, and every report after it would look
+# like another cluster's. So an existing value is left alone, including by a
+# run that cannot read it.
+#
+# Not written at all where the report is turned off: a cluster that sends
+# nothing is given no key to send it with. Turning the report on later means
+# running this step again while the installer can still write to the vault.
+#
+# The path sits under gentian-os/kernel/ for the reason the repository
+# credentials do: it is the one prefix ESO may read.
+# =============================================================================
+seed_licence_report_key() {
+    local path="gentian-os/kernel/licence-report" have
+    if [[ "$(gentian_licence_report_enabled)" != "true" ]]; then
+        info "Licence report is off: no signing key is seeded."
+        return 0
+    fi
+    have="$(bao kv get -mount=secret -field=signing_seed "${path}" 2>/dev/null || true)"
+    if [[ -n "${have}" ]]; then
+        info "Licence report signing key already present; left as it is."
+        return 0
+    fi
+    # Absent, or unreadable. `kv put` with check-and-set 0 writes only when
+    # the path has never been written, so a path this run merely failed to
+    # read is not replaced.
+    if ! bao kv put -mount=secret -cas=0 "${path}" \
+        "signing_seed=$(openssl rand -hex 32)" >/dev/null 2>&1; then
+        warn "The licence report signing key could not be written to OpenBao."
+        warn "  No report is sent without it; the operator records that it has no key."
+        return 0
+    fi
+    success "Licence report signing key stored."
 }
 
 # =============================================================================
@@ -696,51 +787,38 @@ seed_secrets_remaining() {
 # unreadable by ESO no matter who wrote it.
 # =============================================================================
 seed_repository_credentials() {
-    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
-        info "No deployments repository token supplied; skipping its OpenBao path."
-    else
-        local username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
-        info "Seeding gentian-os/kernel/repositories/deployments..."
-        # kv put, not kv_put_once: a rotated token must actually replace the old one.
-        if bao kv put -mount=secret "gentian-os/kernel/repositories/deployments" \
-            "username=${username}" \
-            "password=${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" >/dev/null 2>&1; then
-            success "Deployments repository credential stored."
-        else
-            error "Could not write the deployments repository credential to OpenBao."
-            error "  The Repository claim in step 16b will not become satisfied without it."
-            return 1
-        fi
-    fi
+    local row req name user_var token_var
+    for row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        IFS='|' read -r req name _ _ <<<"${row}"
+        user_var="$(_repo_credential "${req}" username)"
+        token_var="$(_repo_credential "${req}" token)"
 
-    # os/apps/ui follow the same shape: B-11/B-12/B-13's Repository claims
-    # declare a CredentialRequirement against these same paths, and their
-    # ExternalSecrets would sit unsatisfied forever without a value here —
-    # the same bug this function exists to fix for deployments, one role at
-    # a time. Skipped when AUTH is none, which for the public gentian-org
-    # default is every install that has not opted into a mirror.
-    _seed_one_repo_credential() {
-        local role="$1" path="$2" auth_req="$3" user_var="$4" token_var="$5"
-        [[ "$(_repo_auth_for "${auth_req}")" != "none" ]] || return 0
-        local token="${!token_var:-}"
-        [[ -n "${token}" ]] || return 0
-        local username="${!user_var:-x-access-token}"
-        info "Seeding gentian-os/kernel/repositories/${path}..."
-        if bao kv put -mount=secret "gentian-os/kernel/repositories/${path}" \
-            "username=${username}" \
-            "password=${token}" >/dev/null 2>&1; then
-            success "${role} repository credential stored."
-        else
-            error "Could not write the ${role} repository credential to OpenBao."
+        # The platform's own repositories are public unless install.env says
+        # they authenticate, and then they have no path to seed. Their
+        # Repository claims gate on the same paths as the deployments one, so
+        # where they do authenticate they need the value here just as much.
+        if [[ "${req}" != "deployments-repository" && "$(_repo_credential_mode "${req}")" == "none" ]]; then
+            continue
+        fi
+        if [[ -z "${!token_var:-}" ]]; then
+            if [[ "${req}" == "deployments-repository" ]]; then
+                info "No deployments repository token supplied; skipping its OpenBao path."
+            fi
+            continue
+        fi
+
+        info "Seeding gentian-os/kernel/repositories/${name}..."
+        # Written every time, not once: a rotated token has to replace the
+        # one that is there.
+        if ! bao kv put -mount=secret "gentian-os/kernel/repositories/${name}" \
+            "username=${!user_var:-x-access-token}" \
+            "password=${!token_var}" >/dev/null 2>&1; then
+            error "Could not write the ${name} repository credential to OpenBao."
+            error "  Its Repository claim will not become satisfied without it."
             return 1
         fi
-    }
-    _seed_one_repo_credential "os" "gentian-os" gentian-os-repository \
-        GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN || return 1
-    _seed_one_repo_credential "apps" "gentian-apps" gentian-apps-repository \
-        GENTIAN_APPS_GIT_USERNAME GENTIAN_APPS_GIT_TOKEN || return 1
-    _seed_one_repo_credential "ui" "gentian-ui" gentian-ui-repository \
-        GENTIAN_UI_GIT_USERNAME GENTIAN_UI_GIT_TOKEN || return 1
+        success "Repository credential stored: ${name}."
+    done
 }
 
 # =============================================================================
@@ -853,6 +931,38 @@ resync_credential_consumers() {
         done
     fi
 
+    # Before C-01 there is no openbao ClusterSecretStore, so no ExternalSecret
+    # can produce the Secrets the issuers read: waiting here only spent three
+    # and a half minutes of every install before the same warning. C-01 runs
+    # this function again once the store is Ready.
+    if [[ "$(kubectl get clustersecretstore openbao \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" != "True" ]]; then
+        if [[ -n "$(_not_ready_cluster_issuers)" ]]; then
+            info "ClusterIssuers wait for the secret store, which C-01 composes; re-synced there."
+        fi
+        return 0
+    fi
+
+    # The Secrets the not-ready issuers name, waited for before the nudge.
+    # The re-sync above stops at the first quiet poll, which can come before
+    # External Secrets has written the Secret -- the store having only just
+    # become Ready. A nudge then re-latches the issuer on the same absence,
+    # and cert-manager does not watch a solver's Secret, so nothing retries:
+    # the DNS-01 issuer stayed failed after a finished install.
+    local cm_ns secret deadline
+    cm_ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}")"
+    deadline=$(( SECONDS + 90 ))
+    while read -r secret; do
+        [[ -n "${secret}" ]] || continue
+        until kubectl get secret "${secret}" -n "${cm_ns}" >/dev/null 2>&1; do
+            (( SECONDS < deadline )) || break
+            sleep 3
+        done
+    done <<< "$(kubectl get clusterissuers.cert-manager.io -o json 2>/dev/null | jq -r '
+        .items[]
+        | select([(.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length == 0)
+        | [.spec.acme.solvers[]? | .. | objects | to_entries[] | select(.key | test("SecretRef$")) | .value.name // empty] | .[]' 2>/dev/null | sort -u || true)"
+
     count=0
     while read -r name; do
         [[ -n "${name}" ]] || continue
@@ -895,7 +1005,7 @@ resync_credential_consumers() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url argocd_pw
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url
 
     # Around a dozen cluster queries, and on a remote API server they add up to
     # the better part of a minute. Announce it: the last thing printed before
@@ -914,14 +1024,14 @@ print_summary_cp() {
     # install has not completed and nothing here should say otherwise.
     _gentian_handover_done=""
     if [[ "$(kubectl get configmap gentian-handover \
-                -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                 -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
         _gentian_handover_done=1
     fi
 
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
-    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     xr_name="${xr_name:-${claim_name}}"
 
@@ -949,7 +1059,7 @@ print_summary_cp() {
     infra_minio_ready=$(_release_ready minio)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
     # `|| true` on both: grep exits 1 when the release is absent, which is the
     # normal state until phase D deploys Suze. Under pipefail and the ERR trap
@@ -967,11 +1077,6 @@ print_summary_cp() {
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
-    # _argocd_ns, not the literal: the gitops namespace is kernel-gitops, and
-    # reading the secret from "argocd" printed an empty password on every
-    # install -- the one line somebody needs to get in.
-    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n "$(_argocd_ns)" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -1005,18 +1110,13 @@ print_summary_cp() {
         print_portal_login_summary
     fi
     echo ""
-    # The CLI, because tenants are created with it and the installer does not
-    # install it. Named here rather than left to the docs: this is the screen an
-    # operator has in front of them when they go looking for what to do next.
-    echo -e "${GREEN}  Manage tenants and apps with the gentian CLI:${NC}"
-    if command -v kubectl-gentian >/dev/null 2>&1; then
-        echo -e "${GREEN}    gtnctl tenants deploy <name>     (installed; 'gtnctl version' to check it)${NC}"
-    else
-        echo -e "${GREEN}    make -C ${SCRIPT_DIR} install-plugin   then: gtnctl tenants deploy <name>${NC}"
-    fi
+    # Who is in charge of what, and where. On a single-tenancy cluster there
+    # are two administrators and two addresses, and this is the screen that
+    # has to say which is which; on a multi-tenancy one, tenants come next.
+    print_roles_summary
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
-    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
+    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
@@ -1024,8 +1124,9 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
-    echo -e "${GREEN}    User : admin${NC}"
-    echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
+    # No password: Argo CD's local admin is off (D-03), and it is signed in
+    # to through the kernel realm like every other kernel UI.
+    echo -e "${GREEN}    Sign in with Keycloak, as a member of gentian:platform:admin${NC}"
     # Only while it exists. E-03 deletes it, so naming it afterwards sends the
     # operator to a path that is gone — and on a finished install the answer to
     # "where are the OpenBao tokens" is the recovery kit, not a file in /tmp.
@@ -1069,7 +1170,7 @@ print_summary_cp() {
 # copy is exactly the wrong reflex, and "moved" is indistinguishable from
 # "copied and left" from here.
 report_recovery_kit_left_behind() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local path found=""
 
     path="$(kubectl get configmap gentian-handover -n "${ns}" \
@@ -1103,7 +1204,7 @@ report_recovery_kit_left_behind() {
 }
 
 print_handover_summary() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local proven revoked kit
     proven="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)"
@@ -1134,11 +1235,11 @@ print_handover_summary() {
         # E-02 writes the kit, so this means that step did not run or failed.
         echo -e "${YELLOW}      1. ./install.sh --only E-02      (write the recovery kit)${NC}"
         echo -e "${YELLOW}      2. move the kit somewhere safe${NC}"
-        echo -e "${YELLOW}      3. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
+        echo -e "${YELLOW}      3. sign in as the platform admin at https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      4. ./install.sh --only E-03      (revoke and finish)${NC}"
     elif [[ "${proven}" != "true" ]]; then
         echo -e "${YELLOW}      1. move the recovery kit somewhere safe${NC}"
-        echo -e "${YELLOW}      2. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
+        echo -e "${YELLOW}      2. sign in as the platform admin at https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      3. ./install.sh --only E-03      (revoke and finish)${NC}"
     else
         echo -e "${YELLOW}    Someone has signed in and a kit exists, so only the revocation${NC}"
@@ -1147,150 +1248,6 @@ print_handover_summary() {
     fi
     echo ""
 }
-
-
-# =============================================================================
-# scaffold_tenant_deployment — write one tenant's DEFINITION and stop.
-#
-# The counterpart to scaffold_cluster_deployment, and it stops in the same
-# place: it writes the document a human is meant to edit, and nothing that
-# deploys it.
-#
-# A cluster has two directories per tenant and they are not the same thing:
-#
-#   definitions/tenants/<name>/tenant.yaml
-#                                    authored. What the tenant is meant to be.
-#   tenants/<name>/                  deployed. What Argo CD syncs, and what the
-#                                    operator writes into as apps are installed
-#                                    from the store.
-#
-# They diverge on purpose, so the second is not this script's to create.
-# `kubectl gentian tenants deploy <name>` copies the definition across and adds
-# the kustomization, and it is also what creates the shared defaults component
-# — see ensure_tenant_defaults_component in scripts/kubectl-gentian. This
-# function wrote both and gave the component different quotas from the ones
-# that command uses, so whichever ran first decided the cluster's tenant sizing.
-# =============================================================================
-scaffold_tenant_deployment() {
-    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}/.git" ]]; then
-        error "${GENTIAN_DEPLOYMENTS_PATH} is not a git checkout of gentian-deployments."
-        error "  Clone it there first, or point GENTIAN_DEPLOYMENTS_PATH at an existing checkout."
-        return 1
-    fi
-
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:?GENTIAN_DEPLOYMENTS_CLUSTER_ID must be set}"
-    local name="${GENTIAN_TENANT_NAME:?GENTIAN_TENANT_NAME must be set}"
-    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffolding a tenant}"
-    local cluster_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}"
-    local definition_dir="${cluster_dir}/definitions/tenants/${name}"
-
-    if [[ ! -d "${cluster_dir}/kernel" ]]; then
-        error "Cluster ${cluster} has no kernel/ directory in ${GENTIAN_DEPLOYMENTS_PATH}."
-        error "  A tenant belongs to a cluster that exists. Install it first:"
-        error "    ./install.sh"
-        return 1
-    fi
-
-    banner "Scaffolding tenant ${name} for cluster ${cluster}"
-
-    if [[ -f "${definition_dir}/tenant.yaml" ]]; then
-        warn "clusters/${cluster}/definitions/tenants/${name}/tenant.yaml already exists; leaving it alone."
-        _print_tenant_next_steps "${name}" "${cluster}"
-        return 0
-    fi
-
-    mkdir -p "${definition_dir}"
-    {
-        printf 'apiVersion: gentianos.io/v1alpha1\n'
-        printf 'kind: Tenant\n'
-        printf 'metadata:\n'
-        printf '  name: %s\n' "${name}"
-        printf 'spec:\n'
-        printf '  displayName: %s\n' "${GENTIAN_TENANT_DISPLAY_NAME:-${name}}"
-        printf '\n'
-        printf '  # No adminEmail here. The administrator address is derived:\n'
-        printf '  #   admin@%s.%s\n' "${name}" "${domain}"
-        printf '  # and it is the Keycloak username too — one identifier, not\n'
-        printf '  # two that can disagree. Setting it would point the account at\n'
-        printf '  # an address the tenant does not control; this account is\n'
-        printf '  # recovered by the cluster administrator, not by mail.\n'
-        printf '\n'
-        printf '  # Where this tenant is served. Left unset it is %s.%s,\n' "${name}" "${domain}"
-        printf '  # which is what a multi-tenant cluster wants. Set it to serve the\n'
-        printf '  # tenant on a domain they own instead.\n'
-        if [[ -n "${GENTIAN_TENANT_DOMAIN:-}" ]]; then
-            printf '  domain: %s\n' "${GENTIAN_TENANT_DOMAIN}"
-        else
-            printf '  # domain: %s.example.org\n' "${name}"
-        fi
-        printf '\n'
-        printf '  # Prefixes keep one tenant out of another tenant name-space in the\n'
-        printf '  # shared data stores. Changing them after provisioning strands what\n'
-        printf '  # was created under the old ones.\n'
-        printf '  isolation:\n'
-        printf '    keycloakRealm: %s\n' "${name}"
-        printf '    databasePrefix: %s_\n' "${name//-/_}"
-        printf '    s3Prefix: %s-\n' "${name}"
-        printf '\n'
-        printf '  # Retain keeps the data when the Tenant is deleted; Delete removes it.\n'
-        printf '  deletionPolicy: %s\n' "${GENTIAN_TENANT_DELETION_POLICY:-Retain}"
-        printf '\n'
-        printf '  # Quotas and mail come from this cluster'"'"'s shared tenant-defaults\n'
-        printf '  # component, which the deploy command creates. Override here only\n'
-        printf '  # what this tenant needs differently from the rest.\n'
-        printf '\n'
-        printf '  # Apps are installed by profile name from the catalogue.\n'
-        printf '  #   kubectl gentian apps list      what this cluster offers\n'
-        printf '  #\n'
-        printf '  # A profile that is not in the catalogue is refused at admission,\n'
-        printf '  # naming the profile — so a typo here fails on deploy, not later.\n'
-        printf '  # Everything else is installed from the App Store, which is a tile\n'
-        printf '  # on the administrator'"'"'s desktop and not an entry here: the store\n'
-        printf '  # runs outside the cluster, and the tile is there whenever the\n'
-        printf '  # Cluster claim names one (catalogue.storeUrl).\n'
-        printf '  apps:\n'
-        printf '  # Subscriptions runs no pods in the tenant: it is a link on the\n'
-        printf '  # administrator'"'"'s desktop to billing and entitlements. On by\n'
-        printf '  # default, opt-out — delete this entry for a tenant that should not\n'
-        printf '  # see it.\n'
-        printf '  - profile: gentian-subscriptions-me\n'
-        # The claim decides, read from the same file the tenant composition and
-        # B-07 read it from. The composition used to inject this app itself,
-        # which hid it from the tenant operator — see tenant-default.yaml.
-        if [[ "$(yq_get '.spec.llm.enabled' "${cluster_dir}/kernel/claims/cluster.yaml" 2>/dev/null || true)" == "true" ]]; then
-            printf '  # AI Chat, listed because this cluster serves LLM\n'
-            printf '  # (spec.llm.enabled on the Cluster claim). Delete the entry for a\n'
-            printf '  # tenant that should not see it.\n'
-            printf '  - profile: open-webui\n'
-        fi
-        printf '  # Everything else this tenant needs goes beside them, for example:\n'
-        printf '  # - profile: nextcloud-base-ce\n'
-        printf '  #   addons:\n'
-        printf '  #   - nextcloud-calendar-ce\n'
-    } >"${definition_dir}/tenant.yaml"
-
-    success "Wrote clusters/${cluster}/definitions/tenants/${name}/tenant.yaml"
-    _print_tenant_next_steps "${name}" "${cluster}"
-}
-
-_print_tenant_next_steps() {
-    local name="$1" cluster="$2"
-    local def="clusters/${cluster}/definitions/tenants/${name}/tenant.yaml"
-    echo ""
-    info "This is the definition only. Nothing is deployed and nothing is committed."
-    info "  1. Choose its apps:"
-    info "       \$EDITOR ${GENTIAN_DEPLOYMENTS_PATH}/${def}"
-    info "  2. Deploy it:"
-    info "       kubectl gentian tenants deploy ${name}"
-    info "     which copies the definition into clusters/${cluster}/tenants/${name}/,"
-    info "     commits and pushes it, and lets Argo CD create the Tenant."
-    info "  3. Watch it arrive:  kubectl get tenant ${name} -w"
-    echo ""
-    info "If the deploy reports the tenant was refused because handover is not"
-    info "finished, sign in and open Admin Console → Credentials first — see"
-    info "GETTING-STARTED.md, 'Hand the cluster over'."
-}
-
 
 # =============================================================================
 # scaffold_cluster_deployment — write this cluster's kernel/ directory in
@@ -1342,7 +1299,6 @@ _claim_cluster_fields() {
     local im="${CERT_ISSUER_MODE:-acme-dns01}"
     local pf="${PLATFORM:-}"
     local dp="${DNS_PROVIDER:-cloudflare}"
-    local st="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
     printf '\n'
     printf '  # Where this cluster runs. Selects the edge load-balancer settings\n'
@@ -1394,20 +1350,19 @@ _claim_cluster_fields() {
     printf '  certificates:\n'
     printf '    issuerMode: %s\n' "${im}"
     if [[ "${im}" == acme-* ]]; then
-        # Asked by prompt_cluster_settings; staging on dev unless answered
-        # otherwise. A dev cluster is rebuilt often and Let's Encrypt allows
-        # five duplicate certificates per name per week, which one bad
-        # afternoon exhausts — and the rate limit is per name, so it outlives
-        # the cluster that spent it.
-        local ae="${ACME_ENV:-}"
-        if [[ -z "${ae}" ]]; then
-            ae=production
-            [[ "${st}" == "dev" ]] && ae=staging
-        fi
-        if [[ "${ae}" == "staging" ]]; then
-            printf '    # staging: untrusted certificates, generous rate limits.\n'
-            printf '    # Switch to production once the names are settled.\n'
-        fi
+        # Asked by prompt_cluster_settings; production unless answered
+        # otherwise, on every stage. Staging used to be the dev default, for
+        # its rate limits, but the kernel's own sign-in fetches Keycloak's
+        # discovery document through the in-cluster gateway, which serves
+        # this certificate: Envoy Gateway refuses a staging chain, so a dev
+        # install stopped at D-03 with every SecurityPolicy Invalid. The rate
+        # limits are met instead by keeping the issued wildcard across purges
+        # (save_kernel_wildcard).
+        local ae="${ACME_ENV:-production}"
+        printf '    # production. staging is not needed for rebuilds: the installer\n'
+        printf '    # keeps the issued wildcard across purges, so a reinstall orders\n'
+        printf '    # no new certificate. It also breaks the kernel sign-in, which does\n'
+        printf '    # not trust its chain. The option may be removed.\n'
         printf '    acmeEnv: %s\n' "${ae}"
     fi
     if [[ "${im}" == "acme-dns01" ]]; then
@@ -1424,40 +1379,26 @@ _claim_cluster_fields() {
             printf '    # dnsParams:                route53 needs region and\n'
             printf '    #                           hostedZoneID; clouddns a project\n'
         fi
-        # On by default where there is a fixed address to publish.
-        #
-        # A cluster with networkMode: static-ip has one stable IP and a named
-        # dnsProvider, which is the whole input external-dns needs — so writing
-        # the records is the obvious behaviour and leaving it off produces a
-        # claim that contradicts itself: a DNS provider named, an address to
-        # point at, and nothing to write anything.
-        #
-        # That contradiction was invisible while clusters ran on domains whose
-        # records had been created by hand. The first install onto a fresh
-        # domain sat waiting for names nothing was publishing, and the wait
-        # blamed the OIDC discovery URL.
-        #
-        # A tunnel cluster is genuinely different and stays commented: it has no
-        # address to publish, its hostnames resolve through the tunnel's own
-        # CNAMEs, and the operator writes the tenant records itself.
+        # No setting for it: external-dns is installed with the DNS provider
+        # and writes every record of this zone, in both network modes. With a
+        # fixed address the records point at the Gateway's address; behind a
+        # tunnel the operator writes DNSEndpoints that point every hostname
+        # at the tunnel's name. The claim once carried a field for it,
+        # certificates.externalDns, which nothing read.
+        printf '    # external-dns is installed with this provider and writes every record\n'
         if [[ "${nm}" == "static-ip" ]]; then
-            printf '    # external-dns writes this zone from the Gateway hostnames.\n'
-            printf '    # Set false where something else already owns these records.\n'
-            printf '    externalDns: true\n'
+            printf '    # of the zone, pointing at the address of the Gateway. dnsProvider:\n'
         else
-            printf '    # externalDns: true         let external-dns write this zone.\n'
-            printf '    #                           Off while networkMode is tunnel: there\n'
-            printf '    #                           is no fixed address to publish, and the\n'
-            printf '    #                           operator writes the tenant records\n'
-            printf '    #                           through the tunnel CNAMEs itself.\n'
+            printf '    # of the zone, pointing at the tunnel. dnsProvider:\n'
         fi
+        printf '    # none is the one setting that leaves the records to somebody else.\n'
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
     fi
     if [[ "${im}" == "private-ca" ]]; then
         printf '    caBundleSecretRef:\n'
         printf '      name: %s\n' "${CA_BUNDLE_SECRET_NAME:-gentian-root-ca-tls}"
-        printf '      namespace: %s\n' "${CA_BUNDLE_SECRET_NAMESPACE:-cert-manager}"
+        printf '      namespace: %s\n' "${CA_BUNDLE_SECRET_NAMESPACE:-$(ns_kernel edge)}"
     else
         printf '    # caBundleSecretRef:         only read when issuerMode is private-ca\n'
     fi
@@ -1465,8 +1406,8 @@ _claim_cluster_fields() {
     printf '\n'
     printf '  # Where mail goes.\n'
     printf '  #   external  relay through an SMTP provider; supply the smtp-relay\n'
-    printf '  #             credential to the credential manager after install\n'
-    printf '  #   kernel    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
+    printf '  #             credential to the custodian after install\n'
+    printf '  #   system    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
     printf '  mail:\n'
     printf '    serviceMode: %s\n' "${mm}"
     if [[ "${mm}" == "external" ]]; then
@@ -1478,7 +1419,7 @@ _claim_cluster_fields() {
         printf '    # port: 587                 defaults to 587\n'
         printf '    # starttls: true            defaults to true\n'
     else
-        printf '    # host:                     not used while serviceMode is kernel\n'
+        printf '    # host:                     not used while serviceMode is system\n'
     fi
 
     # egressHost, in both modes, because load_deployments_cluster_settings reads
@@ -1495,7 +1436,7 @@ _claim_cluster_fields() {
     # scaffold invented would be wrong in a way that looks configured.
     if [[ -n "${MAIL_EGRESS_HOST:-}" ]]; then
         printf '    egressHost: %s\n' "${MAIL_EGRESS_HOST}"
-    elif [[ "${mm}" == "kernel" ]]; then
+    elif [[ "${mm}" == "system" ]]; then
         printf '    # egressHost:               the name outbound mail leaves from, e.g.\n'
         printf '    #                           mail-egress.%s — required for SPF to pass.\n' "${KERNEL_DOMAIN:-example.com}"
         printf '    #                           Needs a PTR back to it and an A record to the\n'
@@ -1508,14 +1449,14 @@ _claim_cluster_fields() {
 
     printf '\n'
     printf '  # Defaults below are in effect. Uncomment a line to change it.\n'
-    _claim_default_line tenancyMode  "${TENANCY_MODE:-}"  multi   'one subdomain and Keycloak realm per tenant; single = one tenant owns the cluster'
+    _claim_default_line tenancyMode  "${TENANCY_MODE:-}"  multi   'any number of user tenants, each on its own subdomain; single = exactly one user tenant, named user, on the cluster domain itself'
     _claim_default_line secretMode   "${SECRET_MODE:-}"   derived 'every kernel secret reproducible from the master password; random = independent'
     _claim_default_line routingMode  "${ROUTING_MODE:-}"  gateway 'Envoy Gateway plus the Gateway API; the only supported value'
     _claim_default_line storageClass "${STORAGE_CLASS:-}" ''      'empty means the clusters default StorageClass'
 
     printf '\n'
     printf '  # Where the backup private key lives. On by default: it goes to OpenBao as\n'
-    printf '  # well as the recovery kit, so a cluster administrator can restore without\n'
+    printf '  # well as the recovery kit, so a platform admin can restore without\n'
     printf '  # the kit -- and anyone who reaches OpenBao as one can read every bundle.\n'
     printf '  # Set false to keep it in the kit alone: nothing the cluster holds can then\n'
     printf '  # open a bundle, and losing every copy of the kit loses every backup.\n'
@@ -1531,14 +1472,24 @@ _claim_cluster_fields() {
         printf '  llm:\n'
         printf '    enabled: true\n'
         printf '    gpuAcceleration: %s\n' "${GPU_ACCELERATION:-false}"
+        printf '    # The console of the gateway (models, keys, spend) at llm.<kernelDomain>,\n'
+        printf '    # for platform administrators. Off by default: nothing the platform\n'
+        printf '    # does needs it, and off means no route and no way in from the edge.\n'
+        if [[ "${LLM_CONSOLE:-false}" == "true" ]]; then
+            printf '    console:\n'
+            printf '      enabled: true\n'
+        else
+            printf '    # console:\n'
+            printf '    #   enabled: true\n'
+        fi
         if [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]]; then
             printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
         else
             printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         fi
-        printf '    # The models this cluster serves. Removing an entry removes its\n'
-        printf '    # workload; the cached weights survive, so re-adding the same\n'
-        printf '    # name does not download tens of gigabytes again.\n'
+        printf '    # The models this cluster serves on its own GPUs. The gateway offers\n'
+        printf '    # one model per entry; the platform does not start the vLLM instance\n'
+        printf '    # behind it yet, so run one before listing it here.\n'
         printf '    instances: []\n'
         printf '    #  - name: qwen\n'
         printf '    #    modelId: Qwen/Qwen2.5-7B-Instruct\n'
@@ -1550,7 +1501,7 @@ _claim_cluster_fields() {
         printf '    # External OpenAI-compatible providers, routed through the same\n'
         printf '    # gateway. Independent of gpuAcceleration -- a cluster with no GPU\n'
         printf '    # and no instances serves these and nothing else. Adding an entry\n'
-        printf '    # registers its models; removing one deregisters them.\n'
+        printf '    # adds its models to the gateway; removing one removes them.\n'
         printf '    providers: []\n'
         printf '    #  - name: infomaniak\n'
         printf '    #    displayName: Infomaniak AI Services\n'
@@ -1569,6 +1520,8 @@ _claim_cluster_fields() {
         printf '  # llm:\n'
         printf '  #   enabled: false            set true on a cluster that serves models\n'
         printf '  #   gpuAcceleration: false    set true when the cluster has GPUs\n'
+        printf '  #   console:\n'
+        printf '  #     enabled: false          set true to serve the console of the gateway at llm.<kernelDomain>\n'
         printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         printf '  #   instances: []             the models to serve; see the XRD for fields\n'
     fi
@@ -1603,36 +1556,414 @@ _claim_cluster_fields() {
 
     # Where software may enter this cluster (AD-14).
     #
-    # Commented rather than set, because a cluster with no source materialises
-    # nothing on reference and that is a working cluster: its profiles arrive
-    # with the kernel. Adding a source is a deliberate act, and having it be an
-    # edit to this file rather than an environment variable on the director is
-    # the point -- opening a catalogue to a tenant is then a commit with an
-    # author and a date, and "what may this cluster install from" is answerable
-    # without cluster access.
+    # The App Store and its catalogue are set, because a vanilla installation
+    # comes with them: the store is where people are sent for apps, and the
+    # Gentian source is where the Operations Console's entries come from. Changing a source is an edit to this file
+    # rather than an environment variable on the director -- opening a
+    # catalogue to a tenant is then a commit with an author and a date, and
+    # "what may this cluster install from" is answerable without cluster
+    # access. A cluster with no source still works: it materialises nothing on
+    # reference, and its profiles arrive with the kernel.
+    _claim_catalogue_section
+    # The API extensions of add-ons. Recorded here even while nothing reads
+    # it, so the choice an installer made is in git beside everything else it
+    # chose; the grant and the service entries follow when the catalogue
+    # serves them.
+    if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
+        printf '  # apiExtensions: disabled (--disable-api-extensions): no Operations Console\n'
+    else
+        printf '  # apiExtensions: enabled: the Operations Console installs by default\n'
+    fi
+    return 0
+}
+
+# ensure_platform_concierge_exposure <platform tenant directory>
+#
+# The one surface an installation publishes by itself: the concierge, on the
+# cluster's bare domain. It is the page anybody typing the cluster's address
+# meets before they have a session, so it cannot be behind one, and a cluster
+# nobody can find the sign-in of is not installed.
+#
+# It is published the way every perimeter surface is, and in the same place:
+# exposures.yaml beside the tenant, which is the registry the director reads
+# and writes. Written anywhere else it would not show in that registry, and
+# the next surface published through the director would replace the list it
+# was in. So this writes the file the director would have written, with an
+# owner and a review date a year out, and lists it as a patch.
+#
+# The owner is the installer because nobody has an account yet. Once the file
+# exists it is the director's and is left alone, an empty list included:
+# withdrawing the concierge is a decision this must not undo. Succeeds only
+# when it wrote.
+ensure_platform_concierge_exposure() {
+    local dir="$1"
+    local file="${dir}/exposures.yaml" manifest="${dir}/tenant.yaml" kustomization="${dir}/kustomization.yaml"
+    [[ -f "${manifest}" ]] || return 1
+
+    # An earlier installer appended the entry to the tenant's manifest itself.
+    # The block is this function's own, from its comment to the end of the
+    # file, and is taken out so the surface is declared once.
+    local wrote=1
+    if grep -q '^  # What this tenant publishes with no session in front of it' "${manifest}"; then
+        local kept
+        kept="$(sed '/^  # What this tenant publishes with no session in front of it/,$d' "${manifest}")"
+        printf '%s\n' "${kept}" > "${manifest}"
+        info "tenants/platform/tenant.yaml: the concierge's publication moves to exposures.yaml."
+        wrote=0
+    fi
+
+    if [[ ! -f "${file}" ]]; then
+        local now review
+        now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        # A year from now. GNU date takes -d, BSD date takes -v; one of the
+        # two is what this host has.
+        review="$(date -u -d '+365 days' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+365d +%Y-%m-%dT00:00:00Z)"
+        cat > "${file}" <<EXPOSURES
+# Managed by the director: what this tenant publishes to the internet.
+#
+# The concierge is the page on the bare domain of the cluster, which sends a
+# person to the sign-in of their workspace. The installer published it; from
+# here on this file is the director's, and withdrawing or reviewing the entry
+# is done there.
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: platform
+spec:
+  exposures:
+    - install: concierge
+      exposureName: front
+      owner: installer
+      reviewAt: ${review}
+      reason: The sign-in page on the bare domain of the cluster, published at install.
+      publishedAt: ${now}
+      lastReviewedBy: installer
+      lastReviewedAt: ${now}
+EXPOSURES
+        info "tenants/platform/exposures.yaml: the concierge is published on the bare domain."
+        wrote=0
+    fi
+
+    # Listed as a patch, or kustomize never reads it.
+    if [[ -f "${file}" && -f "${kustomization}" ]] && ! grep -qx -- '- path: exposures.yaml' "${kustomization}"; then
+        if grep -qx 'patches:' "${kustomization}"; then
+            local listed
+            listed="$(awk '{ print } $0 == "patches:" { print "- path: exposures.yaml" }' "${kustomization}")"
+            printf '%s\n' "${listed}" > "${kustomization}"
+        else
+            [[ -z "$(tail -c 1 "${kustomization}")" ]] || printf '\n' >> "${kustomization}"
+            printf 'patches:\n- path: exposures.yaml\n' >> "${kustomization}"
+        fi
+        wrote=0
+    fi
+    return "${wrote}"
+}
+
+# _remove_retired_apps_repository_claim <kernel dir>
+#
+# Removes the Repository claim earlier installers scaffolded for the app
+# catalogue's git repository, and answers 0 when it removed one.
+#
+# Only the file this installer wrote, recognised by what it declared: the
+# claim named gentian-apps, a git repository with role apps. A file of that
+# name saying anything else is somebody's own and is left alone.
+_remove_retired_apps_repository_claim() {
+    local file="$1/claims/gentian-apps-repository.yaml"
+    [[ -f "${file}" ]] || return 1
+    grep -q '^  name: gentian-apps$' "${file}" || return 1
+    grep -q '^  type: git$' "${file}" || return 1
+    grep -q '^  role: apps$' "${file}" || return 1
+    rm -f "${file}"
+    info "Removed ${file}: profiles are no longer copied from the gentian-apps git repository;"
+    info "  they arrive one at a time from the catalogue source on the Cluster claim."
+    return 0
+}
+
+# gentian_catalogue_url
+#
+# The address a new Cluster claim names for the default catalogue, `gentian`.
+#
+# gentian-apps publishes two: the released catalogue, built from its main, and
+# the development one, built from its develop. Which a cluster reads follows
+# from which gentian-os it is installed from, the ref in GENTIAN_OS_BRANCH (or,
+# unset, this checkout's branch -- gentian_os_ref): a release tag or
+# main is released software and reads the released catalogue; any other branch
+# is software under development and reads the catalogue under development,
+# whose profiles may need what only that platform has. A ref that cannot be
+# read gets the released one. GENTIAN_CATALOGUE_URL, set, is the answer
+# whatever the ref.
+#
+# Asked when a claim is written and at no other time: an existing claim's
+# source is somebody's decision and is not rewritten.
+gentian_catalogue_url() {
+    if [[ -n "${GENTIAN_CATALOGUE_URL:-}" ]]; then
+        printf '%s\n' "${GENTIAN_CATALOGUE_URL}"
+        return 0
+    fi
+    case "$(gentian_os_ref)" in
+        v[0-9]*.[0-9]*.[0-9]* | main | "")
+            printf '%s\n' "https://gentian-org.github.io/gentian-apps" ;;
+        *)
+            printf '%s\n' "https://gentian-org.github.io/gentian-apps/develop" ;;
+    esac
+}
+
+# gentian_catalogue_reason
+#
+# One line saying why gentian_catalogue_url answers as it does: the comment
+# above the address in the claim, and what step 0 prints.
+gentian_catalogue_reason() {
+    local ref
+    if [[ -n "${GENTIAN_CATALOGUE_URL:-}" ]]; then
+        printf '%s\n' "Set by GENTIAN_CATALOGUE_URL when this claim was written."
+        return 0
+    fi
+    ref="$(gentian_os_ref)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]* | main)
+            printf '%s\n' "The released catalogue: this cluster was installed from gentian-os ${ref}." ;;
+        "")
+            printf '%s\n' "The released catalogue: the gentian-os ref installed from could not be read." ;;
+        *)
+            printf '%s\n' "The development catalogue: this cluster was installed from the gentian-os branch ${ref}, not from a release." ;;
+    esac
+}
+
+# _claim_catalogue_section
+#
+# The claim's catalogue section: the App Store people are sent to, and the
+# source its entries are fetched from. One function, because it is written in
+# two places that must agree: a new claim's scaffold, and an existing claim
+# that has none (ensure_claim_catalogue_section).
+_claim_catalogue_section() {
     printf '\n'
     printf '  # Catalogues this cluster may fetch profiles from. A tenant installing\n'
-    printf '  # "main/nextcloud-base-ce" gets the bundle from the source named main,\n'
-    printf '  # at the digest the App Store stated -- the source itself is not trusted.\n'
+    printf '  # "gentian/nextcloud-base-ce" gets the bundle from the source named\n'
+    printf '  # gentian, at the digest the install asks for -- the source itself is\n'
+    printf '  # not trusted.\n'
     printf '  #\n'
-    printf '  #   access: entitled   the store decides, per tenant, with a signed grant\n'
-    printf '  #   access: open       your own repository; the tenants listed here may\n'
-    printf '  #                      install from it with no grant. Nothing is open by\n'
-    printf '  #                      default, and removing a tenant closes it again.\n'
-    printf '  # catalogue:\n'
-    printf '  #   # Where people are sent for everything the cluster does not\n'
-    printf '  #   # list itself: the maintained (me) and licensed (ee) editions.\n'
-    printf '  #   # A cluster lists only ce and pe from its own sources.\n'
-    printf '  #   storeUrl: https://gentian.org/apps\n'
-    printf '  #   sources:\n'
-    printf '  #     - name: main\n'
-    printf '  #       url: https://store.gentian.org/catalogue\n'
-    printf '  #       access: entitled\n'
-    printf '  #     - name: in-house\n'
-    printf '  #       url: https://git.example.com/profiles\n'
-    printf '  #       access: open\n'
-    printf '  #       tenants: [demo]\n'
+    printf '  # A source named here is offered to every tenant: the cluster lists its\n'
+    printf '  # entries to them as installable from here, without the App Store.\n'
+    printf '  # This is not a licence: whether an app arrives is decided by whether\n'
+    printf '  # the tenant holds a credential for the repository it is pulled from.\n'
+    printf '  catalogue:\n'
+    printf '    # The base address of the App Store API: where the App Store app on\n'
+    printf '    # this cluster reads what is on offer and what a tenant has acquired.\n'
+    if [[ "$(gentian_licence_report_enabled)" == "true" ]]; then
+        printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
+    else
+        printf '    #\n'
+        printf '    # Not named here: the App Store needs licence reporting, which is\n'
+        printf '    # turned off on this cluster (--no-licence-report).\n'
+        printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
+    fi
+    printf '    sources:\n'
+    printf '      - name: gentian\n'
+    # The public catalogue of the gentian-apps repository, which is where the
+    # ce and pe profiles are published: the released one or the development
+    # one, by what is being installed (gentian_catalogue_url).
+    printf '        # %s\n' "$(gentian_catalogue_reason)"
+    printf '        url: %s\n' "$(gentian_catalogue_url)"
+    printf '      # - name: in-house\n'
+    printf '      #   url: https://git.example.com/profiles\n'
+}
+
+# ensure_claim_catalogue_section <claim file>
+#
+# An installation loads the App Store by default, and that has to hold for a
+# claim written before the default existed as well as for a new one: such a
+# claim carries the section as a comment, the director reads no store from it,
+# and the desktop then has no App Store tile for anybody.
+#
+# So a claim with no spec.catalogue is given the default one. A claim that
+# says anything at all there is left alone, and that is how a cluster goes
+# without a store: `catalogue: {}` is a decision somebody wrote down, where an
+# absent key is only a key nobody wrote. The one edit made to an existing
+# section is removing the fields the schema no longer has
+# (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants). The same
+# pass removes the one field the schema lost outside this section
+# (_claim_drop_external_dns), whatever the claim says of the catalogue.
+ensure_claim_catalogue_section() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    _claim_drop_external_dns "${claim}"
+    if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
+        _claim_drop_catalogue_access "${claim}"
+        _claim_drop_catalogue_tenants "${claim}"
+        _claim_warn_retired_catalogue_addresses "${claim}"
+        # A store somebody named stays named: the claim is theirs. The desktop
+        # is told the store is unavailable all the same, by the usher.
+        if [[ "$(gentian_licence_report_enabled)" != "true" ]] \
+            && yq_get '.spec.catalogue.storeUrl' "${claim}" >/dev/null 2>&1; then
+            warn "claims/cluster.yaml names an App Store, and licence reporting is off:"
+            warn "  the App Store is not offered on this cluster. Remove spec.catalogue.storeUrl"
+            warn "  to say so in the claim as well."
+        fi
+        return 0
+    fi
+    # Appended to the file, which is only inside spec while spec is the last
+    # top-level key. A claim somebody has reordered is theirs to edit.
+    local last
+    last="$(grep -E '^[A-Za-z]' "${claim}" | tail -n 1)"
+    if [[ "${last}" != "spec:" ]]; then
+        warn "claims/cluster.yaml names no catalogue, and spec is not its last section,"
+        warn "  so the App Store default is not added. Add spec.catalogue by hand, or"
+        warn "  write 'catalogue: {}' there to say this cluster has no store."
+        return 0
+    fi
+    # A file that does not end in a newline would have the section glued to
+    # its last line.
+    [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
+    _claim_catalogue_section >> "${claim}"
+    info "claims/cluster.yaml named no catalogue: the App Store default was added."
+    info "  Catalogue: $(gentian_catalogue_url)"
+    info "  $(gentian_catalogue_reason)"
+    info "  To run without a store, set 'catalogue: {}' under spec."
+}
+
+# preview_claim_catalogue_section <claim file> — what
+# ensure_claim_catalogue_section would do to the claim, without doing it.
+#
+# For --dry-run and --validate. The edit is made to a copy outside the
+# checkout, so the claim is judged by exactly the code an install runs and is
+# not touched by it; whatever that code says is printed under a line saying
+# none of it happened.
+preview_claim_catalogue_section() {
+    local claim="$1" copy said
+    [[ -f "${claim}" ]] || return 0
+    copy="$(mktemp)"
+    cat "${claim}" > "${copy}"
+    said="$(ensure_claim_catalogue_section "${copy}" 2>&1 || true)"
+    said="${said//${copy}/${claim}}"
+    if ! cmp -s "${claim}" "${copy}"; then
+        gentian_would "edit claims/cluster.yaml, then commit and push the edit signed"
+        info "  What an install would report having done to it:"
+        printf '%s\n' "${said}" | sed 's/^/    /'
+    elif [[ -n "${said}" ]]; then
+        # Nothing to edit: only what it has to say about the claim as it is.
+        printf '%s\n' "${said}"
+    fi
+    rm -f "${copy}"
+}
+
+# _claim_warn_retired_catalogue_addresses <claim file>
+#
+# Two addresses an earlier installer wrote into every new claim never served
+# anything: the store at gentian.org/apps and the catalogue at
+# store.gentian.org/catalogue. A claim still naming them gives its tenants an
+# App Store that cannot reach a store and a catalogue that lists nothing, and
+# nothing on the cluster says why. The claim is not rewritten -- it is
+# somebody's -- so the installer says which line it is and what a new claim
+# would say there.
+_claim_warn_retired_catalogue_addresses() {
+    local claim="$1" store urls
+    store="$(yq_get '.spec.catalogue.storeUrl' "${claim}" 2>/dev/null || true)"
+    if [[ "${store%/}" == "https://gentian.org/apps" ]]; then
+        warn "claims/cluster.yaml names the App Store ${store} (spec.catalogue.storeUrl),"
+        warn "  an address earlier installs wrote that never served a store: the App Store"
+        warn "  app would list nothing. A new claim names ${GENTIAN_STORE_URL:-https://store-service.aluvian.io}."
+        warn "  Edit the line in ${claim} and run ./install.sh again."
+    fi
+    urls="$(yq_get '.spec.catalogue.sources[].url' "${claim}" 2>/dev/null || true)"
+    if grep -qE '^https://store\.gentian\.org/catalogue/?$' <<< "${urls}"; then
+        warn "claims/cluster.yaml names the catalogue https://store.gentian.org/catalogue"
+        warn "  (spec.catalogue.sources), an address earlier installs wrote that never served"
+        warn "  one: no app could be listed or installed from it. A new claim names"
+        warn "  $(gentian_catalogue_url)."
+        warn "  Edit the line in ${claim} and run ./install.sh again."
+    fi
     return 0
+}
+
+# _claim_drop_catalogue_access <claim file>
+#
+# A catalogue source used to say `access: entitled` or `access: open`. The
+# schema no longer has the field, and a claim still carrying it is refused
+# when it is applied, because an unknown field is an error rather than something ignored.
+# So the lines are removed from a claim written before, and only there: under
+# spec.catalogue, at a source's own indent.
+_claim_drop_catalogue_access() {
+    local claim="$1" tmp
+    grep -qE '^      +access: *(entitled|open) *$' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        /^  catalogue:/              { inside = 1; print; next }
+        inside && /^  [A-Za-z]/      { inside = 0 }
+        inside && /^      +access: *(entitled|open) *$/ { next }
+        { print }
+    ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
+    rm -f "${tmp}"
+    info "claims/cluster.yaml: removed 'access' from its catalogue sources; the schema no longer has the field."
+}
+
+# _claim_drop_external_dns <claim file>
+#
+# certificates.externalDns was a field of the claim that nothing read:
+# external-dns is installed with the DNS provider and writes the records
+# whatever the field said. The schema no longer has it, and a claim that
+# still carries it is refused when it is applied, like the two fields above;
+# step 0 wrote it into every static-ip claim, so it is removed from a claim
+# written before. Removing it changes nothing on the cluster.
+_claim_drop_external_dns() {
+    local claim="$1" tmp
+    grep -qE '^    externalDns: *(true|false) *(#.*)?$' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        /^  certificates:/       { inside = 1; print; next }
+        inside && /^  [A-Za-z]/  { inside = 0 }
+        inside && /^    externalDns: *(true|false) *(#.*)?$/ { next }
+        { print }
+    ' "${claim}" > "${tmp}"
+    if ! cmp -s "${tmp}" "${claim}"; then
+        cat "${tmp}" > "${claim}"
+        info "claims/cluster.yaml: removed certificates.externalDns; nothing read it, and the schema no longer has the field. external-dns writes the records as before."
+    fi
+    rm -f "${tmp}"
+}
+
+# _claim_drop_catalogue_tenants <claim file>
+#
+# A catalogue source used to list the tenants it was open to. The list gated
+# nothing -- an install asks whether the person may install apps in the
+# tenant, and never asked about the source -- so the schema no longer has it:
+# a source the claim names is offered to every tenant. A claim still carrying
+# `tenants:` under a source is refused when it is applied, for the same reason
+# as `access` above, so it is removed from a claim written before.
+#
+# The value may be written on the key's line (`tenants: [demo]`), or as a
+# list below it, and the key may be the first of its source (`- tenants:`).
+# In that last case the dash moves to the source's next key, which would
+# otherwise belong to the source before it.
+_claim_drop_catalogue_tenants() {
+    local claim="$1" tmp
+    grep -qE '^    +(- +)?tenants:' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        function indent(line) { match(line, /^ */); return RLENGTH }
+        /^  catalogue:/         { inside = 1; skipping = 0; dash = ""; print; next }
+        inside && /^  [A-Za-z]/ { inside = 0; skipping = 0; dash = "" }
+        inside && skipping {
+            # The value of the key being dropped: anything indented deeper
+            # than the key, and list items written at the key own indent.
+            if ($0 !~ /^ *$/ && (indent($0) > key || (indent($0) == key && $0 ~ /^ *- /))) next
+            skipping = 0
+        }
+        inside && /^      +tenants:/ { key = indent($0); skipping = 1; next }
+        inside && /^    +- +tenants:/ {
+            match($0, /^ *- +/); key = RLENGTH; dash = substr($0, 1, RLENGTH)
+            skipping = 1; next
+        }
+        inside && dash != "" {
+            if ($0 !~ /^ *$/ && indent($0) == key) $0 = dash substr($0, key + 1)
+            dash = ""
+        }
+        { print }
+    ' "${claim}" > "${tmp}"
+    if ! cmp -s "${tmp}" "${claim}"; then
+        cat "${tmp}" > "${claim}"
+        info "claims/cluster.yaml: removed 'tenants' from its catalogue sources; a source is offered to every tenant."
+    fi
+    rm -f "${tmp}"
 }
 
 # _claim_default_line <field> <value> <default> <explanation>
@@ -1660,8 +1991,13 @@ _claim_default_line() {
 # Fast-forwards when that is all it takes. When it is not -- local commits
 # origin does not have, or uncommitted changes -- it refuses and says exactly
 # what to run, because either choice (keep or discard) is the operator's.
+#
 # With `check`, it only reports: --validate and --dry-run promise to change
-# nothing, and moving the checkout is a change.
+# nothing, and that includes the checkout's own .git. So origin is ASKED where
+# its branch is (ls-remote) rather than fetched from: a fetch stores origin's
+# objects in the checkout and moves its origin/<branch>, which is a write even
+# though no file anybody edits changes. The price is that a checkout which is
+# behind cannot be told by how many commits, only that it is.
 gentian_sync_deployments_checkout() {
     resolve_deployments_path
     local mode="${1:-sync}" path="${GENTIAN_DEPLOYMENTS_PATH}" branch behind ahead dirty
@@ -1669,6 +2005,12 @@ gentian_sync_deployments_checkout() {
     git -C "${path}" remote get-url origin >/dev/null 2>&1 || return 0
     branch="$(git -C "${path}" branch --show-current 2>/dev/null || true)"
     branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+
+    if [[ "${mode}" == "check" ]]; then
+        _deployments_checkout_report "${path}" "${branch}"
+        return
+    fi
+
     if ! git -C "${path}" fetch -q origin "${branch}" 2>/dev/null; then
         warn "Could not fetch origin/${branch} of the deployments repository; using the checkout as it is."
         return 0
@@ -1681,10 +2023,6 @@ gentian_sync_deployments_checkout() {
     (( behind > 0 )) || return 0
     dirty="$(git -C "${path}" status --porcelain 2>/dev/null || true)"
     if (( ahead == 0 )) && [[ -z "${dirty}" ]]; then
-        if [[ "${mode}" == "check" ]]; then
-            warn "The deployments checkout is ${behind} commit(s) behind origin/${branch}; an install fast-forwards it."
-            return 0
-        fi
         git -C "${path}" merge -q --ff-only "origin/${branch}" >/dev/null 2>&1 || {
             error "Could not fast-forward ${path} to origin/${branch}."
             return 1
@@ -1692,7 +2030,48 @@ gentian_sync_deployments_checkout() {
         info "Deployments checkout fast-forwarded to origin/${branch} (${behind} commit(s))."
         return 0
     fi
-    error "The deployments checkout is ${behind} commit(s) behind origin/${branch} and cannot be fast-forwarded:"
+    _deployments_checkout_refuse "${path}" "${branch}" "${behind} commit(s) behind" "${ahead}" "${dirty}"
+}
+
+# _deployments_checkout_report <path> <branch> — the same verdict, read-only.
+#
+# Returns what the sync would: 0 where an install would go on (up to date, or
+# behind and able to fast-forward), 1 where it would refuse.
+_deployments_checkout_report() {
+    local path="$1" branch="$2" theirs ours ahead=0 dirty
+    if ! theirs="$(git -C "${path}" ls-remote origin "refs/heads/${branch}" 2>/dev/null)"; then
+        warn "Could not reach origin of the deployments repository; using the checkout as it is."
+        return 0
+    fi
+    theirs="${theirs%%[[:space:]]*}"
+    # An empty remote, or one without the branch: nothing to be behind.
+    [[ -n "${theirs}" ]] || return 0
+    ours="$(git -C "${path}" rev-parse -q --verify HEAD 2>/dev/null || true)"
+    [[ "${theirs}" != "${ours}" ]] || return 0
+    # origin's head is a commit this checkout already has in its own history:
+    # the checkout is ahead of origin, not behind it.
+    if git -C "${path}" merge-base --is-ancestor "${theirs}" HEAD 2>/dev/null; then
+        return 0
+    fi
+    # Local commits origin does not have, by the last origin/<branch> this
+    # checkout fetched. --no-optional-locks: without it `git status` rewrites
+    # the index to refresh it, which is a write to the checkout.
+    if git -C "${path}" rev-parse --verify -q "origin/${branch}" >/dev/null 2>&1; then
+        ahead="$(git -C "${path}" rev-list --count "origin/${branch}..HEAD" 2>/dev/null || echo 0)"
+    fi
+    dirty="$(git -C "${path}" --no-optional-locks status --porcelain 2>/dev/null || true)"
+    if (( ahead == 0 )) && [[ -z "${dirty}" ]]; then
+        warn "The deployments checkout is behind origin/${branch} (origin is at ${theirs:0:12}); an install fast-forwards it."
+        warn "  This run reads the checkout as it is, so what it reports is the definition before that."
+        return 0
+    fi
+    _deployments_checkout_refuse "${path}" "${branch}" "behind" "${ahead}" "${dirty}"
+}
+
+# _deployments_checkout_refuse <path> <branch> <how far behind> <ahead> <dirty>
+_deployments_checkout_refuse() {
+    local path="$1" branch="$2" behind="$3" ahead="$4" dirty="$5"
+    error "The deployments checkout is ${behind} origin/${branch} and cannot be fast-forwarded:"
     if (( ahead > 0 )); then
         error "  it has ${ahead} local commit(s) origin does not:"
         git -C "${path}" log --oneline "origin/${branch}..HEAD" 2>/dev/null | while IFS= read -r line; do
@@ -1707,6 +2086,13 @@ gentian_sync_deployments_checkout() {
 }
 
 scaffold_cluster_deployment() {
+    # Step 0 writes the cluster's definition, publishes its keys and pushes.
+    # prepare_run does not call it under --dry-run or --validate; this is for
+    # the caller that one day forgets.
+    if gentian_read_only; then
+        gentian_would "write whatever clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>} still lacks, and commit and push it signed"
+        return 0
+    fi
     # The files are only useful inside the checkout they get committed from.
     # Writing them into a bare directory produces a tree nothing tracks, which
     # looks like success and installs nothing.
@@ -1724,15 +2110,29 @@ scaffold_cluster_deployment() {
     local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
     local generated=0
 
+    # Before anything is written: the gentian-os Repository claim names the
+    # ref this cluster follows, and a detached checkout with no
+    # GENTIAN_OS_BRANCH has none to name. This wrote "main" there.
+    if [[ ! -f "${kernel_dir}/claims/gentian-os-repository.yaml" && -z "$(gentian_os_ref)" ]]; then
+        error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read,"
+        error "  so the gentian-os Repository claim cannot name the ref this cluster follows."
+        error "  Set GENTIAN_OS_BRANCH in install.env (a branch, or a release tag such as v0.4.0)."
+        return 1
+    fi
+
     if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
-        warn "gentian-deployments/profiles/${stage}.yaml does not exist yet."
-        warn "  Stage-tier policy (logLevel, ACME issuer, etc.) has no home for '${stage}' —"
-        warn "  add it (see profiles/dev.yaml for the existing example) before continuing."
+        warn "profiles/${stage}.yaml does not exist in the deployments repository."
+        warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
+        warn "  render the chart without it: the install would stop at D-01, with no"
+        warn "  operator. Add the file (it may hold a comment and nothing else), commit"
+        warn "  and push it before continuing."
     fi
     if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/_base.yaml" ]]; then
-        warn "gentian-deployments/profiles/_base.yaml does not exist yet."
-        warn "  Cross-stage shared policy (platformSecurityPolicy, etc.) has no home —"
-        warn "  add it before continuing (see profiles/_base.yaml in an existing cluster's repo)."
+        warn "profiles/_base.yaml does not exist in the deployments repository."
+        warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
+        warn "  render the chart without it: the install would stop at D-01, with no"
+        warn "  operator. Add the file (it may hold a comment and nothing else), commit"
+        warn "  and push it before continuing."
     fi
 
     mkdir -p "${kernel_dir}/claims"
@@ -1747,7 +2147,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
   name: ${cluster}-${stage}
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   kernelDomain: ${domain}
   # Who administers this cluster, by the Keycloak group they are in. The
@@ -1760,6 +2160,8 @@ spec:
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
+        info "  Catalogue: $(gentian_catalogue_url)"
+        info "  $(gentian_catalogue_reason)"
         generated=1
     fi
 
@@ -1769,7 +2171,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Suze
 metadata:
   name: ${cluster}-${stage}-suze
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   environment: ${stage}
   idpNamespace: kernel-authentication
@@ -1807,7 +2209,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
   name: deployments
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   type: git
   role: deployments
@@ -1829,39 +2231,40 @@ EOF
         generated=1
     fi
 
-    # The other three repositories the platform reads: its own charts, the app
-    # catalogue and the desktop. Without a claim each one has no AppProject
-    # source, so Argo CD refuses to deploy from it, and the catalogue-sync
-    # ApplicationSet has nothing to sync -- which reads as an empty catalogue
-    # rather than as a missing declaration.
+    # The other two repositories the platform reads: its own charts and the
+    # desktop. Without a claim each one has no AppProject source, so Argo CD
+    # refuses to deploy from it.
     #
     # Public by default, and that is a real shape rather than a degenerate
     # one: spec.credential is optional precisely so a public repository does
     # not have to name a vault path for a secret that does not exist, which
-    # would then sit in the credential manager as a requirement nobody can
+    # would then sit in the custodian as a requirement nobody can
     # satisfy. A mirror sets the matching AUTH and gets the credential block.
-    local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_xrd_role _repo_auth_var
-    for _repo_role in gentian-os gentian-apps gentian-ui; do
+    #
+    # The app catalogue is not one of them. Its git repository was claimed
+    # here so that an ApplicationSet could copy every profile in it into the
+    # cluster; a profile now arrives one at a time through the director, from
+    # the catalogue source the Cluster claim names (_claim_catalogue_section),
+    # and nothing on the cluster reads that git repository. A deployments
+    # checkout scaffolded before then still holds the claim file, and it is
+    # removed here so that a fresh install from it declares no such claim.
+    # Claims are synced without pruning, so on a cluster that already applied
+    # it the Repository stays until it is deleted there; it composes no
+    # ApplicationSet any more either way (docs/install-reference.md).
+    _remove_retired_apps_repository_claim "${kernel_dir}" && generated=1
+    local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_auth_var
+    for _repo_role in gentian-os gentian-ui; do
         _repo_file="${kernel_dir}/claims/${_repo_role}-repository.yaml"
         [[ -f "${_repo_file}" ]] && continue
-        # role is the XRD's vocabulary and is not always the repository's
-        # name: the catalogue is "apps".
-        _repo_xrd_role="${_repo_role}"
         case "${_repo_role}" in
             gentian-os)
                 _repo_url="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
-                _repo_branch="${GENTIAN_OS_BRANCH:-main}"
+                _repo_branch="$(gentian_os_ref)"
                 _repo_auth="${GENTIAN_OS_AUTH:-none}"
                 _repo_auth_var=GENTIAN_OS_AUTH ;;
-            gentian-apps)
-                _repo_url="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
-                _repo_branch="${GENTIAN_APPS_BRANCH:-main}"
-                _repo_auth="${GENTIAN_APPS_AUTH:-none}"
-                _repo_auth_var=GENTIAN_APPS_AUTH
-                _repo_xrd_role=apps ;;
             gentian-ui)
                 _repo_url="${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}"
-                _repo_branch="${GENTIAN_UI_BRANCH:-main}"
+                _repo_branch="$(gentian_ui_branch)"
                 _repo_auth="${GENTIAN_UI_AUTH:-none}"
                 _repo_auth_var=GENTIAN_UI_AUTH ;;
         esac
@@ -1878,10 +2281,10 @@ apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
   name: ${_repo_role}
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   type: git
-  role: ${_repo_xrd_role}
+  role: ${_repo_role}
   writable: false
   branch: ${_repo_branch}
   endpoints:
@@ -1916,17 +2319,12 @@ image:
 
 appLifecycle:
   deployments:
-    enabled: true
     cluster: ${cluster}
     repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
     # Named from the CLAIM, not the composite and not the repo. The Composition
     # emits <claimName>-git-credentials and B-09 names the claim "deployments",
-    # so this is deployments-git-credentials. Scaffolding
-    # gentian-deployments-git-credentials pointed the operator at a Secret
-    # nothing creates -- and because the volume is optional with a subPath, the
-    # kubelet mounted an empty directory there rather than leaving it absent, so
-    # installing an app failed with
-    #   fatal: unable to open /etc/git/credentials: Is a directory
+    # so this is deployments-git-credentials: the Secret the director clones
+    # and pushes with.
     gitCredentialsSecret: deployments-git-credentials
 EOF
         info "Scaffolded ${kernel_dir}/values.yaml"
@@ -1956,6 +2354,11 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   displayName: Platform
+  # The cluster administrator (admin@<kernel>) has no password until its
+  # holder sets one through a single-use link the handover issues. Whether
+  # activating it also enrols a second factor:
+  admin:
+    requireMFA: ${CLUSTER_ADMIN_REQUIRE_MFA:-true}
   isolation:
     mode: namespace
     keycloakRealm: ${KERNEL_REALM:-kernel}
@@ -1984,6 +2387,17 @@ EOF
         info "Scaffolded clusters/${cluster}/tenants/platform"
         generated=1
     fi
+    # The concierge's publication, for the tenant just written and for one
+    # written before the concierge was a published component alike.
+    if ensure_platform_concierge_exposure "${platform_dir}"; then
+        generated=1
+    fi
+
+    # The user tenant of a single-tenancy cluster: beside the platform
+    # tenant, committed with it, admitted after the handover.
+    if scaffold_user_tenant "${cluster}"; then
+        generated=1
+    fi
 
     # No cluster-settings.env is written. Everything it carried that describes
     # the cluster is a field on claims/cluster.yaml, emitted above by
@@ -2010,8 +2424,20 @@ EOF
     # reviewer and the cluster both read them from (AD-2).
     gentian_publish_signing_material "${kernel_dir}" || true
 
+    # The profiles every tenant gets without asking (AD-14, the installer's
+    # default profile): materialised into the same directory the director
+    # materialises an installed entry into, so the operator sees them like
+    # any other.
+    #
+    # Not `|| true` any more: a catalogue that cannot be reached returns 0 and
+    # the install goes on, and what returns 1 -- a profile that is not the
+    # build its digest names -- is a reason to stop before anything of this
+    # run is committed.
+    _scaffold_default_profiles "${cluster}" || return 1
+
     # Nothing is APPLIED: this still contacts no cluster.
     gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
+    gentian_sign_unsigned_head "${kernel_dir}" "${cluster}" || true
 
     echo ""
     info "clusters/${cluster}/kernel is what this cluster becomes. To change a"
@@ -2097,8 +2523,293 @@ _claims_this_checkout_cannot_apply() {
 # the director's push credential. That failure used to be a warning that
 # scrolled past, and the install that followed looked fine until its first
 # write answered 503.
+# _cluster_scaffold_paths <cluster> — what step 0 scaffolds, and so commits:
+# the kernel directory and Tenant/platform beside it. Committing only kernel/
+# left the platform tenant on the install host's disk, the tenants
+# ApplicationSet generated nothing, and D-03 waited for a Tenant that could
+# never arrive.
+_cluster_scaffold_paths() {
+    printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
+    # And the user tenant of a single-tenancy cluster, when its manifest is
+    # there. Only then: a path that does not exist fails `git add` for all of
+    # them.
+    if [[ -n "$(gentian_user_tenant)" ]]; then
+        printf '%s\n' "clusters/$1/tenants/${USER_TENANT_NAME}"
+    fi
+}
+
+# =============================================================================
+# The user tenant of a single-tenancy cluster.
+#
+# A cluster has one of two tenancy modes (docs/design/multi-tenancy.md §3).
+# multi: the platform tenant plus any number of user tenants, each created
+# through the director after the install. single: the platform tenant plus
+# exactly one user tenant, always named "user", which lives on the cluster's
+# own addresses -- desktop.<domain>, admin.<domain>, <app>.<domain>.
+#
+# Only under single does the install create a tenant, and it is that one.
+# Step 0 writes its manifest beside the platform tenant's and commits both,
+# signed, like the rest of the cluster's definition. Nothing admits it early:
+# the cluster holds every tenant but the platform's back until the platform
+# admin has signed in once (the handover gate, internal/webhook), and this
+# manifest carries no override. So it sits in git, refused, through the whole
+# install; the handover (E-03) ends as on any cluster; and E-04 then asks
+# Argo CD to try the manifest again, waits for the tenant, and hands its
+# administrator account over. No credential is needed for that which the
+# handover takes away: E-04 uses the kubeconfig and nothing else.
+# =============================================================================
+
+# The name is fixed: the operator, its admission webhook and the director all
+# refuse any other user tenant under tenancyMode single (internal/tenancy).
+USER_TENANT_NAME="user"
+
+# gentian_tenancy_mode — this cluster's tenancy mode, single or multi.
+#
+# The claim's, once there is a claim: it is what the cluster is built from and
+# what the operator reads, and a claim that does not name the mode means the
+# default, multi -- whatever this run's environment says. A TENANCY_MODE in
+# install.env that disagrees with an existing claim would otherwise have the
+# install scaffold and wait for a user tenant on a cluster that is not a
+# single-tenancy one. Before there is a claim, the mode is what the run was
+# told (step 0's answer, or TENANCY_MODE), which is what the claim is then
+# written from.
+gentian_tenancy_mode() {
+    local claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
+    local mode=""
+    if [[ -f "${claim}" ]]; then
+        mode="$(yq_get '.spec.tenancyMode' "${claim}" 2>/dev/null || true)"
+    else
+        mode="${TENANCY_MODE:-}"
+    fi
+    if [[ "${mode}" != "single" ]]; then
+        mode="multi"
+    fi
+    printf '%s\n' "${mode}"
+}
+
+# gentian_user_tenant — "user" when this is a single-tenancy cluster whose
+# definition holds the user tenant's manifest, and nothing otherwise.
+#
+# Nothing under multi, where a tenant of that name is an ordinary one the
+# install has no part in. Nothing when the manifest is absent, either: there
+# is then no tenant for the install to wait for or hand over, and saying
+# otherwise would have a step wait fifteen minutes for a tenant nobody
+# declared.
+gentian_user_tenant() {
+    local file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants/${USER_TENANT_NAME}/tenant.yaml"
+    if [[ "$(gentian_tenancy_mode)" == "single" && -f "${file}" ]]; then
+        printf '%s\n' "${USER_TENANT_NAME}"
+    fi
+    return 0
+}
+
+# scaffold_user_tenant <cluster> — write the user tenant's manifest on a
+# single-tenancy cluster. Returns 0 when it wrote something.
+#
+# The manifest is the one the director writes for a new tenant (tenantManifest
+# in internal/director/gitops/tenants.go) with one switch on, and nothing
+# more: no annotation admits it ahead of the handover. The switch is
+# spec.perimeter.adminsApprove, which lets the user admin approve what the
+# tenant puts on the internet. Every other tenant starts with it off; here
+# the cluster has one tenant for users. Under multi nothing is written. Under
+# single, three cases write nothing as well, and each says why:
+#
+#   - The tenant has a manifest already. Never rewritten: a second run finds
+#     the first one's work.
+#   - The cluster's definition holds another tenant for users. A
+#     single-tenancy cluster carries exactly one, and the operator would
+#     refuse them; which of them stays is a person's decision, not a
+#     scaffold's.
+#   - The tenant was in this cluster's definition before and was removed. A
+#     retired tenant keeps its data unless it was purged, and an install run
+#     must not quietly attach a new tenant to it.
+scaffold_user_tenant() {
+    local cluster="$1" name="${USER_TENANT_NAME}"
+    if [[ "$(gentian_tenancy_mode)" != "single" ]]; then
+        return 1
+    fi
+    local tenants_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
+    local dir="${tenants_dir}/${name}" rel="clusters/${cluster}/tenants/${name}/tenant.yaml"
+    local f other others=""
+
+    if [[ -f "${dir}/tenant.yaml" ]]; then
+        return 1
+    fi
+    for f in "${tenants_dir}"/*/tenant.yaml; do
+        [[ -f "${f}" ]] || continue
+        other="$(basename "$(dirname "${f}")")"
+        [[ "${other}" == "platform" ]] && continue
+        others="${others:+${others}, }${other}"
+    done
+    if [[ -n "${others}" ]]; then
+        warn "tenancyMode is single and the user tenant was not written: this cluster's"
+        warn "  definition already holds ${others}. A single-tenancy cluster carries the"
+        warn "  platform tenant and exactly one user tenant, named ${name}, and refuses"
+        warn "  every other. Retire ${others} first, or set tenancyMode: multi."
+        return 1
+    fi
+    if [[ -n "$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" log -1 --format=%H -- "${rel}" 2>/dev/null || true)" ]]; then
+        warn "The user tenant was not written: clusters/${cluster}/tenants/${name}"
+        warn "  was part of this cluster's definition before and was removed. A retired"
+        warn "  tenant keeps its data unless it was purged, so the install does not bring"
+        warn "  it back by itself. As the platform admin, once the cluster is up:"
+        warn "    kubectl gentian tenants create ${name}"
+        return 1
+    fi
+
+    mkdir -p "${dir}"
+    cat > "${dir}/tenant.yaml" <<EOF
+# Tenant ${name}: the user tenant of this single-tenancy cluster, written by
+# the install.
+#
+# The cluster's users live here, in a realm of their own, on the cluster's
+# own addresses: the desktop at desktop.<domain>, the administration console
+# at admin.<domain>, each app at <app>.<domain>. The platform tenant beside
+# it holds the platform admin and takes no apps; its desktop is at
+# platform.<domain>.
+#
+# The cluster admits no tenant but the platform's until the platform admin
+# has signed in once, and nothing here asks for an exception: this file waits
+# in git, and the install brings the tenant up after the handover.
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: ${name}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  displayName: "User"
+  # The user admin's account has no password until its holder sets one,
+  # through a single-use link the install issues after the handover
+  # (afterwards: kubectl gentian tenants activate-admin ${name}).
+  admin:
+    requireMFA: true
+  isolation:
+    # A namespace and a realm of its own. The realm is what keeps this
+    # tenant's people apart from the platform admin's.
+    mode: namespace
+    keycloakRealm: ${name}
+    databasePrefix: ${name}_
+    s3Prefix: ${name}-
+  # Retain, so retiring the tenant does not take its data with it. Changing
+  # this to Delete is a deliberate, reviewable edit.
+  deletionPolicy: Retain
+  # The base plan's capacity, which is what every tenant starts on.
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  # Whether the user admin may approve and withdraw this tenant's public
+  # addresses. The install turns it on, because this cluster has one tenant
+  # for users; the switch is the platform admin's:
+  #   kubectl gentian tenants set ${name} --admins-approve-public-addresses=true|false
+  perimeter:
+    adminsApprove: true
+  # Apps are installed through the director, which appends to this list.
+  apps: []
+EOF
+    cat > "${dir}/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+EOF
+    info "Scaffolded clusters/${cluster}/tenants/${name} (the user tenant; admitted after the handover)"
+    return 0
+}
+
+# print_roles_summary — who is in charge of what on this cluster, and where
+# each signs in. The closing words of an install, in the terms the docs use:
+# platform admin; user admin (single-tenancy); tenant admin (multi-tenancy).
+print_roles_summary() {
+    local domain="${KERNEL_DOMAIN:-<kernel-domain>}"
+    echo -e "${GREEN}  Who is in charge of what:${NC}"
+    echo -e "${GREEN}    platform admin — in charge of the platform:${NC}"
+    echo -e "${GREEN}      https://platform.${domain}/     admin@${domain}${NC}"
+    echo -e "${GREEN}      A new activation link: ./install.sh --activate-admin${NC}"
+    if [[ "$(gentian_tenancy_mode)" == "single" ]]; then
+        echo -e "${GREEN}    user admin — in charge of the users and the user tenant:${NC}"
+        echo -e "${GREEN}      https://desktop.${domain}/      user-admin@${domain}${NC}"
+        echo -e "${GREEN}      A new activation link: kubectl gentian tenants activate-admin ${USER_TENANT_NAME}${NC}"
+        echo -e "${GREEN}    This is a single-tenancy cluster: the user tenant is its one tenant for${NC}"
+        echo -e "${GREEN}    users, and https://${domain}/ leads to its desktop.${NC}"
+        if [[ -z "$(gentian_user_tenant)" ]]; then
+            echo -e "${YELLOW}    The user tenant is not in this cluster's definition. As the platform admin:${NC}"
+            echo -e "${YELLOW}      kubectl gentian login && kubectl gentian tenants create ${USER_TENANT_NAME}${NC}"
+        fi
+    else
+        echo -e "${GREEN}    tenant admin — in charge of one tenant and its users; one per tenant.${NC}"
+        echo -e "${GREEN}    This is a multi-tenancy cluster, and the install creates no tenant for users.${NC}"
+        echo -e "${GREEN}    The platform admin creates them in the admin console (Tenants), or with the CLI:${NC}"
+        if ! command -v kubectl-gentian >/dev/null 2>&1; then
+            echo -e "${GREEN}      make -C ${SCRIPT_DIR} install-plugin${NC}"
+        fi
+        echo -e "${GREEN}      kubectl gentian login${NC}"
+        echo -e "${GREEN}      kubectl gentian tenants create <name>${NC}"
+        echo -e "${GREEN}      kubectl gentian tenants activate-admin <name> [--recovery-email <address>]${NC}"
+        echo -e "${GREEN}    A tenant's desktop is https://desktop.<name>.${domain}/, and https://${domain}/${NC}"
+        echo -e "${GREEN}    asks for an e-mail address and sends each person to theirs.${NC}"
+    fi
+}
+
+# _scaffold_default_profiles <cluster> -- the store's entries a vanilla
+# installation comes with, written as materialised profiles.
+#
+# GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
+# of a profile in a catalogue (<catalogue>/profiles/<name>.yaml), optionally
+# pinned with @sha256:<digest>. The default is the Operations Console from the
+# store's catalogue. --disable-api-extensions writes none.
+#
+# Each is held to a digest before a byte of it is written -- the pin, or else
+# what the catalogue's index lists -- and written as the director writes an
+# install of the same bundle, with its origin and its bundle recorded
+# (scripts/lib/catalogue.sh; AD-14).
+#
+# A catalogue that cannot be reached is a warning and not a failed install:
+# the OS needs none of these, and the Admin Console promotes what is missing.
+# Everything else that keeps a profile from being placed stops step 0 -- bytes
+# that do not hash to the digest above all -- because the alternative is a
+# cluster that came up without saying which build it was given.
+_scaffold_default_profiles() {
+    local cluster="$1" dir list entry
+    local -a entries=()
+    dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/catalogue"
+    # The directory and its kustomization exist whatever goes in them: the
+    # gentian-catalogue Application syncs this path from the first install,
+    # and a path that does not exist is a sync error, not an empty catalogue.
+    mkdir -p "${dir}"
+    if [[ ! -f "${dir}/kustomization.yaml" ]]; then
+        printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n' > "${dir}/kustomization.yaml"
+    fi
+    if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
+        info "Default profiles skipped (--disable-api-extensions)."
+        return 0
+    fi
+    list="$(_default_profiles_configured)"
+    [[ -n "${list}" ]] || return 0
+    IFS=',' read -r -a entries <<< "${list}"
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        entry="$(printf '%s' "${entry}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        [[ -n "${entry}" ]] || continue
+        _default_profile_place "${cluster}" "${dir}" "${entry}" || return 1
+    done
+    return 0
+}
+
 gentian_commit_cluster_deployment() {
     local kernel_dir="$1" cluster="$2" dirty sign_args branch
+    local -a paths
+    local _p
+    # Whoever calls it: a run that changes nothing does not commit.
+    if gentian_read_only; then
+        report_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        return 0
+    fi
+    paths=()
+    while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
     command -v git >/dev/null 2>&1 || return 0
     git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || {
         warn "${GENTIAN_DEPLOYMENTS_PATH} is not a git repository, so nothing was committed."
@@ -2108,7 +2819,7 @@ gentian_commit_cluster_deployment() {
     }
 
     dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
-        "clusters/${cluster}/kernel" 2>/dev/null || true)"
+        "${paths[@]}" 2>/dev/null || true)"
     [[ -n "${dirty}" ]] || return 0
 
     # Refuse to commit a claim nothing here can apply.
@@ -2140,14 +2851,14 @@ gentian_commit_cluster_deployment() {
         sign_args="$(gentian_git_sign_args break-glass)"
     fi
 
-    info "Committing clusters/${cluster}/kernel:"
+    info "Committing clusters/${cluster} (kernel/, tenants/platform/):"
     while IFS= read -r line; do
         [[ -n "${line}" ]] && info "    ${line}"
     done <<< "${dirty}"
 
     local -a SIGN
     read -r -a SIGN <<< "${sign_args}"
-    git -C "${GENTIAN_DEPLOYMENTS_PATH}" add -- "clusters/${cluster}/kernel" || {
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" add -- "${paths[@]}" || {
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     }
@@ -2158,8 +2869,10 @@ gentian_commit_cluster_deployment() {
 
 Written by install.sh (step 0) and signed with this cluster's
 break-glass key: before the cluster exists there is no director to write it,
-and AD-2 names that case." 2>&1; then
-        error "The commit failed; clusters/${cluster}/kernel is still uncommitted."
+and AD-2 names that case.${_GENTIAN_DEFAULT_PROFILE_NOTES:+
+
+${_GENTIAN_DEFAULT_PROFILE_NOTES}}" 2>&1; then
+        error "The commit failed; clusters/${cluster} is still uncommitted."
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 1
     fi
@@ -2178,7 +2891,83 @@ and AD-2 names that case." 2>&1; then
         error "  Then run ./install.sh again."
         return 1
     fi
-    success "Committed and pushed clusters/${cluster}/kernel (signed, break-glass)."
+    success "Committed and pushed clusters/${cluster} (signed, break-glass)."
+}
+
+# gentian_sign_unsigned_head -- a break-glass commit on top of a head Argo CD
+# would refuse.
+#
+# Argo CD verifies the newest commit of the deployments repository (AD-2,
+# gpg mode head), so one unsigned commit there stops the cluster syncing all
+# of it. A director that had no key yet made exactly that, and a purge does
+# not touch the repository: the next install then came up blind, with every
+# tenant ApplicationSet refusing the repository. When the head is not signed
+# by a key this cluster trusts, an empty commit signed with the break-glass
+# key puts a trusted one on top -- the case AD-2 names, recorded as such.
+gentian_sign_unsigned_head() {
+    local kernel_dir="$1" cluster="$2" ids head_key head_sig branch sign_args
+    # It fetches, merges, commits and pushes: none of it in a read-only run.
+    gentian_read_only && return 0
+    [[ -f "${kernel_dir}/signing/keys.env" ]] || return 0
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" fetch -q origin 2>/dev/null || return 0
+    branch="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" branch --show-current 2>/dev/null || true)"
+    branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" merge -q --ff-only "origin/${branch}" 2>/dev/null || true
+    ids="$(gentian_signing_keys_from_deployment "${kernel_dir}" 2>/dev/null || true)"
+    sign_args="$(gentian_git_sign_args break-glass 2>/dev/null)" || return 0
+    local -a SIGN
+    read -r -a SIGN <<< "${sign_args}"
+    head_sig="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" "${SIGN[@]}" log -1 --format='%G?' "origin/${branch}" 2>/dev/null || true)"
+    head_key="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" "${SIGN[@]}" log -1 --format='%GK' "origin/${branch}" 2>/dev/null || true)"
+    if [[ "${head_sig}" == "G" || "${head_sig}" == "U" ]] && [[ -n "${head_key}" ]] && grep -qi "${head_key}" <<< "${ids}"; then
+        return 0
+    fi
+    warn "The newest commit of the deployments repository is not signed by a key"
+    warn "  this cluster trusts, so Argo CD would refuse the whole repository."
+    warn "  Adding an empty commit signed with the break-glass key on top."
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" \
+        -c "user.name=${GENTIAN_COMMITTER_NAME:-Gentian installer}" \
+        -c "user.email=${GENTIAN_COMMITTER_EMAIL:-installer@${KERNEL_DOMAIN:-cluster.invalid}}" \
+        "${SIGN[@]}" commit -q --allow-empty -m "chore(${cluster}): sign the head of the deployments repository
+
+The newest commit was not signed by a key this cluster trusts, so Argo CD
+refused the repository (AD-2). This empty commit, signed with the
+break-glass key, puts a trusted head on top; nothing else changes." 2>&1 || {
+        error "The break-glass commit failed; Argo CD will keep refusing the repository."
+        return 1
+    }
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" push -q origin "HEAD:${branch}" 2>&1 || {
+        error "Committed, but the push failed:  git -C ${GENTIAN_DEPLOYMENTS_PATH} push origin HEAD:${branch}"
+        return 1
+    }
+    success "Signed the head of the deployments repository (break-glass)."
+}
+
+# report_uncommitted_cluster_deployment <kernel-dir> <cluster> — what an
+# install would commit and push from the checkout, for a run that does not.
+#
+# The same paths and the same question gentian_commit_cluster_deployment
+# asks, with --no-optional-locks: without it `git status` rewrites the index
+# to refresh it, and the checkout is one of the things this run leaves alone.
+report_uncommitted_cluster_deployment() {
+    local kernel_dir="$1" cluster="$2" dirty line _p
+    local -a paths
+    paths=()
+    while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || return 0
+    dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" --no-optional-locks status --porcelain -- \
+        "${paths[@]}" 2>/dev/null || true)"
+    if [[ -z "${dirty}" ]]; then
+        info "clusters/${cluster} has no uncommitted change; an install would commit nothing from it."
+        return 0
+    fi
+    gentian_would "commit these changes in clusters/${cluster}, signed with the break-glass key, and push them"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && info "    ${line}"
+    done <<< "${dirty}"
+    return 0
 }
 
 _warn_uncommitted_cluster_deployment() {
@@ -2186,14 +2975,17 @@ _warn_uncommitted_cluster_deployment() {
     command -v git >/dev/null 2>&1 || return 0
     git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || return 0
 
-    # Untracked or modified, under this cluster's kernel directory only: a
-    # tenant being edited elsewhere in the repository is not this step's
-    # business.
+    # Untracked or modified, under what step 0 scaffolds only: any other
+    # tenant being edited in the repository is not this step's business.
+    local -a paths
+    local _p
+    paths=()
+    while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
     dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
-        "clusters/${cluster}/kernel" 2>/dev/null)" || return 0
+        "${paths[@]}" 2>/dev/null)" || return 0
     [[ -n "${dirty}" ]] || return 0
 
-    warn "clusters/${cluster}/kernel has uncommitted changes:"
+    warn "clusters/${cluster} has uncommitted changes:"
     while IFS= read -r line; do
         [[ -n "${line}" ]] && warn "    ${line}"
     done <<< "${dirty}"
@@ -2248,6 +3040,12 @@ require_cluster_deployment() {
     # produces a Service whose address nothing pins — the failure the old
     # requirement existed to prevent, now stated against the claim.
     local claim="${kernel_dir}/claims/cluster.yaml"
+    if gentian_read_only; then
+        preview_claim_catalogue_section "${claim}"
+        preview_default_profiles "${cluster}"
+    else
+        ensure_claim_catalogue_section "${claim}"
+    fi
     if [[ -f "${claim}" ]]; then
         local net
         net="$(yq_get '.spec.networkMode' "${claim}" 2>/dev/null || true)"
@@ -2262,6 +3060,15 @@ require_cluster_deployment() {
         # Not a warning any more. An edit sitting in the working copy at
         # install time is an edit the cluster will not get, and the operator
         # has already said what they want by making it.
+        #
+        # Under --dry-run and --validate it is reported and left where it is.
+        # This call is what committed and pushed a cluster's definition from a
+        # dry run: the guard in prepare_run covered the step that WRITES the
+        # definition and not this one, which was thought of as a check.
+        if gentian_read_only; then
+            report_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+            return 0
+        fi
         gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     fi

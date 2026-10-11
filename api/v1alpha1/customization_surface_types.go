@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -236,7 +238,7 @@ const (
 	DeliveryGitSidecar CustomizationDelivery = "git-sidecar"
 	// DeliveryImageLayer bakes addons into a Gentian-built image layer.
 	DeliveryImageLayer CustomizationDelivery = "image-layer"
-	// DeliveryAddonProfile ships the addon as its own AppProfile.
+	// DeliveryAddonProfile ships the addon as its own ComponentProfile.
 	DeliveryAddonProfile CustomizationDelivery = "addon-profile"
 	// DeliveryAppStoreAPI installs through the app's own runtime admin API.
 	DeliveryAppStoreAPI CustomizationDelivery = "app-store-api"
@@ -395,7 +397,7 @@ type CustomizationFork struct {
 // CustomizationAddon declares an addon's identity to the app that hosts it.
 //
 // This exists so the operator can resolve a tenant's selected addons without
-// knowing anything app-specific. A tenant selects addons by AppProfile name
+// knowing anything app-specific. A tenant selects addons by ComponentProfile name
 // ("odoo-crm-ce"), but the app's own addon system knows them by its own
 // identifier — Odoo installs the module "crm", Nextcloud enables the app
 // "richdocuments". Declaring that identifier here keeps the mapping in the
@@ -412,7 +414,7 @@ type CustomizationAddon struct {
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
 	ID string `json:"id"`
 
-	// Of is the AppProfile name of the base this addon activates into. It must be
+	// Of is the ComponentProfile name of the base this addon activates into. It must be
 	// in the same family. Replaces the gentianos.io/requires-profile annotation,
 	// which pointed the same way but existed to auto-install a base when an addon
 	// was installed standalone — the relationship the L3 cleanup inverts.

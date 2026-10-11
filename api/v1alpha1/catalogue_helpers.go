@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -20,21 +22,6 @@ import (
 	"encoding/json"
 	"strings"
 )
-
-// ProfileRequiresEntitlement reports whether an entitlement must be redeemed
-// before this entry may be activated.
-//
-// An annotation, not spec.license. AD-3 moves the licence to the store's
-// listing, outside the cluster, because it is presentation — but whether an
-// entry NEEDS PAYING FOR is an authorization question, and the thing that
-// enforces it runs here. A gate reading a field that has left is a gate that
-// always opens.
-func ProfileRequiresEntitlement(p *ComponentProfile) bool {
-	if p == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(p.Annotations[AnnotationProfileRequiresEntitlement]), "true")
-}
 
 // GatewayAPIBackend is one extra HTTPRoute rule: path prefix → Kubernetes Service.
 type GatewayAPIBackend struct {
@@ -115,7 +102,7 @@ func GatewayEscapedSlashesAction(annotations map[string]string) string {
 	return strings.TrimSpace(annotations[AnnotationIngressGatewayEscapedSlashesAction])
 }
 
-// ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on an AppProfile.
+// ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on a ComponentProfile.
 func ProfileKernelEgressNamespaces(p *ComponentProfile) []string {
 	if p == nil || len(p.Annotations) == 0 {
 		return nil

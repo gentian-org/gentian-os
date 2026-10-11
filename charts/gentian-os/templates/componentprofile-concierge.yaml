@@ -1,0 +1,53 @@
+{{- /*
+  The concierge: the page on the cluster's bare domain, which is the first
+  thing anybody typing the cluster's address meets. It takes an e-mail address
+  and sends the browser to the sign-in of the workspace that address belongs
+  to, and it serves the cluster's own brand to every page that wears it.
+
+  It has no session in front of it, so it is a perimeter surface and not a
+  kernel route: a component of the platform tenant, published from that
+  tenant's DMZ by a proxy that forwards these paths and nothing else
+  (networking.md §1). It holds no credential and asks the cluster nothing.
+  Declaring the surface publishes nothing; the platform tenant's enablement
+  does, with an owner and a review date like any other.
+*/ -}}
+{{- if .Values.concierge.enabled }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: concierge
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  classes: [app]
+  # Nothing opens it from a desktop: it is where people arrive before they
+  # have one.
+  launch: none
+  trustTier: platform
+  version: {{ .Values.concierge.chart.version | quote }}
+  # The cluster has one, and it is the platform tenant's.
+  defaultForPlatform: true
+  package:
+    chart:
+      repository: {{ .Values.concierge.chart.repository | quote }}
+      name: {{ .Values.concierge.chart.name | quote }}
+      version: {{ .Values.concierge.chart.version | quote }}
+    extraValues:
+      # The name the Service the exposure below routes to derives from.
+      fullnameOverride: concierge
+      {{- with .Values.concierge.extraValues }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  expose:
+    - name: front
+      surface: perimeter
+      # Nobody is signed in here; that is the point of the page.
+      authMode: none
+      # The bare domain. Only the platform tenant's entry may have it.
+      apex: true
+      # The whole host: the page, its lookup files, and the cluster's brand.
+      paths: ["/"]
+      backend:
+        service: concierge
+        port: 8080
+{{- end }}

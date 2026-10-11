@@ -1,27 +1,31 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // The publishing proxy's configuration (AD-6).
@@ -57,9 +61,216 @@ import (
 //  4. NO AMBIENT AUTHORITY. Authorization, Cookie and the forwarded-token
 //     header are all dropped. Whatever the application needs to make this
 //     decision is in the URL.
+//
+// One exception to the fourth, and to nothing else. An entry declared
+// authMode app and approved as that has its callers' Authorization header
+// passed on as it came: the callers hold a credential the app issued -- an
+// app password, an API key, a token of the app's -- and only the app can
+// check it. The proxy checks none of it and does not know who calls. Cookie
+// is still dropped and Set-Cookie still hidden, every identity header is
+// still cleared, and only the declared paths are forwarded. Because a
+// guessed password now lands on the app's own sign-in, such an entry is held
+// to a rate of its own, lower than every other entry's.
 
 // perimeterProxyPort is what the proxy listens on inside its pod.
 const perimeterProxyPort = 8080
+
+// perimeterLimits are what every published entry is held to, whatever its
+// profile says. One place, because they are the platform's and not an
+// app's: a profile cannot raise them, and has no field to try with.
+//
+// The cluster's administrator may set each through the operator's
+// environment (the variable beside it). A value the proxy would not start
+// with is not taken: the default stands.
+type perimeterLimits struct {
+	// MaxBody is the largest request body, in nginx's notation.
+	// PERIMETER_MAX_BODY.
+	MaxBody string
+	// RatePerSecond and Burst are the requests one client address may make:
+	// that many a second, and that many more at once before the proxy
+	// answers 429. PERIMETER_RATE_PER_SECOND, PERIMETER_RATE_BURST.
+	RatePerSecond int
+	Burst         int
+	// Concurrent is how many requests of one client address the proxy
+	// works on at a time. PERIMETER_CONCURRENT_PER_CLIENT.
+	Concurrent int
+	// CredentialRatePerSecond, CredentialBurst and CredentialConcurrent are
+	// the same three for an entry that passes the caller's Authorization
+	// header to the app, where every request may be a guess at a password.
+	// Never above the ones for every entry: a setting that would raise them
+	// past those is held to those. PERIMETER_CREDENTIAL_RATE_PER_SECOND,
+	// PERIMETER_CREDENTIAL_RATE_BURST,
+	// PERIMETER_CREDENTIAL_CONCURRENT_PER_CLIENT.
+	CredentialRatePerSecond int
+	CredentialBurst         int
+	CredentialConcurrent    int
+	// ClientAddressHeader names the request header the caller's address is
+	// read from, on a cluster whose edge is reached through something that
+	// is not the caller: a tunnel. Empty reads the address the Gateway saw
+	// the connection come from. Decided by edgeClientAddressHeader.
+	ClientAddressHeader string
+}
+
+// The numbers themselves are in internal/addresses (PerimeterRateFor), where
+// the director reads them too: what an approver is told of the limit is what
+// the proxy is given.
+const defaultPerimeterMaxBody = "10m"
+
+var (
+	defaultPerimeterRate           = addresses.PerimeterRateFor(false)
+	defaultPerimeterCredentialRate = addresses.PerimeterRateFor(true)
+)
+
+var (
+	perimeterBodySize   = regexp.MustCompile(`^[1-9][0-9]{0,8}[kKmMgG]?$`)
+	perimeterHeaderName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,63}$`)
+)
+
+// perimeterLimitsFromEnv are the limits in force: the defaults, each replaced
+// by the operator's environment where that names a usable value.
+// clientAddressHeader is edgeClientAddressHeader's answer for this cluster.
+func perimeterLimitsFromEnv(clientAddressHeader string) perimeterLimits {
+	l := perimeterLimits{
+		MaxBody:             defaultPerimeterMaxBody,
+		RatePerSecond:       defaultPerimeterRate.PerSecond,
+		Burst:               defaultPerimeterRate.Burst,
+		Concurrent:          defaultPerimeterRate.Concurrent,
+		ClientAddressHeader: clientAddressHeader,
+
+		CredentialRatePerSecond: defaultPerimeterCredentialRate.PerSecond,
+		CredentialBurst:         defaultPerimeterCredentialRate.Burst,
+		CredentialConcurrent:    defaultPerimeterCredentialRate.Concurrent,
+	}
+	if v := strings.TrimSpace(os.Getenv("PERIMETER_MAX_BODY")); perimeterBodySize.MatchString(v) {
+		l.MaxBody = v
+	}
+	positive := func(key string, into *int, max int) {
+		if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && n > 0 && n <= max {
+			*into = n
+		}
+	}
+	positive("PERIMETER_RATE_PER_SECOND", &l.RatePerSecond, 100000)
+	positive("PERIMETER_RATE_BURST", &l.Burst, 1000000)
+	positive("PERIMETER_CONCURRENT_PER_CLIENT", &l.Concurrent, 60000)
+	positive("PERIMETER_CREDENTIAL_RATE_PER_SECOND", &l.CredentialRatePerSecond, 100000)
+	positive("PERIMETER_CREDENTIAL_RATE_BURST", &l.CredentialBurst, 1000000)
+	positive("PERIMETER_CREDENTIAL_CONCURRENT_PER_CLIENT", &l.CredentialConcurrent, 60000)
+	return l.bounded()
+}
+
+// bounded holds the limits of an entry that passes a credential on to the
+// limits of every entry: they are the stricter ones or the same, never the
+// looser, however each was set.
+//
+// One that was never set is the strictest the proxy starts with, not the
+// general limit: an unset number must not be how such an entry comes to be
+// limited like any other.
+func (l perimeterLimits) bounded() perimeterLimits {
+	l.CredentialRatePerSecond = max(1, min(l.CredentialRatePerSecond, l.RatePerSecond))
+	l.CredentialBurst = max(1, min(l.CredentialBurst, l.Burst))
+	l.CredentialConcurrent = max(1, min(l.CredentialConcurrent, l.Concurrent))
+	return l
+}
+
+// edgeClientAddressHeader is the header the edge is told the caller's
+// address in, or empty where the edge sees the caller's own connection.
+//
+// A cluster behind the tunnel is reached by the tunnel's client alone, so
+// every request arrives from that client's address; the tunnel writes the
+// caller's into CF-Connecting-IP itself and replaces whatever a caller sent
+// under that name. On a cluster with an address of its own, the Gateway sees
+// the caller's connection, and that header is a caller's to write: reading
+// it there would let anybody choose the address they are counted under.
+//
+// So the answer has to be true of this cluster, and it is taken from the
+// first of these that says:
+//
+//   - PERIMETER_CLIENT_ADDRESS_HEADER, the administrator's word: a header
+//     name, for a cluster whose load balancer or CDN hides the caller behind
+//     its own address and names it in a header; or "none".
+//   - EDGE_INGRESS and NETWORK_MODE, where the operator was told them
+//     (cmd/main.go, buildEdgeIngress): cf-tunnel and tunnel are the tunnel,
+//     static-ip and any other ingress are not.
+//   - The Gateway's own Service. Without an address outside the cluster
+//     (type ClusterIP) nothing but the tunnel's client and this cluster's
+//     pods can open a connection to the Gateway, so the tunnel's header is
+//     the tunnel's word; with one (LoadBalancer, NodePort) it is not read.
+//   - Nothing says: the connection, which nobody can forge.
+func edgeClientAddressHeader(ctx context.Context, c client.Client) string {
+	if header, said := edgeClientAddressHeaderFromEnv(); said {
+		return header
+	}
+	if c == nil {
+		return ""
+	}
+	svc, err := findKernelEdgeService(ctx, c)
+	if err != nil {
+		return ""
+	}
+	if svc.Spec.Type == corev1.ServiceTypeClusterIP || svc.Spec.Type == "" {
+		return cloudflareClientAddressHeader
+	}
+	return ""
+}
+
+func edgeClientAddressHeaderFromEnv() (header string, said bool) {
+	if v := strings.TrimSpace(os.Getenv("PERIMETER_CLIENT_ADDRESS_HEADER")); v != "" {
+		if strings.EqualFold(v, "none") {
+			return "", true
+		}
+		if perimeterHeaderName.MatchString(v) {
+			return v, true
+		}
+	}
+	if name := os.Getenv("EDGE_INGRESS"); name != "" {
+		if name == "cf-tunnel" {
+			return cloudflareClientAddressHeader, true
+		}
+		return "", true
+	}
+	switch os.Getenv("NETWORK_MODE") {
+	case "static-ip":
+		return "", true
+	case "tunnel":
+		return cloudflareClientAddressHeader, true
+	}
+	return "", false
+}
+
+const cloudflareClientAddressHeader = "CF-Connecting-IP"
+
+// perimeterPathPattern is what a declared path may consist of. The path goes
+// into the proxy's configuration, where a brace, a quote, a semicolon or a
+// space would be configuration and not a path; so a path with anything else
+// in it is not rendered at all (perimeterSafePaths).
+var perimeterPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._~/-]*$`)
+
+// perimeterSafePaths are the paths that can be rendered, and whether all of
+// them could be.
+func perimeterSafePaths(paths []string) (safe []string, all bool) {
+	all = true
+	for _, p := range paths {
+		if perimeterPathPattern.MatchString(p) && !strings.Contains(p, "//") {
+			safe = append(safe, p)
+		} else {
+			all = false
+		}
+	}
+	return safe, all
+}
+
+// perimeterPublishedPattern is the expression a normalised path matches when
+// it is inside a declared prefix, by whole segments: /s publishes /s and
+// /s/x and not /sx, as the Gateway's own prefix match does.
+func perimeterPublishedPattern(prefix string) string {
+	if prefix == "/" {
+		return "^/"
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return "^" + regexp.QuoteMeta(prefix)
+	}
+	return "^" + regexp.QuoteMeta(prefix) + "(/|$)"
+}
 
 // perimeterProxyConfig renders the nginx configuration for one enabled
 // exposure.
@@ -68,7 +279,47 @@ const perimeterProxyPort = 8080
 // because those are two different people's decisions: the author said which
 // prefixes this surface is, and the tenant's perimeter approver said it may be
 // published and where. Neither can widen the other.
-func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32) string {
+//
+// website says this surface is a tenant's on the cluster's main address. The
+// platform's paths there are then refused by the proxy as well as outranked
+// at the Gateway, so the website cannot answer them whatever the routes look
+// like for a moment; and every answer says nosniff, the one header the
+// platform adds to a page it does not own.
+//
+// What a request has to pass, in the order the proxy asks:
+//
+//   - its method is not TRACE, TRACK or CONNECT (405);
+//   - its path, as the caller wrote it, has one reading: no empty segment,
+//     no dot segment plain or encoded, no encoded slash or backslash, no
+//     path parameter (400). The proxy decides on the normalised path and
+//     the application is sent the path as written, so a path the two could
+//     read differently is how a declared prefix is left and a denied path
+//     reached;
+//   - its normalised path is inside a declared prefix (404);
+//   - and is not a denied path, compared without regard to case (404);
+//   - its caller's address is within its rate and its concurrent requests
+//     (429);
+//   - its headers and body are within the sizes below (400, 413, 431).
+func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32, website, passCredential bool, limits perimeterLimits) string {
+	limits = limits.bounded()
+	rate, burst, concurrent := limits.RatePerSecond, limits.Burst, limits.Concurrent
+	if passCredential {
+		rate, burst, concurrent = limits.CredentialRatePerSecond, limits.CredentialBurst, limits.CredentialConcurrent
+	}
+	denied := perimeterDenied(e)
+	if website {
+		denied = append(denied, mainAddressReservedPrefixes...)
+		sort.Strings(denied)
+	}
+	prefixes, _ := perimeterSafePaths(perimeterPrefixes(e))
+	denied, deniedAll := perimeterSafePaths(denied)
+	if !deniedAll {
+		// A denied path that cannot be written down cannot be refused, and
+		// publishing the rest without it would publish what the author said
+		// not to. The entry publishes nothing.
+		prefixes = nil
+	}
+
 	var b strings.Builder
 	b.WriteString("# Managed by gentian-os. The publishing proxy for one exposure (AD-6).\n")
 	b.WriteString("#\n")
@@ -88,82 +339,187 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 	b.WriteString("  fastcgi_temp_path /tmp/fastcgi;\n")
 	b.WriteString("  uwsgi_temp_path /tmp/uwsgi;\n")
 	b.WriteString("  scgi_temp_path /tmp/scgi;\n")
-	b.WriteString("  # A shared link may be a large file in either direction.\n")
-	b.WriteString("  client_max_body_size 0;\n")
+	b.WriteString("  # Sizes and times a request is held to. A request line or a header\n")
+	b.WriteString("  # over 8k, or headers over 32k together, is refused; so is a body\n")
+	b.WriteString("  # over the limit. A caller that sends nothing is dropped.\n")
+	fmt.Fprintf(&b, "  client_max_body_size %s;\n", limits.MaxBody)
+	b.WriteString("  client_header_buffer_size 1k;\n")
+	b.WriteString("  large_client_header_buffers 4 8k;\n")
+	b.WriteString("  client_header_timeout 15s;\n")
+	b.WriteString("  client_body_timeout 30s;\n")
+	b.WriteString("  send_timeout 30s;\n")
+	b.WriteString("  keepalive_timeout 65s;\n")
+	b.WriteString("  proxy_connect_timeout 5s;\n")
+	b.WriteString("  proxy_send_timeout 60s;\n")
+	b.WriteString("  proxy_read_timeout 60s;\n")
 	b.WriteString("  proxy_request_buffering off;\n")
 	b.WriteString("  proxy_http_version 1.1;\n")
+	b.WriteString("  # A header name with an underscore is not passed on: an application\n")
+	b.WriteString("  # that reads X_Gentian_Email as X-Gentian-Email would be told who to be.\n")
+	b.WriteString("  underscores_in_headers off;\n")
+	b.WriteString("  ignore_invalid_headers on;\n")
+	b.WriteString("  server_tokens off;\n")
+	b.WriteString("\n")
+	b.WriteString("  # The path as the caller wrote it, up to the query. A path with more\n")
+	b.WriteString("  # than one reading is refused: the proxy decides on the normalised\n")
+	b.WriteString("  # path and the application is sent the written one.\n")
+	b.WriteString("  map $request_uri $perimeter_ambiguous {\n")
+	b.WriteString("    default 0;\n")
+	// An empty segment; a dot segment, plain or encoded; an encoded slash,
+	// backslash or NUL; a backslash or a path parameter, plain or encoded.
+	b.WriteString(`    "~^[^?]*//" 1;` + "\n")
+	b.WriteString(`    "~*^[^?]*/(\.|%2e)(\.|%2e)?(/|\?|$)" 1;` + "\n")
+	b.WriteString(`    "~*^[^?]*%(2f|5c|00)" 1;` + "\n")
+	b.WriteString(`    "~^[^?]*[\x5c;]" 1;` + "\n")
+	b.WriteString(`    "~*^[^?]*%3b" 1;` + "\n")
+	b.WriteString("  }\n")
+	b.WriteString("  # Inside a declared prefix, by whole segments.\n")
+	b.WriteString("  map $uri $perimeter_published {\n")
+	b.WriteString("    default 0;\n")
+	for _, prefix := range prefixes {
+		fmt.Fprintf(&b, "    \"~%s\" 1;\n", perimeterPublishedPattern(prefix))
+	}
+	b.WriteString("  }\n")
+	b.WriteString("  # Refused even where a prefix admits it, whatever its case.\n")
+	b.WriteString("  map $uri $perimeter_denied {\n")
+	b.WriteString("    default 0;\n")
+	for _, deny := range denied {
+		fmt.Fprintf(&b, "    \"~*^%s\" 1;\n", regexp.QuoteMeta(deny))
+	}
+	b.WriteString("  }\n")
+	b.WriteString("  # Whose request this is. The Gateway appends the address its\n")
+	b.WriteString("  # connection came from to X-Forwarded-For, so the last one is the\n")
+	b.WriteString("  # Gateway's word and the ones before it are the caller's.\n")
+	b.WriteString("  map $http_x_forwarded_for $perimeter_edge_peer {\n")
+	b.WriteString("    default $remote_addr;\n")
+	b.WriteString("    \"~(?:^|[ ,])(?<perimeter_last>[0-9A-Fa-f:.]+) *$\" $perimeter_last;\n")
+	b.WriteString("  }\n")
+	client := "$perimeter_edge_peer"
+	if h := limits.ClientAddressHeader; h != "" {
+		b.WriteString("  # This cluster's edge is reached through something that is not the\n")
+		b.WriteString("  # caller, which names the caller in a header of its own.\n")
+		fmt.Fprintf(&b, "  map $http_%s $perimeter_client {\n", strings.ToLower(strings.ReplaceAll(h, "-", "_")))
+		b.WriteString("    default $perimeter_edge_peer;\n")
+		b.WriteString("    \"~^(?<perimeter_named>[0-9A-Fa-f:.]+)$\" $perimeter_named;\n")
+		b.WriteString("  }\n")
+		client = "$perimeter_client"
+	}
+	fmt.Fprintf(&b, "  limit_req_zone %s zone=perimeter_rate:10m rate=%dr/s;\n", client, rate)
+	fmt.Fprintf(&b, "  limit_conn_zone %s zone=perimeter_concurrent:10m;\n", client)
+	b.WriteString("  limit_req_status 429;\n")
+	b.WriteString("  limit_conn_status 429;\n")
+	b.WriteString("\n")
 	b.WriteString("  server {\n")
 	fmt.Fprintf(&b, "    listen %d;\n", perimeterProxyPort)
 	b.WriteString("    server_name _;\n")
 	b.WriteString("    # Nothing here is a browsing surface, and an index of what a\n")
 	b.WriteString("    # tenant shares is not ours to publish.\n")
 	b.WriteString("    autoindex off;\n")
-	b.WriteString("    server_tokens off;\n")
 	b.WriteString("\n")
-	b.WriteString("    # Anything not declared never reaches the tenant.\n")
-	b.WriteString("    location / { return 404; }\n")
-
-	for _, prefix := range perimeterPrefixes(e) {
-		b.WriteString("\n")
-		fmt.Fprintf(&b, "    location %s {\n", prefix)
-		for _, deny := range perimeterDenied(e) {
-			fmt.Fprintf(&b, "      location %s { return 404; }\n", deny)
-		}
-		fmt.Fprintf(&b, "      proxy_pass http://%s:%d;\n", upstreamHost, upstreamPort)
-		b.WriteString("      proxy_set_header Host $host;\n")
-		b.WriteString("      proxy_set_header X-Forwarded-Proto https;\n")
-		b.WriteString("      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		b.WriteString("\n")
-		b.WriteString("      # Property 2, 3 and 4: nothing of the session model goes in.\n")
-		b.WriteString("      # An empty value is what nginx takes for \"do not send this\".\n")
-		b.WriteString("      proxy_set_header Cookie \"\";\n")
-		b.WriteString("      proxy_set_header Authorization \"\";\n")
-		b.WriteString("      proxy_set_header X-Forwarded-Access-Token \"\";\n")
-		for _, h := range perimeterStrippedIdentityHeaders {
-			fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
-		}
-		b.WriteString("\n")
-		b.WriteString("      # And nothing of the application's session comes back out:\n")
-		b.WriteString("      # a Set-Cookie here would plant a cookie on the public host\n")
-		b.WriteString("      # that the browser then carries to every other link on it.\n")
-		b.WriteString("      proxy_hide_header Set-Cookie;\n")
-		b.WriteString("      proxy_pass_header Server;\n")
-		b.WriteString("      proxy_hide_header X-Powered-By;\n")
-		b.WriteString("    }\n")
+	if len(prefixes) == 0 {
+		// An entry with no paths publishes nothing; declaring "/" is the
+		// only way to publish the whole host.
+		b.WriteString("    # Nothing is declared, so nothing reaches the tenant.\n")
+		b.WriteString("    location / { return 404; }\n")
+		b.WriteString("  }\n")
+		b.WriteString("}\n")
+		return b.String()
 	}
+	b.WriteString("    location / {\n")
+	b.WriteString("      if ($request_method ~ \"^(TRACE|TRACK|CONNECT)$\") { return 405; }\n")
+	b.WriteString("      if ($perimeter_ambiguous) { return 400; }\n")
+	b.WriteString("      # Anything not declared never reaches the tenant.\n")
+	b.WriteString("      if ($perimeter_published = 0) { return 404; }\n")
+	b.WriteString("      if ($perimeter_denied) { return 404; }\n")
+	fmt.Fprintf(&b, "      limit_req zone=perimeter_rate burst=%d nodelay;\n", burst)
+	fmt.Fprintf(&b, "      limit_conn perimeter_concurrent %d;\n", concurrent)
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "      proxy_pass http://%s:%d;\n", upstreamHost, upstreamPort)
+	b.WriteString("      proxy_set_header Host $host;\n")
+	b.WriteString("      # What the application is told of the connection is this proxy's\n")
+	b.WriteString("      # word, not the caller's: one address, the scheme and the host.\n")
+	b.WriteString("      proxy_set_header X-Forwarded-Proto https;\n")
+	fmt.Fprintf(&b, "      proxy_set_header X-Forwarded-For %s;\n", client)
+	fmt.Fprintf(&b, "      proxy_set_header X-Real-IP %s;\n", client)
+	b.WriteString("      proxy_set_header X-Forwarded-Host $host;\n")
+	for _, h := range perimeterStrippedForwardingHeaders {
+		fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
+	}
+	b.WriteString("\n")
+	b.WriteString("      # Property 2, 3 and 4: nothing of the session model goes in.\n")
+	b.WriteString("      # An empty value is what nginx takes for \"do not send this\".\n")
+	b.WriteString("      proxy_set_header Cookie \"\";\n")
+	if passCredential {
+		b.WriteString("      # The one header that goes in as it came: this entry was declared\n")
+		b.WriteString("      # and approved as one whose callers present a credential the\n")
+		b.WriteString("      # application issued. The application checks it; this proxy does\n")
+		b.WriteString("      # not, and does not know who is calling.\n")
+		b.WriteString("      proxy_set_header Authorization $http_authorization;\n")
+	} else {
+		b.WriteString("      proxy_set_header Authorization \"\";\n")
+	}
+	b.WriteString("      proxy_set_header X-Forwarded-Access-Token \"\";\n")
+	for _, h := range perimeterStrippedIdentityHeaders() {
+		fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
+	}
+	b.WriteString("\n")
+	b.WriteString("      # And nothing of the application's session comes back out:\n")
+	b.WriteString("      # a Set-Cookie here would plant a cookie on the public host\n")
+	b.WriteString("      # that the browser then carries to every other link on it.\n")
+	b.WriteString("      # Nor what the application runs on: the answer names the proxy.\n")
+	b.WriteString("      proxy_hide_header Set-Cookie;\n")
+	b.WriteString("      proxy_hide_header X-Powered-By;\n")
+	if website {
+		b.WriteString("      proxy_hide_header X-Content-Type-Options;\n")
+		b.WriteString("      add_header X-Content-Type-Options nosniff always;\n")
+	}
+	b.WriteString("    }\n")
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	return b.String()
 }
 
+// perimeterStrippedForwardingHeaders are what a caller could otherwise tell
+// the application about its own connection, or about which path it asked
+// for. The proxy sets the three it vouches for (X-Forwarded-For, -Proto,
+// -Host, and X-Real-IP) and sends none of these.
+var perimeterStrippedForwardingHeaders = []string{
+	"Forwarded",
+	"X-Forwarded-Port",
+	"X-Forwarded-Prefix",
+	"X-Forwarded-Server",
+	"X-Original-URL",
+	"X-Rewrite-URL",
+}
+
 // perimeterStrippedIdentityHeaders are what the gateway sets on an
 // AUTHENTICATED route to tell a backend who the caller is. On the perimeter
 // there is nobody, so an inbound one is somebody claiming to be somebody.
-var perimeterStrippedIdentityHeaders = []string{
-	"X-Auth-Request-User",
-	"X-Auth-Request-Email",
-	"X-Auth-Request-Preferred-Username",
-	"X-Auth-Request-Groups",
-	"X-Auth-Request-Subject",
-	"X-Gentian-Tenant",
-	"X-Gentian-Subject",
+//
+// The front door's own are read from the service that sets them
+// (bouncer.IdentityHeaders), so a header added there is removed here without
+// anybody remembering to. The rest are names an earlier edge used and an
+// application may still read.
+func perimeterStrippedIdentityHeaders() []string {
+	out := []string{
+		"X-Auth-Request-User",
+		"X-Auth-Request-Email",
+		"X-Auth-Request-Preferred-Username",
+		"X-Auth-Request-Groups",
+		"X-Auth-Request-Subject",
+		"X-Gentian-Tenant",
+		"X-Gentian-Actor",
+	}
+	for _, h := range bouncer.IdentityHeaders() {
+		out = append(out, http.CanonicalHeaderKey(h))
+	}
+	return out
 }
 
-// perimeterPrefixes are the path prefixes this exposure publishes, sorted so
-// the generated configuration does not churn between reconciles.
-//
-// An exposure that declares none publishes NOTHING. That is deliberate and it
-// is the opposite of the gateway surface, where empty paths mean the whole
-// host: on the perimeter, "I did not say" must never resolve to "everything".
+// perimeterPrefixes are the path prefixes this exposure publishes: none for an
+// entry that declares none (addresses.Prefixes).
 func perimeterPrefixes(e *gentianov1alpha1.ExposureSpec) []string {
-	out := make([]string, 0, len(e.Paths))
-	for _, p := range e.Paths {
-		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(p, "/") {
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return addresses.Prefixes(e)
 }
 
 // perimeterDenied are the paths refused even where a prefix admits them.

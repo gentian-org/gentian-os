@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // The parts a ComponentProfile is made of: what it requires of the platform,
@@ -150,9 +152,9 @@ type PrivilegedRoleSpec struct {
 	Name string `json:"name"`
 }
 
-// TileSpec configures a Gentian portal tile icon (52×52 SVG).
+// TileSpec configures a desktop tile icon (52×52 SVG).
 // Set icon (catalogue path) or logo (custom data URI). image is source-repo only
-// and must be inlined to logo before the AppProfile is applied to a cluster.
+// and must be inlined to logo before the profile is applied to a cluster.
 type TileSpec struct {
 	// Icon selects a pre-made tile from the Gentian catalogue (path 2).
 	// +optional
@@ -177,9 +179,8 @@ type TileSpec struct {
 // It was called KernelRequirements, which named a fulfiller that is not the
 // fulfiller. A database comes from a component of class "service"; mail may
 // be a relay outside the cluster; object storage may be a bucket at a cloud
-// provider. On AppProfile the JSON key is still kernelRequirements, because
-// every profile in the catalogue writes it; ComponentProfile spells it
-// requires.services.
+// provider. ComponentProfile spells it requires.services; an extension
+// (spec.extensions[]) still writes the key kernelRequirements.
 type ServiceRequirements struct {
 	// Identity specifies OIDC requirements.
 	// +optional
@@ -201,14 +202,142 @@ type ServiceRequirements struct {
 	// +optional
 	Mail *MailRequirement `json:"mail,omitempty"`
 
-	// MCP specifies a Model Context Protocol server requirement.
-	// When enabled, the orchestrator registers the app's MCP endpoint in the
-	// kernel MCP registry and wires OIDC authentication.
+	// MCP declares that the component exposes a Model Context Protocol
+	// endpoint. It is a declaration only: there is no MCP registry, and the
+	// platform registers nothing and wires no authentication for it. Its one
+	// effect today is that a chart component declaring it is installed
+	// through the app Composition.
 	// +optional
 	MCP *MCPRequirement `json:"mcp,omitempty"`
+
+	// LLM declares that the component calls language models through the
+	// platform's model gateway. Only a component that declares it is given a
+	// key at the gateway, the address and the key, and a network path to the
+	// gateway; a component that does not is given none of the three.
+	// +optional
+	LLM *LLMRequirement `json:"llm,omitempty"`
+
+	// Rights declares that the component asks the platform whether a person
+	// may use an app of its tenant, for a person who is not at a browser.
+	// Only a component that declares it is given a key for that question and
+	// a network path to where it is answered.
+	// +optional
+	Rights *RightsRequirement `json:"rights,omitempty"`
+
+	// Vouching declares that the component obtains tokens of a person who is
+	// not at a browser, on the strength of that person's earlier consent: it
+	// signs a short statement naming the person, and the tenant's realm
+	// answers with a token of that person for one app.
+	// +optional
+	Vouching *VouchingRequirement `json:"vouching,omitempty"`
 }
 
-// IdentityRequirement specifies OIDC or SAML needs.
+// VouchingRequirement declares that a component vouches for people at the
+// tenant's realm (RFC 7523, the JWT authorization grant).
+//
+// The platform then, for each install:
+//
+//   - enters the component in the tenant's realm as a trusted issuer, under
+//     the alias vouch-<profile>, with the address its keys are published at;
+//   - gives it a client of the realm to ask with, vouch-<profile>, which can
+//     do nothing else, and which may ask for the scope of any app of the
+//     tenant that has one (app-<profile>, which makes that app the token's
+//     audience);
+//   - delivers the client's secret and what the component has to know in the
+//     Secret vouching-<profile> of the tenant's namespace (VOUCHING_ISSUER,
+//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL);
+//   - gives it the component's own key (the Secret rights-check-<profile>),
+//     as for requires.services.rights.
+//
+// The realm issues a token only for a person who is linked to that issuer.
+// Nothing here links anybody: a person is linked on a request that carries
+// that person's own token, and unlinked on theirs, an administrator's, or
+// the component's own. So the people a component can speak for are the
+// people who said so.
+//
+// A component that can obtain a person's token for any app of the tenant is
+// of platform trust.
+type VouchingRequirement struct {
+	// Keys says where the component publishes the keys its statements are
+	// signed with, as a JWKS. The realm fetches them from there.
+	Keys VouchingKeys `json:"keys"`
+}
+
+// VouchingKeys is the address of a component's signing keys: a Service of the
+// component, in the tenant's namespace.
+type VouchingKeys struct {
+	// Service is the name of the component's Service.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Service string `json:"service"`
+
+	// Port is the Service's port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Path is where the JWKS is served.
+	// +optional
+	// +kubebuilder:default="/.well-known/jwks.json"
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	// +kubebuilder:validation:MaxLength=256
+	Path string `json:"path,omitempty"`
+}
+
+// RightsRequirement declares that a component asks the platform one question:
+// may this person use that app of the component's own tenant. Being present
+// is the declaration.
+//
+// It is for a component that acts for a person who has no session at the
+// edge at that moment, and which would otherwise need the authorization
+// store's own credential. The component receives the address the question is
+// answered at and a key of its own -- random, per tenant and component -- in
+// the Secret rights-check-<component> of the tenant's namespace
+// (RIGHTS_CHECK_URL, RIGHTS_CHECK_KEY). The key is good for that question
+// about that tenant, and for nothing else: it cannot write, cannot list and
+// cannot name another tenant's app.
+//
+// The answer says who in the tenant may use what, so the requirement is for
+// a profile of platform trust.
+type RightsRequirement struct{}
+
+// LLMRequirement declares that a component uses the platform's model gateway.
+// Being present is the declaration.
+//
+// The gateway speaks the OpenAI API. The component receives its base address
+// and a key of its own -- random, per tenant and component, never derived
+// from their names -- in the Secret llm-credentials-<component> of the
+// tenant's namespace (OPENAI_API_BASE, OPENAI_API_BASE_URL, OPENAI_API_KEY),
+// and, where its chart takes them as values, through valueMapping.llm.
+//
+// It is served for an app a tenant installs, and for a component the
+// platform places on tenants itself (defaultForTenants, defaultForPlatform,
+// defaultWhereStoreOffered) when its profile is of platform trust.
+//
+// On a cluster that runs no model gateway the requirement cannot be met, and
+// the component waits and says so, as it does for a database that is not
+// there -- unless the requirement is optional.
+type LLMRequirement struct {
+	// Optional means the component runs without the gateway. While the
+	// cluster serves no models, or the component's key is not delivered yet,
+	// it is released all the same: without credentials, without a network
+	// path to the gateway, and told so through valueMapping.llm.availableKey.
+	// When the key arrives the component is rendered again with it.
+	//
+	// Honoured for a component the platform places on tenants itself. For an
+	// app a tenant installs the requirement holds the release as if this
+	// were not set: its chart is rendered by the app Composition, which
+	// reads the key from where it is kept and cannot render without it.
+	// +optional
+	Optional bool `json:"optional,omitempty"`
+}
+
+// IdentityRequirement says how the app signs people in: with an OIDC client
+// of its own, with a SAML client of its own, or -- for an app that can do
+// neither -- through the platform's sign-in sidecar.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.sidecar) || (!has(self.oidc) && !has(self.saml))",message="identity.sidecar signs people in for an app that can do neither OIDC nor SAML itself: it cannot be declared beside identity.oidc or identity.saml"
 type IdentityRequirement struct {
 	// OIDC describes the OIDC client to register in the tenant's Keycloak realm.
 	// When set, the composition emits a Client CR so every newly deployed tenant
@@ -221,6 +350,92 @@ type IdentityRequirement struct {
 	// SAML describes the SAML client to register in the tenant's Keycloak realm.
 	// +optional
 	SAML *SAMLClientSpec `json:"saml,omitempty"`
+
+	// Sidecar signs people in through the platform's sign-in sidecar.
+	// +optional
+	Sidecar *SignInSidecarSpec `json:"sidecar,omitempty"`
+}
+
+// SignInSidecarSpec declares that an app's people are signed in by the
+// platform's sign-in sidecar: for an app that, in the edition installed,
+// speaks neither OIDC nor SAML, so that a person who is signed in at the
+// platform opens it and is in -- with no second sign-in and no password.
+//
+// Declaring it is all a profile does. The platform then, for each install:
+//
+//   - registers the sidecar as a SAML service provider in the tenant's realm,
+//     under a name and with the one address it derives from where the app
+//     answers. A profile states neither;
+//   - runs the sidecar beside the app, told where the realm is, and gives it
+//     the handler from the profile's bundle;
+//   - routes two paths of the app's own host to it: /sso/login, behind the
+//     front door like the rest of the app, and /sso/acs, which the realm
+//     posts its answer to and which therefore takes no session;
+//   - opens the sidecar's network paths: to the realm's certificate, and to
+//     what is declared below, and to nothing else;
+//   - removes all of it with the app.
+//
+// The handler is the app's part: the code that makes a session in this app
+// for the person the sidecar names. It is the ConfigMap
+// "<profile>.sign-in-handler" of the profile's bundle (key handler.js, label
+// gentianos.io/asset: sign-in-handler), so the install's digest covers it. A
+// handler holds whatever is declared here, which is why it runs only from a
+// bundle the install is pinned to, and never from a tenant's own catalogue.
+//
+// Who may use the app is not decided here. A sign-in begins on /sso/login,
+// which only a person the front door admits to this app reaches.
+type SignInSidecarSpec struct {
+	// Exposure names the gateway entry people open the app at: the sidecar's
+	// two paths are on that entry's host. It may be omitted when the profile
+	// has exactly one gateway entry with authMode oidc.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Exposure string `json:"exposure,omitempty"`
+
+	// EntryPaths are paths of the app that lead to the sign-in instead of to
+	// the app: its front page, and the address of its own sign-in form.
+	// Matched exactly, and only for a page load; a request the app's own page
+	// makes in the background is the app's to deal with. The page a handler
+	// sends a person to after signing them in must not be among them, and
+	// neither may a path under /sso/ or /oauth2/, which are the sign-in's own:
+	// the operator holds an install whose profile names one.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	EntryPaths []string `json:"entryPaths,omitempty"`
+
+	// Database gives the handler the app's own database: where it is and the
+	// app's own login to it, as DB_HOST, DB_PORT, DB_NAME, DB_USER and
+	// DB_PASSWORD, and the network path to that server. The profile must
+	// declare requires.services.database.
+	// +optional
+	Database bool `json:"database,omitempty"`
+
+	// Secrets gives the handler secrets of this app, by the names they have
+	// under spec.secrets.generated: each as SECRET_<NAME>, the name in upper
+	// case. An app's session-signing key is the usual one. A name that is not
+	// under spec.secrets.generated holds the install: what is read is always
+	// this app's own vault path, so no name reaches another app's secret.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=64
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9_]+$`
+	Secrets []string `json:"secrets,omitempty"`
+
+	// AppPort lets the handler call the app itself inside the cluster: it
+	// is the port the app's pods listen on, and the network path is opened
+	// to that port of the app's own pods. The handler is told where the app
+	// is as APP_URL -- the Service and port the exposure routes to, which
+	// need not carry the same number. Such a call does not pass the front
+	// door.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	AppPort int32 `json:"appPort,omitempty"`
 }
 
 // SAMLClientSpec describes a SAML client to be registered in the tenant's Keycloak realm.
@@ -238,8 +453,10 @@ type SAMLClientSpec struct {
 
 // OIDCClientSpec describes an OIDC client to be registered in the tenant's
 // Keycloak realm by the Crossplane composition. Adding this block to an
-// AppProfile is all that is needed to get automatic client registration for
+// profile is all that is needed to get automatic client registration for
 // any new app — no manual Keycloak setup required per tenant.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size() == 0",message="backchannelLogoutUrl is withdrawn: declare backchannelLogout (exposure and path) instead. The platform builds the address from the entry's own Service inside the cluster; a profile no longer names one"
 type OIDCClientSpec struct {
 	// ClientID is the OIDC client identifier registered in Keycloak.
 	// +kubebuilder:validation:Required
@@ -269,10 +486,27 @@ type OIDCClientSpec struct {
 	// +optional
 	PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris,omitempty"`
 
-	// BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-	// notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+	// BackchannelLogoutURL is withdrawn and refused: declare BackchannelLogout
+	// instead.
+	//
+	// It was an address of the profile's own writing, which the realm then
+	// posted a logout token to when a person signed out. Two things were
+	// wrong with that. Every profile wrote the app's public address, where
+	// every path is behind a session, so the realm's own request was answered
+	// with a redirect to the sign-in and never arrived. And it let a
+	// catalogue entry make the identity provider send a request to any
+	// address at all, inside the cluster or outside it.
+	//
+	// The field stays in the definition so that a profile which still
+	// carries it is refused and told why, where an unknown field would be
+	// dropped without a word.
 	// +optional
 	BackchannelLogoutURL string `json:"backchannelLogoutUrl,omitempty"`
+
+	// BackchannelLogout says where in the app the realm tells it that a
+	// person signed out (OpenID Connect Back-Channel Logout).
+	// +optional
+	BackchannelLogout *BackchannelLogoutSpec `json:"backchannelLogout,omitempty"`
 
 	// DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
 	// grant (legacy / CLI apps). Defaults to false.
@@ -283,6 +517,60 @@ type OIDCClientSpec struct {
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
+}
+
+// BackchannelLogoutSpec declares where an app with its own OIDC client is
+// told that a person signed out.
+//
+// When a person signs out at the platform, the realm ends its session and
+// posts a logout token -- a JWT it signs, naming the client, the person and
+// the session -- to every client of that session which registered an address
+// for it. The app checks the token and ends its own session for that person,
+// which otherwise outlives the sign-out: the next person at the same browser
+// would open the app as the one before.
+//
+// A profile states a path and which of its entries the path belongs to. It
+// states no address. The platform builds one from the entry's own backend:
+//
+//	http://<backend.service>.<the component's namespace>.svc.cluster.local:<backend.port><path>
+//
+// So the realm calls the app inside the cluster, server to server, at the
+// app's own Service. It does not call the app's public address, where the
+// front door would ask the realm for a session it does not have; and it can
+// be made to call nothing but the Service this component's own entry routes
+// to -- no other namespace, no address outside the cluster.
+//
+// Nothing is opened for it. The realm's namespace is already admitted to a
+// tenant's pods, and the path is no more public than before.
+//
+// What the app has to do is its own, and the profile's author checks it: the
+// app must verify the token's signature against the realm's keys, its issuer,
+// that its audience is this client, and that it carries the back-channel
+// logout event, before it ends a session. An app that ends a session on an
+// unverified token lets whoever can reach that path sign people out -- never
+// in -- so say in the profile's customization record what the app checks.
+//
+// The realm posts once, when a person signs out or an administrator ends
+// their session. It does not post again if the app did not answer, and not
+// when a session merely runs out.
+type BackchannelLogoutSpec struct {
+	// Exposure names the entry of this profile (spec.expose) whose backend
+	// the path is served by. The entry must route to this component's own
+	// Service: one that names another component's (backend.component) is
+	// refused, and so is a name the profile has no entry for.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Exposure string `json:"exposure"`
+
+	// Path is the app's back-channel logout endpoint: a plain path. One or
+	// more segments of letters, digits, "_", "~" and "-", which may have
+	// single dots inside them. So no query and no fragment, no empty segment
+	// ("//", which begins a host), no ".." and no segment that begins or ends
+	// with a dot, and nothing else that could be read as part of an address.
+	// +kubebuilder:validation:MinLength=2
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)+/?$`
+	Path string `json:"path"`
 }
 
 // DatabaseRequirement specifies a relational database need.
@@ -299,14 +587,29 @@ type DatabaseRequirement struct {
 	DatabasePerTenant bool `json:"databasePerTenant"`
 
 	// AllowDynamicDatabaseCreation lets the app create databases of its own at
-	// runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
-	// CREATEDB. Ask for it only when creating databases is what the app is for
+	// runtime. Ask for it only when creating databases is what the app is for
 	// (a data explorer, say); an app that merely stores its own state must not.
 	//
-	// Databases created this way are still purged with the app: they are owned
-	// by the app role, and uninstall --purge drops everything that role owns.
-	// They are not otherwise governed — the tenant chooses the names, and they
-	// do not appear in the catalogue's provisioning model.
+	// On postgresql the app's role is given CREATEDB. Databases created this
+	// way are the app's by ownership: the app role owns each one it made, so
+	// an export copies them, a restore puts them back and a purge drops them
+	// with the role. They are not otherwise governed — the tenant chooses the
+	// names, and they do not appear in the catalogue's provisioning model.
+	//
+	// On mariadb a database has no owner and the server is shared by every
+	// tenant, so the app's databases are the ones named for it: the app may
+	// create, use and drop databases whose name is the name of its
+	// provisioned database followed by an underscore and anything —
+	// "<database>_reports" — and no other. It is granted all privileges on
+	// those names and on its provisioned database, and none on the server:
+	// CREATE DATABASE under any other name is refused, as is any statement
+	// that needs a global privilege. An app that names its databases itself
+	// must therefore be configured, by the profile, to prefix them with
+	// "<database>_"; one that cannot be is not installable with this field on
+	// the shared server. Databases so named are exported, restored (under the
+	// provisioned name of the tenant restored into) and purged with the
+	// provisioned one. Provisioning refuses an app whose provisioned database
+	// would itself lie under another app's prefix, or the reverse.
 	//
 	// Omitted is equivalent to false, which is also Go's zero value for bool —
 	// left undefaulted at the schema level so profiles that omit it don't
@@ -409,13 +712,31 @@ type MailRequirement struct {
 // go without changing every profile.
 type SMTPRequirement struct{}
 
-// IMAPRequirement declares that an app reads mail. It carries nothing, for the
-// same reason as SMTPRequirement.
-type IMAPRequirement struct{}
+// IMAPRequirement declares that an app reads mail. The mail server's address
+// is the cluster's, for the same reason as in SMTPRequirement.
+type IMAPRequirement struct {
+	// TokenSignIn declares that the app opens a person's mailbox with that
+	// person's sign-in token (SASL XOAUTH2) instead of an app password.
+	//
+	// It is a grant, which is why it is said and never implied by imap: the
+	// mail server accepts a token only from the sign-in client of an app
+	// whose profile declares this. The app's client is given the optional
+	// client scope "mailbox" in the tenant's realm; a token the app obtained
+	// by asking for that scope names the mail server in its audience and is
+	// accepted for the mailbox of the person it was issued to, and no other
+	// token of the app, and no token of any other app, is.
+	//
+	// It needs requires.services.identity.oidc, the client the scope is given
+	// to. Served where the cluster runs its own mail server and the tenant
+	// has mailboxes on it in a realm of its own; elsewhere it does nothing.
+	// +optional
+	TokenSignIn bool `json:"tokenSignIn,omitempty"`
+}
 
-// MCPRequirement describes a Model Context Protocol server endpoint.
+// MCPRequirement describes a Model Context Protocol server endpoint. Nothing
+// reads its fields yet (see ServiceRequirements.MCP).
 type MCPRequirement struct {
-	// Enabled activates MCP endpoint registration.
+	// Enabled says the component exposes the endpoint.
 	// +kubebuilder:default=true
 	Enabled bool `json:"enabled"`
 
@@ -425,7 +746,7 @@ type MCPRequirement struct {
 	// +kubebuilder:validation:Pattern=`^/.*`
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Auth is the authentication method for MCP calls.
+	// Auth is the authentication method the endpoint expects.
 	// +optional
 	// +kubebuilder:validation:Enum=oidc;none
 	// +kubebuilder:default=oidc
@@ -446,7 +767,7 @@ type APIIntegration struct {
 	// +kubebuilder:validation:Enum=redirect;proxy;portal-proxy
 	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
 
-	// BaseURL is the external service origin (e.g. https://corp.gentian.org).
+	// BaseURL is the external service origin (e.g. https://service.example).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^https?://.+`
@@ -537,6 +858,11 @@ type ValueMapping struct {
 	// +optional
 	Cache *CacheValueMapping `json:"cache,omitempty"`
 
+	// LLM maps the model gateway's address and the component's key to Helm
+	// keys, for a component that declares requires.services.llm.
+	// +optional
+	LLM *LLMValueMapping `json:"llm,omitempty"`
+
 	// SMTP maps mail submission values to Helm keys.
 	// +optional
 	SMTP *SMTPValueMapping `json:"smtp,omitempty"`
@@ -598,17 +924,35 @@ type PlatformValueMapping struct {
 	// +optional
 	DirectorURLKey string `json:"directorUrlKey,omitempty"`
 
-	// CredentialManagerURLKey receives the credential manager's in-cluster
+	// UsherURLKey receives the usher's in-cluster URL: where a desktop asks,
+	// with the person's own token, what that person may open. Naming it also
+	// opens the component's egress to the control namespace, where the usher
+	// runs.
+	// +optional
+	UsherURLKey string `json:"usherUrlKey,omitempty"`
+
+	// CustodianURLKey receives the custodian's in-cluster
 	// URL. Like DirectorURLKey it is more than a fact: naming it is what
 	// opens the component's egress to the control namespace, because a
 	// component that does not relay there has no business reaching it.
 	//
-	// The credential manager holds no authority of its own -- every write
+	// The custodian holds no authority of its own -- every write
 	// takes the caller's token and exchanges it for one OpenBao will accept
 	// -- so a component that relays to it is passing the person through,
 	// exactly as it does with the director.
 	// +optional
-	CredentialManagerURLKey string `json:"credentialManagerUrlKey,omitempty"`
+	CustodianURLKey string `json:"custodianUrlKey,omitempty"`
+
+	// RegistrarURLKey receives the registrar's in-cluster URL: where a
+	// console relays, with the person's own token, the managing of a
+	// tenant's people and groups. Like the two above, naming it is what
+	// opens the component's egress to the control namespace.
+	//
+	// The registrar serves the paths the director served for people, so a
+	// component that called the director for them changes the address and
+	// nothing else.
+	// +optional
+	RegistrarURLKey string `json:"registrarUrlKey,omitempty"`
 	// ClusterKey receives the id the director knows this cluster by.
 	// +optional
 	ClusterKey string `json:"clusterKey,omitempty"`
@@ -639,6 +983,27 @@ type PlatformValueMapping struct {
 	// German-speaking and also serves English.
 	// +optional
 	DefaultLanguageKey string `json:"defaultLanguageKey,omitempty"`
+
+	// HostKey receives the host this component answers on in its zone: the
+	// host of its first gateway entry, as the operator routes it. A component
+	// that has to spell its own address -- a redirect address it states to a
+	// service outside the cluster -- is told it rather than left to assemble
+	// it from the tenant and the domain, which differs by tenancy mode.
+	// +optional
+	HostKey string `json:"hostKey,omitempty"`
+
+	// StoreURLKey receives the base address of the App Store API this cluster
+	// names (the Cluster claim's spec.catalogue.storeUrl), and the empty
+	// string while the cluster offers no App Store: none is named, or licence
+	// reporting is off.
+	//
+	// Like the URL keys above it is more than a fact. A store is outside the
+	// cluster, and so are the addresses its own metadata names, so naming this
+	// key is what opens the component's pods a way out: TCP 443 to public
+	// addresses, and only while a store is offered. That is why only a
+	// platform-trust profile may name it.
+	// +optional
+	StoreURLKey string `json:"storeUrlKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.
@@ -759,6 +1124,37 @@ type CacheValueMapping struct {
 	PasswordKey string `json:"passwordKey,omitempty"`
 }
 
+// LLMValueMapping maps the model gateway's values to Helm chart keys.
+type LLMValueMapping struct {
+	// BaseURLKey is the Helm value key for the gateway's OpenAI-compatible
+	// base address (it ends in /v1).
+	// +optional
+	BaseURLKey string `json:"baseUrlKey,omitempty"`
+	// APIKeyKey is the Helm value key for the key the component presents.
+	// For an app a tenant installs, where the app Composition sets it from
+	// the vault. A component the platform places on tenants itself is
+	// rendered by the operator, whose release values are not a place for a
+	// key: such a profile names SecretNameKey instead, and is refused if it
+	// names this.
+	// +optional
+	APIKeyKey string `json:"apiKeyKey,omitempty"`
+	// SecretNameKey receives the NAME of the Secret the component's model
+	// credentials are in (llm-credentials-<component>, in the component's
+	// namespace; the key is under OPENAI_API_KEY), as a plain string, for a
+	// chart that reads the key with a secretKeyRef or envFrom. The same shape
+	// as database.secretNameKey: the key is never a chart value. Empty while
+	// an optional requirement is not met. For a component the platform
+	// places on tenants itself.
+	// +optional
+	SecretNameKey string `json:"secretNameKey,omitempty"`
+	// AvailableKey receives true when the gateway's address and the
+	// component's key are delivered, and false while an optional requirement
+	// (requires.services.llm.optional) is not met. For a component the
+	// platform places on tenants itself.
+	// +optional
+	AvailableKey string `json:"availableKey,omitempty"`
+}
+
 // SMTPValueMapping maps SMTP submission values to Helm chart keys.
 type SMTPValueMapping struct {
 	// HostKey is the Helm value key for the SMTP host.
@@ -828,13 +1224,13 @@ type AppSidecarSpec struct {
 }
 
 // BackupSpec tells the platform how this app must be captured and put back.
-// spec.kernelRequirements already declares *which* stores the app has; this
+// spec.requires.services already declares *which* stores the app has; this
 // declares how to pause it, what on its volumes is worth keeping, and what has
 // to run after a restore before the app is usable again — knowledge only the
 // app's author has.
 //
 // Every field is optional, and a profile that declares nothing gets the safe
-// default: scale the app to zero, dump every store in spec.kernelRequirements,
+// default: scale the app to zero, dump every store in spec.requires.services,
 // and archive every PersistentVolumeClaim its Helm release owns. That is
 // correct for most apps, so the section exists for the ones that deviate.
 //
@@ -1120,14 +1516,16 @@ type AppSecret struct {
 	ValuePath string `json:"valuePath"`
 }
 
-// DerivedSecretKey names one deterministic value the platform adds to the
-// credentials Secret it manages for an app.
+// DerivedSecretKey names one value the platform makes for an app and adds to
+// the credentials Secret it manages for it.
 //
-// The derivation is deliberately frozen: the value is a function of the tenant
-// and app name only, so it survives reinstalls. Changing how it is computed
-// rotates the value for every existing tenant, which for a session-signing key
-// means logging everyone out — so the formula must not be "improved" in place.
-// A genuinely better derivation belongs in appSecrets under a new key name.
+// The value is a secret of this tenant, app and key, made once and kept in
+// the vault as the app's other credentials are. How it is made follows the
+// cluster's secretMode: derived from the master password, so that a cluster
+// rebuilt from the same master password and salt arrives at it again, or
+// drawn at random, and then the stored copy is the only one. It is never
+// made again while it is stored: an app signs sessions with such a key and
+// may encrypt what it keeps with it.
 type DerivedSecretKey struct {
 	// Key is the Secret key, and therefore the environment variable name when
 	// the app consumes the Secret with envFrom (e.g. "WEBUI_SECRET_KEY").

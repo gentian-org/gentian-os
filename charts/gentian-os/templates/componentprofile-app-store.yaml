@@ -1,0 +1,124 @@
+{{- /*
+  The App Store app: the store's interface on the cluster. A store is a
+  service outside the cluster that holds the data about apps; this component
+  fetches that data, renders it, and installs on the cluster's side as the
+  person signed in, through the director and the custodian. It holds nothing
+  of its own -- no credential, no database, no Kubernetes access -- and this
+  profile is the platform's whole statement about it: the app's own
+  repository ships no profile on purpose.
+
+  It is not on every cluster. A tenant has one only while the cluster offers
+  an App Store: licence reporting is on and the Cluster claim names a store
+  (spec.catalogue.storeUrl). The platform tenant has none, because nobody
+  installs apps there.
+*/ -}}
+{{- if .Values.appStore.enabled }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: app-store
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  classes: [app]
+  # Reached from the App Store tile on the web exposure.
+  launch: tile
+  # Platform trust, because it relays the forwarded token to the director,
+  # the custodian and the usher, which forwardToken below requires, and
+  # because it is told where the store is, which opens its way out of the
+  # cluster.
+  trustTier: platform
+  version: {{ .Values.appStore.chart.version | quote }}
+  # Every tenant but the platform tenant, and only while the cluster offers
+  # an App Store. Taken away again when it no longer does: this component
+  # owns no data.
+  defaultWhereStoreOffered: true
+  package:
+    chart:
+      repository: {{ .Values.appStore.chart.repository | quote }}
+      name: {{ .Values.appStore.chart.name | quote }}
+      version: {{ .Values.appStore.chart.version | quote }}
+    valueMapping:
+      # Every key matches the app's chart as gentian-ui ships it, whose schema
+      # refuses a key it does not know under these objects.
+      platform:
+        issuerKey: auth.issuer
+        zoneClientIdKey: auth.clientId
+        audienceKey: auth.audience
+        # Asked who may install, and to declare a repository, install and pin.
+        directorUrlKey: director.url
+        # Asked to store a repository's credential.
+        custodianUrlKey: custodian.url
+        # Asked what the cluster has made of the tenant's apps, and whether
+        # the cluster offers an App Store at all.
+        usherUrlKey: usher.url
+        clusterKey: director.cluster
+        tenantKey: platform.tenant
+        kernelDomainKey: platform.kernelDomain
+        realmKey: platform.realm
+        zoneKindKey: platform.zoneKind
+        # store.<the tenant's base domain>: the redirect address the app
+        # states to a store's issuer is spelled from it.
+        hostKey: host
+        # The store API's base address, from the Cluster claim. Naming it is
+        # also what opens this component's egress to public addresses on 443:
+        # the store, its issuer and the origins of its pictures are outside
+        # the cluster.
+        storeUrlKey: store.url
+    extraValues:
+      # The name every object of the release derives from, pinned so the
+      # Services the exposures below route to are known before the release
+      # exists.
+      fullnameOverride: app-store
+      auth:
+        disabled: false
+        mode: edge
+      gateway:
+        enabled: false
+      networkPolicy:
+        create: false
+      api:
+        env:
+          ENVIRONMENT: production
+      {{- with .Values.appStore.extraValues }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  expose:
+    # The API. It relays the caller's token to the director, the custodian and
+    # the usher, which is why this entry forwards the edge token.
+    #
+    # /oauth/callback is where a store's issuer sends the person back after
+    # they signed in to the store: a top-level navigation from another site.
+    # The zone's session cookies are SameSite=Lax, which a browser sends on
+    # exactly that, so the request arrives with the session and reaches the
+    # API with the person's token like any other. It is not the edge's own
+    # callback, which is under /oauth2.
+    - name: api
+      surface: gateway
+      authMode: oidc
+      subDomain: store
+      paths: ["/api", "/oauth/callback", "/healthz", "/readyz"]
+      forwardToken: true
+      backend:
+        service: app-store-api
+        port: 8000
+    # The bundle, on the same host so both share one session. The tile is
+    # asked on the tenant: it is for the people who may install apps there,
+    # and because it asks can_install_app the routes of this component ask it
+    # too -- a member who knows the host is refused at the edge.
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: store
+      backend:
+        service: app-store-web
+        port: 8080
+      tile:
+        displayName: App Store
+        description: Browse apps, acquire them and install them in this tenant.
+        # The "store" glyph of internal/tiles/catalogue.json, which the
+        # desktop ships too.
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPjxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSIjRUNFOERGIi8+PHJlY3Qgd2lkdGg9IjUyIiBoZWlnaHQ9IjUyIiByeD0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyMCwgMjEsIDQ2LCAwLjA4KSIgc3Ryb2tlLXdpZHRoPSIxIi8+PHN2ZyB4PSIxNCIgeT0iMTQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMyNjI2OTYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJtMiA3IDQuNDEtNC40MUEyIDIgMCAwIDEgNy44MyAyaDguMzRhMiAyIDAgMCAxIDEuNDIuNTlMMjIgNyIvPjxwYXRoIGQ9Ik00IDEydjhhMiAyIDAgMCAwIDIgMmgxMmEyIDIgMCAwIDAgMi0ydi04Ii8+PHBhdGggZD0iTTEwIDEydjQiLz48cGF0aCBkPSJNMTQgMTJ2NCIvPjxwYXRoIGQ9Ik0yIDdoMjAiLz48L3N2Zz48L3N2Zz4=
+        relation: can_install_app
+        object: tenant
+{{- end }}

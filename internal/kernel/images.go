@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package kernel
@@ -28,7 +22,12 @@ const (
 	// is not pinned in this repo (the CNPG operator's default applies, 17.x
 	// today), so bump this alongside CNPG operator upgrades.
 	DefaultPostgresProvisionerImage = "postgres:17-alpine"
-	DefaultMariaDBProvisionerImage  = "mariadb:11"
+	// The MariaDB client is the server's own image (charts/infra/mariadb
+	// pins it), to the digest. A floating mariadb:11 resolved to an 11.8
+	// client, whose mariadb-dump opens every dump with a statement the 11.1
+	// server refuses (SET ... NOTE_VERBOSITY): each dump was taken and none
+	// could be loaded again. Bump the two together; a test holds them equal.
+	DefaultMariaDBProvisionerImage  = "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
 	DefaultRedisProvisionerImage    = "redis:7-alpine"
 	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
 	DefaultKeycloakProvisionerImage = "alpine:3.20"
@@ -43,6 +42,19 @@ const (
 	// upstream security fixes more than it wants a small attack surface we
 	// maintain ourselves.
 	DefaultPerimeterProxyImage = "nginx:1.27-alpine"
+	// DefaultSignInSidecarImage is the platform's sign-in sidecar: the
+	// program that signs people in to an app that can do neither OIDC nor
+	// SAML (internal/controller/signin_sidecar.go).
+	//
+	// One build, named twice: by a tag no later build takes, and by the
+	// digest of what that tag held. This is the program that decides whether
+	// a sign-in is genuine, so the build that was tested is the build that
+	// runs, and neither a registry nor a rebuild can change it.
+	//
+	// It is built by gentian-apps, from images/gentian-sidecar-sso-saml. A
+	// build of that repository's develop branch is develop-<commit>; a
+	// release is its version.
+	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-6c430b6@sha256:99b6f7547e58f446c00dc0764fedfcb22661dc50eaf50ca82b9f467f84df8a38"
 )
 
 func PostgresProvisionerImage() string {
@@ -64,6 +76,12 @@ func MemcachedImage() string {
 // PerimeterProxyImage is the publishing proxy for a tenant's DMZ.
 func PerimeterProxyImage() string {
 	return envOrDefault("PERIMETER_PROXY_IMAGE", DefaultPerimeterProxyImage)
+}
+
+// SignInSidecarImage is the sign-in sidecar the operator runs beside an app
+// whose profile declares one.
+func SignInSidecarImage() string {
+	return envOrDefault("SIGN_IN_SIDECAR_IMAGE", DefaultSignInSidecarImage)
 }
 
 func KeycloakProvisionerImage() string {

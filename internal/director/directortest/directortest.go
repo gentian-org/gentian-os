@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package directortest holds the fixtures the director's contract tests share:
@@ -19,7 +13,6 @@ limitations under the License.
 package directortest
 
 import (
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -56,13 +49,73 @@ spec:
 `
 }
 
+// OnCluster are the profiles every fixture repository holds in its catalogue
+// directory: the ones tests install or switch on by name alone, which is
+// valid only for a profile the cluster already has.
+var OnCluster = []string{
+	"element", "nextcloud", "notes", "odoo", "status", "wiki", "board", "calendar", "deck",
+	"app-0", "app-1", "app-2", "app-3", "app-4", "app-5", "element-deck", "element-talk",
+}
+
+// ProfileYAML is a minimal ComponentProfile.
+func ProfileYAML(name string) string {
+	return "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: " + name +
+		"\nspec:\n  classes: [app]\n  trustTier: certified\n  version: \"1.0.0\"\n"
+}
+
+// PublishingProfileYAML is a ComponentProfile that declares one entry for the
+// internet beside its page behind sign-in: a share surface under its own
+// label, or with apex a website for the cluster's main address.
+func PublishingProfileYAML(name, entry string, apex bool) string {
+	where := "      subDomain: share-" + name + "\n      paths: [\"/s/\", \"/public.php/\"]\n      denyPaths: [\"/s/admin/\"]\n"
+	if apex {
+		where = "      apex: true\n      paths: [\"/\"]\n"
+	}
+	return ProfileYAML(name) +
+		"  expose:\n" +
+		"    - name: web\n      surface: gateway\n      authMode: oidc\n" +
+		"      backend:\n        service: " + name + "\n        port: 8080\n" +
+		"    - name: " + entry + "\n      surface: perimeter\n      authMode: none\n" + where +
+		"      backend:\n        service: " + name + "\n        port: 8080\n"
+}
+
+// CataloguePath is the repository-relative path of a file in the cluster's
+// catalogue directory.
+func CataloguePath(file string) string {
+	return "clusters/" + Cluster + "/catalogue/" + file
+}
+
+// ClaimPath is the repository-relative path of the Cluster claim.
+const ClaimPath = "clusters/" + Cluster + "/kernel/claims/cluster.yaml"
+
+// Commit writes files into the remote as one commit: what somebody else
+// pushed. Paths are repository-relative.
+func Commit(t testing.TB, remote string, files map[string]string) {
+	t.Helper()
+	work := t.TempDir()
+	Git(t, "", "clone", "--no-local", remote, work)
+	for path, body := range files {
+		full := filepath.Join(work, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Git(t, work, "add", "-A")
+	Git(t, work, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-m", "seed")
+	Git(t, work, "push", "origin", "HEAD:main")
+}
+
 // Remote creates a bare repository holding the given tenants and returns its path.
 func Remote(t testing.TB, tenants ...string) string {
 	t.Helper()
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	Git(t, "", "init", "--bare", "--initial-branch=main", remote)
-	// No background maintenance on the remote: a detached `git gc --auto`
-	// still writing when the test ends is what makes TempDir cleanup fail.
+	// No maintenance on the remote at all: it is started there by whoever
+	// pushes, and a detached `git gc --auto` still writing when the test ends
+	// is what makes TempDir cleanup fail.
 	Git(t, "", "--git-dir", remote, "config", "gc.auto", "0")
 	Git(t, "", "--git-dir", remote, "config", "receive.autogc", "false")
 	seed := t.TempDir()
@@ -72,6 +125,22 @@ func Remote(t testing.TB, tenants ...string) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(claims, "cluster.yaml"), []byte("apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: "+Cluster+"\nspec:\n  kernelDomain: "+KernelDomain+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalogue := filepath.Join(seed, "clusters", Cluster, "catalogue")
+	if err := os.MkdirAll(catalogue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range OnCluster {
+		if err := os.WriteFile(filepath.Join(catalogue, name+".yaml"), []byte(ProfileYAML(name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Nextcloud is what every fixture tenant has installed, and it declares
+	// a share surface for the internet: the entry the publishing tests
+	// approve.
+	if err := os.WriteFile(filepath.Join(catalogue, "nextcloud.yaml"),
+		[]byte(PublishingProfileYAML("nextcloud", "shares", false)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range tenants {
@@ -90,17 +159,26 @@ func Remote(t testing.TB, tenants ...string) string {
 }
 
 // Clone returns a fresh checkout of remote — what one director replica owns.
+//
+// Cloned over git's transport, as a director clones its forge. Given a path,
+// git instead links the files of the remote's object directory one by one,
+// and that includes whatever a push arriving at that moment has half written:
+// the clone fails with "hardlink different from source".
 func Clone(t testing.TB, remote string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "checkout")
-	Git(t, "", "clone", remote, dir)
+	Git(t, "", "clone", "--no-local", remote, dir)
 	return dir
 }
 
 // Git runs git and fails the test on error, returning trimmed output.
+//
+// Housekeeping stays in the foreground, as it does for the director's own
+// git: a repack git detached is still writing into a directory the test is
+// about to remove, and the removal fails with "directory not empty".
 func Git(t testing.TB, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"}, args...)...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -225,28 +303,4 @@ func OtherKey(t testing.TB) *rsa.PrivateKey {
 		t.Fatal(err)
 	}
 	return k
-}
-
-// Statement signs payload as the store would: a compact JWS, EdDSA, with the
-// key id in the protected header.
-func Statement(t testing.TB, key ed25519.PrivateKey, kid string, payload any) string {
-	t.Helper()
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: key},
-		(&jose.SignerOptions{}).WithHeader("kid", kid))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	jws, err := signer.Sign(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := jws.CompactSerialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out
 }

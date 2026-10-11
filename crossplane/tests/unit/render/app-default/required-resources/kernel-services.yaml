@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gentian-kernel-services
-  namespace: gentian-system
+  namespace: kernel-control
   labels:
     gentianos.io/config-type: kernel-services
 data:

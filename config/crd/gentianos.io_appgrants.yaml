@@ -31,7 +31,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: AppGrant is a tenant-scoped authorization grant — a subset of
-          AppProfile declarations.
+          what the ComponentProfile declares.
         properties:
           apiVersion:
             description: |-
@@ -62,10 +62,10 @@ spec:
                     call a provided contract.
                   properties:
                     app:
-                      description: App is the consumer AppProfile name.
+                      description: App is the consumer ComponentProfile name.
                       type: string
                     contract:
-                      description: Contract matches AppProfile.spec.provides[].name.
+                      description: Contract matches ComponentProfile.spec.provides[].name.
                       type: string
                     scope:
                       description: Scope lists approved capability strings for the
@@ -81,12 +81,12 @@ spec:
                   type: object
                 type: array
               app:
-                description: App is the installed AppProfile name (matches Tenant.spec.apps[].profile).
+                description: App is the installed ComponentProfile name (matches Tenant.spec.apps[].profile).
                 type: string
               consume:
                 description: |-
                   Consume lists contract capabilities this app may use from providers in the tenant.
-                  Each entry must be a subset of AppProfile.spec.optionalIntegrations.
+                  Each entry must be a subset of ComponentProfile.spec.integrations.
                 items:
                   description: ConsumeGrantSpec is the tenant-approved consumption
                     grant for one contract.

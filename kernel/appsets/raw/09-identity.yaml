@@ -61,6 +61,12 @@ spec:
             # a tuple at all. The path is unchanged, so only the host moved.
             - name: eventListener.directorURL
               value: 'http://gentian-os-membership.ns.control.placeholder.svc.cluster.local:8090/v1/events/keycloak'
+            # The claim's mail.host, the relay Keycloak's realm sends through on
+            # an external-mail cluster -- the same placeholder the mail
+            # ApplicationSet fills. Without it keycloak-smtp-credentials had an
+            # empty smtp_host, and the realm was configured to send to ":587".
+            - name: relayHost
+              value: 'mail.relay.placeholder'
           valueFiles:
             - values.yaml
             - values-{{.env}}.yaml

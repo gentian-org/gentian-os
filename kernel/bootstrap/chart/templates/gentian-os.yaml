@@ -2,7 +2,7 @@
 # The operator, in the control namespace. It takes the namespace layout as
 # values, so it addresses kernel namespaces by function rather than by the one
 # name v4 had for all of them.
-{{- if .Values.operator.enabled }}
+{{- if eq (toString .Values.operator.enabled) "true" }}
 {{- /*
   The manifests come from a git ref; the image comes from a published tag, and
   the installer resolves that to the image built from THIS CHECKOUT'S COMMIT
@@ -51,7 +51,7 @@ spec:
     - .spec.target.deletionPolicy
     - .metadata.finalizers
   sources:
-  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     path: charts/gentian-os
     helm:
@@ -74,8 +74,20 @@ spec:
           {{- range .Values.namespaces.kernel }}
           {{ .function }}: {{ .name }}
           {{- end }}
+        {{- with .Values.tenantDNS01ClusterIssuer }}
+        # The issuer tenant certificates are requested from: the one this
+        # install created, by the rule that named it (ACME_ENV and the DNS
+        # provider). Stated here because a stage profile names one too, and
+        # a profile that says staging on a cluster whose issuers are
+        # production asks for an issuer that does not exist -- no tenant
+        # certificate is ever issued, and no tenant host ever answers.
+        tenantDNS01ClusterIssuer: {{ . | quote }}
+        {{- end }}
         # The Gateway, its routes and its reference grants live at the edge.
         servicesNamespace: {{ include "ns" (list . "edge") }}
+        # The switch for the kernel's network rules, compared as a string
+        # the way it is passed (--set-string): only "true" is on.
+        kernelNetworkPolicies: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
         # Where Argo CD runs. The operator chart's default is "argocd", which
         # is v4's name -- it reaches only a ConfigMap key nothing reads today,
         # but a stale namespace waiting in a ConfigMap for its first reader is
@@ -84,13 +96,13 @@ spec:
           namespace: {{ include "ns" (list . "gitops") }}
         infraNamespace: {{ include "ns" (list . "authentication") }}
         authzBridge:
-          # Retired with the split: the director projects membership from
-          # Keycloak's events instead. Its URL stays because it is where
-          # OpenFGA answers, which the director reads too.
-          enabled: false
+          # Where OpenFGA answers, which the operator and the director read.
           openfgaURL: {{ printf "http://gentian-openfga.%s.svc.cluster.local:8080" (include "ns" (list . "authorization")) | quote }}
         # The edge's enforcement point, beside the Gateways (networking.md §2).
-        edgeAuthz:
+        bouncer:
+          enabled: true
+        # What a signed-in person's desktop asks what it may show (§3.10).
+        usher:
           enabled: true
         # The desktop every tenant gets, from the branch this cluster follows.
         desktop:
@@ -98,7 +110,8 @@ spec:
           chart:
             version: {{ .Values.desktop.chartVersion | default (printf "0.1.0-%s" (.Values.desktop.chartBranch | default "develop")) | quote }}
         # The administration console every tenant gets, from the branch of
-        # gentian-apps this cluster follows. Like the desktop, it is published
+        # gentian-ui this cluster follows -- the desktop's repository and
+        # branch, since both are the platform's own UIs. Like the desktop, it is published
         # as a moving prerelease per branch and an immutable one per commit,
         # and what is pinned here is the immutable one -- a Helm release under
         # an unchanged version string is never upgraded, so following the
@@ -106,7 +119,20 @@ spec:
         adminConsole:
           enabled: true
           chart:
-            version: {{ .Values.adminConsole.chartVersion | default (printf "0.1.1-%s" (.Values.adminConsole.chartBranch | default "main")) | quote }}
+            version: {{ .Values.adminConsole.chartVersion | default (printf "0.1.1-%s" (.Values.adminConsole.chartBranch | default "develop")) | quote }}
+        # The concierge: the page on the cluster's bare domain, the platform
+        # tenant's component, published from its DMZ. Pinned like the consoles.
+        concierge:
+          enabled: true
+          chart:
+            version: {{ .Values.concierge.chartVersion | default (printf "0.1.0-%s" (.Values.concierge.chartBranch | default "develop")) | quote }}
+        # The App Store app's profile, pinned like the consoles. A tenant gets
+        # the component only while the cluster offers an App Store: licence
+        # reporting is on and the Cluster claim names a store.
+        appStore:
+          enabled: true
+          chart:
+            version: {{ .Values.appStore.chartVersion | default (printf "0.1.0-%s" (.Values.appStore.chartBranch | default "develop")) | quote }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from
@@ -124,7 +150,12 @@ spec:
             key: keys
         director:
           enabled: true
-          entitlements: "off"
+        # What keeps the list of people, at Keycloak (§3.10). The director
+        # served those routes and held the credential for them; it does
+        # neither now, so a cluster with a director and no registrar has no
+        # people screens.
+        registrar:
+          enabled: true
         # The waiver allowlist is the director's to write, into the claims,
         # where the console's changes to it are commits. The chart would
         # otherwise create a second copy of the same object from its own
@@ -132,6 +163,12 @@ spec:
         # for whoever edits the wrong one.
         platformSecurityPolicy:
           create: false
+        # The licence report: whether this cluster says what it runs, and
+        # to where. Always stated, both ways, so that the claim of a cluster
+        # that reports nothing is as readable as one that does.
+        licenceReport:
+          enabled: {{ eq (toString .Values.licenceReport.enabled) "true" }}
+          url: {{ .Values.licenceReport.url | default .Values.licenceReport.defaultUrl | quote }}
         # The vault's namespace, for the Role that lets the operator exec into
         # its pod during bootstrap.
         openbaoNamespace: {{ include "ns" (list . "secrets") }}
@@ -149,4 +186,7 @@ spec:
       selfHeal: true
     syncOptions:
     - ServerSideApply=true
+    # Apply ignoreDifferences on sync too, not only on comparison: otherwise
+    # the fields ignored above are still rewritten on every sync.
+    - RespectIgnoreDifferences=true
 {{- end }}

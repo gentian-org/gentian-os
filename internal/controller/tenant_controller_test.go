@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -324,6 +318,10 @@ func TestMain(m *testing.M) {
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
 		MailServiceMode: "system",
+		// This suite has no vault, and says so: without the statement a
+		// tenant's deletion stops at the step that destroys its stored
+		// credentials, which is what a deployment missing its vault must do.
+		WithoutVault: true,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -333,6 +331,7 @@ func TestMain(m *testing.M) {
 	ctx, cancel := context.WithCancel(context.Background())
 	startXTenantShellSimulator(ctx, testClient)
 	startTenantProvisioningJobSimulator(ctx, testClient)
+	startNamespaceFinalizer(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
 
 	// Stand in for Crossplane and provider-keycloak, which do not run here.
@@ -357,13 +356,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
 	// The platform namespaces tenant provisioning writes to, one per function
 	// (internal/controller/namespaces.go): identity Jobs in the authentication
 	// namespace, the Gateway and its reference grants at the edge, the
 	// provisioning ConfigMap in the provisioning one, and each data-plane Job
 	// beside its system service.
-	for _, ns := range append([]string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"}, testPlatformNamespaces[1:]...) {
+	for _, ns := range testPlatformNamespaces[1:] {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
 		}); err != nil {
@@ -417,7 +415,7 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "system-s3"},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio.platform-kernel.svc:9000"),
+			"endpoint":  []byte("http://minio.system-s3.svc:9000"),
 			"accessKey": []byte("minioadmin"),
 			"secretKey": []byte("minioadmin"),
 		},
@@ -621,7 +619,6 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GTN Demo",
-			Domain:      "acme.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -648,7 +645,6 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "beta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Beta Co",
-			Domain:      "beta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -691,7 +687,6 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gamma"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Gamma Inc",
-			Domain:      "gamma.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -723,7 +718,6 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "delta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Delta Ltd",
-			Domain:      "delta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -754,7 +748,6 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "epsilon"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Epsilon GmbH",
-			Domain:      "epsilon.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -787,7 +780,6 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "missing-profile"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Co",
-			Domain:      "missing-profile.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "does-not-exist"},
 			},
@@ -838,7 +830,6 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "zeta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Zeta Corp",
-			Domain:      "zeta.example.com",
 			Isolation:   &gentianov1alpha1.TenantIsolation{Namespace: "zeta-custom"},
 		},
 	}
@@ -863,7 +854,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "retainer"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Retainer LLC",
-			Domain:         "retainer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 		},
 	}
@@ -901,7 +891,6 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "destroyer"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Destroyer Co",
-			Domain:         "destroyer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		},
 	}
@@ -919,6 +908,9 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// For Delete policy deleteIdentity creates cleanup jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-destroyer-gentian-backup", "system-s3")
 	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", layout.Namespace(layout.Authentication))
 
 	// Wait for Tenant CR to be gone
@@ -927,11 +919,12 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		return err != nil
 	})
 
-	// Namespace should be terminating or gone
+	// The namespace is gone, not merely terminating: the Tenant's finalizer
+	// comes off only once it is, because every volume of the tenant is in it.
 	ns := &corev1.Namespace{}
 	err := testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-destroyer"}, ns)
-	if err == nil && ns.DeletionTimestamp == nil {
-		t.Error("namespace should be deleted or terminating after Delete policy")
+	if err == nil {
+		t.Errorf("the tenant is gone while its namespace is still there (deletionTimestamp %v)", ns.DeletionTimestamp)
 	}
 }
 
@@ -952,7 +945,6 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "combodp"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Combo DP Co",
-			Domain:      "combodp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "combo-pg"},
 				{Profile: "combo-redis"},

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -20,6 +14,7 @@ import (
 	"context"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -87,13 +82,67 @@ func (r *TenantReconciler) EnsureMailForTest(ctx context.Context, tenant *gentia
 	return err
 }
 
-// WriteDirectorRealmSecretForTest exposes the hand-over write. Its merge rule
+// WriteRegistrarRealmSecretForTest exposes the hand-over write. Its merge rule
 // decides whether a realm that could not be reached on one pass keeps a
 // working credential, and getting that wrong takes a screen down for as long
 // as the outage lasts.
-func WriteDirectorRealmSecretForTest(ctx context.Context, c client.Client, data map[string][]byte, complete bool) error {
-	return writeDirectorRealmSecret(ctx, c, data, complete)
+func WriteRegistrarRealmSecretForTest(ctx context.Context, c client.Client, data map[string][]byte, complete bool) error {
+	return writeRegistrarRealmSecret(ctx, c, data, complete)
+}
+
+// RetireDirectorRealmSecretForTest exposes the removal of the Secret the
+// director used to mount.
+func RetireDirectorRealmSecretForTest(ctx context.Context, c client.Client) error {
+	return retireDirectorRealmSecret(ctx, c)
 }
 
 // ServicesNamespaceForTest is where the hand-over Secret lands.
 func ServicesNamespaceForTest() string { return servicesNamespace }
+
+// RegistrarRealmSecretNamespaceForTest is where the registrar's realm credentials are written.
+func RegistrarRealmSecretNamespaceForTest() string { return registrarRealmSecretNamespace() }
+
+// SyncMailAppPasswordsForTest exposes the writer of a tenant's mail
+// passwords: the hashes, the tenant's own copy, the seed and the realm's
+// submission credential. Where each of them lands is what is asserted.
+func (r *TenantReconciler) SyncMailAppPasswordsForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	return r.syncMailAppPasswords(ctx, tenant)
+}
+
+// SyncKernelRealmSubmissionIdentityForTest exposes the registration of the
+// kernel realm's submission credential, which is read from one namespace and
+// written to another.
+func (r *TenantReconciler) SyncKernelRealmSubmissionIdentityForTest(ctx context.Context) error {
+	return r.syncKernelRealmSubmissionIdentity(ctx)
+}
+
+// RetireMisplacedMailObjectsForTest exposes the removal of the mail objects an
+// earlier version wrote where nothing read them.
+func (r *TenantReconciler) RetireMisplacedMailObjectsForTest(ctx context.Context) error {
+	return r.retireMisplacedMailObjects(ctx)
+}
+
+// TenantSMTPJobForTest is the Job that configures a tenant realm's mail, for
+// the namespace it runs in and the Secrets it reads there.
+func TenantSMTPJobForTest(tenant string) *batchv1.Job {
+	return makeTenantSMTPJob(tenant, tenant, "mail.example.test", "Example")
+}
+
+// KernelMailAddressesForTest are the addresses the operator publishes for
+// mail.<kernelDomain> and imap.<kernelDomain>, read from the Services in
+// front of the mail edge.
+func (r *TenantReconciler) KernelMailAddressesForTest(ctx context.Context) (smtp, imap string) {
+	return r.kernelMailAddress(ctx), r.kernelIMAPAddress(ctx)
+}
+
+// HoldUntilPostfixAcceptsDomainForTest exposes the check between a tenant's
+// provisioning and its mail reporting ready.
+func (r *TenantReconciler) HoldUntilPostfixAcceptsDomainForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.holdUntilPostfixAcceptsDomain(ctx, tenant)
+}
+
+// SyncPostfixDKIMTablesForTest exposes the writer of the signing tables
+// Postfix mounts.
+func (r *TenantReconciler) SyncPostfixDKIMTablesForTest(ctx context.Context) error {
+	return r.syncPostfixDKIMTables(ctx)
+}

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1_test
@@ -27,9 +29,9 @@ import (
 	"github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ----- AppProfile tests -----
+// ----- ComponentProfile tests -----
 
-func TestAppProfile_DeepCopy(t *testing.T) {
+func TestComponentProfile_DeepCopy(t *testing.T) {
 	qty := resource.MustParse("5Gi")
 
 	original := &v1alpha1.ComponentProfile{
@@ -119,7 +121,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 // This replaces a test that set the field and then asserted the field equalled
 // what it had just been set to, while its failure message claimed the default
 // was argocd. It asserted nothing and documented something untrue.
-func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
+func TestComponentProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
 	unset := &v1alpha1.ComponentProfile{}
 	if unset.IsAPI() {
 		t.Error("an unset deploymentMethod must not read as an ApiProfile")
@@ -137,7 +139,7 @@ func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
 	}
 }
 
-func TestAppProfile_ExtraValues_RoundTrip(t *testing.T) {
+func TestComponentProfile_ExtraValues_RoundTrip(t *testing.T) {
 	raw := `{"smtp":{"port":587},"someNested":{"key":"value"}}`
 	ap := &v1alpha1.ComponentProfile{
 		Spec: v1alpha1.ComponentProfileSpec{
@@ -180,7 +182,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: v1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "gtn-demo.example.com",
 			DeletionPolicy: v1alpha1.DeletionPolicyRetain,
 			Isolation: &v1alpha1.TenantIsolation{
 				Mode:           v1alpha1.IsolationModeNamespace,
@@ -189,8 +190,7 @@ func TestTenant_DeepCopy(t *testing.T) {
 				S3Prefix:       "gtn-demo-",
 			},
 			Mail: &v1alpha1.TenantMail{
-				Mode:   v1alpha1.MailModeSelfhosted,
-				Domain: "gtn-demo.example.com",
+				Mode: v1alpha1.MailModeSelfhosted,
 			},
 			Quotas: &v1alpha1.TenantQuotas{
 				MaxApps: 20,
@@ -244,7 +244,6 @@ func TestTenant_DeletionPolicyValues(t *testing.T) {
 			tenant := &v1alpha1.Tenant{
 				Spec: v1alpha1.TenantSpec{
 					DisplayName:    "Test Tenant",
-					Domain:         "t.example.com",
 					DeletionPolicy: tc.policy,
 				},
 			}

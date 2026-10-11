@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package gitops
@@ -20,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +22,8 @@ import (
 	"time"
 
 	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // The cluster's settings live in one file, the Cluster claim in git, and this
@@ -201,6 +196,31 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 		}
 		paths = append(paths, p)
 	}
+	// multi -> single on a cluster that carries more than a single-tenancy
+	// cluster may. Refused here, loudly and before anything is written: the
+	// operator would refuse every such tenant on its next pass, and each would
+	// then stand where it was -- its data kept, its hosts still answering,
+	// and nothing reconciling it -- with the reason on a status condition.
+	// Nothing is removed by either refusal. single -> multi is always fine.
+	if gentianov1alpha1.NormalizeTenancyMode(values["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle && values["tenancyMode"] != "" {
+		names, err := g.Tenants(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		var others []string
+		for _, n := range names {
+			if n != platformTenant && n != gentianov1alpha1.SingleUserTenantName {
+				others = append(others, n)
+			}
+		}
+		if len(others) > 0 {
+			return Result{}, fmt.Errorf(
+				"%w: this cluster carries %s, and a single-tenancy cluster admits only the platform tenant "+
+					"and one user tenant named %q. Nothing was changed. Retire %s first, or keep tenancyMode multi",
+				ErrSingleRefused, strings.Join(others, ", "),
+				gentianov1alpha1.SingleUserTenantName, strings.Join(others, ", "))
+		}
+	}
 	sort.Strings(paths)
 	message := fmt.Sprintf("feat(cluster): set %s (via %s)", strings.Join(paths, ", "), meta.actor())
 
@@ -227,7 +247,7 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 func (g *GitOps) applyClaim(ctx context.Context, message string, meta Meta, fn edit) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
+	for started, attempt := time.Now(), 1; ; attempt++ {
 		if err := g.ensureRepo(ctx); err != nil {
 			return Result{}, err
 		}
@@ -267,13 +287,10 @@ func (g *GitOps) applyClaim(ctx context.Context, message string, meta Meta, fn e
 		if !errors.Is(err, errPushRejected) {
 			return Result{}, err
 		}
-		select {
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
-		case <-time.After(time.Duration(rand.Int63n(int64(attempt) * int64(40*time.Millisecond)))):
+		if err := retryPush(ctx, started, attempt); err != nil {
+			return Result{}, err
 		}
 	}
-	return Result{}, ErrPushContended
 }
 
 // setClaimValue writes one dotted path into the claim text.
@@ -284,18 +301,36 @@ func (g *GitOps) applyClaim(ctx context.Context, message string, meta Meta, fn e
 // there at all, so it is inserted under its parent, creating the parents it
 // needs. Everything else in the file is untouched, byte for byte.
 func setClaimValue(text, path, value string) (string, bool, error) {
+	newText, changed, err := setKeyPath(text, "spec", strings.Split(path, "."), value)
+	if errors.Is(err, errNoRoot) {
+		return text, false, fmt.Errorf("the claim has no spec block")
+	}
+	if errors.Is(err, errNoPath) {
+		return text, false, fmt.Errorf("%w: %s", ErrUnknownSetting, path)
+	}
+	return newText, changed, err
+}
+
+var (
+	errNoRoot = errors.New("no such top-level block")
+	errNoPath = errors.New("path not reached")
+)
+
+// setKeyPath is setClaimValue under any top-level block, with the keys given
+// as a list so one of them may itself contain a dot -- an annotation key
+// such as gentianos.io/purge-requested.
+func setKeyPath(text, root string, keys []string, value string) (string, bool, error) {
 	lines := strings.Split(text, "\n")
-	keys := strings.Split(path, ".")
 
 	specAt := -1
 	for i, l := range lines {
-		if strings.TrimRight(l, " ") == "spec:" && indentOf(l) == 0 {
+		if strings.TrimRight(l, " ") == root+":" && indentOf(l) == 0 {
 			specAt = i
 			break
 		}
 	}
 	if specAt < 0 {
-		return text, false, fmt.Errorf("the claim has no spec block")
+		return text, false, errNoRoot
 	}
 
 	// Walk down, one key at a time, inside the extent of the parent found so far.
@@ -333,7 +368,7 @@ func setClaimValue(text, path, value string) (string, bool, error) {
 		start, end = at+1, blockEnd(lines, at+1, indent)
 		indent += 2
 	}
-	return text, false, fmt.Errorf("%w: %s", ErrUnknownSetting, path)
+	return text, false, errNoPath
 }
 
 // findKeyLine finds `<indent><key>:` between start and end.

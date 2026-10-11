@@ -12,7 +12,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
   name: schema-invalid-repository
-  namespace: crossplane-system
+  namespace: kernel-provisioning
 spec:
   type: git
   endpoints:

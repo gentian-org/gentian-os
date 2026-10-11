@@ -1,0 +1,28 @@
+# An app of tenant acme whose chart lies inside a registry repository that
+# tenant declared. The operator named the repository's pull Secret on the
+# claim: the release pulls its chart with it, from this app's own namespace,
+# and the chart's imagePullSecrets list it after the cluster's own.
+#
+# The extension's chart is in no declared repository and is pulled without a
+# credential. An app whose claim names nothing -- every other app fixture, and
+# so every app of a tenant that declared no repository -- gets neither.
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-demo-app-fixture
+  annotations:
+    crossplane.io/external-name: render-demo-app-fixture
+spec:
+  claimRef:
+    name: demo-app
+    namespace: tenant-acme
+  profileRef:
+    name: demo-app
+  tenantNamespace: tenant-acme
+  domain: acme.platform.example.test
+  pullSecrets:
+    images:
+      - repository-vendor-apps-pull
+    charts:
+      - repository: oci://example.invalid/demo-app
+        secretName: repository-vendor-apps-pull

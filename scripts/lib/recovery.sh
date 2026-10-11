@@ -33,13 +33,11 @@ _KIT_KEYS=(
     KERNEL_DOMAIN
     GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH
     GENTIAN_DEPLOYMENTS_CLUSTER_ID GENTIAN_DEPLOYMENTS_STAGE
-    GENTIAN_OS_REPO GENTIAN_OS_BRANCH GENTIAN_OS_IMAGE_REPOSITORY
+    GENTIAN_OS_REPO GENTIAN_OS_BRANCH
     MASTER_PASSWORD DERIVATION_SALT
     GENTIAN_DEPLOYMENTS_GIT_USERNAME GENTIAN_DEPLOYMENTS_GIT_TOKEN
-    GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
-    GENTIAN_APPS_GIT_USERNAME GENTIAN_APPS_GIT_TOKEN
-    GENTIAN_UI_GIT_USERNAME GENTIAN_UI_GIT_TOKEN
-    REGISTRY_USER REGISTRY_PASSWORD
+    GENTIAN_OS_GIT_USERNAME GENTIAN_UI_GIT_USERNAME
+    GENTIAN_OS_GIT_TOKEN GENTIAN_UI_GIT_TOKEN
     CF_API_TOKEN CF_TUNNEL_TOKEN
     SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
     TRANSIT_UNSEAL_KEY OPENBAO_RECOVERY_KEYS OPENBAO_ROOT_TOKEN
@@ -196,10 +194,10 @@ _kit_recipient() {
 #
 # Under kernel/, so the cluster-admin policy already reads it and no new grant
 # is needed for the person who would be restoring. eso-read denies this exact
-# path — see the Cluster composition — so escrow means "a cluster administrator
-# can read it", not "the cluster can read it". The distinction is the whole
-# point: a key ESO could materialise into a Secret would be readable by anything
-# that takes the cluster, which is the one thing escrow must not come to mean.
+# path — see the Cluster composition — so nothing that goes through External
+# Secrets can read it: a key ESO could materialise into a Secret would be
+# readable by anything able to write an ExternalSecret. The operator's own
+# policy, operator-write, covers gentian-os/* and so reads it as well.
 _KIT_BACKUP_ESCROW_PATH="gentian-os/kernel/backup/identity"
 
 # _kit_escrow_enabled — whether this cluster escrows the backup identity.
@@ -374,7 +372,7 @@ _kit_backup_identity() {
                 warn "  the documented default applied. Set spec.backup.escrowIdentity to say"
                 warn "  so deliberately, or false to keep the key in this kit alone."
             fi
-            warn "  A cluster administrator can restore without this kit — and anyone who"
+            warn "  A platform admin can restore without this kit — and anyone who"
             warn "  reaches OpenBao as one can read every bundle. Keep the kit anyway: it"
             warn "  is the only copy that survives losing the cluster."
         else
@@ -416,7 +414,7 @@ _kit_gather() {
         _kit_from_json "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
             '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
-        TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n openbao \
+        TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" \
             -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
 
@@ -643,7 +641,7 @@ export_recovery_kit() {
 # property of the file — so this warns rather than fails the export.
 _record_kit_export_proof() {
     local out="${1:-}"
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     # The path is recorded too, so a later step can name the file rather than
@@ -726,7 +724,9 @@ load_recovery_kit() {
     # variable somewhere downstream: it has to be back in a KEYRING before
     # anything can sign with it. Imported here so that a --recover run can
     # commit to the deployments repository the way the original install did.
-    if [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]]; then
+    if [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]] && gentian_read_only; then
+        gentian_would "restore the kit's break-glass signing key to $(gentian_gpg_home)"
+    elif [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]]; then
         if gentian_import_break_glass_key "${GENTIAN_BREAK_GLASS_KEY}"; then
             info "  Break-glass signing key restored ($(gentian_signing_key_long_id break-glass))."
         else

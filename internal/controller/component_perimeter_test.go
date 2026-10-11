@@ -1,23 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +28,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -56,7 +52,7 @@ func enabledShares(expiry time.Time) []gentianov1alpha1.ExposureEnablement {
 	return []gentianov1alpha1.ExposureEnablement{{
 		ExposureName: "shares",
 		Owner:        "u-tom",
-		ExpiresAt:    metav1.NewTime(expiry),
+		ExpiresAt:    exposureEnds(expiry),
 	}}
 }
 
@@ -75,20 +71,28 @@ func perimeterScheme() *runtime.Scheme {
 func TestThePublishedSurfaceIsOnlyWhatWasDeclared(t *testing.T) {
 	profile := nextcloudWithPerimeter()
 	e := &profile.Spec.Expose[1]
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080)
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 
-	// Property 1: only the declared prefixes, and everything else refused
-	// here rather than forwarded.
-	for _, want := range []string{"location /s/ {", "location /remote.php/dav/ {", "location /public.php {"} {
+	// Property 1: only the declared prefixes, by whole segments, and
+	// everything else refused here rather than forwarded.
+	for _, want := range []string{
+		`"~^/s/" 1;`, `"~^/remote\.php/dav/" 1;`, `"~^/public\.php(/|$)" 1;`,
+		"if ($perimeter_published = 0) { return 404; }",
+	} {
 		if !strings.Contains(conf, want) {
-			t.Errorf("a declared prefix is missing: %s", want)
+			t.Errorf("a declared prefix, or the refusal of the rest, is missing: %s", want)
 		}
 	}
-	if !strings.Contains(conf, "location / { return 404; }") {
-		t.Error("anything not declared must be refused by the proxy, not forwarded")
+	// A denied path is refused even where a prefix admits it, whatever its
+	// case.
+	for _, want := range []string{`"~*^/remote\.php/dav/systemtags/" 1;`, "if ($perimeter_denied) { return 404; }"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("the denied path is not refused: %s", want)
+		}
 	}
-	if !strings.Contains(conf, "location /remote.php/dav/systemtags/ { return 404; }") {
-		t.Error("a denied path must be refused even where a prefix admits it")
+	// A path with more than one reading is refused before either is asked.
+	if !strings.Contains(conf, "if ($perimeter_ambiguous) { return 400; }") {
+		t.Error("a path the proxy and the application could read differently must be refused")
 	}
 
 	// Properties 2 to 4: nothing of the session model goes in.
@@ -99,6 +103,7 @@ func TestThePublishedSurfaceIsOnlyWhatWasDeclared(t *testing.T) {
 		`proxy_set_header X-Auth-Request-User "";`,
 		`proxy_set_header X-Auth-Request-Groups "";`,
 		`proxy_set_header X-Gentian-Subject "";`,
+		`proxy_set_header Forwarded "";`,
 	} {
 		if !strings.Contains(conf, want) {
 			t.Errorf("the perimeter must not carry identity inwards; missing: %s", want)
@@ -109,12 +114,138 @@ func TestThePublishedSurfaceIsOnlyWhatWasDeclared(t *testing.T) {
 	if !strings.Contains(conf, "proxy_hide_header Set-Cookie;") {
 		t.Error("a Set-Cookie from the application must not reach the public host")
 	}
-	// It reaches exactly one upstream.
-	if strings.Count(conf, "proxy_pass ") != len(perimeterPrefixes(e)) {
-		t.Errorf("proxy_pass appears %d times for %d prefixes", strings.Count(conf, "proxy_pass "), len(perimeterPrefixes(e)))
+	if strings.Contains(conf, "proxy_pass_header Server") {
+		t.Error("the answer must name the proxy, not what the application runs on")
+	}
+	// It reaches exactly one upstream, from exactly one place.
+	if strings.Count(conf, "proxy_pass ") != 1 {
+		t.Errorf("proxy_pass appears %d times, want once", strings.Count(conf, "proxy_pass "))
 	}
 	if !strings.Contains(conf, "proxy_pass http://nextcloud.tenant-acme.svc.cluster.local:8080;") {
 		t.Error("the upstream is not the component's own Service")
+	}
+}
+
+// Every header the front door sets on a route behind a session is removed
+// on a route without one, by the list the front door itself keeps: a header
+// added to the bouncer is stripped here without anybody remembering to.
+func TestThePerimeterStripsEveryIdentityHeaderTheFrontDoorSets(t *testing.T) {
+	e := &nextcloudWithPerimeter().Spec.Expose[1]
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	stripped := map[string]bool{}
+	for _, h := range perimeterStrippedIdentityHeaders() {
+		stripped[strings.ToLower(h)] = true
+		if !strings.Contains(conf, fmt.Sprintf("proxy_set_header %s \"\";", h)) {
+			t.Errorf("%s is in the list and not in the configuration", h)
+		}
+	}
+	if len(bouncer.IdentityHeaders()) < 6 {
+		t.Fatalf("the front door names %d identity headers; it set six when this was written", len(bouncer.IdentityHeaders()))
+	}
+	for _, h := range bouncer.IdentityHeaders() {
+		if !stripped[strings.ToLower(h)] {
+			t.Errorf("the front door sets %s and the publishing proxy lets a caller send it", h)
+		}
+	}
+	// The sign-in route that takes no session removes the same ones.
+	onACS := map[string]bool{}
+	for _, h := range frontDoorIdentityHeaders {
+		onACS[strings.ToLower(h)] = true
+	}
+	for _, h := range bouncer.IdentityHeaders() {
+		if !onACS[strings.ToLower(h)] {
+			t.Errorf("the front door sets %s and the sign-in route lets a caller send it", h)
+		}
+	}
+}
+
+// The limits are the platform's, in one place, and what the operator's
+// environment may change is bounded by what the proxy starts with.
+func TestThePerimeterLimits(t *testing.T) {
+	for _, key := range []string{
+		"PERIMETER_MAX_BODY", "PERIMETER_RATE_PER_SECOND", "PERIMETER_RATE_BURST", "PERIMETER_CONCURRENT_PER_CLIENT",
+		"PERIMETER_CLIENT_ADDRESS_HEADER", "EDGE_INGRESS", "NETWORK_MODE",
+	} {
+		t.Setenv(key, "")
+	}
+	e := &nextcloudWithPerimeter().Spec.Expose[1]
+	render := func() string {
+		return perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	}
+
+	conf := render()
+	for _, want := range []string{
+		"client_max_body_size 10m;", "large_client_header_buffers 4 8k;", "client_header_timeout 15s;",
+		"client_body_timeout 30s;", "proxy_connect_timeout 5s;", "proxy_read_timeout 60s;", "server_tokens off;",
+		"underscores_in_headers off;",
+		"zone=perimeter_rate:10m rate=20r/s;", "limit_req zone=perimeter_rate burst=200 nodelay;",
+		"limit_conn perimeter_concurrent 100;", "limit_req_status 429;", "limit_conn_status 429;",
+		`if ($request_method ~ "^(TRACE|TRACK|CONNECT)$") { return 405; }`,
+		// Nothing says how the cluster is reached: the connection, which
+		// nobody can forge.
+		"limit_req_zone $perimeter_edge_peer ",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("the default configuration lacks %q", want)
+		}
+	}
+	if strings.Contains(conf, "cf_connecting_ip") {
+		t.Error("a header a caller can write is read on a cluster nobody said is behind the tunnel")
+	}
+
+	// Behind the tunnel, which names the caller itself.
+	t.Setenv("NETWORK_MODE", "tunnel")
+	conf = render()
+	for _, want := range []string{"map $http_cf_connecting_ip $perimeter_client {", "limit_req_zone $perimeter_client "} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("behind the tunnel the configuration lacks %q", want)
+		}
+	}
+
+	// A cluster with an address of its own: the Gateway saw the caller, and
+	// a header a caller can write is not read.
+	t.Setenv("NETWORK_MODE", "static-ip")
+	conf = render()
+	if strings.Contains(conf, "cf_connecting_ip") || !strings.Contains(conf, "limit_req_zone $perimeter_edge_peer ") {
+		t.Errorf("with an address of its own the cluster must key on the Gateway's word alone:\n%s", conf)
+	}
+	if !strings.Contains(conf, "proxy_set_header X-Forwarded-For $perimeter_edge_peer;") {
+		t.Error("the application is not told the address the Gateway saw")
+	}
+
+	// The administrator's values, and values the proxy would not start with.
+	t.Setenv("PERIMETER_MAX_BODY", "2g")
+	t.Setenv("PERIMETER_RATE_PER_SECOND", "50")
+	t.Setenv("PERIMETER_RATE_BURST", "500")
+	t.Setenv("PERIMETER_CONCURRENT_PER_CLIENT", "10")
+	t.Setenv("PERIMETER_CLIENT_ADDRESS_HEADER", "True-Client-IP")
+	conf = render()
+	for _, want := range []string{
+		"client_max_body_size 2g;", "rate=50r/s;", "burst=500 nodelay;", "limit_conn perimeter_concurrent 10;",
+		"map $http_true_client_ip $perimeter_client {",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("the administrator's value is not in force: %q", want)
+		}
+	}
+	t.Setenv("PERIMETER_MAX_BODY", "10m; include /etc/passwd")
+	t.Setenv("PERIMETER_RATE_PER_SECOND", "-1")
+	t.Setenv("PERIMETER_RATE_BURST", "lots")
+	t.Setenv("PERIMETER_CONCURRENT_PER_CLIENT", "0")
+	t.Setenv("PERIMETER_CLIENT_ADDRESS_HEADER", "X-Bad Header;")
+	conf = render()
+	for _, want := range []string{"client_max_body_size 10m;", "rate=20r/s;", "burst=200 nodelay;", "limit_conn perimeter_concurrent 100;"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("an unusable value replaced the default: %q is missing", want)
+		}
+	}
+	if strings.Contains(conf, "passwd") || strings.Contains(conf, "x_bad") {
+		t.Errorf("an unusable value reached the configuration:\n%s", conf)
+	}
+	t.Setenv("PERIMETER_CLIENT_ADDRESS_HEADER", "none")
+	t.Setenv("NETWORK_MODE", "tunnel")
+	if conf = render(); strings.Contains(conf, "$perimeter_client") {
+		t.Error("PERIMETER_CLIENT_ADDRESS_HEADER=none must read the connection even behind the tunnel")
 	}
 }
 
@@ -125,12 +256,37 @@ func TestAPerimeterEntryWithNoPathsPublishesNothing(t *testing.T) {
 		Name: "everything", Surface: gentianov1alpha1.SurfacePerimeter,
 		Backend: gentianov1alpha1.BackendRef{Service: "nextcloud", Port: 8080},
 	}
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080)
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 	if strings.Contains(conf, "proxy_pass") {
 		t.Fatal("an entry declaring no paths forwarded something")
 	}
 	if !strings.Contains(conf, "location / { return 404; }") {
 		t.Fatal("it should refuse everything")
+	}
+}
+
+// A path that would be configuration rather than a path is not rendered, and
+// a denied path that cannot be rendered closes the entry: publishing the
+// rest without it would publish what the author said not to.
+func TestAPathThatWouldBeConfigurationIsNotRendered(t *testing.T) {
+	e := &gentianov1alpha1.ExposureSpec{
+		Name: "x", Surface: gentianov1alpha1.SurfacePerimeter,
+		Paths:   []string{"/ok/", "/a b", "/x { return 200; }", "/q\"", "/semi;", "/d$uri", "/n\nl", "/dup//slash"},
+		Backend: gentianov1alpha1.BackendRef{Service: "app", Port: 8080},
+	}
+	conf := perimeterProxyConfig(e, "app.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	if !strings.Contains(conf, `"~^/ok/" 1;`) {
+		t.Error("the one usable path is not published")
+	}
+	for _, bad := range []string{"/a b", "return 200", "/semi", "$uri\"", "/dup"} {
+		if strings.Contains(conf, bad) {
+			t.Errorf("an unusable path reached the configuration: %q", bad)
+		}
+	}
+	e.DenyPaths = []string{"/ok/private x"}
+	conf = perimeterProxyConfig(e, "app.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	if strings.Contains(conf, "proxy_pass") {
+		t.Error("an entry whose denied path cannot be rendered still published the rest")
 	}
 }
 
@@ -228,6 +384,33 @@ func TestAnEnabledSurfaceIsPublishedFromTheDMZ(t *testing.T) {
 		t.Fatalf("the DMZ may reach %d things; want the component and DNS", len(egress.Spec.Egress))
 	}
 	// Into the tenant: from the DMZ only.
+	// The proxy itself takes connections from the Gateway's Envoy pods and
+	// from nothing else: what it believes of a caller's address is what the
+	// Gateway appended, and only the Gateway may be the one saying it.
+	front := &networkingv1.NetworkPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Name: name + "-ingress", Namespace: dmz}, front); err == nil {
+		t.Fatal("with the kernel's network rules off the proxy carries their rule")
+	}
+	t.Setenv("KERNEL_NETWORK_POLICIES", "true")
+	if _, err := r.ensurePerimeter(ctx, comp, profile, tenant, r.zoneOf(tenant)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: name + "-ingress", Namespace: dmz}, front); err != nil {
+		t.Fatalf("no ingress policy on the proxy: %v", err)
+	}
+	if len(front.Spec.Ingress) != 1 || len(front.Spec.Ingress[0].From) != 1 || len(front.Spec.Ingress[0].Ports) != 1 ||
+		front.Spec.Ingress[0].Ports[0].Port.IntVal != perimeterProxyPort {
+		t.Fatalf("the proxy admits %+v; want the Gateway on the proxy's port", front.Spec.Ingress)
+	}
+	if peer := front.Spec.Ingress[0].From[0]; peer.NamespaceSelector == nil || peer.PodSelector == nil ||
+		peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != layout.Namespace(layout.Edge) ||
+		peer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "envoy" {
+		t.Fatalf("the proxy admits %+v; want the Envoy pods of the edge namespace alone", peer)
+	}
+	if front.Spec.PodSelector.MatchLabels["gentianos.io/exposure"] == "" {
+		t.Fatalf("the policy selects %v, not this exposure's proxy", front.Spec.PodSelector)
+	}
+
 	ingress := &networkingv1.NetworkPolicy{}
 	if err := c.Get(ctx, types.NamespacedName{Name: name + "-ingress", Namespace: ns}, ingress); err != nil {
 		t.Fatalf("no ingress policy in the tenant namespace: %v", err)
@@ -293,9 +476,9 @@ func TestAnEnablementWithoutADeclarationPublishesNothing(t *testing.T) {
 	comp := componentFor("nextcloud-base-ce", tenantNamespaceName(tenant))
 	comp.Spec.Exposures = []gentianov1alpha1.ExposureEnablement{{
 		ExposureName: "invented", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
-	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{domain: "acme.k.example"}, time.Now())
+	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now(), perimeterMainAddress{})
 	if len(live) != 0 {
 		t.Fatalf("published %d surfaces for an entry no profile declares", len(live))
 	}
@@ -308,16 +491,19 @@ func TestAGatewayEntryCannotBePublishedOnThePerimeter(t *testing.T) {
 	comp := componentFor("nextcloud-base-ce", tenantNamespaceName(tenant))
 	comp.Spec.Exposures = []gentianov1alpha1.ExposureEnablement{{
 		ExposureName: "web", Owner: "u-tom", // "web" is the gateway entry
-		ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
-	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{domain: "acme.k.example"}, time.Now())
+	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now(), perimeterMainAddress{})
 	if len(live) != 0 {
 		t.Fatalf("a gateway surface was published on the perimeter")
 	}
 }
 
 // A published host needs a listener on the perimeter Gateway, or its route
-// attaches to nothing.
+// attaches to nothing. The host is the one the ROUTE is written with -- the
+// entry's own label -- and not a name of the listener's own making: the two
+// once differed (the entry's name against its subDomain), and a route whose
+// host no listener serves answers nothing.
 //
 // This is the failure with no error to read: the HTTPRoute exists, the proxy
 // runs, and the hostname resolves to an Envoy that has never been told to
@@ -327,9 +513,9 @@ func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
 	tenant := acmeTenantFixture()
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 
 	var hosts []string
 	for _, l := range gw.Spec.Listeners {
@@ -337,7 +523,7 @@ func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
 			hosts = append(hosts, string(*l.Hostname))
 		}
 	}
-	if !containsString(hosts, "shares.acme.k.example") {
+	if !containsString(hosts, "share.acme.k.example") {
 		t.Fatalf("the published host has no listener; got %v", hosts)
 	}
 	// The identity provider's own listener is still there: publishing a
@@ -355,9 +541,9 @@ func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
 	tenant := acmeTenantFixture()
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	for _, l := range gw.Spec.Listeners {
 		if l.Hostname != nil && strings.HasPrefix(string(*l.Hostname), "*") {
 			t.Fatalf("the perimeter claimed a wildcard listener: %s", *l.Hostname)
@@ -365,24 +551,24 @@ func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
 	}
 }
 
-// A vanity host is published at the name it names, not under the tenant's
-// domain.
-func TestAVanityHostIsPublishedAsGiven(t *testing.T) {
+// A tenant bound to a custom domain publishes under it: the entry's name
+// under the domain the TenantDomain gave it, not under the kernel's.
+func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 	tenant := acmeTenantFixture()
+	tenant.Status.Domain = "acme.example"
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		Host:      "files.acme.example",
-		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	var hosts []string
 	for _, l := range gw.Spec.Listeners {
 		if l.Hostname != nil {
 			hosts = append(hosts, string(*l.Hostname))
 		}
 	}
-	if !containsString(hosts, "files.acme.example") {
-		t.Fatalf("the vanity host has no listener; got %v", hosts)
+	if !containsString(hosts, "share.acme.example") {
+		t.Fatalf("the custom domain's host has no listener; got %v", hosts)
 	}
 }
 
@@ -390,7 +576,70 @@ func TestAVanityHostIsPublishedAsGiven(t *testing.T) {
 // listeners the kernel needs.
 func TestATenantPublishingNothingAddsNoListener(t *testing.T) {
 	tenant := acmeTenantFixture()
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	if len(gw.Spec.Listeners) != 2 {
+		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
+	}
+}
+
+// perimeterProfiles is what the Gateway is given to name a published host:
+// the profiles, by the name an install carries.
+func perimeterProfiles() map[string]*gentianov1alpha1.ComponentProfile {
+	p := nextcloudWithPerimeter()
+	return map[string]*gentianov1alpha1.ComponentProfile{p.Name: p}
+}
+
+// The platform tenant may publish on the cluster's bare domain, with the
+// kernel's own certificate; no other tenant's apex entry gets a listener.
+func TestOnlyThePlatformTenantPublishesOnTheBareDomain(t *testing.T) {
+	front := &gentianov1alpha1.ComponentProfile{}
+	front.Name = "front"
+	front.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name: "site", Surface: gentianov1alpha1.SurfacePerimeter, AuthMode: gentianov1alpha1.AuthModeNone,
+		Apex: true, Paths: []string{"/"},
+		Backend: gentianov1alpha1.BackendRef{Service: "front", Port: 8080},
+	}}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{"front": front}
+	published := []gentianov1alpha1.TenantExposure{{Install: "front", ExposureName: "site", Owner: "installer"}}
+
+	platform := platformTenantFixture()
+	platform.Spec.Exposures = published
+	acme := acmeTenantFixture()
+	acme.Spec.Exposures = published
+
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*platform, *acme}, profiles)
+	var apex *gatewayv1.Listener
+	for i, l := range gw.Spec.Listeners {
+		if l.Hostname == nil {
+			continue
+		}
+		switch string(*l.Hostname) {
+		case "k.example":
+			apex = &gw.Spec.Listeners[i]
+		case "acme.k.example":
+			t.Fatalf("a tenant other than the platform's got a listener on its bare domain")
+		}
+	}
+	if apex == nil {
+		t.Fatalf("the platform tenant's apex entry has no listener")
+	}
+	ref := apex.TLS.CertificateRefs[0]
+	// No namespace on the reference means the Gateway's own, which is where
+	// the kernel's certificate is.
+	if string(ref.Name) != kernelWildcardTLSSecretName || (ref.Namespace != nil && string(*ref.Namespace) != servicesNamespace) {
+		t.Fatalf("the bare domain is served with %v, want the kernel's certificate", ref)
+	}
+}
+
+// An enablement that names nothing the profile declares as a perimeter entry
+// gets no listener.
+func TestAnEnablementOfNothingDeclaredGetsNoListener(t *testing.T) {
+	tenant := acmeTenantFixture()
+	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{
+		{Install: "nextcloud-base-ce", ExposureName: "web", Owner: "u-tom"},
+		{Install: "unknown", ExposureName: "shares", Owner: "u-tom"},
+	}
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	if len(gw.Spec.Listeners) != 2 {
 		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
 	}
@@ -403,4 +652,50 @@ func containsString(all []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// exposureEnds is an expiry, for an exposure published for a while.
+func exposureEnds(at time.Time) *metav1.Time {
+	t := metav1.NewTime(at)
+	return &t
+}
+
+// Which address a caller is counted under is asked of the cluster: the
+// Gateway's Service has an address outside the cluster or it has not, and
+// only without one is the tunnel's header the tunnel's word.
+func TestTheClientAddressFollowsHowTheGatewayIsReached(t *testing.T) {
+	for _, key := range []string{"PERIMETER_CLIENT_ADDRESS_HEADER", "EDGE_INGRESS", "NETWORK_MODE"} {
+		t.Setenv(key, "")
+	}
+	ctx := context.Background()
+	edge := func(kind corev1.ServiceType) client.Client {
+		return fake.NewClientBuilder().WithScheme(perimeterScheme()).WithObjects(&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "envoy-kernel-edge", Namespace: layout.Namespace(layout.Edge),
+				Labels: map[string]string{"gateway.envoyproxy.io/owning-gatewayclass": GentianGatewayClassName},
+			},
+			Spec: corev1.ServiceSpec{Type: kind},
+		}).Build()
+	}
+	if got := edgeClientAddressHeader(ctx, edge(corev1.ServiceTypeLoadBalancer)); got != "" {
+		t.Errorf("a Gateway with an address of its own: reads %q, a header any caller can write", got)
+	}
+	if got := edgeClientAddressHeader(ctx, edge(corev1.ServiceTypeNodePort)); got != "" {
+		t.Errorf("a Gateway on node ports: reads %q", got)
+	}
+	if got := edgeClientAddressHeader(ctx, edge(corev1.ServiceTypeClusterIP)); got != "CF-Connecting-IP" {
+		t.Errorf("a Gateway reachable through the tunnel alone: reads %q, want the tunnel's header", got)
+	}
+	if got := edgeClientAddressHeader(ctx, fake.NewClientBuilder().WithScheme(perimeterScheme()).Build()); got != "" {
+		t.Errorf("no Gateway Service yet: reads %q, want the connection", got)
+	}
+	// What the operator was told outranks what it sees.
+	t.Setenv("NETWORK_MODE", "static-ip")
+	if got := edgeClientAddressHeader(ctx, edge(corev1.ServiceTypeClusterIP)); got != "" {
+		t.Errorf("told static-ip: reads %q", got)
+	}
+	t.Setenv("PERIMETER_CLIENT_ADDRESS_HEADER", "True-Client-IP")
+	if got := edgeClientAddressHeader(ctx, edge(corev1.ServiceTypeLoadBalancer)); got != "True-Client-IP" {
+		t.Errorf("the administrator named a header: reads %q", got)
+	}
 }

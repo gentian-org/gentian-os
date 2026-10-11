@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -25,6 +19,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 )
 
@@ -36,14 +31,22 @@ const (
 	CollectForDelete    = provisioner.CollectForDelete
 )
 
+// collectKernelApps is the apps of a tenant that have one kind of store.
+//
+// For provisioning that is the apps the tenant has now whose profile
+// declares the store (match). For a deletion it is every app the store was
+// ever made for: those, the ones the tenant's record of what was provisioned
+// names (recorded) -- which is how the stores of an app uninstalled long ago
+// are found -- and, while they last, the ones a setup Job still names.
 func (r *TenantReconciler) collectKernelApps(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	mode AppCollectionMode,
 	match func(*gentianov1alpha1.ComponentProfile) bool,
 	setupJobPrefix func(tenantName string) string,
+	recorded func(backup.Provisioned) bool,
 ) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +69,13 @@ func (r *TenantReconciler) collectKernelApps(
 			}
 			apps = appendUniqueStrings(apps, fromJobs...)
 		}
+	}
+	if mode == CollectForDelete && recorded != nil {
+		fromRecord, err := r.recordedApps(ctx, tenant.Name, recorded)
+		if err != nil {
+			return nil, err
+		}
+		apps = appendUniqueStrings(apps, fromRecord...)
 	}
 	return apps, nil
 }

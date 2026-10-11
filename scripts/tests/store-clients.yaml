@@ -1,0 +1,1245 @@
+# Who connects to the four shared stores of the system tier, and who must not.
+#
+# Every legitimate client of PostgreSQL, MariaDB, Redis and MinIO, as the code
+# builds it: the namespace its pod runs in, the labels that pod carries and
+# the port it dials. Two tests read this file and neither is enough alone:
+#
+#   scripts/tests/test-store-network-policies.sh
+#       renders each store's NetworkPolicy and asserts every client here is
+#       admitted and every entry under `denied` is not;
+#   internal/controller/store_clients_test.go
+#       builds each client with the constructor the operator uses (`built`)
+#       and asserts it runs where, and carries what, this file says.
+#
+# So a client that moves namespace, or loses the label a rule selects on,
+# fails the second; a rule that stops admitting a client fails the first. A
+# NEW client of a store belongs here before its code is merged: a client the
+# policy does not admit is a Job that hangs on a cluster and nowhere else.
+#
+# `built: none` marks a client no constructor in the operator's Go builds,
+# with the reason in `proof`.
+#
+# The model gateway's namespace is on the same table (`store: llm`): it is
+# no store, and its pods carry the same kind of policy.
+#
+# Namespaces of the kernel and system tiers get their labels from
+# kernel/namespaces.yaml. A tenant namespace is written out with the labels
+# the Tenant composition gives it.
+tenantNamespace: &tenant
+  name: tenant-acme
+  labels:
+    gentianos.io/tier: tenant
+    gentianos.io/tenant: acme
+
+clients:
+  # ── PostgreSQL (system-postgresql) ─────────────────────────────────────
+  - store: postgresql
+    client: a tenant's app that declared a PostgreSQL database
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 5432
+    built: tenant-app-postgresql
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets; the address is seeded by tenant_data_plane_manifests.go
+  - store: postgresql
+    client: a tenant's desktop, whose database lives on this server
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 5432
+    built: tenant-component-database
+    proof: internal/controller/component_desktop.go componentDatabaseNamespace, component_network_policy.go
+  - store: postgresql
+    client: the role Job that makes an app's role and database
+    namespace: system-postgresql
+    podLabels: {}
+    port: 5432
+    built: postgres-role-job
+    proof: internal/controller/database_reconciler.go makeRoleJob
+  - store: postgresql
+    client: the destroy Job that drops an app's databases and role
+    namespace: system-postgresql
+    podLabels: {}
+    port: 5432
+    built: postgres-destroy-job
+    proof: internal/backup/teardown.go PostgresDestroyJob
+  - store: postgresql
+    client: pg_dump of a tenant export, which runs where the administrator's Secret is
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+    built: export-postgres-dump
+    proof: internal/controller/tenantexport_controller.go captureUnits, tenantexport_placement.go, internal/backup/jobs.go PostgresDumpJob
+  - store: postgresql
+    client: pg_restore of a tenant restore, which runs where the administrator's Secret is
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+    built: restore-postgres
+    proof: internal/controller/tenantrestore_controller.go restoreUnits, tenantexport_placement.go, internal/backup/restore_jobs.go PostgresRestoreJob
+  - store: postgresql
+    client: the operator, reading and writing a tenant's usage history and notices
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 5432
+    built: none
+    proof: internal/usage/store.go connect, internal/applifecycle/notifications.go; the labels are checked against the rendered operator chart
+  - store: postgresql
+    client: a replica or a join Job of the cluster itself, streaming from the primary
+    namespace: system-postgresql
+    podLabels: {cnpg.io/cluster: postgres, cnpg.io/jobRole: join}
+    port: 5432
+    built: none
+    proof: CloudNativePG 1.25.0 pkg/specs/jobs.go (upstream; instances is 1 by default, so this is for a cluster that raises it)
+  - store: postgresql
+    client: CloudNativePG's operator, asking an instance for its status
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 8000
+    built: none
+    proof: >-
+      chart cloudnative-pg 0.23.0 rendered with kernel/values/cnpg.yaml (kernel/bootstrap/chart/templates/cnpg.yaml);
+      the port is CloudNativePG 1.25.0 pkg/management/url StatusPort
+
+  # ── MariaDB (system-mariadb) ───────────────────────────────────────────
+  - store: mariadb
+    client: a tenant's app that declared a MariaDB database
+    namespace: *tenant
+    podLabels: {gentianos.io/app: shop}
+    port: 3306
+    built: tenant-app-mariadb
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets
+  - store: mariadb
+    client: the setup Job that makes an app's database and user
+    namespace: system-mariadb
+    podLabels: {}
+    port: 3306
+    built: mariadb-setup-job
+    proof: internal/controller/mariadb_reconciler.go makeMariaDBSetupJob
+  - store: mariadb
+    client: the destroy Job that drops an app's databases and user
+    namespace: system-mariadb
+    podLabels: {}
+    port: 3306
+    built: mariadb-destroy-job
+    proof: internal/backup/teardown.go MariaDBDestroyJob
+  - store: mariadb
+    client: mariadb-dump of a tenant export, which runs where the administrator's Secret is
+    namespace: system-mariadb
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+    built: export-mariadb-dump
+    proof: internal/controller/tenantexport_controller.go captureUnits, tenantexport_placement.go, internal/backup/jobs.go MariaDBDumpJob
+  - store: mariadb
+    client: the load of a tenant restore, which runs where the administrator's Secret is
+    namespace: system-mariadb
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+    built: restore-mariadb
+    proof: internal/controller/tenantrestore_controller.go restoreUnits, tenantexport_placement.go, internal/backup/restore_jobs.go MariaDBRestoreJob
+
+  # ── Redis (system-cache) ───────────────────────────────────────────────
+  - store: cache
+    client: a tenant's app that declared a Redis cache
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 6379
+    built: tenant-app-cache
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets
+  - store: cache
+    client: the ACL Job that makes an app's user
+    namespace: system-cache
+    podLabels: {}
+    port: 6379
+    built: redis-acl-job
+    proof: internal/controller/cache_reconciler.go makeRedisACLJob
+  - store: cache
+    client: the destroy Job that removes an app's user and keys
+    namespace: system-cache
+    podLabels: {}
+    port: 6379
+    built: cache-destroy-job
+    proof: internal/backup/teardown.go CacheDestroyJob
+
+  # ── MinIO (system-s3) ──────────────────────────────────────────────────
+  - store: s3
+    client: a tenant's app that declared a bucket
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 9000
+    built: tenant-app-s3
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets
+  - store: s3
+    client: the volume capture of a tenant export, which runs where the claim is
+    namespace: *tenant
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-volume-archive
+    proof: internal/controller/tenantexport_controller.go captureUnits, internal/kernel/netpolicy/export.go
+  - store: s3
+    client: the volume load of a tenant restore, which runs where the claim is
+    namespace: *tenant
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-volume
+    proof: internal/controller/tenantrestore_controller.go restoreUnits
+  - store: s3
+    client: the bucket Job that makes an app's bucket, user and policy
+    namespace: system-s3
+    podLabels: {}
+    port: 9000
+    built: s3-bucket-job
+    proof: internal/controller/storage_reconciler.go makeS3BucketJob
+  - store: s3
+    client: the destroy Job that removes an app's bucket, user and policy
+    namespace: system-s3
+    podLabels: {}
+    port: 9000
+    built: s3-destroy-job
+    proof: internal/backup/teardown.go ObjectStorageDestroyJob
+  - store: s3
+    client: the capture of a bucket, reading it and uploading to the bundle
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-s3-archive
+    proof: internal/controller/tenantexport_controller.go captureUnits, internal/backup/jobs.go S3ArchiveJob
+  - store: s3
+    client: the load of a bucket in a tenant restore
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-s3
+    proof: internal/controller/tenantrestore_controller.go restoreUnits, internal/backup/restore_jobs.go S3RestoreJob
+  - store: s3
+    client: the Job that writes a bundle's manifest
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-manifest
+    proof: internal/controller/tenantexport_controller.go manifestUnit, internal/backup/manifest.go ManifestJob
+  # The units that run beside another service, where that service's
+  # administrator Secret is, and reach the bundle from there with the copy
+  # staged for the run (internal/controller/tenantexport_placement.go).
+  - store: s3
+    client: pg_dump of a tenant export, uploading its dump to the bundle
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-postgres-upload
+    proof: internal/backup/jobs.go uploadJob
+  - store: s3
+    client: pg_restore of a tenant restore, fetching its dump from the bundle
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-postgres-fetch
+    proof: internal/backup/restore_jobs.go fetchAndDecrypt
+  - store: s3
+    client: mariadb-dump of a tenant export, uploading its dump to the bundle
+    namespace: system-mariadb
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-mariadb-upload
+    proof: internal/backup/jobs.go uploadJob
+  - store: s3
+    client: the load of a tenant restore into MariaDB, fetching its dump from the bundle
+    namespace: system-mariadb
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-mariadb-fetch
+    proof: internal/backup/restore_jobs.go fetchAndDecrypt
+  - store: s3
+    client: the realm export of a tenant export, uploading to the bundle
+    namespace: kernel-authentication
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-realm-upload
+    proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/jobs.go RealmExportJob
+  - store: s3
+    client: the realm import of a tenant restore, fetching from the bundle
+    namespace: kernel-authentication
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-realm-fetch
+    proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/restore_jobs.go RealmImportJob
+  - store: s3
+    client: the copy of a tenant's mailboxes in a tenant export, uploading to the bundle
+    namespace: system-mail
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-mailboxes-upload
+    proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/mailboxes.go MailboxBackupJob
+  - store: s3
+    client: the load of a tenant's mailboxes in a tenant restore, fetching from the bundle
+    namespace: system-mail
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-mailboxes-fetch
+    proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/mailboxes.go MailboxRestoreJob
+  - store: s3
+    client: pg_dump of the desktop database on the kernel's PostgreSQL in a tenant export, uploading to the bundle
+    namespace: kernel-data
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-kernel-desktop-upload
+    proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/desktop.go KernelDesktopDumpJob
+  - store: s3
+    client: pg_restore of the desktop database on the kernel's PostgreSQL in a tenant restore, fetching from the bundle
+    namespace: kernel-data
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-kernel-desktop-fetch
+    proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/desktop.go KernelDesktopRestoreJob
+  - store: s3
+    client: the operator, reading a bundle's manifest, streaming a download and writing an import
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 9000
+    built: none
+    proof: >-
+      internal/bundlestore/bundlestore.go Minio, internal/applifecycle/bundle_download.go, bundle_import.go;
+      the labels are checked against the rendered operator chart
+
+  # ── The model gateway's namespace (system-llm) ─────────────────────────
+  # Not a store, and held to the same discipline. Four pod sets serve there,
+  # each with a policy of its own, so a row names the `server` it connects
+  # to: gateway, database, cache or mock. Read by
+  # scripts/tests/llm_network_policies.py.
+  - store: llm
+    server: gateway
+    client: a tenant's app that declared the model gateway
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 4000
+    built: tenant-app-llm
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets; the address is written by internal/controller/model_access_reconciler.go
+  - store: llm
+    server: gateway
+    client: a tenant's desktop, a component the platform places, whose profile declares the model gateway
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 4000
+    built: tenant-component-llm
+    proof: >-
+      internal/controller/model_access_reconciler.go modelGatewayEgress, component_network_policy.go ensureNetworkPolicy
+      (opened once the desktop's key is delivered); charts/gentian-os/templates/componentprofile-desktop.yaml declares it
+  - store: llm
+    server: gateway
+    client: the desktop of the tenant that adopts the kernel realm, served as any tenant's is
+    namespace: {name: tenant-platform, labels: {gentianos.io/tier: tenant, gentianos.io/tenant: platform}}
+    podLabels: {app.kubernetes.io/instance: tenant-platform-desktop}
+    port: 4000
+    built: kernel-realm-desktop-llm
+    proof: >-
+      the same rule; the platform tenant's namespace is a tenant-tier namespace like any other
+      (crossplane/compositions/tenant-default.yaml labels every tenant's namespace gentianos.io/tier=tenant)
+  - store: llm
+    server: gateway
+    client: the operator, registering and removing an app's key and a tenant's team
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 4000
+    built: none
+    proof: >-
+      internal/modelgateway/modelgateway.go, internal/controller/model_access_reconciler.go, litellm_team.go,
+      internal/applifecycle/purge.go (the lifecycle service runs in the operator, cmd/main.go);
+      the labels are checked against the rendered operator chart
+  # Only where the claim switches the gateway's console on
+  # (spec.llm.console.enabled, off by default). `when: console` says so:
+  # llm_network_policies.py admits this row on a cluster with the console on
+  # and holds the same row REFUSED on every other.
+  - store: llm
+    server: gateway
+    when: console
+    client: the Gateway's Envoy pods, routing the gateway's console llm.<kernelDomain>
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy}
+    port: 4000
+    built: none
+    proof: >-
+      internal/controller/kernel_gateway_routes.go kernelRouteLiteLLM (the route and its backend, composed only
+      when clusterLLMConsoleRouted says so);
+      the pods are Envoy Gateway's, labelled by it (upstream), and selected by the same label in
+      kernel/manifests/gateway/chart/templates/envoyproxy.yaml
+  - store: llm
+    server: database
+    client: the gateway, on its own database
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 5432
+    built: none
+    proof: kernel/services/llm/manifests/templates/llm-services.yaml DATABASE_URL (the Secret litellm-db-app CloudNativePG writes)
+  - store: llm
+    server: database
+    client: a replica or a join Job of the gateway's database cluster, streaming from the primary
+    namespace: system-llm
+    podLabels: {cnpg.io/cluster: litellm-db, cnpg.io/jobRole: join}
+    port: 5432
+    built: none
+    proof: CloudNativePG 1.25.0 pkg/specs/jobs.go (upstream; the Cluster is rendered with instances 1, so this is for a cluster that raises it)
+  - store: llm
+    server: database
+    client: CloudNativePG's operator, asking the gateway's database instance for its status
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 8000
+    built: none
+    proof: >-
+      chart cloudnative-pg 0.23.0 rendered with kernel/values/cnpg.yaml (kernel/bootstrap/chart/templates/cnpg.yaml);
+      the port is CloudNativePG 1.25.0 pkg/management/url StatusPort
+  - store: llm
+    server: cache
+    client: the gateway, on its own Redis
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 6379
+    built: none
+    proof: kernel/services/llm/manifests/templates/llm-services.yaml REDIS_HOST
+  - store: llm
+    server: mock
+    client: the gateway, calling the mock model server on a cluster without GPUs
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 8000
+    built: none
+    proof: >-
+      inferred: kernel/services/llm/manifests/templates/vllm-mock.yaml exists so that the gateway has a model to
+      answer with, and no code in this repository registers it or calls it; the registration is made in the
+      gateway's own console
+
+# What must NOT get in. Each is a pod that could connect before these
+# policies existed, or a port that is not a client's business.
+denied:
+  - store: postgresql
+    client: Keycloak, whose database is the kernel's own
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    port: 5432
+  - store: postgresql
+    client: the director, which reaches no store itself
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: director}
+    port: 5432
+  - store: postgresql
+    client: a perimeter proxy in a tenant's DMZ
+    namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
+    podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 5432
+  - store: postgresql
+    client: a capture pod beside the object store, where no database unit runs any more
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+  - store: postgresql
+    client: the realm unit of an export, which has no business with a database
+    namespace: kernel-authentication
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+  - store: postgresql
+    client: the object store's own pod, which is not a capture
+    namespace: system-s3
+    podLabels: {app.kubernetes.io/name: minio, app.kubernetes.io/instance: minio}
+    port: 5432
+  - store: postgresql
+    client: a pod of a namespace outside the layout
+    namespace: {name: default, labels: {}}
+    podLabels: {}
+    port: 5432
+  - store: postgresql
+    client: a tenant's app on the instance manager's port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 8000
+  - store: postgresql
+    client: a tenant's app on the metrics port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 9187
+  - store: postgresql
+    client: the kernel's own PostgreSQL on the instance manager's port
+    namespace: kernel-data
+    podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/podRole: instance}
+    port: 8000
+  - store: postgresql
+    client: CloudNativePG's operator on the data port
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 5432
+  - store: mariadb
+    client: the operator, which reaches MariaDB through its Jobs only
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 3306
+  - store: mariadb
+    client: a capture pod beside the object store, where no database unit runs any more
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+  - store: mariadb
+    client: a PostgreSQL unit of an export, which is not MariaDB's client
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+  - store: mariadb
+    client: Crossplane and its providers
+    namespace: kernel-provisioning
+    podLabels: {}
+    port: 3306
+  - store: mariadb
+    client: a perimeter proxy in a tenant's DMZ
+    namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
+    podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 3306
+  - store: cache
+    client: a capture pod, because a cache is not captured
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 6379
+  - store: cache
+    client: the operator, which reaches Redis through its Jobs only
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 6379
+  - store: cache
+    client: Argo CD
+    namespace: kernel-gitops
+    podLabels: {}
+    port: 6379
+  - store: s3
+    client: the usher, which reaches no store itself
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: usher}
+    port: 9000
+  - store: s3
+    client: Keycloak, which is not a capture
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    port: 9000
+  - store: s3
+    client: the tenants' PostgreSQL itself, which is not a capture
+    namespace: system-postgresql
+    podLabels: {cnpg.io/cluster: postgres, cnpg.io/podRole: instance}
+    port: 9000
+  - store: s3
+    client: a setup Job beside MariaDB, which is not a capture
+    namespace: system-mariadb
+    podLabels: {}
+    port: 9000
+  - store: s3
+    client: a capture pod in a namespace no unit runs in
+    namespace: kernel-authorization
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+  - store: s3
+    client: a pod beside the kernel's PostgreSQL that is no unit of an export or a restore
+    namespace: kernel-data
+    podLabels: {cnpg.io/cluster: kernel-postgres}
+    port: 9000
+  - store: s3
+    client: the mail server, which is no unit of an export or a restore
+    namespace: system-mail
+    podLabels: {app.kubernetes.io/name: dovecot}
+    port: 9000
+  - store: s3
+    client: a capture pod of an export on the console port
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9001
+  - store: s3
+    client: the edge, which routes nothing to the object store
+    namespace: kernel-edge
+    podLabels: {}
+    port: 9000
+  - store: s3
+    client: a tenant's app on the console port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 9001
+  - store: s3
+    client: the operator on the console port
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 9001
+  - store: llm
+    server: gateway
+    client: a perimeter proxy in a tenant's DMZ
+    namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
+    podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: the director, which administers nothing at the gateway
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: director}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: cert-manager, which shares the edge namespace with the Gateway's pods
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: cert-manager}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: the mock model server, which is called and calls nothing
+    namespace: system-llm
+    podLabels: {app: vllm-inference}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: a pod of a namespace outside the layout
+    namespace: {name: default, labels: {}}
+    podLabels: {}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: Keycloak
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    port: 4000
+  - store: llm
+    server: database
+    client: a tenant's app that declared the model gateway, on the gateway's database
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 5432
+  - store: llm
+    server: database
+    client: a tenant's desktop, on the gateway's database
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 5432
+  - store: llm
+    server: cache
+    client: a tenant's desktop, on the gateway's Redis
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 6379
+  - store: llm
+    server: database
+    client: the operator, which reaches the gateway through its API only
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 5432
+  - store: llm
+    server: database
+    client: the mock model server
+    namespace: system-llm
+    podLabels: {app: vllm-inference}
+    port: 5432
+  - store: llm
+    server: database
+    client: the gateway on the instance manager's port
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 8000
+  - store: llm
+    server: database
+    client: CloudNativePG's operator on the data port
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 5432
+  - store: llm
+    server: database
+    client: the tenants' PostgreSQL, another cluster of the same operator
+    namespace: system-postgresql
+    podLabels: {cnpg.io/cluster: postgres, cnpg.io/podRole: instance}
+    port: 5432
+  - store: llm
+    server: database
+    client: a tenant's app on the metrics port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 9187
+  - store: llm
+    server: cache
+    client: a tenant's app that declared the model gateway, on the gateway's Redis
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 6379
+  - store: llm
+    server: cache
+    client: the operator
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 6379
+  - store: llm
+    server: cache
+    client: the gateway's database, beside it in the namespace
+    namespace: system-llm
+    podLabels: {cnpg.io/cluster: litellm-db, cnpg.io/podRole: instance}
+    port: 6379
+  - store: llm
+    server: mock
+    client: a tenant's app that declared the model gateway, going round the gateway to a model server
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 8000
+  - store: llm
+    server: mock
+    client: the Gateway's Envoy pods
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy}
+    port: 8000
+  - store: llm
+    server: mock
+    client: CloudNativePG's operator, whose port number the model server shares
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 8000
+
+# ── Servers that are not shared stores ───────────────────────────────────
+#
+# The kernel's own PostgreSQL (kernel-postgres, in kernel-data), the two mail
+# servers (Dovecot and Postfix, in system-mail when mail.serviceMode is
+# `system`) and the proxy in front of them (mail-edge, in system-mail-dmz).
+# Each carries a NetworkPolicy of its own chart, and these are their clients,
+# held the same two ways:
+#
+#   scripts/tests/server_network_policies.py   (make test-store-network-policies)
+#   internal/controller/server_clients_test.go
+#
+# `evidence` says how far the row is carried by this repository: `proven`
+# when the namespace, the port and whatever a rule selects the client by are
+# read from a chart, a script or the operator's code here; `inferred` when
+# part of it rests on upstream software that is not vendored, named in
+# `proof`. A rule may lean on nothing that is only inferred, bar the pinned
+# CloudNativePG labels the stores' policies lean on too.
+#
+# `external: true` marks a connection that does not arrive from a pod -- from
+# the internet through a load balancer. No selector can name it; it is
+# admitted only by a rule with ports and no `from`, and only the proxy in the
+# mail DMZ has such a rule. This table is the mail flows in one place: who
+# reaches the proxy, what the proxy reaches, and who else reaches each server.
+servers:
+  clients:
+    # ── kernel-postgres (kernel-data) ───────────────────────────────────
+    - server: kernel-postgres
+      client: Keycloak, whose database is here
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx, app.kubernetes.io/instance: gentian-idp-keycloak}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/appsets/raw/09-identity.yaml (dbHost, and the namespace the values land in),
+        kernel/services/keycloak-idp/manifests/templates/configmap.yaml database.hostname and .port;
+        the pod labels are upstream keycloakx 7.3.2's and no rule selects on them
+    - server: kernel-postgres
+      client: OpenFGA, and the migration that runs as its init container
+      namespace: kernel-authorization
+      podLabels: {app.kubernetes.io/name: openfga, app.kubernetes.io/instance: gentian-openfga}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/appsets/raw/09-identity.yaml, kernel/services/openfga/manifests/templates/externalsecret.yaml datastore.uri,
+        configmap.yaml migrationType initContainer; the pod labels are upstream openfga 0.3.10's and no rule selects on them
+    - server: kernel-postgres
+      client: the registrar, which records who was allowed to ask for an identity change
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: registrar}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: charts/gentian-os/templates/externalsecret-registrar-database.yaml, registrar.yaml REGISTRAR_DATABASE_URL, internal/registrar/record
+    - server: kernel-postgres
+      client: the operator, reading and writing the usage history and notices of the tenant that adopts the kernel realm
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: >-
+        internal/usage/sampler.go StoreForTenant (the desktop-database Secret of the tenant's namespace),
+        internal/applifecycle/notifications.go notificationConn; that Secret names this server for the tenant
+        that adopts the kernel realm (internal/controller/component_desktop.go ensureDatabaseRequirement)
+    - server: kernel-postgres
+      client: the desktop of the tenant that adopts the kernel realm
+      namespace: {name: tenant-platform, labels: {gentianos.io/tier: tenant, gentianos.io/tenant: platform}}
+      podLabels: {app.kubernetes.io/instance: tenant-platform-desktop}
+      port: 5432
+      built: kernel-realm-desktop-database
+      evidence: proven
+      proof: internal/controller/component_desktop.go componentDatabaseNamespace, component_network_policy.go
+    - server: kernel-postgres
+      client: pg_dump of the desktop database of the tenant that adopts the kernel realm, in a tenant export
+      namespace: kernel-data
+      podLabels: {gentianos.io/component: tenant-export}
+      port: 5432
+      built: export-kernel-desktop-dump
+      evidence: proven
+      proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/desktop.go KernelDesktopDumpJob
+    - server: kernel-postgres
+      client: pg_restore of that database, in a tenant restore
+      namespace: kernel-data
+      podLabels: {gentianos.io/component: tenant-export}
+      port: 5432
+      built: restore-kernel-desktop
+      evidence: proven
+      proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/desktop.go KernelDesktopRestoreJob
+    - server: kernel-postgres
+      client: the Job that empties that database when the tenant is deleted
+      namespace: kernel-data
+      podLabels: {}
+      port: 5432
+      built: kernel-desktop-destroy-job
+      evidence: proven
+      proof: internal/controller/tenant_mailboxes.go deleteKernelDesktop, internal/backup/desktop.go KernelDesktopDestroyJob
+    - server: kernel-postgres
+      client: a replica or a join Job of the cluster itself, streaming from the primary
+      namespace: kernel-data
+      podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/jobRole: join}
+      port: 5432
+      built: none
+      evidence: inferred
+      proof: >-
+        CloudNativePG 1.25.0 pkg/specs/jobs.go (upstream; instances is 1 in kernel/data/kernel-postgres/values.yaml,
+        so this is for a cluster that raises it)
+    - server: kernel-postgres
+      client: CloudNativePG's operator, asking an instance for its status
+      namespace: kernel-data
+      podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+      port: 8000
+      built: none
+      evidence: inferred
+      proof: >-
+        kernel/bootstrap/chart/templates/cnpg.yaml (the namespace); the labels are chart cloudnative-pg 0.23.0's
+        and the port CloudNativePG 1.25.0's pkg/management/url StatusPort, both upstream
+
+    # ── Dovecot (system-mail) ───────────────────────────────────────────
+    - server: dovecot
+      client: Postfix, delivering mail for a hosted domain over LMTP
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: mail, app.kubernetes.io/instance: postfix-dev}
+      port: 24
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/services/postfix/manifests/templates/configmap.yaml virtual_transport;
+        the labels are the ones service-edge.yaml selects Postfix's pods by
+    - server: dovecot
+      client: Postfix, asking whether a submission credential is good
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: mail, app.kubernetes.io/instance: postfix-dev}
+      port: 12345
+      built: none
+      evidence: proven
+      proof: kernel/services/postfix/manifests/templates/configmap.yaml smtpd_sasl_path
+    - server: dovecot
+      client: the proxy of the mail DMZ, passing on an IMAPS connection it took on 993 with the client's address in a PROXY header
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10993
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/services/mail-edge/manifests/templates/configmap.yaml (backend imaps),
+        kernel/services/dovecot/manifests/templates/deployment.yaml inet_listener imaps-edge and Service dovecot-<env>-edge
+    - server: dovecot
+      client: the installer's check of the Deployment, on the delivery port
+      namespace: system-mail
+      podLabels: {gentianos.io/purpose: verify}
+      port: 24
+      built: none
+      evidence: proven
+      proof: scripts/lib/verify-kernel-services.sh verify_dovecot_installation, _run_ephemeral_pod
+    - server: dovecot
+      client: the installer's check of the Deployment, on the IMAP port
+      namespace: system-mail
+      podLabels: {gentianos.io/purpose: verify}
+      port: 143
+      built: none
+      evidence: proven
+      proof: scripts/lib/verify-kernel-services.sh verify_dovecot_installation
+    - server: dovecot
+      client: a pod of a tenant that reads mail by the Service's name, which the chart keeps this port for
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 143
+      built: none
+      evidence: inferred
+      proof: >-
+        kernel/services/dovecot/manifests/templates/deployment.yaml ("143 remains for in-cluster clients");
+        the operator hands this port to nobody, and no such client is named in this repository
+    - server: dovecot
+      client: a tenant's app that declared mail.imap and uses Dovecot by the Service's name on the TLS port
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 993
+      built: tenant-app-mail-imap
+      evidence: inferred
+      proof: >-
+        internal/kernel/netpolicy/kernel.go (the app's egress opens the mail namespace);
+        the operator hands the public name (SeedIMAP: imap.<kernelDomain>), which arrives at the mail edge instead,
+        and no client that uses the Service's name is named in this repository
+
+    # ── Postfix (system-mail) ───────────────────────────────────────────
+    - server: postfix
+      client: the proxy of the mail DMZ, passing on mail it took on 25 with the sender's address in a PROXY header
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10025
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/services/mail-edge/manifests/templates/configmap.yaml (backend smtp),
+        kernel/services/postfix/manifests/templates/configmap.yaml postfix-<env>-edge-listeners and service-edge.yaml
+    - server: postfix
+      client: the proxy of the mail DMZ, passing on a submission it took on 587
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10587
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/services/mail-edge/manifests/templates/configmap.yaml (backend submission),
+        kernel/services/postfix/manifests/templates/configmap.yaml postfix-<env>-edge-listeners and service-edge.yaml
+    - server: postfix
+      client: a tenant's app that declared mail.smtp and uses Postfix by the Service's name
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 587
+      built: tenant-app-mail-smtp
+      evidence: inferred
+      proof: >-
+        internal/controller/mail_reconciler.go mailSharedPostfixHost (the Service's name when the cluster has no domain,
+        or MAIL_SMTP_HOST) and mailSharedPostfixPort, internal/kernel/netpolicy/kernel.go;
+        with a domain the app is handed the public name, which arrives at the mail edge instead
+
+    # ── The mail edge (system-mail-dmz) ─────────────────────────────────
+    # The proxy's own ports: the load balancer's 25, 587 and 993 reach the
+    # pod on 2525, 2587 and 2993.
+    - server: mail-edge
+      client: a mail server on the internet, delivering to the MX
+      external: true
+      port: 2525
+      built: none
+      evidence: proven
+      proof: kernel/services/mail-edge/manifests/templates/service.yaml (port 25)
+    - server: mail-edge
+      client: a mail client outside the cluster, submitting
+      external: true
+      port: 2587
+      built: none
+      evidence: proven
+      proof: kernel/services/mail-edge/manifests/templates/service.yaml (port 587)
+    - server: mail-edge
+      client: a mail client outside the cluster, reading mail
+      external: true
+      port: 2993
+      built: none
+      evidence: proven
+      proof: kernel/services/mail-edge/manifests/templates/service.yaml (port 993)
+    - server: mail-edge
+      client: a tenant's app that declared mail.smtp, dialling mail.<kernelDomain>
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 2587
+      built: tenant-app-mail-edge-smtp
+      evidence: inferred
+      proof: >-
+        internal/controller/mail_reconciler.go mailSharedPostfixHost and mailSharedPostfixPort, internal/kernel/netpolicy/kernel.go;
+        whether the connection still carries the pod's address when it arrives is the cluster's proxy mode, not this repository's
+    - server: mail-edge
+      client: a tenant's app that declared mail.imap, dialling imap.<kernelDomain>
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 2993
+      built: tenant-app-mail-edge-imap
+      evidence: inferred
+      proof: >-
+        internal/controller/mail_reconciler.go (SeedIMAP: imap.<kernelDomain>, 993), internal/kernel/netpolicy/kernel.go;
+        the source it arrives from is, as for submission, the cluster's proxy mode
+    - server: mail-edge
+      client: Keycloak, sending a realm's mail to mail.<kernelDomain>
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx, app.kubernetes.io/instance: gentian-idp-keycloak}
+      port: 2587
+      built: none
+      evidence: inferred
+      proof: >-
+        internal/controller/keycloak_tenant_smtp.go (SMTP_HOST mail.<kernelDomain>, SMTP_PORT 587);
+        the source it arrives from is, as for an app, the cluster's proxy mode
+
+  # What must NOT get in.
+  denied:
+    - server: kernel-postgres
+      client: the director, which keeps nothing in a database
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: director}
+      port: 5432
+    - server: kernel-postgres
+      client: the usher
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: usher}
+      port: 5432
+    - server: kernel-postgres
+      client: the custodian
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: custodian}
+      port: 5432
+    - server: kernel-postgres
+      client: a pod of the control namespace that is none of the operator's programs
+      namespace: kernel-control
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: Argo CD
+      namespace: kernel-gitops
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: Crossplane and its providers, none of which speaks to a database
+      namespace: kernel-provisioning
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: the vault and External Secrets
+      namespace: kernel-secrets
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: the edge
+      namespace: kernel-edge
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: the tenants' PostgreSQL
+      namespace: system-postgresql
+      podLabels: {cnpg.io/cluster: postgres, cnpg.io/podRole: instance}
+      port: 5432
+    - server: kernel-postgres
+      client: the model gateway, whose database is its own
+      namespace: system-llm
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: a mail server
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: dovecot}
+      port: 5432
+    - server: kernel-postgres
+      client: a perimeter proxy in a tenant's DMZ
+      namespace: {name: tenant-platform-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: platform}}
+      podLabels: {app.kubernetes.io/name: perimeter-proxy}
+      port: 5432
+    - server: kernel-postgres
+      client: a pod of a namespace outside the layout
+      namespace: {name: default, labels: {}}
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: Keycloak on the instance manager's port
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx}
+      port: 8000
+    - server: kernel-postgres
+      client: the operator on the instance manager's port
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+      port: 8000
+    - server: kernel-postgres
+      client: a tenant's desktop on the instance manager's port
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+      port: 8000
+    - server: kernel-postgres
+      client: an instance of the cluster on another's instance manager
+      namespace: kernel-data
+      podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/podRole: instance}
+      port: 8000
+    - server: kernel-postgres
+      client: CloudNativePG's operator of another namespace, were there one
+      namespace: system-postgresql
+      podLabels: {app.kubernetes.io/name: cloudnative-pg}
+      port: 8000
+    - server: kernel-postgres
+      client: the registrar on the metrics port
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: registrar}
+      port: 9187
+
+    - server: dovecot
+      client: a tenant's app on the delivery port, which takes mail with no credential
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 24
+    - server: dovecot
+      client: a tenant's app on the authentication service
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 12345
+    - server: dovecot
+      client: a tenant's app on the port that believes a PROXY header, where it could give itself any address
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 10993
+    - server: dovecot
+      client: a mail client outside the cluster, were a load balancer pointed at Dovecot again
+      external: true
+      port: 993
+    - server: dovecot
+      client: a connection from outside the cluster on the port that believes a PROXY header
+      external: true
+      port: 10993
+    - server: dovecot
+      client: Keycloak on the delivery port
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx}
+      port: 24
+    - server: dovecot
+      client: Keycloak on the IMAP port, which no realm uses
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx}
+      port: 143
+    - server: dovecot
+      client: the operator, which writes Dovecot's files and never connects to it
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+      port: 12345
+    - server: dovecot
+      client: a pod beside Dovecot that is neither Postfix nor the check
+      namespace: system-mail
+      podLabels: {}
+      port: 24
+    - server: dovecot
+      client: a pod beside Dovecot on the port that believes a PROXY header
+      namespace: system-mail
+      podLabels: {}
+      port: 10993
+    - server: dovecot
+      client: the installer's check on the authentication service
+      namespace: system-mail
+      podLabels: {gentianos.io/purpose: verify}
+      port: 12345
+    - server: dovecot
+      client: a pod labelled as the check in another namespace
+      namespace: {name: default, labels: {}}
+      podLabels: {gentianos.io/purpose: verify}
+      port: 24
+    - server: dovecot
+      client: a pod labelled as Postfix in another namespace
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/name: mail, app.kubernetes.io/instance: postfix-dev}
+      port: 24
+    - server: dovecot
+      client: a pod labelled as the proxy in a tenant's namespace
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10993
+    - server: dovecot
+      client: a pod of the mail DMZ that is not the proxy
+      namespace: system-mail-dmz
+      podLabels: {}
+      port: 10993
+    - server: dovecot
+      client: the proxy on the authentication service, where it could try passwords without Postfix's limits
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 12345
+    - server: dovecot
+      client: the proxy on the delivery port, which takes mail with no credential
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 24
+    - server: dovecot
+      client: the proxy on the ports of the cluster's own pods, where its address would be taken for a pod's
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 993
+    - server: dovecot
+      client: the proxy on plain IMAP
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 143
+
+    - server: postfix
+      client: a tenant's app on a port Postfix does not publish
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 8891
+    - server: postfix
+      client: a tenant's app on the inbound port that believes a PROXY header, where it could give itself any address
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 10025
+    - server: postfix
+      client: a tenant's app on the submission port that believes a PROXY header
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 10587
+    - server: postfix
+      client: a tenant's app on 25, which nothing inside the cluster is handed
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 25
+    - server: postfix
+      client: a mail server on the internet, were a load balancer pointed at Postfix again
+      external: true
+      port: 25
+    - server: postfix
+      client: a mail client outside the cluster, were a load balancer pointed at Postfix again
+      external: true
+      port: 587
+    - server: postfix
+      client: a connection from outside the cluster on the port that believes a PROXY header
+      external: true
+      port: 10025
+    - server: postfix
+      client: the proxy on the submission port of the cluster's own pods, where its address is inside the range Postfix trusts
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 587
+    - server: postfix
+      client: the proxy on 25, the same way
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 25
+    - server: postfix
+      client: a pod of the mail DMZ that is not the proxy
+      namespace: system-mail-dmz
+      podLabels: {}
+      port: 10025
+    - server: postfix
+      client: a pod labelled as the proxy in a tenant's namespace
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10587
+    - server: postfix
+      client: Dovecot on a port that believes a PROXY header
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: dovecot, app.kubernetes.io/instance: dovecot-dev}
+      port: 10025
+    - server: postfix
+      client: Dovecot on a port Postfix does not serve
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: dovecot, app.kubernetes.io/instance: dovecot-dev}
+      port: 465
+    - server: postfix
+      client: Keycloak by the Service's name, which no realm is given
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx, app.kubernetes.io/instance: gentian-idp-keycloak}
+      port: 587
+    - server: postfix
+      client: a pod of a namespace outside the layout on a port Postfix does not publish
+      namespace: {name: default, labels: {}}
+      podLabels: {}
+      port: 8891
+    - server: postfix
+      client: a pod of a namespace outside the layout on the submission port
+      namespace: {name: default, labels: {}}
+      podLabels: {}
+      port: 587
+
+    - server: mail-edge
+      client: a connection from outside the cluster on the proxy's health port
+      external: true
+      port: 8404
+    - server: mail-edge
+      client: a tenant's app on the proxy's health port
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 8404
+    - server: mail-edge
+      client: a connection from outside the cluster on a port the proxy does not listen on
+      external: true
+      port: 143

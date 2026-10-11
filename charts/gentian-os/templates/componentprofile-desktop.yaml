@@ -3,7 +3,7 @@
   Every tenant gets one from this profile, the platform tenant included --
   its desktop is the platform console, in the kernel zone (AD-10). The
   profile is what the desktop is: a tenant component of platform trust, a
-  database requirement, and two gateway exposures on one host, the API's
+  database requirement, an optional model gateway requirement, and two gateway exposures on one host, the API's
   forwarding the edge token because the BFF relays it to the director and to
   nothing else. What the platform tells it -- realm, zone client, director --
   is the component reconciler's, not the profile's.
@@ -43,6 +43,8 @@ spec:
         zoneClientIdKey: auth.clientId
         audienceKey: auth.audience
         directorUrlKey: director.url
+        # Where the desktop asks which tiles this person may open.
+        usherUrlKey: usher.url
         clusterKey: director.cluster
         tenantKey: tenant
         kernelDomainKey: kernelDomain
@@ -56,6 +58,13 @@ spec:
         # The desktop consumes its credentials Secret whole, with envFrom, so
         # it is told the Secret's name and nothing else.
         secretNameKey: existingSecret.name
+      llm:
+        # The model gateway, for the desktop's assistant: whether there is
+        # one for this tenant's desktop, its address, and the name of the
+        # Secret this desktop's own key is in. The key is no chart value.
+        availableKey: llm.available
+        baseUrlKey: llm.baseUrl
+        secretNameKey: llm.apiKeySecretName
     extraValues:
       # The shape of the desktop chart as the platform runs it: the edge holds
       # the session, so the bundle runs no code flow; and the desktop holds no
@@ -79,6 +88,11 @@ spec:
       database:
         engine: postgresql
         databasePerTenant: true
+      # The assistant on the desktop calls models with a key that is this
+      # tenant's desktop's alone. Optional: on a cluster that serves no
+      # models the desktop comes up without the assistant.
+      llm:
+        optional: true
   expose:
     # The BFF: the same-origin relay the shell talks to. It relays to the
     # director with the user's own token, which is why this entry -- and
@@ -86,9 +100,11 @@ spec:
     - name: api
       surface: gateway
       authMode: oidc
-      # console.<zone>, the desktop's name in every zone (networking.md §3);
-      # the operator's redirects and frame policies assume it.
-      subDomain: console
+      # desktop.<zone>, the desktop's name in a tenant's zone (networking.md
+      # §3); the operator's redirects and frame policies assume it. In the
+      # platform tenant's zone the same entry answers on the zone's own name,
+      # platform.<kernel>.
+      subDomain: desktop
       paths: ["/api", "/healthz", "/readyz"]
       forwardToken: true
       backend:
@@ -98,7 +114,7 @@ spec:
     - name: web
       surface: gateway
       authMode: oidc
-      subDomain: console
+      subDomain: desktop
       backend:
         service: desktop-gentian-portal-web
         port: 8080

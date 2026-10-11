@@ -1,41 +1,40 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package netpolicy
 
-import "github.com/gentian-org/gentian-os/internal/meta"
+import (
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
+)
 
 const RoutingModeGateway = meta.RoutingModeGateway
 
 // Config carries cluster-specific namespace names and routing options used when
 // building tenant isolation NetworkPolicies.
 type Config struct {
-	InfraNamespace    string
 	ServicesNamespace string
-	OpenbaoNamespace  string
 	RoutingMode       string
 	KubeAPIServerCIDR string
+	// NarrowEdge admits, from the edge namespace, the Gateway's Envoy pods
+	// alone instead of every pod there. It follows the switch the kernel
+	// namespaces' own rules are under (KERNEL_NETWORK_POLICIES): one setting
+	// decides both, so a cluster that turned the rules off to rule them out
+	// has ruled this one out too.
+	NarrowEdge bool
 }
 
 // DefaultConfig returns test-friendly defaults; production callers should pass explicit Config.
 func DefaultConfig() Config {
 	return Config{
-		InfraNamespace:    "gentian-infra-dev",
-		ServicesNamespace: "gentian-dev",
-		OpenbaoNamespace:  "openbao",
+		ServicesNamespace: layout.Kernel(layout.Edge),
 		RoutingMode:       RoutingModeGateway,
 		KubeAPIServerCIDR: "10.0.0.0/8",
 	}

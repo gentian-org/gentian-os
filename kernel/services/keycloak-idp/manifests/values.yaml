@@ -11,14 +11,19 @@ storageClass: ""
 mailServiceMode: external
 relayHost: ""
 relayPort: "587"
+# A relay on port 587: implicit TLS off, STARTTLS on.
 relaySsl: "false"
 relayStarttls: "true"
 kernelDomain: ""
 # The realm the cluster's own users live in. Tenants have their own realms and
 # are configured by the operator, not from here.
 kernelRealm: kernel
-# The database host. v4: the InfraData Postgres; v5: kernel-postgres in kernel-data.
-dbHost: ""   # empty: gentian-postgresql-<env>.gentian-infra-<env> (v4); v5 sets kernel-postgres-rw.kernel-data
+# The database host: kernel-postgres in kernel-data.
+dbHost: ""   # empty: kernel-postgres-rw.kernel-data.svc.cluster.local
+
+# The Keycloak image tag. One version for the server, the theme's init
+# container and the event listener's build; see templates/configmap.yaml.
+keycloakVersion: "26.8.0"
 
 # The event listener that keeps OpenFGA's memberships equal to Keycloak's.
 #

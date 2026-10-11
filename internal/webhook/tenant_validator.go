@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package webhook
@@ -31,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/handover"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
@@ -38,7 +33,7 @@ import (
 // TenantValidator validates Tenant create/update requests.
 //
 // Checks performed:
-//  1. Every app in spec.apps references an AppProfile that exists.
+//  1. Every app in spec.apps references a ComponentProfile that exists.
 //  2. The number of apps does not exceed spec.quotas.maxApps (when set).
 //
 // +kubebuilder:webhook:path=/validate-gentianos-io-v1alpha1-tenant,mutating=false,failurePolicy=fail,sideEffects=None,groups=gentianos.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=vtenant.gentianos.io,admissionReviewVersions=v1
@@ -108,6 +103,18 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 		}
 	}
 
+	// Creation only, for the same reason: a tenant that already exists stays
+	// manageable whatever its names are. One that does not yet is refused
+	// when its realm, its database prefix or its bucket prefix is another
+	// tenant's -- the rule the director applies before it commits a tenant
+	// (backup.NamesTaken), here for a Tenant that reaches the cluster by any
+	// other way.
+	if req.Operation == admissionv1.Create {
+		if err := v.validateNames(ctx, tenant); err != nil {
+			return admission.Denied(err.Error())
+		}
+	}
+
 	if err := v.Validate(ctx, tenant); err != nil {
 		return admission.Denied(err.Error())
 	}
@@ -117,7 +124,7 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 // validateHandover refuses a new tenant while the write path is unproven.
 //
 // The message is long on purpose. A denial an operator cannot act on gets
-// worked around by disabling the webhook, which removes the AppProfile and
+// worked around by disabling the webhook, which removes the ComponentProfile and
 // tenancy checks with it.
 func (v *TenantValidator) validateHandover(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if !v.GateOnHandover || v.HandoverNamespace == "" {
@@ -164,7 +171,7 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		}
 	}
 
-	// Check each referenced AppProfile exists.
+	// Check each referenced ComponentProfile exists.
 	seen := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		if _, dup := seen[app.Profile]; dup {
@@ -176,20 +183,31 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		err := v.Client.Get(ctx, types.NamespacedName{Name: app.Profile}, profile)
 		if k8serrors.IsNotFound(err) {
 			return fmt.Errorf(
-				"tenant %q: AppProfile %q not found; install the app catalogue first",
+				"tenant %q: ComponentProfile %q not found; install the app catalogue first",
 				tenant.Name, app.Profile,
 			)
 		}
 		if err != nil {
-			return fmt.Errorf("tenant %q: looking up AppProfile %q: %w", tenant.Name, app.Profile, err)
+			return fmt.Errorf("tenant %q: looking up ComponentProfile %q: %w", tenant.Name, app.Profile, err)
 		}
 	}
 
-	if err := tenancy.EnforceSingle(ctx, v.Client, v.TenancyMode, tenant); err != nil {
-		return err
+	if err := tenancy.EnforceSingle(v.TenancyMode, v.KernelRealm, tenant); err != nil {
+		return fmt.Errorf("tenant %q: %w", tenant.Name, err)
 	}
 
 	return nil
+}
+
+// validateNames refuses a new tenant one of whose names another tenant uses.
+// A cluster whose tenants cannot be listed refuses the tenant: admitting it
+// unasked is how one tenant comes to provision into another's databases.
+func (v *TenantValidator) validateNames(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := v.Client.List(ctx, tenants); err != nil {
+		return fmt.Errorf("tenant %q: the cluster's tenants could not be listed, so whether its names are free is not known: %w", tenant.Name, err)
+	}
+	return backup.NamesTaken(tenant, tenants.Items)
 }
 
 // InjectDecoder satisfies admission.DecoderInjector so controller-runtime

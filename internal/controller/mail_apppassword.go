@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -48,7 +42,7 @@ import (
 //
 // Two artefacts per tenant, deliberately on opposite sides of the boundary:
 //
-//	the hashes, in the kernel namespace, for Dovecot to verify against;
+//	the hashes, in Dovecot's namespace, for Dovecot to verify against;
 //	the plaintexts, in the TENANT namespace, for that tenant's mail client.
 //
 // A tenant therefore holds its own users' credentials and nobody else's, which
@@ -132,8 +126,14 @@ var keycloakAdminHTTP = &http.Client{Timeout: 30 * time.Second}
 //
 // Extracted so the two realm readers below share one way of authenticating
 // rather than two that can drift.
+//
+// The admin Secret is read beside Keycloak, where its ExternalSecret writes it
+// and where the identity Jobs mount it. It was read from the edge namespace,
+// which holds no such Secret, so every caller failed before asking Keycloak
+// anything: no user was listed, no mail password was minted, and no realm was
+// given a submission credential.
 func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token string, err error) {
-	ns := defaultServicesNamespace()
+	ns := identityNamespace
 	if base, err = r.secretValue(ctx, keycloakAdminSecret, ns, "url"); err != nil {
 		return "", "", err
 	}
@@ -296,8 +296,13 @@ func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm str
 // Never rotated automatically: rotating it changes every password the tenant's
 // clients already hold, which logs everyone out of their mail at once with no
 // signal as to why.
+//
+// Kept in the mail namespace, beside the hashes derived from it. Only the
+// operator reads it, so no mount decides where it goes; what decides it is
+// that every mail password of the tenant follows from this value, and the
+// edge namespace -- where it was -- is the one that faces the internet.
 func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([]byte, error) {
-	ns := defaultServicesNamespace()
+	ns := mailSeedNamespace
 	name := mailAppPasswordSeedName + "-" + tenant
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec)
@@ -307,6 +312,13 @@ func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([
 		}
 	} else if !errors.IsNotFound(err) {
 		return nil, err
+	}
+	// A seed written where it used to be is taken over rather than replaced:
+	// a new one would change every password already handed to this tenant.
+	if moved, adoptErr := r.adoptMisplacedMailSeed(ctx, name); adoptErr != nil {
+		return nil, adoptErr
+	} else if len(moved) > 0 {
+		return moved, nil
 	}
 	seed := make([]byte, 32)
 	if _, err := rand.Read(seed); err != nil {
@@ -349,7 +361,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	{
 		sec := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+			Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
 		}, sec); err == nil {
 			for _, l := range strings.Split(string(sec.Data[mailAppPasswordFile(mailAppPasswordApp, name)+".users"]), "\n") {
 				if addr, _, ok := strings.Cut(strings.TrimSpace(l), ":"); ok {
@@ -392,7 +404,14 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err := r.upsertSecret(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
 		return err
 	}
-	// The hashes, in the kernel namespace, for Dovecot — one pair of files per
+	// And nobody else's: upsertSecret merges, so the password of a person who
+	// was removed or switched off stayed in the tenant's copy for as long as
+	// the tenant existed -- and it is derived from the address, so it is also
+	// the password the next person given that address would be handed.
+	if err := r.keepOnlySecretKeys(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
+		return err
+	}
+	// The hashes, in Dovecot's namespace, for Dovecot — one pair of files per
 	// tenant, NOT one pair shared by all of them.
 	//
 	// The shared key this replaces held only the lines of whichever tenant
@@ -403,7 +422,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	// nothing logged beyond an auth failure. Dovecot includes the directory by
 	// glob and the passdbs chain with result_failure = continue, so a file per
 	// tenant needs no configuration change and cannot overwrite another's.
-	if err := r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+	if err := r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
 		mailAppPasswordFile(mailAppPasswordApp, name) + ".users": []byte(lines.String()),
 		mailAppPasswordFile(mailAppPasswordApp, name) + ".conf":  passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
 	}); err != nil {
@@ -425,7 +444,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 		return err
 	}
 	if migrated {
-		if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+		if err := r.deleteSecretKeys(ctx, dovecotAppPasswordsSecret, dovecotNamespace,
 			mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
 			return err
 		}
@@ -438,7 +457,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 func (r *TenantReconciler) allTenantsHaveOwnPasswdFile(ctx context.Context) (bool, error) {
 	sec := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+		Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
 	}, sec); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil
@@ -494,8 +513,10 @@ func passdbInclude(file string) []byte {
 //
 // Both halves again, and for the same reason as the app passwords: the hash
 // where Dovecot verifies it, the plaintext where the consumer reads it. The
-// consumer here is the SMTP configuration Job, which runs in the kernel
-// namespace, so the plaintext goes there rather than into the tenant's.
+// consumers here are the SMTP configuration Job and the realm the tenant's
+// Composition declares, both of which read beside Keycloak, so the plaintext
+// goes there rather than into the tenant's namespace. It was written to the
+// edge namespace instead: the Job found no Secret and sent unauthenticated.
 func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant, domain string, seed []byte) error {
 	addr := mailSubmissionLocalPart + "@" + domain
 	pw := deriveMailPassword(seed, mailSubmissionApp, addr)
@@ -505,7 +526,7 @@ func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, ten
 	if err := r.registerSubmissionIdentity(ctx, mailSubmissionApp, tenant.Name, addr, pw); err != nil {
 		return err
 	}
-	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, defaultServicesNamespace(), map[string][]byte{
+	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, mailSubmissionNamespace, map[string][]byte{
 		"smtp_user":     []byte(addr),
 		"smtp_password": []byte(pw),
 	})
@@ -590,6 +611,95 @@ func (r *TenantReconciler) deleteSecretKeys(ctx context.Context, name, ns string
 		return nil
 	}
 	return r.Update(ctx, sec)
+}
+
+// keepOnlySecretKeys removes every key of a Secret that is not in keep.
+func (r *TenantReconciler) keepOnlySecretKeys(ctx context.Context, name, ns string, keep map[string][]byte) error {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	var stale []string
+	for k := range sec.Data {
+		if _, ok := keep[k]; !ok {
+			stale = append(stale, k)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	return r.deleteSecretKeys(ctx, name, ns, stale...)
+}
+
+// mailSignInListed reports whether any passwd-file the mail server verifies
+// against still holds a line for an address: whether somebody could still
+// sign in to that mailbox, or send as it, with a mail password.
+func (r *TenantReconciler) mailSignInListed(ctx context.Context, address string) (bool, error) {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for key, file := range sec.Data {
+		if !strings.HasSuffix(key, ".users") {
+			continue
+		}
+		for _, line := range strings.Split(string(file), "\n") {
+			if who, _, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && strings.EqualFold(who, address) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// keycloakRealmHolders lists every address a realm's people hold, as a login
+// or as their address, whether or not they may sign in at the moment: a
+// person who was switched off is still a person, and their mailbox is theirs.
+func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm string) (map[string]bool, error) {
+	base, token, err := r.keycloakAdminBase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	held := map[string]bool{}
+	for first := 0; ; first += 100 {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, url.PathEscape(realm), first), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		page, err := keycloakAdminHTTP.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if page.StatusCode != http.StatusOK {
+			_ = page.Body.Close()
+			return nil, fmt.Errorf("listing the people of realm %s: the identity provider answered %d", realm, page.StatusCode)
+		}
+		var users []keycloakRealmUser
+		err = json.NewDecoder(page.Body).Decode(&users)
+		_ = page.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			for _, a := range []string{u.Username, u.Email} {
+				if strings.Contains(a, "@") {
+					held[strings.ToLower(a)] = true
+				}
+			}
+		}
+		if len(users) < 100 {
+			break
+		}
+	}
+	return held, nil
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {

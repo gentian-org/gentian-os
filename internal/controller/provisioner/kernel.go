@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package provisioner
@@ -19,6 +13,7 @@ package provisioner
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +24,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // ErrDeleteJobPending indicates a cleanup Job has been created but not finished.
@@ -51,28 +47,88 @@ type JobWaitRequirement struct {
 	JobNameForApp func(tenantName, appName string) string
 }
 
-// MatchMariaDBProfile reports whether an AppProfile requires MariaDB provisioning.
+// The ports the shared stores' pods listen on. An app is handed one of them
+// with its credentials, and its network policy opens that one and no other
+// (internal/kernel/netpolicy), so the two read the same constant. A
+// NetworkPolicy port is the pod's, not the Service's; each of these Services
+// keeps the two the same.
+//
+// The servers themselves are composed by the charts under kernel/services,
+// which also write the address the operator reads for Redis and MinIO; the
+// test beside this file holds those to these numbers.
+//
+// Each of those charts also carries the NetworkPolicy that says who may
+// connect to its server, and admits them on the same port: the server's side
+// of the rule an app's policy is the tenant's side of. That number is a chart
+// value, held to these by the same test.
+const (
+	PostgresPort      int32 = 5432
+	MariaDBPort       int32 = 3306
+	RedisPort         int32 = 6379
+	ObjectStoragePort int32 = 9000
+	MemcachedPort     int32 = 11211
+)
+
+// ModelGatewayPort is the port the model gateway's pods listen on, in the
+// llm system namespace. It is not a store, and is held like one: an app that
+// declares requires.services.llm is handed an address on this port, its
+// network policy opens this port there and no other, and the gateway's own
+// NetworkPolicy (kernel/services/llm/manifests) admits it on the same number.
+const ModelGatewayPort = modelgateway.Port
+
+// MatchModelAccessProfile reports whether a profile declares that it calls
+// models through the platform's gateway.
+func MatchModelAccessProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile != nil && profile.Services() != nil && profile.Services().LLM != nil
+}
+
+// DatabaseEngineOf is the engine a profile's database requirement names, or
+// "" when it declares no database. An engine left out is postgresql, which is
+// what the API says the field defaults to.
+func DatabaseEngineOf(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.DatabaseEngine {
+	if profile == nil || profile.Services() == nil || profile.Services().Database == nil {
+		return ""
+	}
+	if e := profile.Services().Database.Engine; e != "" {
+		return e
+	}
+	return gentianov1alpha1.DatabaseEnginePostgreSQL
+}
+
+// CacheEngineOf is the engine a profile's cache requirement names, or "" when
+// it declares no cache. An engine left out is redis, the field's default.
+func CacheEngineOf(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.CacheEngine {
+	if profile == nil || profile.Services() == nil || profile.Services().Cache == nil {
+		return ""
+	}
+	if e := profile.Services().Cache.Engine; e != "" {
+		return e
+	}
+	return gentianov1alpha1.CacheEngineRedis
+}
+
+// MatchMariaDBProfile reports whether a ComponentProfile requires MariaDB provisioning.
 func MatchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Database != nil &&
 		profile.Services().Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
 }
 
-// MatchS3Profile reports whether an AppProfile requires S3 storage provisioning.
+// MatchS3Profile reports whether a ComponentProfile requires S3 storage provisioning.
 func MatchS3Profile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Storage != nil &&
 		profile.Services().Storage.S3 != nil
 }
 
-// MatchRedisProfile reports whether an AppProfile requires Redis cache provisioning.
+// MatchRedisProfile reports whether a ComponentProfile requires Redis cache provisioning.
 func MatchRedisProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Cache != nil &&
 		profile.Services().Cache.Engine == gentianov1alpha1.CacheEngineRedis
 }
 
-// MatchMemcachedProfile reports whether an AppProfile requires Memcached cache provisioning.
+// MatchMemcachedProfile reports whether a ComponentProfile requires Memcached cache provisioning.
 func MatchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Cache != nil &&
@@ -125,6 +181,7 @@ func EnsureDeleteJobs(
 	jobComplete func(*batchv1.Job) bool,
 ) error {
 	pending := false
+	var failures []string
 	for _, appName := range apps {
 		name := jobName(tenant.Name, appName)
 		existing := &batchv1.Job{}
@@ -138,12 +195,50 @@ func EnsureDeleteJobs(
 			pending = true
 			continue
 		}
+		if jobFailed(existing) {
+			// A cleanup Job that failed did not clean up. It used to count
+			// as "not complete yet", so a deletion waited on it for ever
+			// and said nothing, or went on once its TTL had removed it. It
+			// is reported, and removed so the next pass runs it again: the
+			// deletion resumes where it stopped and does not move past a
+			// store it could not destroy.
+			failures = append(failures, fmt.Sprintf("%s (%s)", name, jobFailureReason(existing)))
+			prop := metav1.DeletePropagationBackground
+			if err := c.Delete(ctx, existing, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
+				return fmt.Errorf("remove the failed delete Job %s: %w", name, err)
+			}
+			continue
+		}
 		if !jobComplete(existing) {
 			pending = true
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%w in %s: %s; each is run again", ErrDeleteJobFailed, kernelNamespace, strings.Join(failures, ", "))
 	}
 	if pending {
 		return ErrDeleteJobPending
 	}
 	return nil
+}
+
+// ErrDeleteJobFailed is a cleanup Job that ended without doing its work.
+var ErrDeleteJobFailed = fmt.Errorf("cleanup job failed")
+
+func jobFailed(job *batchv1.Job) bool {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func jobFailureReason(job *batchv1.Job) string {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			return strings.TrimSpace(c.Reason + " " + c.Message)
+		}
+	}
+	return ""
 }

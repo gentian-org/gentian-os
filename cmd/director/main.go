@@ -1,23 +1,19 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 // Command director is the platform's only writer to gentian-deployments.
 //
 // It authenticates every request against Keycloak, asks OpenFGA whether the
 // caller may make the change, and commits it as the caller. It holds the git
 // push credential and no cluster credential; the operator holds the reverse.
+// It holds no Keycloak credential either: people are the registrar's
+// (cmd/registrar).
 package main
 
 import (
@@ -35,12 +31,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
-	"github.com/gentian-org/gentian-os/internal/director/record"
-	"github.com/gentian-org/gentian-os/internal/membership"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 func main() {
@@ -86,19 +79,6 @@ func run(log *slog.Logger) error {
 	cluster := req.env("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 	if len(req.missing) > 0 {
 		return fmt.Errorf("missing configuration: %v", req.missing)
-	}
-
-	// Entitlements are enforced unless a deployment says otherwise, in so many
-	// words. A cluster with no store has nothing that could grant one, and
-	// turns this off as a visible setting.
-	enforce := true
-	switch v := envOr("DIRECTOR_ENTITLEMENTS", "enforce"); v {
-	case "enforce":
-	case "off":
-		enforce = false
-		log.Warn("entitlements are not enforced: any catalogue entry may be installed by whoever may install", "setting", "DIRECTOR_ENTITLEMENTS=off")
-	default:
-		return fmt.Errorf("DIRECTOR_ENTITLEMENTS must be enforce or off, not %q", v)
 	}
 
 	verifier, err := authn.NewVerifier(authn.Config{
@@ -147,29 +127,22 @@ func run(log *slog.Logger) error {
 	// deployments repository only for commits carrying one of the keys the
 	// cluster was told to trust.
 	//
-	// Warned rather than fatal when the key is absent. A cluster whose
-	// deployments checkout predates signing has no keys, so its AppProject
-	// carries no policy either, and a director that refused to start would
-	// take the console down over a constraint nothing is enforcing. What it
-	// must not do is sign with anything other than the key it was given --
-	// there is no fallback and none is generated.
+	// Warned rather than fatal when the key is absent. External Secrets may
+	// project it after this pod started, so it is read again before each
+	// commit; until then a repository that names signing keys gets no commit
+	// at all, because one unsigned head stops Argo CD syncing all of it. What
+	// the director must not do is sign with anything other than the key it
+	// was given -- there is no fallback and none is generated.
 	if keyPath := os.Getenv("DIRECTOR_SIGNING_KEY_FILE"); keyPath != "" {
-		key, err := os.ReadFile(keyPath)
-		switch {
-		case err != nil:
-			log.Error("the signing key could not be read; commits will be unsigned and Argo CD will refuse them",
+		home := envOr("DIRECTOR_GNUPGHOME", "/tmp/gentian-director-gnupg")
+		signCtx, cancelSign := context.WithTimeout(context.Background(), time.Minute)
+		err := repo.SignFrom(signCtx, keyPath, home)
+		cancelSign()
+		if err != nil {
+			log.Warn("no signing key yet; read again before each commit",
 				"path", keyPath, "error", err)
-		default:
-			home := envOr("DIRECTOR_GNUPGHOME", "/tmp/gentian-director-gnupg")
-			signCtx, cancelSign := context.WithTimeout(context.Background(), time.Minute)
-			err = repo.EnableSigning(signCtx, string(key), home)
-			cancelSign()
-			if err != nil {
-				log.Error("signing could not be enabled; commits will be unsigned and Argo CD will refuse them",
-					"error", err)
-			} else {
-				log.Info("commits are signed", "key", repo.SigningKey())
-			}
+		} else {
+			log.Info("commits are signed", "key", repo.SigningKey())
 		}
 	} else {
 		log.Warn("no signing key: commits are unsigned (AD-2)",
@@ -193,23 +166,6 @@ func run(log *slog.Logger) error {
 	// the director's token had to be able to write -- so the rule that the
 	// director reads the graph and writes git was enforced by care rather
 	// than by the credential. Now it is enforced by the credential.
-	// The store is believed only through keys pinned here, from the Cluster
-	// claim. No key, no store: statements are refused because the endpoint does
-	// not exist, not because a lookup failed.
-	var store *api.StoreConfig
-	if raw := os.Getenv("DIRECTOR_STORE_KEYS"); raw == "" {
-		log.Warn("no store signing key pinned: entitlement statements are not accepted", "setting", "DIRECTOR_STORE_KEYS")
-	} else {
-		keys, err := membership.ParseKeys(raw)
-		if err != nil {
-			return fmt.Errorf("DIRECTOR_STORE_KEYS: %w", err)
-		}
-		sv, err := entitlement.NewVerifier(keys, cluster)
-		if err != nil {
-			return err
-		}
-		store = &api.StoreConfig{Verifier: sv, Applier: &entitlement.Applier{Repo: repo, Store: checker}}
-	}
 	// No back-channel logout endpoint, and nothing to sweep.
 	//
 	// Ending a session at Keycloak is what ends it. The edge holds a
@@ -227,129 +183,96 @@ func run(log *slog.Logger) error {
 	// cluster routes by being handed it rather than by being trusted to go and
 	// look. A cluster whose operator has not projected yet has no file here,
 	// and the endpoint answers an empty list.
-	// The operator's app-lifecycle API is the one thing in the cluster this
-	// process asks a question of, and it only ever asks: a tenant's enforced
-	// ceiling, what is under it, which plans it may move to. Choosing a plan
-	// is then a commit here, like every other change. Without the URL the
-	// resources routes do not exist, which a console shows as exactly that.
+	// The operator's listener is the one thing in the cluster this process
+	// talks to: it issues the commands of the command door there, and asks
+	// what a commit or a command depends on -- which plans a tenant may move
+	// to, whether a restore finished. Choosing a plan is then a commit here,
+	// like every other change. A person's reads of live state do not pass
+	// through this process; they are the usher's. Without the URL the routes
+	// that need the operator do not exist.
 	var lc api.Lifecycle
+	var definitions schemacheck.Source
 	if u := os.Getenv("DIRECTOR_APP_LIFECYCLE_URL"); u == "" {
-		log.Warn("no app-lifecycle URL: a tenant's resources cannot be read or its plan chosen here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
+		log.Warn("no app-lifecycle URL: no plan can be chosen and no command issued from here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
 	} else {
-		// The operator's API refuses a request that presents no token, so a
-		// director started without one reaches nothing. Saying so here is
-		// better than every resources call answering 401 with no clue why.
-		token := os.Getenv("APP_LIFECYCLE_TOKEN")
-		if token == "" {
-			log.Warn("no app-lifecycle token: the operator's API will refuse every request from here",
-				"setting", "APP_LIFECYCLE_TOKEN")
+		// The operator admits this process by its ServiceAccount: the token
+		// is one the kubelet projects for the operator's audience and
+		// replaces every few minutes, so it is read from its file on every
+		// request. A director with no such file reaches nothing, and saying
+		// so here is better than every call answering 502 with no clue why.
+		tokenFile := envOr("DIRECTOR_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
+		if _, err := os.Stat(tokenFile); err != nil {
+			log.Warn("no ServiceAccount token for the operator's listener: it will refuse every request from here",
+				"setting", "DIRECTOR_LIFECYCLE_TOKEN_FILE", "file", tokenFile)
 		}
-		lc = lifecycle.New(u, token)
+		client := lifecycle.New(u, lifecycle.TokenFile(tokenFile))
+		lc = client
+		definitions = schemacheck.Cached(func() (schemacheck.Report, error) {
+			return client.Definitions(context.Background())
+		}, schemacheck.DefaultSourceTTL, nil)
 	}
-	// The same OpenFGA client answers both questions, and the two are
-	// separate interfaces on purpose: Check is the hot path, ViewOf is a
-	// How this director speaks for Keycloak (S7A.17).
+	// Every commit is put to what the cluster serves before it is made.
 	//
-	// One credential per realm, handed over by the operator as a mounted
-	// Secret with a key per realm. The director holds no Kubernetes identity
-	// and does not go and look for them, the same division as the tile
-	// catalogue above: the operator holds the administrative credential and
-	// gives this service exactly what it may use.
+	// What this process writes is applied by Argo CD, and a cluster whose
+	// resource definitions are older than this software drops, on apply,
+	// every field it does not know -- silently, with the commit made. This
+	// process holds no cluster credential and is not given one for this: the
+	// operator reads the definitions and says what it found, on the listener
+	// this process already calls. A commit that sets a field the cluster
+	// would drop is refused, and so is one made while the answer cannot be
+	// had; with no operator to ask at all, that is every commit that sets a
+	// field. Reads, and writes that only remove, are served regardless.
+	repo.GuardDefinitions(definitions)
+	// No Keycloak credential, and no record of identity actions.
 	//
-	// A cluster whose operator has not written the Secret yet has no realms
-	// here, and the people and realm-settings routes are simply not
-	// registered -- which a console shows as those screens being absent
-	// rather than as screens that should have worked.
-	var ident api.Identity
-	realmDir := envOr("DIRECTOR_REALM_CREDENTIALS_PATH", "/etc/gentian/realms")
-	idClient, err := identity.New(identity.Config{
-		BaseURL: envOr("DIRECTOR_IDENTITY_BASE_URL", issuerBase),
-		Source:  identity.NewDirectorySource(realmDir, envOr("DIRECTOR_IDENTITY_CLIENT_ID", identity.ClientID)),
-		Logger:  log,
-	})
-	if err != nil {
-		return fmt.Errorf("identity: %w", err)
-	}
-	// Registered on CONFIGURATION, not on contents.
-	//
-	// Gating this on "are there credentials right now" was wrong and would
-	// have failed exactly the case it has to work for: on a first install the
-	// operator writes the Secret minutes after this process starts, and a
-	// director that decided at boot would never serve the screens no matter
-	// how many realms arrived. The source re-reads; what a realm without a
-	// credential gets is a 503 naming it, from the route.
-	//
-	// DIRECTOR_REALM_CREDENTIALS_PATH set to the empty string is how a
-	// deployment says this director speaks for nothing at all, and then the
-	// routes genuinely do not exist.
-	if realmDir == "" {
-		log.Warn("this director speaks for no realm: people and realm settings are not served here",
-			"setting", "DIRECTOR_REALM_CREDENTIALS_PATH")
-	} else {
-		ident = idClient
-		if realms := idClient.Realms(); len(realms) == 0 {
-			log.Info("no realm credentials yet; the operator writes one per realm",
-				"path", realmDir)
-		} else {
-			log.Info("speaking for realms", "realms", realms, "path", realmDir)
-		}
-	}
+	// This process spoke for Keycloak once: it held a client credential for
+	// every realm and served the people, group and realm-settings routes
+	// beside the ones that commit to git. One process could then change both
+	// what the cluster runs and who may sign in to it. Those routes, the
+	// credential and the database that records who was allowed to ask are
+	// the registrar's now (cmd/registrar), and what is left here verifies a
+	// caller's token against the issuer's public keys and nothing more.
 
-	// person reviewing who holds what. Neither can write through the API.
-	// The durable record of who was allowed to ask for a change to a person
-	// (S7A.17). Optional on purpose: a cluster whose director database has
-	// not been provisioned yet keeps the log line and starts anyway, because
-	// refusing to serve at all would take the console down over an audit
-	// trail. The warning says which it is.
-	var authorityRecord *record.Store
-	if dsn := os.Getenv("DIRECTOR_DATABASE_URL"); dsn != "" {
-		authorityRecord, err = record.Open(context.Background(), dsn, recordRetention(log))
-		if err != nil {
-			return fmt.Errorf("director database: %w", err)
-		}
-		defer authorityRecord.Close()
-		go pruneRecord(authorityRecord, log)
-	} else {
-		log.Warn("DIRECTOR_DATABASE_URL is not set; identity actions are logged but not recorded")
-	}
-
-	// Catalogue sources: where a profile is fetched from when a tenant
-	// installs it (AD-3), read from the Cluster claim in git (AD-14).
+	// Catalogues: where a profile is fetched from when a tenant installs it
+	// (AD-3), declared in git (AD-14) -- on the Cluster claim for the ones
+	// every tenant sees, on a tenant's manifest for the ones only it does.
 	//
-	// On the claim and not in this process's environment, because opening a
-	// catalogue to a tenant is a decision about what software may enter the
-	// cluster. On the claim it is a commit with an author and a date, next to
-	// everything else the cluster is; in an environment variable it is a
-	// value that changed when somebody rolled a Deployment, and the only
-	// record is whatever the pod spec says now.
+	// In git and not in this process's environment, because naming a
+	// catalogue is a decision about what software may enter the cluster. In
+	// git it is a commit with an author and a date; in an environment
+	// variable it is a value that changed when somebody rolled a Deployment,
+	// and the only record is whatever the pod spec says now.
 	//
-	// The list is read once, at start. A source added to the claim reaches
-	// the director when its Deployment next starts -- which is what an Argo
-	// sync of a changed claim produces anyway -- and the tuples that say
-	// WHICH tenant a source is open to are the operator's, reconciled
-	// continuously. Without any source, this cluster's profiles arrive some
-	// other way and nothing is materialised on reference.
-	var entries *catalogue.Fetcher
-	var declared []gitops.CatalogueSource
+	// They are read when they are needed, per request and per tenant, so a
+	// catalogue added through the API is there for the next install and one
+	// removed is gone. What is read here, once, is only the App Store's
+	// address, and the cluster's own catalogues for the log.
+	//
+	// The fetcher connects to public https addresses and to nothing else
+	// (internal/director/catalogue/address.go): an address somebody typed
+	// must not be a way to reach into the cluster this process runs in.
+	//
+	// A catalogue may instead be kept in a directory of the deployments
+	// repository itself, for profiles that must not be public. That is read
+	// from the checkout this process already holds, with the credential it
+	// already has: no address, and no request to anywhere
+	// (internal/director/gitops/catalogue_directory.go).
+	entries := catalogue.NewFetcher()
+	entries.Repo = repo
 	var storeURL string
 	readSources, cancelRead := context.WithTimeout(context.Background(), time.Minute)
 	catalogues, err := repo.Catalogue(readSources)
 	cancelRead()
-	declared, storeURL = catalogues.Sources, catalogues.StoreURL
+	storeURL = catalogues.StoreURL
 	if err != nil {
 		// Not fatal. A director that cannot read the claim still serves
-		// every call that is not an install from a catalogue, and refusing
-		// to start would take the console down with it.
-		log.Warn("catalogue sources could not be read from the Cluster claim; nothing will be materialised",
+		// every call, and reads the claim again when a catalogue is asked
+		// for; refusing to start would take the console down with it.
+		log.Warn("the Cluster claim could not be read at start; its catalogues are read again when they are needed",
 			"error", err)
-	} else if len(declared) > 0 {
-		sources := make(map[string]string, len(declared))
-		for _, src := range declared {
-			sources[src.Name] = src.URL
-			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL,
-				"access", src.Access, "openTo", len(src.Tenants))
-		}
-		entries = catalogue.NewFetcher(sources)
+	}
+	for _, src := range catalogues.Sources {
+		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL, "path", src.Path)
 	}
 	if storeURL == "" {
 		// Worth one line: without it the cluster's own catalogue view can
@@ -359,20 +282,21 @@ func run(log *slog.Logger) error {
 			"setting", "spec.catalogue.storeUrl")
 	}
 
+	// The same OpenFGA client answers both questions, and the two are
+	// separate interfaces on purpose: Check is the hot path, ViewOf is a
+	// person reviewing who holds what. Neither can write through the API.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
-		Record:              authorityRecord,
-		Catalogue:           entries,
-		CatalogueSources:    declared,
-		StoreURL:            storeURL,
-		Binder:              checker,
-		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
-		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
-		Lifecycle: lc, Identity: ident,
-		InviteClientID:    os.Getenv("DIRECTOR_INVITE_CLIENT_ID"),
-		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI")})
+		Catalogue: entries,
+		StoreURL:  storeURL,
+		Cluster:   cluster,
+		Lifecycle: lc})
 	if err != nil {
 		return err
 	}
+
+	// A purge a previous run asked for and did not see through.
+	handler.ResumePurges(context.Background())
+	handler.ResumeImports(context.Background())
 
 	srv := &http.Server{
 		Addr:              envOr("DIRECTOR_LISTEN", ":8080"),
@@ -400,43 +324,14 @@ func run(log *slog.Logger) error {
 	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// The requests are answered; now what runs beside them. A watcher that is
+	// in the middle of a commit is given the rest of the same half minute.
+	closed := make(chan struct{})
+	go func() { handler.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-shutdown.Done():
+		log.Warn("the director stopped while a watcher was still writing to the repository")
+	}
 	return nil
-}
-
-// recordRetention is how long an authority record is kept, from
-// DIRECTOR_RECORD_RETENTION (a Go duration). Personal data needs a horizon
-// somebody chose, and an unparseable value is a misconfiguration worth saying
-// out loud rather than silently becoming the default.
-func recordRetention(log *slog.Logger) time.Duration {
-	raw := os.Getenv("DIRECTOR_RECORD_RETENTION")
-	if raw == "" {
-		return record.DefaultRetention
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		log.Warn("DIRECTOR_RECORD_RETENTION is not a duration; using the default",
-			"value", raw, "default", record.DefaultRetention.String())
-		return record.DefaultRetention
-	}
-	return d
-}
-
-// pruneRecord removes what is past the horizon, once at start and daily after.
-//
-// In the process rather than a CronJob: it is one DELETE against a database
-// only this process has a credential for, and a CronJob would need its own
-// copy of that credential to run it.
-func pruneRecord(store *record.Store, log *slog.Logger) {
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		n, err := store.Prune(ctx)
-		cancel()
-		switch {
-		case err != nil:
-			log.Error("could not prune the authority record", "error", err.Error())
-		case n > 0:
-			log.Info("pruned authority records past their retention", "rows", n)
-		}
-		time.Sleep(24 * time.Hour)
-	}
 }

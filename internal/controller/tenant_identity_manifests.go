@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -33,7 +27,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
@@ -53,6 +46,10 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	jobs, err := r.buildTenantProvisioningJobs(ctx, tenant)
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
+	}
+	// On record before anything is made: see recordProvisionedStores.
+	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
+		return err
 	}
 	stampScriptHashes(jobs)
 	// A Job's pod template is immutable, so re-applying a changed script does
@@ -170,7 +167,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	// and the realm is the identity bootstrap's. See adoptsKernelRealm.
 	adopted := r.adoptsKernelRealm(tenant)
 	var broker *realmBrokerParams
-	if r.KernelRealm != "" && r.KernelDomain != "" {
+	if kernelBrokerEnabled && r.KernelRealm != "" && r.KernelDomain != "" {
 		broker = &realmBrokerParams{
 			kernelRealm:       r.KernelRealm,
 			kernelExternalURL: kernelExternalURL(r.KernelDomain),
@@ -197,11 +194,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupsJSON))
 
 	if !adopted {
-		adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
-		if err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminEmail(tenant), adminCreds))
+		jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminUsername(tenant)))
 	}
 
 	for _, cfg := range oidcConfigs {
@@ -233,33 +226,29 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		//
 		// The kernel broker Job is down to one thing: the kernel realm's own
 		// first-broker-login flow. No XTenant covers the kernel realm, so nothing
-		// composes it.
-		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
-		// No portal BFF client Job. The client, its confidential secret taken
-		// from gentian-portal-bff, and its seven default scopes are all
-		// Composition resources now.
-		// No portal public client Job. The client and its openbao-audience
-		// protocol mapper are both Composition resources now, adopted by their
-		// natural keys, so a Job writing the same fields would be a second owner
-		// racing the first.
+		// composes it. Not built while kernelBroker is off: nothing names the flow.
+		if kernelBroker {
+			jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
+		}
+		// No portal clients at all: the portal is retired, and a tenant's people
+		// sign in through the edge's zone client, which tenant-default composes.
 		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			mailHost := ""
 			if r.KernelDomain != "" {
 				mailHost = "mail." + r.KernelDomain
 			}
-			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost))
+			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost, brandName(ctx, r.Client)))
 		}
 	}
 
 	return jobs, nil
 }
 
-func (r *TenantReconciler) seedTenantAdminCreds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (secrets.TenantAdminCreds, error) {
-	username := tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
-	if r.Seeder != nil {
-		return r.Seeder.SeedTenantAdmin(ctx, tenant.Name, username)
-	}
-	return secrets.TenantAdminCreds{Username: username, Password: "placeholder"}, nil
+// tenantAdminUsername is the administrator's login. The account has no
+// password until its holder sets one through an activation link: nothing here
+// derives, stores or logs one.
+func (r *TenantReconciler) tenantAdminUsername(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
 }
 
 // seedOIDCSecrets writes issuer/client-id/client-secret to OpenBao for apps whose
@@ -268,11 +257,7 @@ func (r *TenantReconciler) seedOIDCSecrets(ctx context.Context, tenant *gentiano
 	if r.Seeder == nil || cfg.clientID == "" {
 		return nil
 	}
-	issuerHost := tenant.Spec.Domain
-	if r.KernelDomain != "" {
-		issuerHost = r.KernelDomain
-	}
-	issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+	issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 	if _, err := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID); err != nil {
 		return fmt.Errorf("seed oidc for %s: %w", cfg.profileName, err)
 	}
@@ -283,11 +268,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 	if cfg.pack != nil {
 		clientSecret := ""
 		if r.Seeder != nil && !cfg.pack.PublicClient {
-			issuerHost := tenant.Spec.Domain
-			if r.KernelDomain != "" {
-				issuerHost = r.KernelDomain
-			}
-			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 			if seedErr != nil {
 				return nil, fmt.Errorf("seed oidc pack for %s: %w", cfg.profileName, seedErr)
@@ -299,11 +280,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 
 	clientSecret := ""
 	if r.Seeder != nil {
-		issuerHost := tenant.Spec.Domain
-		if r.KernelDomain != "" {
-			issuerHost = r.KernelDomain
-		}
-		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 		creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 		if seedErr != nil {
 			return nil, fmt.Errorf("seed oidc for %s: %w", cfg.profileName, seedErr)
@@ -407,6 +384,10 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 	// below, because what it grants is collected from the installed profiles.
 	addGroup(keycloak.TenantMembersGroup(tenant.Name), nil)
 	addGroup(keycloak.TenantAdminsGroup(tenant.Name), nil)
+	// Whoever approves what the tenant publishes to the internet. Made with
+	// the tenant and empty, so that naming an approver is adding a person to
+	// a group that is there rather than knowing which name to give a new one.
+	addGroup(keycloak.TenantPerimeterGroup(tenant.Name), nil)
 
 	// The Odoo roles an app admin gets, unioned across everything installed.
 	//
@@ -423,7 +404,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 	// changes — this only decides which roles ride on the app-admins group.
 	adminRoles := map[string]struct{}{}
 
-	// Helper to extract attributes from AppProfile name
+	// Helper to extract attributes from ComponentProfile name
 	resolveProfileAttrs := func(profileName string) (map[string][]string, error) {
 		profile := &gentianov1alpha1.ComponentProfile{}
 		err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile)
@@ -461,7 +442,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 
 	// 2. Add groups for all tenant apps, and for the addons activated inside them
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return "", err
 		}

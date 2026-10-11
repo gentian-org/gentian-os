@@ -81,6 +81,44 @@ spec:
               A service may have a console, but never on the perimeter: that surface has
               no session, so there is nothing for an enablement to switch on.
             properties:
+              addonPins:
+                description: |-
+                  AddonPins is the build each pinned addon was installed from, as the
+                  Tenant records it. Nothing is rendered for this instance while a
+                  pinned addon's profile is not shown to be that build: the addon list
+                  reaches the release through this component, so this is where an
+                  unverified addon is kept out of it.
+                items:
+                  description: AddonPin is the build one addon was installed from.
+                  properties:
+                    catalogue:
+                      description: |-
+                        Catalogue is the catalogue the pinned build was fetched from: the first
+                        half of its coordinate, <catalogue>/<name>.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                      type: string
+                    digest:
+                      description: |-
+                        Digest pins the addon's profile bundle: the build the install asked
+                        for.
+                      pattern: ^sha256:[a-f0-9]{64}$
+                      type: string
+                    name:
+                      description: Name is the addon's profile name, as addons lists
+                        it.
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - digest
+                  - name
+                  type: object
+                maxItems: 128
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               addons:
                 description: Addons enabled on this instance, by the profile's own
                   names.
@@ -100,38 +138,110 @@ spec:
                 - app
                 - shared-app
                 type: string
+              config:
+                description: |-
+                  Config is what this install overrides of the profile's defaults: the
+                  replica count and chart values the tenant chose. It is the install's
+                  and not the profile's, so two tenants installing one profile may differ
+                  here and nowhere else.
+                properties:
+                  dropIns:
+                    description: |-
+                      DropIns supply tenant-authored files into drop-in directories the target
+                      ComponentProfile declares as tenantEditable. This is rung L1 at tenant scope —
+                      the highest rung a tenant admin may reach unaided, and the only one where
+                      self-service makes sense: content, never code.
+
+                      Each entry must name a declared, tenantEditable drop-in; filenames are
+                      restricted to the 90-99 range so platform and profile files keep priority.
+                      Content lands in a ConfigMap and is therefore not secret material.
+                      See docs/app-customization.md §2.2.1.
+                    items:
+                      description: TenantAppDropIn is tenant-authored content for
+                        one declared drop-in directory.
+                      properties:
+                        files:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Files maps filename to content. Filenames are validated against the
+                            tenant-reserved 90-99 numeric prefix range, and total content is capped by
+                            the drop-in's maxBytes.
+                          minProperties: 1
+                          type: object
+                        name:
+                          description: |-
+                            Name must match a ComponentProfile.spec.customization.dropIns[].name entry that
+                            sets tenantEditable: true. Tenants cannot invent mount paths — that would be
+                            repackaging (L4) at tenant scope.
+                          maxLength: 63
+                          pattern: ^[a-z][a-z0-9-]*$
+                          type: string
+                      required:
+                      - files
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  extraValues:
+                    description: |-
+                      ExtraValues deep-merges Helm values over the profile's defaults.
+                      Must not contain secrets — use valueMapping for credentials.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  replicas:
+                    description: Replicas overrides the default replica count.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               exposures:
                 description: |-
-                  Exposures are the perimeter entries of the profile that are switched on.
-                  Gateway entries need none: they carry the session and are always on.
+                  Exposures are the entries of the profile a perimeter approver approved:
+                  the perimeter entries that are switched on, and the entries behind
+                  sign-in whose Authorization header is left to the app. Every other
+                  gateway entry needs none: it carries the session and is always on.
                 items:
                   description: |-
-                    ExposureEnablement switches on one perimeter entry of the profile.
+                    ExposureEnablement is the approval of one entry of the profile: it switches
+                    on a perimeter entry, or lets an entry behind sign-in keep the app's own
+                    Authorization header. Which, is Kind.
 
                     authMode is not repeated here: the profile's entry is the one source, and an
                     enablement cannot weaken it.
                   properties:
+                    apex:
+                      description: |-
+                        Apex is the approver saying that this surface is for the cluster's
+                        main address (the bare domain), copied from the Tenant's entry.
+                      type: boolean
                     expiresAt:
                       description: |-
-                        ExpiresAt bounds the exposure, and is always set: a public surface with
-                        no end is not something anybody decided. At expiry the operator treats
-                        the enablement as absent; the entry stays in git as history.
+                        ExpiresAt ends the exposure, for one that was published for a while:
+                        at expiry the operator treats the enablement as absent, and the entry
+                        stays in git as history. Optional. A surface meant to stay -- a
+                        tenant's website -- has none, because an expiry nobody renewed takes
+                        a production site off the internet with no decision behind it.
                       format: date-time
                       type: string
                     exposureName:
                       description: |-
-                        ExposureName names an entry of the profile's expose list whose surface is
-                        "perimeter".
+                        ExposureName names an entry of the profile's expose list that asks for
+                        approval.
                       maxLength: 40
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
-                    host:
+                    kind:
                       description: |-
-                        Host is the public hostname. Empty means the entry's default host in the
-                        tenant's zone. A vanity host is admitted only if the tenant's approved
-                        domains include it.
-                      maxLength: 253
-                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
+                        Kind is what was approved, copied from the Tenant's entry; empty is a
+                        public address. An approval is in force only for an entry that
+                        declares this kind.
+                      enum:
+                      - public
+                      - publicAppCredential
+                      - signInAppAuthorization
                       type: string
                     owner:
                       description: |-
@@ -142,21 +252,23 @@ spec:
                       type: string
                     reviewAt:
                       description: |-
-                        ReviewAt is when the owner and the perimeter approver are asked to renew
-                        or revoke.
+                        ReviewAt is when the owner and the perimeter approver look at it again,
+                        and it is always set: what is public is known and revisited, whether or
+                        not it ends. A review that is overdue is reported; it takes nothing
+                        down.
                       format: date-time
                       type: string
                   required:
-                  - expiresAt
                   - exposureName
                   - owner
+                  - reviewAt
                   type: object
                   x-kubernetes-validations:
                   - message: 'owner is immutable: a renewal by someone else is a new
                       enablement'
                     rule: self.owner == oldSelf.owner
                   - message: reviewAt must not be later than expiresAt
-                    rule: '!has(self.reviewAt) || self.reviewAt <= self.expiresAt'
+                    rule: '!has(self.expiresAt) || self.reviewAt <= self.expiresAt'
                 maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:
@@ -227,8 +339,11 @@ spec:
                   of.
                 properties:
                   digest:
-                    description: Digest pins the profile bundle this instance was
-                      installed from.
+                    description: |-
+                      Digest pins the profile bundle this instance was installed from. When
+                      set, nothing is rolled out from a profile that is not shown to be that
+                      build: the bundle the profile carries must hash to it, and the profile
+                      must be what the bundle says.
                     pattern: ^sha256:[a-f0-9]{64}$
                     type: string
                   name:

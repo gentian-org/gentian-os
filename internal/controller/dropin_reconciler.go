@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -57,13 +51,14 @@ var dropInFileNamePattern = regexp.MustCompile(`^9[0-9]-[a-zA-Z0-9._-]+$`)
 //
 // This is rung L1 at tenant scope (see docs/app-customization.md §2.2.1): the
 // highest rung a tenant admin may reach unaided. A tenant may supply content —
-// a logo, a locale bundle, a config fragment — into a directory the AppProfile
+// a logo, a locale bundle, a config fragment — into a directory the ComponentProfile
 // has explicitly declared as tenantEditable. It may not introduce code, invent
 // mount paths, or shadow platform files.
 //
-// The mount itself is generated from AppProfile.spec.customization.dropIns by the
-// composition, so no per-app operator logic is involved: the operator only writes
-// validated content into a predictably named ConfigMap.
+// Nothing mounts it. The operator writes validated content into a predictably
+// named ConfigMap and stops there: no composition and no chart of the
+// catalogue mounts that ConfigMap into the app, so a tenant's drop-in has no
+// effect on the app yet.
 func (r *TenantReconciler) ensureTenantDropIns(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	desired, err := r.buildTenantDropIns(ctx, tenant)
 	if err != nil {
@@ -100,7 +95,7 @@ type dropInConfigMapSpec struct {
 }
 
 // buildTenantDropIns validates every tenant drop-in against the declaration on the
-// target AppProfile and returns the ConfigMaps to write. Validation is total: any
+// target ComponentProfile and returns the ConfigMaps to write. Validation is total: any
 // invalid entry fails the whole build, so a tenant cannot half-apply a change.
 func (r *TenantReconciler) buildTenantDropIns(
 	ctx context.Context,
@@ -111,9 +106,9 @@ func (r *TenantReconciler) buildTenantDropIns(
 		return specs, nil
 	}
 
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
-		return nil, fmt.Errorf("load AppProfile index: %w", err)
+		return nil, fmt.Errorf("load ComponentProfile index: %w", err)
 	}
 
 	for _, app := range tenant.Spec.Apps {
@@ -122,7 +117,7 @@ func (r *TenantReconciler) buildTenantDropIns(
 		}
 		profile, exists := appProfileFromIndex(profileIndex, app.Profile)
 		if !exists {
-			return nil, fmt.Errorf("app %q: AppProfile not found", app.Profile)
+			return nil, fmt.Errorf("app %q: ComponentProfile not found", app.Profile)
 		}
 
 		for _, tenantDropIn := range app.Config.DropIns {

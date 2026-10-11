@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -29,7 +23,7 @@ import (
 
 func params() JobParams {
 	return JobParams{
-		Namespace:    "platform-kernel",
+		Namespace:    "system-postgresql",
 		Name:         "tx-demo-app-pg",
 		Tenant:       "demo",
 		App:          "nextcloud-base-ce",
@@ -114,8 +108,11 @@ func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 
 func TestMariaDBDumpUploadsTheFileItWrote(t *testing.T) {
 	job := MariaDBDumpJob(params(), "demo_app")
-	if !strings.Contains(initContainerScript(job), "> /work/dump.sql.gz") {
-		t.Errorf("dump path unexpected:\n%s", initContainerScript(job))
+	// Written to a file and compressed there: through a pipe the exit status
+	// would be gzip's, and a dump that failed would be uploaded as taken.
+	dump := initContainerScript(job)
+	if !strings.Contains(dump, "--result-file=/work/dump.sql 'demo_app'\ngzip /work/dump.sql\n") || strings.Contains(dump, "|") {
+		t.Errorf("dump path unexpected:\n%s", dump)
 	}
 	if !strings.Contains(mainScript(job), `mc cp "/work/dump.sql.gz`+EncryptedSuffix+`"`) {
 		t.Errorf("upload path unexpected:\n%s", mainScript(job))
@@ -393,10 +390,10 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 		"volume":        VolumeArchiveJob(p, "data", []string{"**/cache"}),
 		"s3":            S3ArchiveJob(p, "demo-bucket"),
 		"realm-export":  RealmExportJob(p, "demo"),
-		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
-		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -491,10 +488,10 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 		"volume":        VolumeArchiveJob(p, "data", nil),
 		"s3":            S3ArchiveJob(p, "demo-bucket"),
 		"realm-export":  RealmExportJob(p, "demo"),
-		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
-		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -527,8 +524,8 @@ func TestNoMcImageContainerInvokesTar(t *testing.T) {
 	jobs := map[string]*batchv1.Job{
 		"volume":         VolumeArchiveJob(p, "data", nil),
 		"s3":             S3ArchiveJob(p, "demo-bucket"),
-		"s3-restore":     S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"volume-restore": VolumeRestoreJob(p, recipientDecryption(), "data"),
+		"s3-restore":     S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"volume-restore": VolumeRestoreJob(p, recipientDecryption(), VolumeArtefact("data"), "data"),
 		"bundle-delete":  BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -594,7 +591,7 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 // credential. Reading the endpoint from the credential Secret would mean
 // whoever can edit that Secret can redirect every tenant's backups — so a
 // configured destination carries its address as a literal, and only the keys
-// come from the credential manager.
+// come from the custodian.
 func TestConfiguredEndpointIsNotReadFromTheCredential(t *testing.T) {
 	p := params()
 	p.Endpoint = "https://sos-ch-gva-2.exo.io"
@@ -665,7 +662,7 @@ func TestPlatformStorageStillReadsItsEndpointFromTheSecret(t *testing.T) {
 // went to the same MinIO the apps use.
 func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
 	p := JobParams{
-		Namespace: "platform-kernel",
+		Namespace: "system-postgresql",
 		Name:      "tx-demo-docmost-s3",
 		Tenant:    "demo",
 		App:       "docmost-ce",
@@ -782,7 +779,7 @@ func TestAnUnheldVolumeLeavesSchedulingAlone(t *testing.T) {
 // confined to whichever node happened to be named.
 func TestJobsWithoutAVolumeAreNotPinned(t *testing.T) {
 	p := JobParams{
-		Namespace: "platform-kernel", Name: "tx-demo-pg", Tenant: "demo",
+		Namespace: "system-postgresql", Name: "tx-demo-pg", Tenant: "demo",
 		App: "docmost-ce", Bucket: "demo-backup", Prefix: "demo-export",
 	}
 	if sel := PostgresDumpJob(p, "demo_docmost").Spec.Template.Spec.NodeSelector; sel != nil {

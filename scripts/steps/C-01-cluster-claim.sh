@@ -26,6 +26,26 @@ apply() {
     CROSSPLANE_NAMESPACE="$(ns_kernel provisioning)"
     OPENBAO_NAMESPACE="$(ns_kernel secrets)"
     apply_cluster_xr
+    _c01_resync_after_store
+}
+
+# The ExternalSecrets B-08 re-synced could not come good then: they read
+# through the openbao ClusterSecretStore, which this step composes. Nothing
+# nudged them again once it existed, so the DNS-01 credential -- and with it
+# the wildcard's issuer -- waited out External Secrets' own backoff. Now the
+# store is waited for and the same re-sync runs once more.
+_c01_resync_after_store() {
+    local deadline=$(( SECONDS + 180 ))
+    until [[ "$(kubectl get clustersecretstore openbao \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" == "True" ]]; do
+        if (( SECONDS > deadline )); then
+            warn "The openbao ClusterSecretStore is not Ready after 3 minutes; ExternalSecrets"
+            warn "  that failed before it existed sync on their own backoff."
+            return 0
+        fi
+        sleep 5
+    done
+    resync_credential_consumers
 }
 
 destroy() {

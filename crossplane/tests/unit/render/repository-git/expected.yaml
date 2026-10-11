@@ -27,7 +27,7 @@ metadata:
   generateName: deployments-m288c-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-m288c
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -43,7 +43,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - https://git.internal.example/gentian-deployments
@@ -62,7 +62,7 @@ metadata:
   generateName: deployments-m288c-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-m288c
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -78,7 +78,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: repo-deployments-m288c
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         data:
         - remoteRef:
@@ -115,7 +115,7 @@ metadata:
   generateName: deployments-m288c-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-m288c
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -133,7 +133,7 @@ spec:
         labels:
           gentianos.io/credential-requirement: deployments-m288c
         name: credreq-repository-deployments-m288c
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:
@@ -160,7 +160,7 @@ metadata:
     crossplane.io/composition-resource-name: credreq-deployments-m288c
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-m288c
     gentianos.io/credential-phase: bootstrap
     gentianos.io/credential-scope: cluster
@@ -201,7 +201,7 @@ metadata:
   generateName: deployments-m288c-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-m288c
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -217,7 +217,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: deployments-git-credentials
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:

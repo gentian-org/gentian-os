@@ -65,23 +65,36 @@ spec:
               grants anything: every permissive statement here is a request that a named
               person answers on the Component.
 
+              One policy carries a component's session on every host it has, and that
+              policy either hands the edge's token over in the Authorization header or
+              leaves the header to the app. It cannot do both.
               A service may expose -- a console is not a contract surface -- but only on
               the gateway. The perimeter has no session, and a service console published
               there is never what anybody meant.
+              The address the realm posts a logout token to is built from an entry's
+              backend, so the entry has to be this profile's, has to route to this
+              component's own Service, and that Service's name has to be a name and
+              nothing else: it becomes the host of the address.
+              An extension's client is not told of a sign-out: nothing builds an address
+              for it, and a declaration that did nothing would read as one that works.
               One delivery, and nothing outside package to reach for. The OR this replaces
               admitted a chart beside an API integration, and deploymentMethod could
               contradict whichever was set.
 
               chart and composition together are the one legal pair, because they answer
               different halves of one question: the chart is WHAT is installed, and the
-              composition is WHAT ELSE is created beside it. Three catalogue entries are
-              like this -- Odoo, Element and OpenProject each render their chart through a
-              Composition that also emits a portal bridge, an SSO sidecar or a stable
-              service alias. Refusing the pair sent that fact into an annotation, where
-              nothing validated it.
+              composition is WHAT ELSE is created beside it. Two catalogue entries are
+              like this -- Odoo and Element each render their chart through a
+              Composition that also emits an SSO sidecar or a stable service alias.
+              Refusing the pair sent that fact into an annotation, where nothing
+              validated it.
 
               Every other pairing is still refused, and composition alone is still a
               delivery of its own: a component the Composition creates entirely.
+              A tile is on an exposure, or on package.api for a component that is only a
+              link to a service hosted elsewhere -- it has no exposure to carry one, and
+              counting exposures alone refused every such profile. `package` is a CEL
+              reserved word, so the API server names the field __package__.
             properties:
               backup:
                 description: Backup declares what a consistent copy of this component
@@ -284,7 +297,7 @@ spec:
                         type: string
                       of:
                         description: |-
-                          Of is the AppProfile name of the base this addon activates into. It must be
+                          Of is the ComponentProfile name of the base this addon activates into. It must be
                           in the same family. Replaces the gentianos.io/requires-profile annotation,
                           which pointed the same way but existed to auto-install a base when an addon
                           was installed standalone — the relationship the L3 cleanup inverts.
@@ -662,6 +675,13 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
+              defaultForPlatform:
+                description: |-
+                  DefaultForPlatform means the platform tenant gets a Component of this
+                  profile, and no other tenant does: something the cluster has one of and
+                  that runs with a tenant's authority rather than the kernel's. Created
+                  and named the way DefaultForTenants creates its own.
+                type: boolean
               defaultForTenants:
                 description: |-
                   DefaultForTenants means every tenant gets a Component of this profile,
@@ -672,6 +692,19 @@ spec:
                   declared the same way rather than by another name the operator knows.
                   Only a profile of class "app" may say it: a service and a shared-app
                   have one instance, so there is nothing to give each tenant.
+                type: boolean
+              defaultWhereStoreOffered:
+                description: |-
+                  DefaultWhereStoreOffered means every tenant except the platform tenant
+                  gets a Component of this profile for as long as the cluster offers an
+                  App Store: licence reporting is on and the Cluster claim names a store
+                  (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
+                  creates its own.
+
+                  Unlike the two above it is also taken away: when the cluster stops
+                  offering a store the Component is removed again, so a profile that says
+                  this must own no data. The platform tenant gets none because nobody
+                  installs apps there.
                 type: boolean
               expose:
                 description: |-
@@ -701,10 +734,22 @@ spec:
                         own policy now and are not read from here.
                       maxProperties: 16
                       type: object
+                    apex:
+                      description: |-
+                        Apex publishes this entry on the cluster's bare domain -- its main
+                        address -- instead of a host under the zone's domain. Only a perimeter
+                        entry may say it. The operator honours it for the platform tenant,
+                        and for the one user tenant of a single-tenancy cluster when that
+                        tenant's approver published the entry for the main address (apex on
+                        the enablement) and no other surface holds it. Everywhere else an
+                        apex entry has no host and is not published: the bare domain is the
+                        first thing anybody typing the cluster's address meets.
+                      type: boolean
                     authMode:
                       description: AuthMode is mandatory and has no default.
                       enum:
                       - oidc
+                      - app
                       - jwt
                       - bearer
                       - basic
@@ -730,12 +775,33 @@ spec:
                           minimum: 1
                           type: integer
                         service:
+                          maxLength: 63
                           minLength: 1
                           type: string
                       required:
                       - port
                       - service
                       type: object
+                    clientAuthorization:
+                      description: |-
+                        ClientAuthorization says whose the Authorization header is on this
+                        entry. Unset, it is the platform's: the edge replaces whatever a
+                        client sent there and removes it before the app. "app" says the app's
+                        pages send a token of the app's own in that header, and asks that it
+                        be left alone.
+
+                        It is a request. It takes effect once the tenant's perimeter approver
+                        has approved this entry; until then the entry is served like any other
+                        behind sign-in and the header is removed. Approved, a person still has
+                        to be signed in and still has to be allowed to use the app, exactly as
+                        before; the edge puts no token of its own in the header and removes
+                        none, and no platform token reaches the app.
+
+                        The session's cookies belong to a host, so what one entry declares
+                        holds for every entry of the component on the same host.
+                      enum:
+                      - app
+                      type: string
                     denyPaths:
                       description: |-
                         DenyPaths are refused even where Paths admits them. Deny wins regardless
@@ -746,6 +812,20 @@ spec:
                       maxItems: 64
                       type: array
                       x-kubernetes-list-type: set
+                    exchangeToken:
+                      description: |-
+                        ExchangeToken asks the front door to hand this backend a token of the
+                        person that is valid at this app and nowhere else: the session's token
+                        exchanged at the tenant's realm for one whose audience is the app. The
+                        backend verifies it -- signature, issuer, audience, expiry -- and need
+                        not trust the identity headers, which anything that can reach it could
+                        set.
+
+                        Not forwardToken: that passes the session's own token, which is valid
+                        at the director and at every sibling, and so is for a component of
+                        platform trust. An exchanged token is worth nothing outside the app it
+                        names, and any app may ask for it.
+                      type: boolean
                     forwardToken:
                       description: |-
                         ForwardToken asks the gateway to pass the edge access token to this
@@ -938,6 +1018,40 @@ spec:
                   - message: 'a perimeter entry cannot use authMode oidc: the session
                       lives on the gateway'
                     rule: self.surface != 'perimeter' || self.authMode != 'oidc'
+                  - message: 'apex is for a perimeter entry and names the whole host:
+                      it takes no subDomain'
+                    rule: '!has(self.apex) || !self.apex || (self.surface == ''perimeter''
+                      && !has(self.subDomain))'
+                  - message: 'authMode jwt, bearer, basic and signature are not available
+                      on a perimeter entry yet: the platform verifies no token, password
+                      or signature there. Declare authMode app if the app itself checks
+                      the credential its callers send in the Authorization header,
+                      or authMode none if the paths are for anyone'
+                    rule: self.surface != 'perimeter' || self.authMode in ['none',
+                      'app', 'oidc']
+                  - message: 'authMode app is for a perimeter entry: it passes the
+                      caller''s Authorization header to the app with no sign-in in
+                      front. Behind sign-in, declare authMode oidc with clientAuthorization
+                      app'
+                    rule: self.authMode != 'app' || self.surface == 'perimeter'
+                  - message: 'clientAuthorization is for a gateway entry behind the
+                      session (authMode oidc): it says whose the Authorization header
+                      is once a person has signed in'
+                    rule: '!has(self.clientAuthorization) || (self.surface == ''gateway''
+                      && self.authMode == ''oidc'')'
+                  - message: 'clientAuthorization excludes forwardToken and exchangeToken:
+                      the Authorization header toward the app is either the app''s
+                      own or a token the platform puts there'
+                    rule: '!has(self.clientAuthorization) || ((!has(self.forwardToken)
+                      || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))'
+                  - message: 'an apex entry is a website for anyone (authMode none):
+                      the cluster''s main address passes no credential to an app'
+                    rule: '!has(self.apex) || !self.apex || self.authMode == ''none'''
+                  - message: a gateway entry is behind the zone's session (authMode
+                      oidc) or pins its caller (source). What needs neither is a perimeter
+                      surface
+                    rule: self.surface != 'gateway' || self.authMode == 'oidc' ||
+                      has(self.source)
                 maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:
@@ -1030,14 +1144,29 @@ spec:
                             allowDynamicDatabaseCreation:
                               description: |-
                                 AllowDynamicDatabaseCreation lets the app create databases of its own at
-                                runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
-                                CREATEDB. Ask for it only when creating databases is what the app is for
+                                runtime. Ask for it only when creating databases is what the app is for
                                 (a data explorer, say); an app that merely stores its own state must not.
 
-                                Databases created this way are still purged with the app: they are owned
-                                by the app role, and uninstall --purge drops everything that role owns.
-                                They are not otherwise governed — the tenant chooses the names, and they
-                                do not appear in the catalogue's provisioning model.
+                                On postgresql the app's role is given CREATEDB. Databases created this
+                                way are the app's by ownership: the app role owns each one it made, so
+                                an export copies them, a restore puts them back and a purge drops them
+                                with the role. They are not otherwise governed — the tenant chooses the
+                                names, and they do not appear in the catalogue's provisioning model.
+
+                                On mariadb a database has no owner and the server is shared by every
+                                tenant, so the app's databases are the ones named for it: the app may
+                                create, use and drop databases whose name is the name of its
+                                provisioned database followed by an underscore and anything —
+                                "<database>_reports" — and no other. It is granted all privileges on
+                                those names and on its provisioned database, and none on the server:
+                                CREATE DATABASE under any other name is refused, as is any statement
+                                that needs a global privilege. An app that names its databases itself
+                                must therefore be configured, by the profile, to prefix them with
+                                "<database>_"; one that cannot be is not installable with this field on
+                                the shared server. Databases so named are exported, restored (under the
+                                provisioned name of the tenant restored into) and purged with the
+                                provisioned one. Provisioning refuses an app whose provisioned database
+                                would itself lie under another app's prefix, or the reverse.
 
                                 Omitted is equivalent to false, which is also Go's zero value for bool —
                                 left undefaulted at the schema level so profiles that omit it don't
@@ -1098,10 +1227,51 @@ spec:
                                   - PUBLIC
                                   - CONFIDENTIAL
                                   type: string
+                                backchannelLogout:
+                                  description: |-
+                                    BackchannelLogout says where in the app the realm tells it that a
+                                    person signed out (OpenID Connect Back-Channel Logout).
+                                  properties:
+                                    exposure:
+                                      description: |-
+                                        Exposure names the entry of this profile (spec.expose) whose backend
+                                        the path is served by. The entry must route to this component's own
+                                        Service: one that names another component's (backend.component) is
+                                        refused, and so is a name the profile has no entry for.
+                                      maxLength: 40
+                                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                      type: string
+                                    path:
+                                      description: |-
+                                        Path is the app's back-channel logout endpoint: a plain path. One or
+                                        more segments of letters, digits, "_", "~" and "-", which may have
+                                        single dots inside them. So no query and no fragment, no empty segment
+                                        ("//", which begins a host), no ".." and no segment that begins or ends
+                                        with a dot, and nothing else that could be read as part of an address.
+                                      maxLength: 256
+                                      minLength: 2
+                                      pattern: ^(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)+/?$
+                                      type: string
+                                  required:
+                                  - exposure
+                                  - path
+                                  type: object
                                 backchannelLogoutUrl:
                                   description: |-
-                                    BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-                                    notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                    BackchannelLogoutURL is withdrawn and refused: declare BackchannelLogout
+                                    instead.
+
+                                    It was an address of the profile's own writing, which the realm then
+                                    posted a logout token to when a person signed out. Two things were
+                                    wrong with that. Every profile wrote the app's public address, where
+                                    every path is behind a session, so the realm's own request was answered
+                                    with a redirect to the sign-in and never arrived. And it let a
+                                    catalogue entry make the identity provider send a request to any
+                                    address at all, inside the cluster or outside it.
+
+                                    The field stays in the definition so that a profile which still
+                                    carries it is refused and told why, where an unknown field would be
+                                    dropped without a word.
                                   type: string
                                 clientId:
                                   description: ClientID is the OIDC client identifier
@@ -1140,6 +1310,14 @@ spec:
                               required:
                               - clientId
                               type: object
+                              x-kubernetes-validations:
+                              - message: 'backchannelLogoutUrl is withdrawn: declare
+                                  backchannelLogout (exposure and path) instead. The
+                                  platform builds the address from the entry''s own
+                                  Service inside the cluster; a profile no longer
+                                  names one'
+                                rule: '!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size()
+                                  == 0'
                             saml:
                               description: SAML describes the SAML client to register
                                 in the tenant's Keycloak realm.
@@ -1158,12 +1336,118 @@ spec:
                               - acsUrl
                               - entityId
                               type: object
+                            sidecar:
+                              description: Sidecar signs people in through the platform's
+                                sign-in sidecar.
+                              properties:
+                                appPort:
+                                  description: |-
+                                    AppPort lets the handler call the app itself inside the cluster: it
+                                    is the port the app's pods listen on, and the network path is opened
+                                    to that port of the app's own pods. The handler is told where the app
+                                    is as APP_URL -- the Service and port the exposure routes to, which
+                                    need not carry the same number. Such a call does not pass the front
+                                    door.
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                database:
+                                  description: |-
+                                    Database gives the handler the app's own database: where it is and the
+                                    app's own login to it, as DB_HOST, DB_PORT, DB_NAME, DB_USER and
+                                    DB_PASSWORD, and the network path to that server. The profile must
+                                    declare requires.services.database.
+                                  type: boolean
+                                entryPaths:
+                                  description: |-
+                                    EntryPaths are paths of the app that lead to the sign-in instead of to
+                                    the app: its front page, and the address of its own sign-in form.
+                                    Matched exactly, and only for a page load; a request the app's own page
+                                    makes in the background is the app's to deal with. The page a handler
+                                    sends a person to after signing them in must not be among them, and
+                                    neither may a path under /sso/ or /oauth2/, which are the sign-in's own:
+                                    the operator holds an install whose profile names one.
+                                  items:
+                                    maxLength: 256
+                                    pattern: ^/[A-Za-z0-9._~/-]*$
+                                    type: string
+                                  maxItems: 16
+                                  type: array
+                                  x-kubernetes-list-type: set
+                                exposure:
+                                  description: |-
+                                    Exposure names the gateway entry people open the app at: the sidecar's
+                                    two paths are on that entry's host. It may be omitted when the profile
+                                    has exactly one gateway entry with authMode oidc.
+                                  maxLength: 40
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                secrets:
+                                  description: |-
+                                    Secrets gives the handler secrets of this app, by the names they have
+                                    under spec.secrets.generated: each as SECRET_<NAME>, the name in upper
+                                    case. An app's session-signing key is the usual one. A name that is not
+                                    under spec.secrets.generated holds the install: what is read is always
+                                    this app's own vault path, so no name reaches another app's secret.
+                                  items:
+                                    maxLength: 64
+                                    pattern: ^[a-z0-9_]+$
+                                    type: string
+                                  maxItems: 8
+                                  type: array
+                                  x-kubernetes-list-type: set
+                              type: object
+                          type: object
+                          x-kubernetes-validations:
+                          - message: 'identity.sidecar signs people in for an app
+                              that can do neither OIDC nor SAML itself: it cannot
+                              be declared beside identity.oidc or identity.saml'
+                            rule: '!has(self.sidecar) || (!has(self.oidc) && !has(self.saml))'
+                        llm:
+                          description: |-
+                            LLM declares that the component calls language models through the
+                            platform's model gateway. Only a component that declares it is given a
+                            key at the gateway, the address and the key, and a network path to the
+                            gateway; a component that does not is given none of the three.
+                          properties:
+                            optional:
+                              description: |-
+                                Optional means the component runs without the gateway. While the
+                                cluster serves no models, or the component's key is not delivered yet,
+                                it is released all the same: without credentials, without a network
+                                path to the gateway, and told so through valueMapping.llm.availableKey.
+                                When the key arrives the component is rendered again with it.
+
+                                Honoured for a component the platform places on tenants itself. For an
+                                app a tenant installs the requirement holds the release as if this
+                                were not set: its chart is rendered by the app Composition, which
+                                reads the key from where it is kept and cannot render without it.
+                              type: boolean
                           type: object
                         mail:
                           description: Mail specifies SMTP and/or IMAP requirements.
                           properties:
                             imap:
                               description: IMAP requests inbound mail (IMAP) credentials.
+                              properties:
+                                tokenSignIn:
+                                  description: |-
+                                    TokenSignIn declares that the app opens a person's mailbox with that
+                                    person's sign-in token (SASL XOAUTH2) instead of an app password.
+
+                                    It is a grant, which is why it is said and never implied by imap: the
+                                    mail server accepts a token only from the sign-in client of an app
+                                    whose profile declares this. The app's client is given the optional
+                                    client scope "mailbox" in the tenant's realm; a token the app obtained
+                                    by asking for that scope names the mail server in its audience and is
+                                    accepted for the mailbox of the person it was issued to, and no other
+                                    token of the app, and no token of any other app, is.
+
+                                    It needs requires.services.identity.oidc, the client the scope is given
+                                    to. Served where the cluster runs its own mail server and the tenant
+                                    has mailboxes on it in a realm of its own; elsewhere it does nothing.
+                                  type: boolean
                               type: object
                             smtp:
                               description: SMTP requests outbound mail (SMTP submission)
@@ -1172,21 +1456,24 @@ spec:
                           type: object
                         mcp:
                           description: |-
-                            MCP specifies a Model Context Protocol server requirement.
-                            When enabled, the orchestrator registers the app's MCP endpoint in the
-                            kernel MCP registry and wires OIDC authentication.
+                            MCP declares that the component exposes a Model Context Protocol
+                            endpoint. It is a declaration only: there is no MCP registry, and the
+                            platform registers nothing and wires no authentication for it. Its one
+                            effect today is that a chart component declaring it is installed
+                            through the app Composition.
                           properties:
                             auth:
                               default: oidc
-                              description: Auth is the authentication method for MCP
-                                calls.
+                              description: Auth is the authentication method the endpoint
+                                expects.
                               enum:
                               - oidc
                               - none
                               type: string
                             enabled:
                               default: true
-                              description: Enabled activates MCP endpoint registration.
+                              description: Enabled says the component exposes the
+                                endpoint.
                               type: boolean
                             endpoint:
                               default: /mcp
@@ -1196,6 +1483,13 @@ spec:
                               type: string
                           required:
                           - enabled
+                          type: object
+                        rights:
+                          description: |-
+                            Rights declares that the component asks the platform whether a person
+                            may use an app of its tenant, for a person who is not at a browser.
+                            Only a component that declares it is given a key for that question and
+                            a network path to where it is answered.
                           type: object
                         storage:
                           description: Storage specifies object storage (S3) and/or
@@ -1229,6 +1523,44 @@ spec:
                                     bucket for each tenant. Defaults to true.
                                   type: boolean
                               type: object
+                          type: object
+                        vouching:
+                          description: |-
+                            Vouching declares that the component obtains tokens of a person who is
+                            not at a browser, on the strength of that person's earlier consent: it
+                            signs a short statement naming the person, and the tenant's realm
+                            answers with a token of that person for one app.
+                          properties:
+                            keys:
+                              description: |-
+                                Keys says where the component publishes the keys its statements are
+                                signed with, as a JWKS. The realm fetches them from there.
+                              properties:
+                                path:
+                                  default: /.well-known/jwks.json
+                                  description: Path is where the JWKS is served.
+                                  maxLength: 256
+                                  pattern: ^/[A-Za-z0-9._~/-]*$
+                                  type: string
+                                port:
+                                  description: Port is the Service's port.
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                service:
+                                  description: Service is the name of the component's
+                                    Service.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - port
+                              - service
+                              type: object
+                          required:
+                          - keys
                           type: object
                       type: object
                     name:
@@ -1516,7 +1848,7 @@ spec:
                     properties:
                       baseUrl:
                         description: BaseURL is the external service origin (e.g.
-                          https://corp.gentian.org).
+                          https://service.example).
                         minLength: 1
                         pattern: ^https?://.+
                         type: string
@@ -1818,6 +2150,43 @@ spec:
                           Integrations maps optional integration credentials to Helm keys,
                           keyed by the contract name.
                         type: object
+                      llm:
+                        description: |-
+                          LLM maps the model gateway's address and the component's key to Helm
+                          keys, for a component that declares requires.services.llm.
+                        properties:
+                          apiKeyKey:
+                            description: |-
+                              APIKeyKey is the Helm value key for the key the component presents.
+                              For an app a tenant installs, where the app Composition sets it from
+                              the vault. A component the platform places on tenants itself is
+                              rendered by the operator, whose release values are not a place for a
+                              key: such a profile names SecretNameKey instead, and is refused if it
+                              names this.
+                            type: string
+                          availableKey:
+                            description: |-
+                              AvailableKey receives true when the gateway's address and the
+                              component's key are delivered, and false while an optional requirement
+                              (requires.services.llm.optional) is not met. For a component the
+                              platform places on tenants itself.
+                            type: string
+                          baseUrlKey:
+                            description: |-
+                              BaseURLKey is the Helm value key for the gateway's OpenAI-compatible
+                              base address (it ends in /v1).
+                            type: string
+                          secretNameKey:
+                            description: |-
+                              SecretNameKey receives the NAME of the Secret the component's model
+                              credentials are in (llm-credentials-<component>, in the component's
+                              namespace; the key is under OPENAI_API_KEY), as a plain string, for a
+                              chart that reads the key with a secretKeyRef or envFrom. The same shape
+                              as database.secretNameKey: the key is never a chart value. Empty while
+                              an optional requirement is not met. For a component the platform
+                              places on tenants itself.
+                            type: string
+                        type: object
                       oidc:
                         description: OIDC maps OIDC provider values to Helm keys.
                         properties:
@@ -1872,14 +2241,14 @@ spec:
                             description: ClusterKey receives the id the director knows
                               this cluster by.
                             type: string
-                          credentialManagerUrlKey:
+                          custodianUrlKey:
                             description: |-
-                              CredentialManagerURLKey receives the credential manager's in-cluster
+                              CustodianURLKey receives the custodian's in-cluster
                               URL. Like DirectorURLKey it is more than a fact: naming it is what
                               opens the component's egress to the control namespace, because a
                               component that does not relay there has no business reaching it.
 
-                              The credential manager holds no authority of its own -- every write
+                              The custodian holds no authority of its own -- every write
                               takes the caller's token and exchanges it for one OpenBao will accept
                               -- so a component that relays to it is passing the person through,
                               exactly as it does with the director.
@@ -1902,6 +2271,14 @@ spec:
                               on a platform-trust component that relays the forwarded token there;
                               naming it also opens the component's egress to the control namespace.
                             type: string
+                          hostKey:
+                            description: |-
+                              HostKey receives the host this component answers on in its zone: the
+                              host of its first gateway entry, as the operator routes it. A component
+                              that has to spell its own address -- a redirect address it states to a
+                              service outside the cluster -- is told it rather than left to assemble
+                              it from the tenant and the domain, which differs by tenancy mode.
+                            type: string
                           issuerKey:
                             description: |-
                               IssuerKey receives the zone's OIDC issuer, the realm on the identity
@@ -1916,9 +2293,40 @@ spec:
                             description: RealmKey receives the name of the zone's
                               realm.
                             type: string
+                          registrarUrlKey:
+                            description: |-
+                              RegistrarURLKey receives the registrar's in-cluster URL: where a
+                              console relays, with the person's own token, the managing of a
+                              tenant's people and groups. Like the two above, naming it is what
+                              opens the component's egress to the control namespace.
+
+                              The registrar serves the paths the director served for people, so a
+                              component that called the director for them changes the address and
+                              nothing else.
+                            type: string
+                          storeUrlKey:
+                            description: |-
+                              StoreURLKey receives the base address of the App Store API this cluster
+                              names (the Cluster claim's spec.catalogue.storeUrl), and the empty
+                              string while the cluster offers no App Store: none is named, or licence
+                              reporting is off.
+
+                              Like the URL keys above it is more than a fact. A store is outside the
+                              cluster, and so are the addresses its own metadata names, so naming this
+                              key is what opens the component's pods a way out: TCP 443 to public
+                              addresses, and only while a store is offered. That is why only a
+                              platform-trust profile may name it.
+                            type: string
                           tenantKey:
                             description: TenantKey receives the name of the tenant
                               the component runs in.
+                            type: string
+                          usherUrlKey:
+                            description: |-
+                              UsherURLKey receives the usher's in-cluster URL: where a desktop asks,
+                              with the person's own token, what that person may open. Naming it also
+                              opens the component's egress to the control namespace, where the usher
+                              runs.
                             type: string
                           zoneClientIdKey:
                             description: |-
@@ -2040,14 +2448,21 @@ spec:
                         description: |-
                           ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
                           rarest: an app that needs the Kubernetes API is most of the way to being
-                          a controller.
+                          a controller. Each entry asks, by name, for one of the roles the
+                          platform defines; a profile never states the rules of a role.
                         items:
-                          description: ClusterRoleRequest asks for Kubernetes API
-                            access.
+                          description: |-
+                            ClusterRoleRequest asks for one of the cluster roles the platform defines.
+
+                            The role is bound to ServiceAccount, in the component's own namespace, when
+                            three things hold: Name is one of the platform's roles, the cluster's
+                            PlatformSecurityPolicy permits it for this profile, and it was granted on
+                            the install. Otherwise nothing is bound and the Component says why.
                           properties:
                             name:
-                              description: Name is what a PrivilegeGrant refers to.
-                                Unique within the profile.
+                              description: |-
+                                Name is the platform's name of the role, and what a PrivilegeGrant
+                                refers to (clusterRoles/<name>). Unique within the profile.
                               pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                               type: string
                             reason:
@@ -2055,6 +2470,10 @@ spec:
                               minLength: 10
                               type: string
                             rules:
+                              description: |-
+                                Rules is not used. A profile used to state the rules of the role it
+                                wanted; no role is ever made from them. An entry that still carries
+                                rules stays installable, binds nothing, and the Component says so.
                               items:
                                 description: |-
                                   PolicyRule holds information that describes a policy rule, but does not contain information
@@ -2103,12 +2522,20 @@ spec:
                                 required:
                                 - verbs
                                 type: object
-                              minItems: 1
                               type: array
+                            serviceAccount:
+                              description: |-
+                                ServiceAccount is the ServiceAccount the component's chart runs its
+                                pods under, in the component's namespace. The role is bound to it and
+                                to nothing else. An entry without one binds nothing, and so does one
+                                that names "default", which every pod without an account of its own
+                                runs under.
+                              maxLength: 253
+                              pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                              type: string
                           required:
                           - name
                           - reason
-                          - rules
                           type: object
                         maxItems: 32
                         type: array
@@ -2392,14 +2819,29 @@ spec:
                           allowDynamicDatabaseCreation:
                             description: |-
                               AllowDynamicDatabaseCreation lets the app create databases of its own at
-                              runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
-                              CREATEDB. Ask for it only when creating databases is what the app is for
+                              runtime. Ask for it only when creating databases is what the app is for
                               (a data explorer, say); an app that merely stores its own state must not.
 
-                              Databases created this way are still purged with the app: they are owned
-                              by the app role, and uninstall --purge drops everything that role owns.
-                              They are not otherwise governed — the tenant chooses the names, and they
-                              do not appear in the catalogue's provisioning model.
+                              On postgresql the app's role is given CREATEDB. Databases created this
+                              way are the app's by ownership: the app role owns each one it made, so
+                              an export copies them, a restore puts them back and a purge drops them
+                              with the role. They are not otherwise governed — the tenant chooses the
+                              names, and they do not appear in the catalogue's provisioning model.
+
+                              On mariadb a database has no owner and the server is shared by every
+                              tenant, so the app's databases are the ones named for it: the app may
+                              create, use and drop databases whose name is the name of its
+                              provisioned database followed by an underscore and anything —
+                              "<database>_reports" — and no other. It is granted all privileges on
+                              those names and on its provisioned database, and none on the server:
+                              CREATE DATABASE under any other name is refused, as is any statement
+                              that needs a global privilege. An app that names its databases itself
+                              must therefore be configured, by the profile, to prefix them with
+                              "<database>_"; one that cannot be is not installable with this field on
+                              the shared server. Databases so named are exported, restored (under the
+                              provisioned name of the tenant restored into) and purged with the
+                              provisioned one. Provisioning refuses an app whose provisioned database
+                              would itself lie under another app's prefix, or the reverse.
 
                               Omitted is equivalent to false, which is also Go's zero value for bool —
                               left undefaulted at the schema level so profiles that omit it don't
@@ -2460,10 +2902,51 @@ spec:
                                 - PUBLIC
                                 - CONFIDENTIAL
                                 type: string
+                              backchannelLogout:
+                                description: |-
+                                  BackchannelLogout says where in the app the realm tells it that a
+                                  person signed out (OpenID Connect Back-Channel Logout).
+                                properties:
+                                  exposure:
+                                    description: |-
+                                      Exposure names the entry of this profile (spec.expose) whose backend
+                                      the path is served by. The entry must route to this component's own
+                                      Service: one that names another component's (backend.component) is
+                                      refused, and so is a name the profile has no entry for.
+                                    maxLength: 40
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                  path:
+                                    description: |-
+                                      Path is the app's back-channel logout endpoint: a plain path. One or
+                                      more segments of letters, digits, "_", "~" and "-", which may have
+                                      single dots inside them. So no query and no fragment, no empty segment
+                                      ("//", which begins a host), no ".." and no segment that begins or ends
+                                      with a dot, and nothing else that could be read as part of an address.
+                                    maxLength: 256
+                                    minLength: 2
+                                    pattern: ^(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)+/?$
+                                    type: string
+                                required:
+                                - exposure
+                                - path
+                                type: object
                               backchannelLogoutUrl:
                                 description: |-
-                                  BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-                                  notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                  BackchannelLogoutURL is withdrawn and refused: declare BackchannelLogout
+                                  instead.
+
+                                  It was an address of the profile's own writing, which the realm then
+                                  posted a logout token to when a person signed out. Two things were
+                                  wrong with that. Every profile wrote the app's public address, where
+                                  every path is behind a session, so the realm's own request was answered
+                                  with a redirect to the sign-in and never arrived. And it let a
+                                  catalogue entry make the identity provider send a request to any
+                                  address at all, inside the cluster or outside it.
+
+                                  The field stays in the definition so that a profile which still
+                                  carries it is refused and told why, where an unknown field would be
+                                  dropped without a word.
                                 type: string
                               clientId:
                                 description: ClientID is the OIDC client identifier
@@ -2502,6 +2985,14 @@ spec:
                             required:
                             - clientId
                             type: object
+                            x-kubernetes-validations:
+                            - message: 'backchannelLogoutUrl is withdrawn: declare
+                                backchannelLogout (exposure and path) instead. The
+                                platform builds the address from the entry''s own
+                                Service inside the cluster; a profile no longer names
+                                one'
+                              rule: '!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size()
+                                == 0'
                           saml:
                             description: SAML describes the SAML client to register
                               in the tenant's Keycloak realm.
@@ -2520,12 +3011,118 @@ spec:
                             - acsUrl
                             - entityId
                             type: object
+                          sidecar:
+                            description: Sidecar signs people in through the platform's
+                              sign-in sidecar.
+                            properties:
+                              appPort:
+                                description: |-
+                                  AppPort lets the handler call the app itself inside the cluster: it
+                                  is the port the app's pods listen on, and the network path is opened
+                                  to that port of the app's own pods. The handler is told where the app
+                                  is as APP_URL -- the Service and port the exposure routes to, which
+                                  need not carry the same number. Such a call does not pass the front
+                                  door.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              database:
+                                description: |-
+                                  Database gives the handler the app's own database: where it is and the
+                                  app's own login to it, as DB_HOST, DB_PORT, DB_NAME, DB_USER and
+                                  DB_PASSWORD, and the network path to that server. The profile must
+                                  declare requires.services.database.
+                                type: boolean
+                              entryPaths:
+                                description: |-
+                                  EntryPaths are paths of the app that lead to the sign-in instead of to
+                                  the app: its front page, and the address of its own sign-in form.
+                                  Matched exactly, and only for a page load; a request the app's own page
+                                  makes in the background is the app's to deal with. The page a handler
+                                  sends a person to after signing them in must not be among them, and
+                                  neither may a path under /sso/ or /oauth2/, which are the sign-in's own:
+                                  the operator holds an install whose profile names one.
+                                items:
+                                  maxLength: 256
+                                  pattern: ^/[A-Za-z0-9._~/-]*$
+                                  type: string
+                                maxItems: 16
+                                type: array
+                                x-kubernetes-list-type: set
+                              exposure:
+                                description: |-
+                                  Exposure names the gateway entry people open the app at: the sidecar's
+                                  two paths are on that entry's host. It may be omitted when the profile
+                                  has exactly one gateway entry with authMode oidc.
+                                maxLength: 40
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                              secrets:
+                                description: |-
+                                  Secrets gives the handler secrets of this app, by the names they have
+                                  under spec.secrets.generated: each as SECRET_<NAME>, the name in upper
+                                  case. An app's session-signing key is the usual one. A name that is not
+                                  under spec.secrets.generated holds the install: what is read is always
+                                  this app's own vault path, so no name reaches another app's secret.
+                                items:
+                                  maxLength: 64
+                                  pattern: ^[a-z0-9_]+$
+                                  type: string
+                                maxItems: 8
+                                type: array
+                                x-kubernetes-list-type: set
+                            type: object
+                        type: object
+                        x-kubernetes-validations:
+                        - message: 'identity.sidecar signs people in for an app that
+                            can do neither OIDC nor SAML itself: it cannot be declared
+                            beside identity.oidc or identity.saml'
+                          rule: '!has(self.sidecar) || (!has(self.oidc) && !has(self.saml))'
+                      llm:
+                        description: |-
+                          LLM declares that the component calls language models through the
+                          platform's model gateway. Only a component that declares it is given a
+                          key at the gateway, the address and the key, and a network path to the
+                          gateway; a component that does not is given none of the three.
+                        properties:
+                          optional:
+                            description: |-
+                              Optional means the component runs without the gateway. While the
+                              cluster serves no models, or the component's key is not delivered yet,
+                              it is released all the same: without credentials, without a network
+                              path to the gateway, and told so through valueMapping.llm.availableKey.
+                              When the key arrives the component is rendered again with it.
+
+                              Honoured for a component the platform places on tenants itself. For an
+                              app a tenant installs the requirement holds the release as if this
+                              were not set: its chart is rendered by the app Composition, which
+                              reads the key from where it is kept and cannot render without it.
+                            type: boolean
                         type: object
                       mail:
                         description: Mail specifies SMTP and/or IMAP requirements.
                         properties:
                           imap:
                             description: IMAP requests inbound mail (IMAP) credentials.
+                            properties:
+                              tokenSignIn:
+                                description: |-
+                                  TokenSignIn declares that the app opens a person's mailbox with that
+                                  person's sign-in token (SASL XOAUTH2) instead of an app password.
+
+                                  It is a grant, which is why it is said and never implied by imap: the
+                                  mail server accepts a token only from the sign-in client of an app
+                                  whose profile declares this. The app's client is given the optional
+                                  client scope "mailbox" in the tenant's realm; a token the app obtained
+                                  by asking for that scope names the mail server in its audience and is
+                                  accepted for the mailbox of the person it was issued to, and no other
+                                  token of the app, and no token of any other app, is.
+
+                                  It needs requires.services.identity.oidc, the client the scope is given
+                                  to. Served where the cluster runs its own mail server and the tenant
+                                  has mailboxes on it in a realm of its own; elsewhere it does nothing.
+                                type: boolean
                             type: object
                           smtp:
                             description: SMTP requests outbound mail (SMTP submission)
@@ -2534,21 +3131,23 @@ spec:
                         type: object
                       mcp:
                         description: |-
-                          MCP specifies a Model Context Protocol server requirement.
-                          When enabled, the orchestrator registers the app's MCP endpoint in the
-                          kernel MCP registry and wires OIDC authentication.
+                          MCP declares that the component exposes a Model Context Protocol
+                          endpoint. It is a declaration only: there is no MCP registry, and the
+                          platform registers nothing and wires no authentication for it. Its one
+                          effect today is that a chart component declaring it is installed
+                          through the app Composition.
                         properties:
                           auth:
                             default: oidc
-                            description: Auth is the authentication method for MCP
-                              calls.
+                            description: Auth is the authentication method the endpoint
+                              expects.
                             enum:
                             - oidc
                             - none
                             type: string
                           enabled:
                             default: true
-                            description: Enabled activates MCP endpoint registration.
+                            description: Enabled says the component exposes the endpoint.
                             type: boolean
                           endpoint:
                             default: /mcp
@@ -2558,6 +3157,13 @@ spec:
                             type: string
                         required:
                         - enabled
+                        type: object
+                      rights:
+                        description: |-
+                          Rights declares that the component asks the platform whether a person
+                          may use an app of its tenant, for a person who is not at a browser.
+                          Only a component that declares it is given a key for that question and
+                          a network path to where it is answered.
                         type: object
                       storage:
                         description: Storage specifies object storage (S3) and/or
@@ -2592,6 +3198,44 @@ spec:
                                 type: boolean
                             type: object
                         type: object
+                      vouching:
+                        description: |-
+                          Vouching declares that the component obtains tokens of a person who is
+                          not at a browser, on the strength of that person's earlier consent: it
+                          signs a short statement naming the person, and the tenant's realm
+                          answers with a token of that person for one app.
+                        properties:
+                          keys:
+                            description: |-
+                              Keys says where the component publishes the keys its statements are
+                              signed with, as a JWKS. The realm fetches them from there.
+                            properties:
+                              path:
+                                default: /.well-known/jwks.json
+                                description: Path is where the JWKS is served.
+                                maxLength: 256
+                                pattern: ^/[A-Za-z0-9._~/-]*$
+                                type: string
+                              port:
+                                description: Port is the Service's port.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              service:
+                                description: Service is the name of the component's
+                                  Service.
+                                maxLength: 63
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - port
+                            - service
+                            type: object
+                        required:
+                        - keys
+                        type: object
                     type: object
                 type: object
               secrets:
@@ -2602,19 +3246,22 @@ spec:
                 properties:
                   derived:
                     description: |-
-                      Derived secrets are recomputed from the tenant and component name. Their
-                      formula and inputs are load-bearing forever: a change to either silently
-                      rotates the value for every existing tenant. Prefer Generated.
+                      Derived secrets are keys the platform adds to the credentials Secret it
+                      manages for the component, under the names given. Each is made once per
+                      tenant, component and key, the way the cluster's secretMode says, and
+                      kept in the vault.
                     items:
                       description: |-
-                        DerivedSecretKey names one deterministic value the platform adds to the
-                        credentials Secret it manages for an app.
+                        DerivedSecretKey names one value the platform makes for an app and adds to
+                        the credentials Secret it manages for it.
 
-                        The derivation is deliberately frozen: the value is a function of the tenant
-                        and app name only, so it survives reinstalls. Changing how it is computed
-                        rotates the value for every existing tenant, which for a session-signing key
-                        means logging everyone out — so the formula must not be "improved" in place.
-                        A genuinely better derivation belongs in appSecrets under a new key name.
+                        The value is a secret of this tenant, app and key, made once and kept in
+                        the vault as the app's other credentials are. How it is made follows the
+                        cluster's secretMode: derived from the master password, so that a cluster
+                        rebuilt from the same master password and salt arrives at it again, or
+                        drawn at random, and then the stored copy is the only one. It is never
+                        made again while it is stored: an app signs sessions with such a key and
+                        may encrypt what it keeps with it.
                       properties:
                         key:
                           description: |-
@@ -2701,6 +3348,37 @@ spec:
                 valid at the director and at every sibling'
               rule: '!has(self.expose) || self.expose.all(e, !(has(e.forwardToken)
                 && e.forwardToken) || self.trustTier == ''platform'')'
+            - message: 'clientAuthorization excludes forwardToken and exchangeToken
+                across a component''s entries: the Authorization header toward the
+                app is either the app''s own or a token the platform puts there, and
+                one policy carries the session for all of a component''s entries'
+              rule: '!has(self.expose) || !self.expose.exists(e, (has(e.forwardToken)
+                && e.forwardToken) || (has(e.exchangeToken) && e.exchangeToken)) ||
+                !self.expose.exists(e, has(e.clientAuthorization))'
+            - message: 'a service does not declare clientAuthorization: it is approved
+                in a tenant''s registry by that tenant''s perimeter approver, and
+                a service runs in no tenant'
+              rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
+                || self.expose.all(e, !has(e.clientAuthorization))'
+            - message: 'requires.services.rights requires trustTier platform: the
+                answer says who in the tenant may use what'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights)
+                || self.trustTier == ''platform'''
+            - message: 'exchangeToken is for a gateway entry behind a session (authMode
+                oidc): there is a session''s token to exchange only there'
+              rule: '!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken)
+                && e.exchangeToken) || (e.surface == ''gateway'' && e.authMode ==
+                ''oidc''))'
+            - message: 'a component asks for forwardToken or for exchangeToken, not
+                both: its entries share one host, and a host''s backends are handed
+                one token or the other'
+              rule: '!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken)
+                && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) &&
+                e.exchangeToken))'
+            - message: 'requires.services.vouching requires trustTier platform: the
+                component can obtain a person''s token for any app of the tenant'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
+                || self.trustTier == ''platform'''
             - message: 'a service exposes on the gateway only: the perimeter has no
                 session'
               rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
@@ -2713,6 +3391,48 @@ spec:
                 have one instance'
               rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.defaultForTenants)
                 || !self.defaultForTenants'
+            - message: 'defaultWhereStoreOffered is for class app: a service and a
+                shared-app have one instance'
+              rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.defaultWhereStoreOffered)
+                || !self.defaultWhereStoreOffered'
+            - message: 'storeUrlKey requires trustTier platform: naming it opens the
+                component a way out of the cluster'
+              rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
+                || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size()
+                == 0 || self.trustTier == ''platform'''
+            - message: 'requires.services.identity.sidecar.database needs requires.services.database:
+                the database the handler is given is the app''s own'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity)
+                || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database)
+                || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)'
+            - message: 'requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc:
+                the sign-in client whose tokens the mail server is to accept'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail)
+                || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn)
+                || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity)
+                && has(self.requires.services.identity.oidc))'
+            - message: 'a component the platform places on tenants declares requires.services.llm
+                only at trustTier platform: it is given a key at the model gateway
+                without a tenant having installed it'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm)
+                || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform)
+                && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
+                && self.defaultWhereStoreOffered)) || self.trustTier == ''platform'''
+            - message: 'requires.services.identity.oidc.backchannelLogout.exposure
+                must name an entry of this profile that routes to this component''s
+                own Service (no backend.component), whose backend.service is a plain
+                Service name: the realm is told to call that Service and no other
+                address'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity)
+                || !has(self.requires.services.identity.oidc) || !has(self.requires.services.identity.oidc.backchannelLogout)
+                || (has(self.expose) && self.expose.exists(e, e.name == self.requires.services.identity.oidc.backchannelLogout.exposure
+                && (!has(e.backend.component) || e.backend.component.size() == 0)
+                && e.backend.service.matches(''^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'')))'
+            - message: backchannelLogout is served for the component's own client
+                (requires.services.identity.oidc), not for an extension's
+              rule: '!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements)
+                || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc)
+                || !has(x.kernelRequirements.identity.oidc.backchannelLogout))'
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
               rule: '[has(self.__package__.chart) || (has(self.__package__.composition)
@@ -2727,13 +3447,13 @@ spec:
             - message: launchFrom is meaningless unless launch is from
               rule: self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size()
                 == 0
-            - message: 'launch tile needs a tile on an exposure: an app nobody can
-                open is installed and lost'
+            - message: 'launch tile needs a tile on an exposure or on package.api:
+                an app nobody can open is installed and lost'
               rule: self.launch != 'tile' || (has(self.expose) && self.expose.exists(e,
-                has(e.tile)))
+                has(e.tile))) || (has(self.__package__.api) && has(self.__package__.api.tile))
             - message: 'a tile means launch tile: say how a person reaches this'
-              rule: self.launch == 'tile' || !has(self.expose) || !self.expose.exists(e,
-                has(e.tile))
+              rule: self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e,
+                has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))
           status:
             description: ComponentProfileStatus is the observed state of a ComponentProfile.
             properties:

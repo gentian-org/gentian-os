@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package security
@@ -22,7 +16,6 @@ import (
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -197,23 +190,6 @@ func GrantedPodSecurityWaivers(profile *gentianov1alpha1.ComponentProfile, comp 
 		w := &profile.Spec.Requires.Privileges.PodSecurity[i]
 		if _, ok := granted[PrivilegeRef(PrivilegePodSecurity, w.Name)]; ok {
 			out = append(out, *w)
-		}
-	}
-	return out
-}
-
-// GrantedClusterRoleRules are the API-access rules a person granted, in the
-// profile's order.
-func GrantedClusterRoleRules(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time) []rbacv1.PolicyRule {
-	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
-		return nil
-	}
-	granted := GrantedPrivileges(comp, now)
-	var out []rbacv1.PolicyRule
-	for i := range profile.Spec.Requires.Privileges.ClusterRoles {
-		c := &profile.Spec.Requires.Privileges.ClusterRoles[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeClusterRoles, c.Name)]; ok {
-			out = append(out, c.Rules...)
 		}
 	}
 	return out

@@ -17,14 +17,21 @@ try_load_creds_from_openbao() {
     # not have it, so a fast path that ignores it skips the lookup that would
     # have prevented the prompt.
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
-    # A role whose AUTH is "none" needs nothing here — the fast path must not
-    # wait on a token that will never exist. _repo_auth_for is the same gate
-    # _requirement_applies() uses, so this agrees with what
-    # collect_bootstrap_credentials would actually prompt for.
-    local _os_ready=1 _apps_ready=1 _ui_ready=1
-    [[ "$(_repo_auth_for gentian-os-repository)" != "none" && -z "${GENTIAN_OS_GIT_TOKEN:-}" ]] && _os_ready=0
-    [[ "$(_repo_auth_for gentian-apps-repository)" != "none" && -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]] && _apps_ready=0
-    [[ "$(_repo_auth_for gentian-ui-repository)" != "none" && -z "${GENTIAN_UI_GIT_TOKEN:-}" ]] && _ui_ready=0
+    # A repository that authenticates is ready once its token is here. One
+    # that does not is ready as it stands: waiting for a token nobody will
+    # ever supply would keep the fast path from being taken at all. The mode
+    # is the same one the prompt loop asks, so the two cannot disagree.
+    local _repos_ready=1 _row _req _what _var _vault
+    for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        _req="${_row%%|*}"
+        if [[ "$(_repo_credential_mode "${_req}")" == "none" ]]; then
+            continue
+        fi
+        _var="$(_repo_credential "${_req}" token)"
+        if [[ -z "${!_var:-}" ]]; then
+            _repos_ready=0
+        fi
+    done
     # The provider credentials count too. Without them the fast path returns
     # with the zone and ingress tokens still unset, and the prompt loop asks
     # for what OpenBao is holding -- the same defect the recovery below fixes,
@@ -40,9 +47,13 @@ try_load_creds_from_openbao() {
         done < <(catalogue_field_keys "${_pr}" 2>/dev/null || true)
     done < <(_provider_requirement_names 2>/dev/null || true)
 
-    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" \
-        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" \
-        && "${_providers_ready}" == "1" ]]; then
+    # The master password and the deployments token are wanted on every
+    # cluster; the rest was worked out above.
+    local _core_ready=0
+    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        _core_ready=1
+    fi
+    if [[ "${_core_ready}${_repos_ready}${_providers_ready}" == "111" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
@@ -75,7 +86,7 @@ try_load_creds_from_openbao() {
     info "Checking whether OpenBao already holds this cluster's credentials..."
 
     local bao_addr
-    if ! bao_addr=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https 2>/dev/null) \
+    if ! bao_addr=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null) \
         || [[ -z "${bao_addr}" ]]; then
         info "  OpenBao is not reachable yet — asking for the credentials instead."
         return 0
@@ -121,47 +132,27 @@ try_load_creds_from_openbao() {
         v=$(_bao_get "repositories/deployments" '.data.data.password')
         [[ -n "$v" ]] && { export GENTIAN_DEPLOYMENTS_GIT_TOKEN="$v"; loaded=1; }
     fi
-    # os/apps/ui mirror the deployments pair above, but only when their AUTH
-    # gates them in — reading a path nothing ever wrote is a guaranteed 404,
-    # every run, for the common unmirrored install.
-    if [[ "$(_repo_auth_for gentian-os-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_OS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-os" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_OS_GIT_USERNAME="$v"; loaded=1; }
+    # The platform's own repositories are read back the same way, but only
+    # those that authenticate: the path of one that does not was never
+    # written, and asking for it is a 404 on every run of a plain install.
+    for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        _req="${_row%%|*}"
+        if [[ "${_req}" == "deployments-repository" || "$(_repo_credential_mode "${_req}")" == "none" ]]; then
+            continue
         fi
-        if [[ -z "${GENTIAN_OS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-os" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_OS_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ "$(_repo_auth_for gentian-apps-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_APPS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-apps" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_USERNAME="$v"; loaded=1; }
-        fi
-        if [[ -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-apps" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ "$(_repo_auth_for gentian-ui-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_UI_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-ui" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_UI_GIT_USERNAME="$v"; loaded=1; }
-        fi
-        if [[ -z "${GENTIAN_UI_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-ui" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_UI_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ -z "${REGISTRY_USER:-}" ]]; then
-        v=$(_bao_get "storage/registry" '.data.data.username')
-        [[ -n "$v" ]] && { export REGISTRY_USER="$v"; loaded=1; }
-    fi
-    if [[ -z "${REGISTRY_PASSWORD:-}" ]]; then
-        v=$(_bao_get "storage/registry" '.data.data.password')
-        [[ -n "$v" ]] && { export REGISTRY_PASSWORD="$v"; loaded=1; }
-    fi
+        _vault="$(_repo_credential "${_req}" vault)"
+        for _what in username token; do
+            _var="$(_repo_credential "${_req}" "${_what}")"
+            if [[ -n "${!_var:-}" ]]; then
+                continue
+            fi
+            v=$(_bao_get "repositories/${_vault}" ".data.data.${_what/token/password}")
+            if [[ -n "$v" ]]; then
+                export "${_var}=${v}"
+                loaded=1
+            fi
+        done
+    done
     # Provider credentials -- the zone host and the edge ingress -- read back
     # from the same tables that decided to ask for them, so what was seeded is
     # what is recovered.
@@ -219,8 +210,8 @@ init_openbao_transit() {
     # silently took an early-return path on a stale state), fail fast here
     # so subsequent steps don't proceed against a half-initialised transit.
     local missing=()
-    kubectl get secret -n "${TRANSIT_NAMESPACE:-openbao}" openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
-    kubectl get secret -n "${TRANSIT_NAMESPACE:-openbao}" openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
     if (( ${#missing[@]} > 0 )); then
         error "Transit init reported success but required Secrets are missing: ${missing[*]}"
         error "Re-run init-openbao-transit.sh manually and re-run install.sh."
@@ -235,18 +226,31 @@ init_openbao() {
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
-    until kubectl get svc openbao -n "${OPENBAO_NAMESPACE:-openbao}" &>/dev/null; do
+    until kubectl get svc openbao -n "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" &>/dev/null; do
         echo -n "."; sleep 5; i=$((i + 5))
         [[ $i -lt 120 ]] || { error "Timed out."; exit 1; }
     done
     echo ""
 
-    local BAO_HTTP
-    if ! BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
-        error "Could not reach the openbao Service on :8200."
-        error "  Neither the ClusterIP nor a kubectl port-forward responded."
-        exit 1
-    fi
+    # The Service exists the moment the chart is applied; the pod behind it
+    # does not answer until it can start. On a fresh cluster it waits for the
+    # transit token B-02 writes a moment earlier and for its volume to bind,
+    # which on network storage is minutes, not seconds. Probing as soon as the
+    # Service existed failed every cold install. So: retry the address for up
+    # to five minutes, and say why it is waiting.
+    local BAO_HTTP="" waited=0 phase
+    info "Waiting for openbao-0 to answer (up to 5 min)..."
+    until BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null); do
+        if (( waited >= 300 )); then
+            phase="$(kubectl get pod openbao-0 -n "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            error "Could not reach the openbao Service on :8200 within 5 minutes (openbao-0: ${phase:-absent})."
+            error "  Neither the ClusterIP nor a kubectl port-forward responded."
+            error "  kubectl describe pod openbao-0 -n ${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}   says why."
+            exit 1
+        fi
+        echo -n "."; sleep 10; waited=$((waited + 10))
+    done
+    echo ""
     export VAULT_SKIP_VERIFY=true
 
     local init_status
@@ -284,14 +288,14 @@ init_openbao() {
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
                     info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
                     if [[ "$(kubectl get configmap gentian-handover \
-                            -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                            -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                             -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null)" != "true" ]]; then
                         warn "  No recovery kit is on record yet. Run:"
                         warn "    ./install.sh --export-recovery-kit"
                     fi
                     export BAO_TOKEN="$stored_token"
                 elif [[ "$(kubectl get configmap gentian-handover \
-                        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                        -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
                     info "Bootstrap token: revoked at handover (E-03)."
                     info "  Day-2 writes go through OIDC; steps that need an OpenBao"
@@ -367,7 +371,7 @@ init_openbao() {
             -H "Content-Type: application/json" \
             -d '{"secret_shares": 1, "secret_threshold": 1}') || {
             error "OpenBao init request failed against ${BAO_HTTP}."
-            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n ${OPENBAO_NAMESPACE:-openbao}')."
+            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n ${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}')."
             error "Common cause: the openbao-transit-token Secret is missing, leaving openbao-0 in CreateContainerConfigError."
             exit 1
         }
@@ -505,7 +509,7 @@ _resolve_bao_token() {
 
     if command -v bao >/dev/null 2>&1 && [[ -n "${BAO_ADDR:-}" ]]; then
         info "No OpenBao token available; trying an OIDC sign-in as cluster-admin..."
-        info "  A browser should open. Sign in as the cluster administrator."
+        info "  A browser should open. Sign in as the platform admin."
         # -token-only: the token and nothing else on stdout (no verification
         # banner, no wrapping details), and it is not written to the local
         # token helper file — this shell carries it as BAO_TOKEN like every
@@ -560,7 +564,7 @@ _resolve_bao_token() {
 #
 # Returns non-zero when OpenBao cannot be reached, leaving BAO_TOKEN unset.
 resolve_openbao_access() {
-    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         warn "Could not reach the openbao Service on :8200."
         warn "  Neither the ClusterIP nor a kubectl port-forward responded."
         return 1
@@ -574,7 +578,7 @@ resolve_openbao_access() {
 seed_secrets() {
     banner "Seeding kernel secrets"
 
-    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
@@ -662,4 +666,17 @@ seed_secrets() {
         "${SMTP_RELAY_USERNAME:-}" \
         "${SMTP_RELAY_PASSWORD:-}"
     success "All kernel secrets seeded."
+}
+
+# gentian_handed_over — the bootstrap token was revoked at handover (E-03).
+#
+# After that this shell holds no OpenBao token by design, so a step whose
+# check needs one cannot verify anything -- and that is not the same as the
+# step being undone. Such checks answer undefined then, so a finished cluster
+# does not list them as outstanding and a re-run does not walk into a 403.
+# Before handover the same gap stays MISSING, which is what makes apply() run
+# and say what is wrong.
+gentian_handed_over() {
+    [[ "$(kubectl get configmap gentian-handover -n "$(ns_kernel control)" \
+        -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]
 }

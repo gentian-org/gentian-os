@@ -13,7 +13,7 @@
 
   <properties>
     <!-- Must match the Keycloak the platform runs: the event SPI is private API. -->
-    <keycloak.version>26.0.7</keycloak.version>
+    <keycloak.version>26.8.0</keycloak.version>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
@@ -36,6 +36,20 @@
       <groupId>org.keycloak</groupId>
       <artifactId>keycloak-core</artifactId>
       <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- The activation link: the admin API's own permission checks and action
+         tokens live here, and the endpoint reuses them rather than restating them. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-services</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.ws.rs</groupId>
+      <artifactId>jakarta.ws.rs-api</artifactId>
+      <version>3.1.0</version>
       <scope>provided</scope>
     </dependency>
     <dependency>

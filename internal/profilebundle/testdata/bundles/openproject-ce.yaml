@@ -1,0 +1,448 @@
+# ComponentProfile — OpenProject, community edition (per-tenant project management)
+#
+# Source chart: https://charts.openproject.org/ openproject 12.0.0
+#   The chart puts commonLabels on its pods and takes no podLabels, so the
+#   platform's two labels are set as commonLabels below.
+#   Image: docker.io/openproject/openproject, one fixed version.
+#
+# Secret inventory:
+#   Platform-provided:
+#     pg_*                → postgresql.auth.password / connection.*
+#     s3_secret_key       → s3.auth.secretAccessKey
+#     smtp_password       → environment.OPENPROJECT_SMTP__PASSWORD
+#   App-internal (3) → secrets.generated:
+#     admin_password      → openproject.admin_user.password
+#     api_admin_password  → environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD
+#     secret_key_base     → environment.SECRET_KEY_BASE
+#
+# Sign-in: OpenProject's own single sign-on (OIDC, SAML) is part of its paid
+# edition and is not configured here. People are signed in by the platform's
+# sign-in sidecar with the handler in assets/sign-in-handler.js; see
+# customizations/sign-in-sidecar.yaml and customization.md.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: openproject-ce
+  labels:
+    gentianos.io/profile-name: openproject-ce
+spec:
+  classes:
+    - app
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: "https://charts.openproject.org/"
+      name: openproject
+      version: "12.0.0"
+
+    valueMapping:
+      database:
+        hostKey: "postgresql.connection.host"
+        portKey: "postgresql.connection.port"
+        nameKey: "postgresql.auth.database"
+        userKey: "postgresql.auth.username"
+        passwordKey: "postgresql.auth.password"
+      s3:
+        endpointKey: "s3.endpoint"
+        bucketKey: "s3.bucketName"
+        accessKeyKey: "s3.auth.accessKeyId"
+        regionKey: "s3.region"
+        secretKeyKey: "s3.auth.secretAccessKey"
+      smtp:
+        hostKey: "environment.OPENPROJECT_SMTP__ADDRESS"
+        portKey: "environment.OPENPROJECT_SMTP__PORT"
+        userKey: "environment.OPENPROJECT_SMTP__USER__NAME"
+        passwordKey: "environment.OPENPROJECT_SMTP__PASSWORD"
+
+    extraValues:
+      fullnameOverride: "openproject-ce"
+
+      # The chart labels its pods with commonLabels and with nothing else.
+      # These two are how the platform finds an app's pods: its network paths
+      # to the database, and the sign-in sidecar's path to the app.
+      commonLabels:
+        gentianos.io/app: "${APP_ID}"
+        gentianos.io/tenant: "${TENANT_ID}"
+
+      image:
+        registry: "docker.io"
+        repository: "openproject/openproject"
+        # One version, not the moving 16-slim: the sign-in handler was run
+        # against exactly this one (customizations/sign-in-sidecar.yaml).
+        tag: "16.6.10-slim"
+        imagePullPolicy: "IfNotPresent"
+
+      dbInit:
+        image:
+          registry: "docker.io"
+          repository: "library/postgres"
+          tag: "16-alpine"
+
+      postgresql:
+        bundled: false
+
+      memcached:
+        bundled: false
+        connection:
+          host: "memcached"
+          port: 11211
+
+      s3:
+        enabled: true
+        pathStyle: true
+        directUploads: false
+        enableSignatureV4Streaming: false
+      # endpoint, bucketName, region and auth.accessKeyId are supplied by the
+      # platform through valueMapping.s3 — this app does not name a bucket or
+      # an object store. The endpoint is all the chart needs: s3.host is not
+      # set, and OpenProject's seeder, which writes the demo project's
+      # pictures to the bucket and fails without one, runs against the
+      # platform's object store with these values
+      # (images/gentian-sidecar-sso-saml/e2e/openproject.e2e.js).
+
+      persistence:
+        enabled: false
+
+      probes:
+        liveness:
+          initialDelaySeconds: 300
+          failureThreshold: 30
+        readiness:
+          initialDelaySeconds: 150
+          failureThreshold: 30
+
+      appInit:
+        resources:
+          limits:
+            cpu: "250m"
+            memory: "1Gi"
+          requests:
+            cpu: "100m"
+            memory: "768Mi"
+
+      replicaCount: 1
+      backgroundReplicaCount: 0
+
+      resources:
+        limits:
+          cpu: "750m"
+          memory: "2Gi"
+        requests:
+          cpu: "250m"
+          memory: "1Gi"
+
+      containerSecurityContext:
+        enabled: true
+        privileged: false
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - "ALL"
+        seccompProfile:
+          type: "RuntimeDefault"
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+
+      podAnnotations:
+        secret.reloader.stakater.com/reload: openproject-ce-sensitive-values
+
+      # The seeder is an ordinary Job of the release, as the chart has it, and
+      # not a post-install hook: the platform's composition waits for the
+      # release's pods, the web pod waits for the database the seeder makes,
+      # and Helm runs a post-install hook only after that wait is over.
+      seederJob:
+        resources:
+          limits:
+            cpu: "250m"
+            memory: "768Mi"
+          requests:
+            cpu: "100m"
+            memory: "512Mi"
+
+      serviceAccount:
+        create: true
+
+      openproject:
+        seed_locale: "de"
+        host: "projects.${TENANT_DOMAIN}"
+        # The administrator OpenProject seeds on first start. Locked: nobody
+        # signs in with a password here, and the sign-in sidecar signs nobody
+        # in to a locked account, so no person at the platform becomes this
+        # administrator by holding its address. Who administers OpenProject
+        # is who holds the platform's App Admin role: customization.md.
+        admin_user:
+          name: "OpenProject Internal Admin"
+          mail: "openproject-admin@${TENANT_DOMAIN}"
+          password_reset: "false"
+          locked: true
+        useTmpVolumes: true
+
+      ingress:
+        enabled: false
+
+      environment:
+        OPENPROJECT_LOGIN__REQUIRED: "true"
+      # Nobody signs in to OpenProject with a password: its own form answers
+      # 404, and with it go registering and resetting a password. People come
+      # in through the platform's sign-in sidecar.
+        OPENPROJECT_DISABLE__PASSWORD__LOGIN: "true"
+      # OpenProject's "stay signed in" token is what the sign-in handler
+      # hands OpenProject to make a session; 0, the default, switches the
+      # token off. The number is its lifetime in days for a token OpenProject
+      # makes itself, which it does only from the password form that is off;
+      # the handler's own tokens end within the hour.
+        OPENPROJECT_AUTOLOGIN: "1"
+        OPENPROJECT_EMAIL__DELIVERY__METHOD: "smtp"
+      # ADDRESS, PORT and USER__NAME are supplied by the platform through
+      # valueMapping.smtp — this app does not name a mail server.
+        OPENPROJECT_SMTP__SSL: "false"
+        OPENPROJECT_SMTP__AUTHENTICATION: "cram_md5"
+        OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "true"
+        OPENPROJECT_SMTP__OPENSSL__VERIFY__MODE: "none"
+        OPENPROJECT_SMTP__DOMAIN: "${TENANT_DOMAIN}"
+        OPENPROJECT_SMTP__USER__NAME: "gentian-system@${TENANT_DOMAIN}"
+        OPENPROJECT_MAIL__FROM: "noreply@${TENANT_DOMAIN}"
+        OPENPROJECT_HOME__URL: "https://projects.${TENANT_DOMAIN}/"
+        OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_USER: "api_admin"
+        OPENPROJECT_LOG__LEVEL: "info"
+        OPENPROJECT_APP__TITLE: "Projekte"
+        OPENPROJECT_USER__DEFAULT__TIMEZONE: "Europe/Berlin"
+        OPENPROJECT_DEFAULT__COMMENT__SORT__ORDER: "desc"
+        OPENPROJECT_PLUGIN__OPENPROJECT__AVATARS: '{enable_gravatars: false, enable_local_avatars: true}'
+
+  # Customization ladder — see customization.md
+  requires:
+    services:
+      identity:
+      # OpenProject's own single sign-on needs its paid edition and is not
+      # used. Its people are signed in by the platform's sidecar, with the
+      # handler in assets/sign-in-handler.js. See
+      # customizations/sign-in-sidecar.yaml for the review.
+        sidecar:
+        # Where OpenProject sends a browser that has no session. Not "/",
+        # where the handler ends: OpenProject's front page stays its own.
+          entryPaths: ["/login"]
+        # The handler looks the person up and writes the one-time token
+        # OpenProject turns into a session.
+          database: true
+        # secret_key_base: OpenProject stores a token as a hash made with it.
+        # api_admin_password: OpenProject's own interface for making an
+        # account and for making it an administrator's or an ordinary one,
+        # called inside the cluster.
+          secrets: [secret_key_base, api_admin_password]
+        # That call, and the one that turns the token into a session.
+          appPort: 8080
+      database:
+        engine: postgresql
+        databasePerTenant: true
+      storage:
+        s3:
+          bucketPerTenant: true
+      cache:
+        engine: memcached
+      mail:
+        smtp: {}
+
+  provides:
+    - name: project-management
+      protocol: http-json
+
+  integrations:
+    - contract: central-navigation
+      provider: portal
+      capabilities:
+        - navigation:register
+    - contract: file-store
+      capabilities:
+        - webdav:read
+        - webdav:write
+
+  secrets:
+    generated:
+      - name: admin_password
+        valuePath: "openproject.admin_user.password"
+      - name: api_admin_password
+        valuePath: "environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD"
+      # Rails' own key. The image ships a placeholder ("OVERWRITE_ME") and the
+      # chart sets none, so without this every install shares a public one.
+      - name: secret_key_base
+        valuePath: "environment.SECRET_KEY_BASE"
+
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: "projects"
+      # What is left of OpenProject's own ways in with a password, refused at
+      # the front door as well as switched off in OpenProject. Its form's own
+      # address, /login, is not here: it is where the sign-in begins, and
+      # OpenProject answers a password posted to it with 404.
+      denyPaths:
+        - /account/register
+        - /account/lost_password
+        - /account/change_password
+      backend:
+        service: "openproject-ce"
+        port: 8080
+      tile:
+        displayName: "Projects"
+        displayNames:
+          de_DE: "Projekte"
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDx0aXRsZT5QbGFjZWhvbGRlciB0aWxlPC90aXRsZT4KICA8cmVjdCB3aWR0aD0iNTIiIGhlaWdodD0iNTIiIHJ4PSIxMCIgZmlsbD0iI0VDRThERiIvPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjAsIDIxLCA0NiwgMC4wOCkiIHN0cm9rZS13aWR0aD0iMSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzE0MTUyRSIgc3Ryb2tlLW9wYWNpdHk9IjAuNDUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxNiIgeT0iMTYiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgcng9IjQiLz4KICAgIDxwYXRoIGQ9Ik0xNiAyM2gyMCIvPgogIDwvZz4KICA8Y2lyY2xlIGN4PSIyMC41IiBjeT0iMTkuNSIgcj0iMS4yNSIgZmlsbD0iIzE0MTUyRSIgZmlsbC1vcGFjaXR5PSIwLjQ1Ii8+Cjwvc3ZnPgo=
+        image: assets/tile.svg
+        relation: can_launch
+  customization:
+    grade: B
+    rubricScore: 5
+    supportedRungs: [L0, L1, L3, L4]
+    ladderDocs: https://github.com/gentian-org/gentian-apps/blob/main/profiles/openproject-ce/customization.md
+    configure:
+      hotReload: false
+    dropIns:
+      - name: branding
+        path: /app/public/gentian-branding
+        format: files
+        source: configMap
+        upstreamDocumented: false   # no upstream drop-in dir — this mount is really L4
+        tenantEditable: true
+        maxBytes: 262144
+    extension:
+      mechanism: openproject-plugin
+      delivery: [image-layer]       # plugins resolve at build time
+      apiStability: undocumented
+      apiDocs: https://www.openproject.org/docs/development/
+      perTenantAddons: false
+      testMatrix: ["15"]
+    publishes:
+      apis:
+        - contract: project-management
+          protocol: http-json
+          spec: openapi
+          path: /api/v3
+          auth: oidc-token-exchange
+    repackage:
+      chartOwnership: upstream
+    patch:
+      allowed: false
+      seriesPath: patches/series
+      requiresApproval: platform-team
+    fork:
+      allowed: false
+  launch: tile
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "openproject-ce.sign-in-handler"
+  labels:
+    "gentianos.io/asset": "sign-in-handler"
+    "gentianos.io/profile-name": "openproject-ce"
+data:
+  "handler.js": "'use strict';\n\n// Sign-in handler for OpenProject (community edition), run by the platform's\n// sign-in sidecar. See customization.md beside this file for the review.\n//\n// OpenProject's own single sign-on (OIDC, SAML) is part of its paid edition\n// and is not used or touched here. What the free edition has is an account\n// per person, a session kept in its database and named by the cookie\n// \"_open_project_session\", and a \"stay signed in\" token: a row of the table\n// tokens that OpenProject turns into a session for the browser that presents\n// its value in the cookie \"autologin\". This handler uses that token, once,\n// and never shows it to a browser:\n//\n//   1. the person's account, if they have none: OpenProject's own interface\n//      for making one (POST /api/v3/users), called inside the cluster as the\n//      service account the profile configures. An ordinary account.\n//   1a. who administers OpenProject: the person the sidecar says holds the\n//      platform's App Admin role is made an administrator, and a person it\n//      does not say so of is made an ordinary account again -- both through\n//      OpenProject's own interface (PATCH /api/v3/users/<id>), as the same\n//      service account, and only when the account is not already what it\n//      should be. Nobody is an administrator for having been the first, or\n//      for administering the tenant.\n//   2. a token for that account, ending when the sidecar says the session\n//      ends. Its value is made here and stored the way OpenProject stores\n//      one: as a hash made with the installation's secret_key_base.\n//   3. OpenProject's own sign-in with that token, inside the cluster. It\n//      answers with the session cookie, and links the session to the token.\n//   4. the token's stored hash is replaced, so that its value opens nothing\n//      a second time. The row stays, as the record of when the session ends.\n//   5. the browser is given the session cookie OpenProject made. No cookie is\n//      forged, and the secret signs nothing.\n//\n// A session whose token has run out is deleted: at every sign-in and once a\n// minute. OpenProject does the same when a token is destroyed through its own\n// pages; it has no lifetime of its own for a session.\n//\n// And when the person signs out at the platform (onLogout): their sessions\n// and the tokens they were made from are deleted, as they are when a token\n// has run out. OpenProject reads a session from its database on every\n// request, so the cookie is nobody's from then on.\n//\n// Nobody has a password. OpenProject's interface demands one for a new\n// account, so a random value is given and its stored hash is deleted again at\n// once; the profile switches password sign-in off altogether.\n//\n// What it is given (see the profile's requires.services.identity.sidecar):\n//   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   OpenProject's own database\n//   SECRET_SECRET_KEY_BASE                            what it hashes a token's value with\n//   SECRET_API_ADMIN_PASSWORD                         its service account's password\n//   APP_URL                                           OpenProject inside the cluster\n\nconst crypto = require('crypto');\nconst http = require('http');\nconst { Pool } = require('pg');\n\nconst SESSION_COOKIE = '_open_project_session';\nconst AUTOLOGIN_COOKIE = 'autologin';\nconst AUTOLOGIN_TOKEN = 'Token::AutoLogin';\n// The service account's name, as the profile sets it\n// (OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_USER).\nconst API_USER = 'api_admin';\n// users.status, as OpenProject numbers it (app/models/principal.rb).\nconst ACTIVE = 1;\nconst INVITED = 4;\n\nconst pool = new Pool({\n    host: process.env.DB_HOST,\n    port: parseInt(process.env.DB_PORT || '5432', 10),\n    database: process.env.DB_NAME,\n    user: process.env.DB_USER,\n    password: process.env.DB_PASSWORD,\n    max: 4,\n    connectionTimeoutMillis: 5000,\n});\n\nfunction sha256(text) {\n    return crypto.createHash('sha256').update(text).digest('hex');\n}\n\n// A request to OpenProject inside the cluster, told the public address it is\n// asked under: it refuses a host it does not know, and sets its session\n// cookie only for a request that arrived over TLS.\nfunction app(method, path, origin, { headers = {}, json } = {}) {\n    const target = new URL(path, process.env.APP_URL);\n    const body = json === undefined ? null : JSON.stringify(json);\n    return new Promise((resolve, reject) => {\n        const req = http.request({\n            host: target.hostname,\n            port: target.port || 80,\n            method,\n            path: target.pathname + target.search,\n            timeout: 8000,\n            headers: {\n                ...headers,\n                host: new URL(origin).host,\n                'x-forwarded-proto': 'https',\n                accept: 'application/json, text/html',\n                ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}),\n            },\n        }, (res) => {\n            // The answer's text is not read: it would name the person.\n            res.resume();\n            res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));\n        });\n        req.on('timeout', () => req.destroy(new Error('OpenProject did not answer in time')));\n        req.on('error', reject);\n        if (body) req.write(body);\n        req.end();\n    });\n}\n\nfunction names(person) {\n    const parts = person.name.trim().split(/\\s+/).filter(Boolean);\n    const first = (parts.shift() || person.email.split('@')[0]).slice(0, 100);\n    return { firstName: first, lastName: (parts.join(' ') || '-').slice(0, 100) };\n}\n\nasync function findUser(email) {\n    const found = await pool.query(\n        \"select id, status, admin from users where type = 'User' and lower(mail) = $1 order by id asc limit 2\", [email]);\n    // Two accounts under one address: OpenProject does not allow it, and\n    // which of them the person is cannot be decided here.\n    if (found.rows.length > 1) return { ambiguous: true };\n    return found.rows[0] || null;\n}\n\nfunction serviceAccount() {\n    return { authorization: 'Basic ' + Buffer.from(`${API_USER}:${process.env.SECRET_API_ADMIN_PASSWORD}`).toString('base64') };\n}\n\n// Who administers OpenProject is who holds the platform's App Admin role,\n// and it is settled at every sign-in: given to a person who holds it, taken\n// from a person who does not. person.appAdmin is the sidecar's reading of\n// the realm's signed answer; a sidecar that does not say is one that says no.\n// The session is made only once the account is what it should be, so a\n// person the role was withdrawn from is not signed in as an administrator\n// because a call failed.\nasync function settleAdministrator(user, person, origin) {\n    const wanted = person.appAdmin === true;\n    if (Boolean(user.admin) === wanted) return false;\n    const is = async () => {\n        const now = await pool.query(\"select admin from users where id = $1 and type = 'User'\", [user.id]);\n        return now.rows.length === 1 && Boolean(now.rows[0].admin) === wanted;\n    };\n    const res = await app('PATCH', `/api/v3/users/${user.id}`, origin, { headers: serviceAccount(), json: { admin: wanted } });\n    if (await is()) return true;\n    // OpenProject does not take the flag from its last active administrator:\n    // it wants one to exist. Here one need not -- nobody administers a new\n    // installation either, and the platform makes one whenever somebody is\n    // given the role -- and a role that was withdrawn has to go. So for that\n    // one case, and only for taking away, the flag is written.\n    if (!wanted) {\n        await pool.query(\"update users set admin = false, updated_at = now() where id = $1 and type = 'User'\", [user.id]);\n        if (await is()) return true;\n    }\n    throw new Error(`setting the administrator flag answered ${res.status}`);\n}\n\nasync function createUser(person, origin) {\n    const { firstName, lastName } = names(person);\n    // Random, given to nobody, and deleted again below. The four characters\n    // at the end are there for whatever rules the installation has set for a\n    // password.\n    const password = crypto.randomBytes(32).toString('base64url') + 'aZ9!';\n    const res = await app('POST', '/api/v3/users', origin, {\n        headers: serviceAccount(),\n        json: { login: person.email, email: person.email, firstName, lastName, status: 'active', password },\n    });\n    const user = await findUser(person.email);\n    if (!user || user.ambiguous) throw new Error(`creating the account answered ${res.status}`);\n    await pool.query('delete from user_passwords where user_id = $1', [user.id]);\n    return user;\n}\n\n// One account is made once, however many sign-ins of the same person arrive\n// together. The sidecar is a single process.\nconst creating = new Map();\n\nasync function ensureUser(person, origin) {\n    const existing = await findUser(person.email);\n    if (existing) return existing;\n    if (!creating.has(person.email)) {\n        creating.set(person.email, createUser(person, origin).finally(() => creating.delete(person.email)));\n    }\n    return creating.get(person.email);\n}\n\n// An account somebody in OpenProject invited this address to: the person is\n// who the invitation was for, so it is theirs now, with the name the\n// platform knows them by. The invitation's own tokens are spent with it.\nasync function acceptInvitation(user, person) {\n    const { firstName, lastName } = names(person);\n    const done = await pool.query(\n        'update users set status = $2, firstname = $3, lastname = $4, updated_at = now() where id = $1 and status = $5',\n        [user.id, ACTIVE, firstName, lastName, INVITED]);\n    await pool.query(\"delete from tokens where user_id = $1 and type = 'Token::Invitation'\", [user.id]);\n    return done.rowCount === 1;\n}\n\n// A session ends when its token has run out. OpenProject keeps the link\n// between the two and deletes the session when the token is destroyed\n// through its own pages; nothing in it destroys a token for having run out.\nasync function endExpiredSessions() {\n    await pool.query(\n        'delete from sessions where id in (select l.session_id from autologin_session_links l ' +\n        'join tokens t on t.id = l.token_id where t.type = $1 and t.expires_on < now())', [AUTOLOGIN_TOKEN]);\n    await pool.query('delete from tokens where type = $1 and expires_on < now()', [AUTOLOGIN_TOKEN]);\n}\nsetInterval(() => endExpiredSessions().catch(() => {}), 60 * 1000).unref();\n\n// The session cookie in an answer of OpenProject's, or ''.\nfunction sessionIn(headers) {\n    for (const line of headers['set-cookie'] || []) {\n        const pair = line.split(';')[0];\n        const eq = pair.indexOf('=');\n        if (eq > 0 && pair.slice(0, eq).trim() === SESSION_COOKIE) return pair.slice(eq + 1).trim();\n    }\n    return '';\n}\n\nasync function openSession(user, ctx) {\n    const value = crypto.randomBytes(32).toString('hex');\n    // As OpenProject stores a token (app/models/token/hashed_token.rb).\n    const stored = sha256(value + process.env.SECRET_SECRET_KEY_BASE);\n    const made = await pool.query(\n        \"insert into tokens (user_id, type, value, created_at, expires_on, data) \" +\n        \"values ($1, $2, $3, now(), now() + make_interval(secs => $4), '{}') returning id\",\n        [user.id, AUTOLOGIN_TOKEN, stored, ctx.sessionSeconds]);\n    const tokenId = made.rows[0].id;\n    let session = '';\n    try {\n        // OpenProject's own sign-in page: for a browser with a valid token it\n        // makes a session and answers with a redirect.\n        const res = await app('GET', '/login', ctx.origin, { headers: { cookie: `${AUTOLOGIN_COOKIE}=${value}` } });\n        // Spent, whatever was answered: no value matches this.\n        await pool.query('update tokens set value = $2 where id = $1', [tokenId, 'spent:' + crypto.randomBytes(24).toString('hex')]);\n        const candidate = sessionIn(res.headers);\n        if (/^[0-9a-f]{16,128}$/.test(candidate)) {\n            // The session OpenProject made is this person's, made from this\n            // token: read back from its own tables, not taken on trust. A\n            // session is stored under a hash of its cookie\n            // (Rack::Session::SessionId#private_id).\n            const check = await pool.query(\n                'select s.user_id from sessions s join autologin_session_links l on l.session_id = s.id ' +\n                'where l.token_id = $1 and s.session_id = $2', [tokenId, '2::' + sha256(candidate)]);\n            if (check.rows.length === 1 && String(check.rows[0].user_id) === String(user.id)) session = candidate;\n        }\n        if (!session) throw new Error(`OpenProject made no session (${res.status})`);\n        return session;\n    } finally {\n        if (!session) await pool.query('delete from tokens where id = $1', [tokenId]).catch(() => {});\n    }\n}\n\nmodule.exports = {\n    async onLogin(person, ctx) {\n        await endExpiredSessions();\n\n        let user = await ensureUser(person, ctx.origin);\n        if (!user || user.ambiguous) return { refuse: true };\n        if (user.status === INVITED && await acceptInvitation(user, person)) user = { ...user, status: ACTIVE };\n        // An account locked in OpenProject stays locked, and one that waits\n        // for an administrator's approval goes on waiting.\n        if (user.status !== ACTIVE) return { refuse: true };\n\n        if (await settleAdministrator(user, person, ctx.origin)) {\n            ctx.log(person.appAdmin === true ? 'administrator-made' : 'administrator-unmade');\n        }\n\n        const session = await openSession(user, ctx);\n        return {\n            // OpenProject's front page. Not /login: the platform sends that\n            // to the sign-in.\n            redirect: '/',\n            cookies: [{ name: SESSION_COOKIE, value: session }],\n        };\n    },\n    // The person signed out at the platform: their sessions in OpenProject\n    // end. All of them, in every browser -- password sign-in is switched\n    // off, so there is no session of theirs that was not made here. The\n    // sessions first and then the tokens they were made from, as for a token\n    // that has run out.\n    async onLogout(person, ctx) {\n        const user = await findUser(person.email);\n        // Two accounts under one address: nobody was signed in as either.\n        if (!user || user.ambiguous) return;\n        const linked = await pool.query(\n            'delete from sessions where id in (select l.session_id from autologin_session_links l ' +\n            'join tokens t on t.id = l.token_id where t.type = $1 and t.user_id = $2)', [AUTOLOGIN_TOKEN, user.id]);\n        const own = await pool.query('delete from sessions where user_id = $1', [user.id]);\n        await pool.query('delete from tokens where type = $1 and user_id = $2', [AUTOLOGIN_TOKEN, user.id]);\n        ctx.log('sessions-ended', { count: linked.rowCount + own.rowCount });\n    },\n};\n"
+---
+# Customization record — see gentian-os/docs/app-customization.md §5
+#
+# Covers the sign-in handler (assets/sign-in-handler.js): the code the
+# platform's sign-in sidecar runs to make an OpenProject session for a person.
+apiVersion: gentianos.io/v1alpha1
+kind: Customization
+metadata:
+  # Named after the profile it travels with. No namespace: a companion in a
+  # profile bundle states none, and the cluster puts it where its catalogue
+  # is applied.
+  name: openproject-ce.sign-in-sidecar
+  labels:
+    gentianos.io/profile-name: openproject-ce
+spec:
+  summary: "Sign people in to OpenProject through the platform's sign-in sidecar, with no password"
+
+  target:
+    family: openproject
+    profile: openproject-ce
+    appVersion: "16.6.10"
+    chartVersion: "12.0.0"
+
+  rung: L2
+  scope: profile
+
+  rungJustification:
+    L0: >-
+      OpenProject's community edition has no setting that takes a person from an
+      identity provider: OIDC and SAML are refused without a token of the paid
+      edition (modules/auth_plugins/lib/open_project/plugins/auth_plugin.rb). Its
+      sign-in from a proxy's header (OPENPROJECT_AUTH__SOURCE__SSO) only finds
+      people of an LDAP directory (app/controllers/concerns/auth_source_sso.rb
+      asks LdapAuthSource.find_user and nobody else), and the platform has none.
+    L1: >-
+      The branding drop-in is the only one, and it carries static files.
+
+  upstreamFirst:
+    attempted: true
+    forwarded: not-needed
+    reason: >-
+      Single sign-on is what upstream sells. A sign-in that goes around it is not
+      something to offer them; the tenant that wants OpenProject's own single
+      sign-on buys the edition that has it and a profile for that edition declares
+      identity.oidc.
+
+  artifacts:
+    - repo: gentian-org/gentian-apps
+      path: profiles/openproject/openproject-ce/assets/sign-in-handler.js
+      version: "1.1.0"
+    - repo: gentian-org/gentian-apps
+      path: images/gentian-sidecar-sso-saml
+      version: "0.3.0"
+
+  origin:
+    authorship: gentian
+    repoOwnership: gentian
+    reviewedBy: platform-team
+    supportContract: none
+
+  owner: platform-team
+  created: 2026-10-09
+  reviewBy: 2027-01-09
+  exitCriteria: >-
+    Gone when OpenProject can sign people in by a standard the platform serves in
+    the edition installed. Until then, on every OpenProject upgrade: run
+    images/gentian-sidecar-sso-saml/e2e/openproject.e2e.js against the new image
+    before the profile's image tag moves. It fails if the stay-signed-in token, the
+    way its value is hashed, the session table, the link between the two, the
+    interface that makes an account, or the setting that switches password sign-in
+    off have changed. The question under licensing is to be answered before this
+    record's review date, not at it.
+  upgradeRisk: high
+  testedAgainst: ["16.6.10"]
+
+  security:
+    macWaivers: []
+    newEgress: []
+    handlesPersonalData: true
+
+  licensing:
+    effect: none
+    notes: >-
+      OpenProject runs its community edition, unmodified. No enterprise token is
+      set or seeded, no check for one is touched, nothing of the OIDC, SAML or SCIM
+      modules is configured, and no file of OpenProject is patched. The handler uses
+      what the free edition has for everybody: an account, made through its own
+      APIv3 as the service account the profile configures (global basic auth); the
+      setting that switches password sign-in off (disable_password_login); and the
+      "stay signed in" token, which OpenProject itself turns into a session. Who
+      administers it is set through the same APIv3, for the person who holds the
+      platform's App Admin role. OPEN, for the owner. Four things are written to
+      OpenProject's database instead of through its interface: the token's row (and
+      afterwards its stored value, so that it works once); the removal of the
+      password hash the interface demands for a new account; the status of an
+      account somebody invited, when the invited person first arrives; and the
+      administrator flag of the last active administrator when the role was
+      withdrawn from them, which the interface refuses to take. None of them is a
+      paid feature. But the result —
+      a person signed in at an identity provider is in OpenProject without typing
+      anything — is what the paid edition sells as single sign-on, reached here
+      without it. OpenProject's code is under the GPL, version 3, which does not
+      restrict how the program is run; whether the vendor accepts this use of the
+      community edition is a judgement this record does not make.

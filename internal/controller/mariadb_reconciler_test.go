@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -25,11 +19,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newMariaDBProfile creates a minimal AppProfile that requires a MariaDB database.
+// newMariaDBProfile creates a minimal ComponentProfile that requires a MariaDB database.
 func newMariaDBProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -59,7 +54,6 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nomaria"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Maria Co",
-			Domain:      "nomaria.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -105,7 +99,6 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mariacreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Maria Create Co",
-			Domain:      "mariacreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "maria-app1"}},
 		},
 	}
@@ -134,18 +127,9 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
-	// DB_NAME and DB_USER must be present as literal env vars.
-	envMap := make(map[string]string)
-	for _, e := range container.Env {
-		if e.Value != "" {
-			envMap[e.Name] = e.Value
-		}
-	}
-	if envMap["DB_NAME"] == "" {
-		t.Error("expected DB_NAME env var to be set")
-	}
-	if envMap["DB_USER"] == "" {
-		t.Error("expected DB_USER env var to be set")
+	// The script is the inventory's, for this tenant's and app's names.
+	if want := backup.MariaDBSetupScript("mariacreate_maria_app1", "mariacreate_maria_app1", false); container.Command[len(container.Command)-1] != want {
+		t.Errorf("setup script = %q", container.Command)
 	}
 
 	// Credentials must come from the mariadb-admin Secret (not literal values).
@@ -176,7 +160,6 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mariaready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Maria Ready Co",
-			Domain:      "mariaready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "maria-app2"}},
 		},
 	}
@@ -232,7 +215,6 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mariadelete"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "mariadelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "maria-app3"}},
 		},
@@ -252,7 +234,10 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteMariaDB; mark its jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-mariadelete-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", layout.Namespace(layout.Authentication))
 
 	// A delete Job should be created in the kernel namespace.

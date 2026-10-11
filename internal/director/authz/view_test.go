@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authz
@@ -57,10 +51,12 @@ func TestTheViewResolvesWhoHoldsWhatAndWhatItCarries(t *testing.T) {
 	if len(admin.Groups) != 1 || admin.Groups[0] != "gentian:platform:admins" {
 		t.Fatalf("admin groups = %v", admin.Groups)
 	}
-	if strings.Join(admin.Grants, ",") != "can_audit,can_configure,can_deploy_tenant" {
+	// Setting a kernel credential is administering the cluster; seeing that one
+	// is required, and who set it, is also the auditor's.
+	if strings.Join(admin.Grants, ",") != "can_audit,can_configure,can_deploy_tenant,can_read_credential,can_write_credential" {
 		t.Fatalf("admin grants = %v", admin.Grants)
 	}
-	if strings.Join(by["auditor"].Grants, ",") != "can_audit" {
+	if strings.Join(by["auditor"].Grants, ",") != "can_audit,can_read_credential" {
 		t.Fatalf("auditor grants = %v", by["auditor"].Grants)
 	}
 }
@@ -110,9 +106,6 @@ func TestAnEdgeToAnotherObjectIsNotABinding(t *testing.T) {
 	roles := strings.Join(g.roles("tenant"), ",")
 	if roles != "admin,member,perimeter_approver" {
 		t.Fatalf("tenant roles = %q: operated_by and cluster are edges, member is a role", roles)
-	}
-	if strings.Join(g.roles("catalogue_entry"), ",") != "" {
-		t.Fatalf("catalogue_entry has roles: %v", g.roles("catalogue_entry"))
 	}
 	// And a tenant member's permissions are the member's, not the admin's.
 	if strings.Join(g.grantsOf("tenant", "member"), ",") != "can_enter,can_view" {

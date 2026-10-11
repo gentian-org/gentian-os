@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -270,7 +264,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 			t.Errorf("CredentialSecret = %q, want the workspace's own %q",
 				got.CredentialSecret, policy.CredentialSecret)
 		}
-		if got.CredentialSecret == ExportCredentialSecretName("manual-3") {
+		if got.CredentialSecret == ExportCredentialSecretName(tenant.Name, "manual-3") {
 			t.Error("managed source staged a copy; nothing should have been copied")
 		}
 	})
@@ -283,7 +277,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 			CredentialSecretRef: "someone-elses-secret",
 		}, tenant, "manual-4")
 
-		want := ExportCredentialSecretName("manual-4")
+		want := ExportCredentialSecretName(tenant.Name, "manual-4")
 		if got.CredentialSecret != want {
 			t.Errorf("CredentialSecret = %q, want %q", got.CredentialSecret, want)
 		}

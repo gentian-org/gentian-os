@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -49,6 +43,22 @@ func TestAProfileChangeRunsItsComponents(t *testing.T) {
 		if req.Name != "desktop" {
 			t.Fatalf("request %v is not a desktop", req)
 		}
+	}
+	// An addon's profile runs the component that activates it as well as its
+	// own: a base held for a pinned addon is released by the addon's profile
+	// becoming the pinned build.
+	base := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "odoo", Namespace: "tenant-demo"}}
+	base.Spec.ProfileRef.Name = "odoo"
+	base.Spec.Addons = []string{"odoo-crm"}
+	addon := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "odoo-crm", Namespace: "tenant-demo"}}
+	addon.Spec.ProfileRef.Name = "odoo-crm"
+	for _, obj := range []*gentianov1alpha1.Component{base, addon} {
+		if err := c.Create(context.Background(), obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := componentsReferencingProfile(context.Background(), c, "odoo-crm"); len(got) != 2 {
+		t.Fatalf("requests = %v, want the addon and its base", got)
 	}
 	if got := componentsReferencingProfile(context.Background(), c, "nothing"); len(got) != 0 {
 		t.Fatalf("a profile nothing references runs %v", got)

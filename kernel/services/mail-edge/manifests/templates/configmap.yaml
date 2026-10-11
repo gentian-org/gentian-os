@@ -1,0 +1,114 @@
+{{- /*
+  The proxy's configuration.
+
+  A TCP proxy and nothing more. It reads no SMTP and no IMAP, holds no
+  certificate and no key, and stores nothing: a connection that arrives on a
+  listener is opened again to the one server that listener belongs to, with a
+  PROXY-protocol header in front saying who the client is. TLS -- STARTTLS on
+  25 and 587, from the first byte on 993 -- passes through and ends at Postfix
+  and Dovecot, where the certificate is.
+
+  The PROXY header is the point. Without it both servers would see every
+  connection come from this pod: one address for the whole internet, and one
+  that lies inside the pod range Postfix treats as its own network. With it
+  they see the client, and their own limits, checks and logs are about the
+  client. Both listen for it on ports of their own (backendPort) that take
+  nothing else and that only this namespace is admitted to.
+*/ -}}
+{{- $enabled := splitList "," (include "mail-edge.enabled" .) | compact }}
+{{- if $enabled }}
+{{- $pp := .Values.loadBalancer.proxyProtocol }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mail-edge-{{ .Values.env }}-config
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    {{- include "mail-edge.selector" . | nindent 4 }}
+    gentianos.io/component: mail-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+data:
+  haproxy.cfg: |
+    global
+        log stdout format raw local0 info
+        maxconn 4000
+
+    # The Services are looked up when a connection needs them, not once at
+    # start: the proxy starts whether or not the mail servers exist yet, and
+    # follows a Service that is made again.
+    resolvers cluster
+        parse-resolv-conf
+        hold valid 10s
+        hold nx 5s
+        hold other 5s
+        resolve_retries 3
+        timeout resolve 2s
+        timeout retry 1s
+
+    defaults
+        mode tcp
+        log global
+        # One line per connection: the client's address and port, the
+        # listener, the server, how long, how many bytes, and why it ended.
+        # A connection refused for being over a limit is one of them -- it
+        # names the listener and no server, and ends in "PR" -- which is how
+        # "this sender cannot reach us" is told from "this sender is limited".
+        # (No `option dontlognull`: it would hide exactly those.)
+        option tcplog
+        timeout connect 5s
+        timeout client 6m
+        timeout server 6m
+        retries 2
+        # No health check of the servers, on purpose. A check of a server
+        # that expects a PROXY header has to send one, and what HAProxy sends
+        # for a connection that has no client (PROXY v2, command LOCAL) makes
+        # Postfix 3.10's smtpd exit --
+        #   fatal: smtpd_peer_hostaddr_to_sockaddr: cannot convert client
+        #   address 'unknown' port 'unknown'
+        # -- after which Postfix's master holds that listener back for a
+        # minute ("bad command startup -- throttling"): the check itself would
+        # stop mail. Dovecot takes the same check as a failed login every ten
+        # seconds. With one server behind each listener a check would decide
+        # nothing either: a connection to a server that is down is closed, and
+        # logged with the reason, checked or not.
+        default-server init-addr last,libc,none resolvers cluster
+
+    # What the kubelet asks. It answers for the proxy alone: a mail server
+    # that is down is reported by its own pod, and must not take the listener
+    # of the other one off the load balancer.
+    frontend health
+        mode http
+        bind :8404
+        option dontlog-normal
+        monitor-uri /healthz
+        http-request deny
+    {{- range $name := $enabled }}
+    {{- $l := index $.Values.listeners $name }}
+
+    frontend {{ $name }}
+        {{- if and $pp.enabled (not $pp.from) }}
+        bind :{{ $l.listen }} accept-proxy
+        {{- else }}
+        bind :{{ $l.listen }}
+        {{- end }}
+        maxconn {{ $l.maxConnections }}
+        timeout client {{ $l.timeout }}
+        {{- if and $pp.enabled $pp.from }}
+        # The load balancer says who the client is; nobody else may.
+        tcp-request connection expect-proxy layer4 if { src {{ join " " $pp.from }} }
+        {{- end }}
+        # Counted per client address -- the one the load balancer reported,
+        # where it reports one. An address over either figure is closed at
+        # once; the sender retries, as SMTP requires it to.
+        stick-table type ipv6 size 100k expire 10m store conn_cur,conn_rate(60s)
+        tcp-request session track-sc0 src
+        tcp-request content reject if { sc0_conn_cur gt {{ $l.connectionsPerAddress }} }
+        tcp-request content reject if { sc0_conn_rate gt {{ $l.connectionsPerMinutePerAddress }} }
+        default_backend {{ $name }}
+
+    backend {{ $name }}
+        timeout server {{ $l.timeout }}
+        server {{ $l.backend }} {{ include "mail-edge.backendHost" (list $ $l) }}:{{ $l.backendPort }} send-proxy-v2
+    {{- end }}
+{{- end }}

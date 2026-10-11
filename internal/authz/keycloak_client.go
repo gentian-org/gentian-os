@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authz
@@ -256,6 +250,36 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 	return err
 }
 
+// UpdateRealmMailSender sets the name a realm's mail says it is from, and
+// nothing else about its mail.
+//
+// The realm's mail settings are read back and written whole with only that
+// name changed: the password comes back masked, and Keycloak keeps the stored
+// one for a masked value, so the credential is never handled here. A realm
+// with no mail configured is left alone -- there is no sender to name.
+func (c *KeycloakAdminClient) UpdateRealmMailSender(ctx context.Context, realm, name string) error {
+	if realm == "" || name == "" {
+		return nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return err
+	}
+	var current struct {
+		SMTPServer map[string]any `json:"smtpServer"`
+	}
+	if err := c.getAdminJSON(ctx, token, "/admin/realms/"+url.PathEscape(realm), &current); err != nil {
+		return err
+	}
+	if len(current.SMTPServer) == 0 || current.SMTPServer["fromDisplayName"] == name {
+		return nil
+	}
+	current.SMTPServer["fromDisplayName"] = name
+	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm),
+		map[string]any{"smtpServer": current.SMTPServer}, http.StatusNoContent, http.StatusOK)
+	return err
+}
+
 func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) ([]KeycloakUser, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {
@@ -278,6 +302,21 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 		}
 	}
 	return out, nil
+}
+
+// CountRealmUsers answers how many enabled accounts a realm holds, as Keycloak
+// counts them. A number and nothing about who.
+func (c *KeycloakAdminClient) CountRealmUsers(ctx context.Context, realm string) (int, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	path := fmt.Sprintf("/admin/realms/%s/users/count?enabled=true", url.PathEscape(realm))
+	if err := c.getAdminJSON(ctx, token, path, &n); err != nil {
+		return 0, fmt.Errorf("keycloak count users: %w", err)
+	}
+	return n, nil
 }
 
 // ListGroupMembers returns enabled users in a Keycloak group by group name.
@@ -310,6 +349,140 @@ func (c *KeycloakAdminClient) ListGroupMembers(ctx context.Context, realm, group
 		}
 	}
 	return out, nil
+}
+
+// GroupExists reports whether the realm has a group of this name.
+func (c *KeycloakAdminClient) GroupExists(ctx context.Context, realm, groupName string) (bool, error) {
+	id, err := c.findGroupID(ctx, realm, groupName)
+	return id != "", err
+}
+
+// DeleteGroup removes a realm's group of this name, and with it every
+// membership in it. existed is false, with no error, when there was no such
+// group: asked twice, the second call finds nothing and says so.
+//
+// The group is looked for again afterwards, and one that is still there is an
+// error whatever the delete answered: a caller that reports the group gone
+// has to have seen it gone.
+func (c *KeycloakAdminClient) DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error) {
+	id, err := c.findGroupID(ctx, realm, groupName)
+	if err != nil {
+		return false, err
+	}
+	if id == "" {
+		return false, nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return true, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
+	status, err := c.doAdmin(ctx, token, http.MethodDelete, path, nil)
+	if err != nil && status != http.StatusNotFound {
+		return true, fmt.Errorf("keycloak delete group %s: %w", groupName, err)
+	}
+	left, err := c.findGroupID(ctx, realm, groupName)
+	if err != nil {
+		return true, err
+	}
+	if left != "" {
+		return true, fmt.Errorf("keycloak still has group %s after deleting it", groupName)
+	}
+	return true, nil
+}
+
+// GroupNames lists the realm's top-level groups whose name starts with prefix.
+func (c *KeycloakAdminClient) GroupNames(ctx context.Context, realm, prefix string) ([]string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	base := fmt.Sprintf("/admin/realms/%s/groups", url.PathEscape(realm))
+	var out []string
+	for first := 0; ; first += keycloakAdminPageSize {
+		var page []keycloakGroupRecord
+		if err := c.getAdminJSON(ctx, token, paginatedAdminPath(base, first, keycloakAdminPageSize), &page); err != nil {
+			return nil, fmt.Errorf("keycloak list groups: %w", err)
+		}
+		for _, g := range page {
+			if strings.HasPrefix(g.Name, prefix) {
+				out = append(out, g.Name)
+			}
+		}
+		if len(page) < keycloakAdminPageSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+// builtInClientScopes are the client scopes Keycloak gives every realm. They
+// are the realm's own, whatever a catalogue names its packs' scopes: a pack
+// that called its scope "profile" must not get the realm's profile scope
+// deleted when its app is purged.
+var builtInClientScopes = map[string]bool{
+	"profile": true, "email": true, "address": true, "phone": true, "roles": true, "web-origins": true,
+	"offline_access": true, "microprofile-jwt": true, "acr": true, "basic": true, "service_account": true,
+	"organization": true, "role_list": true, "saml_organization": true,
+}
+
+// IsBuiltInClientScope reports whether a client scope is one Keycloak gives
+// every realm.
+func IsBuiltInClientScope(name string) bool { return builtInClientScopes[name] }
+
+// DeleteClientScope removes a client scope from a realm by name, with its
+// protocol mappers, which are part of it. existed is false, with no error,
+// when the realm has no such scope. One of Keycloak's own scopes is refused.
+//
+// Like DeleteGroup it looks again afterwards: a scope that is still there is
+// an error whatever the delete answered.
+func (c *KeycloakAdminClient) DeleteClientScope(ctx context.Context, realm, name string) (existed bool, err error) {
+	if IsBuiltInClientScope(name) {
+		return false, fmt.Errorf("refusing to delete the client scope %s: it is one Keycloak gives every realm", name)
+	}
+	id, err := c.findClientScopeID(ctx, realm, name)
+	if err != nil {
+		return false, err
+	}
+	if id == "" {
+		return false, nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return true, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/client-scopes/%s", url.PathEscape(realm), url.PathEscape(id))
+	status, err := c.doAdmin(ctx, token, http.MethodDelete, path, nil)
+	if err != nil && status != http.StatusNotFound {
+		return true, fmt.Errorf("keycloak delete client scope %s: %w", name, err)
+	}
+	left, err := c.findClientScopeID(ctx, realm, name)
+	if err != nil {
+		return true, err
+	}
+	if left != "" {
+		return true, fmt.Errorf("keycloak still has the client scope %s after deleting it", name)
+	}
+	return true, nil
+}
+
+// findClientScopeID looks a client scope up by its exact name. The endpoint
+// answers with every scope of the realm; it does not page.
+func (c *KeycloakAdminClient) findClientScopeID(ctx context.Context, realm, name string) (string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	var scopes []keycloakGroupRecord
+	if err := c.getAdminJSON(ctx, token, fmt.Sprintf("/admin/realms/%s/client-scopes", url.PathEscape(realm)), &scopes); err != nil {
+		return "", fmt.Errorf("keycloak list client scopes: %w", err)
+	}
+	for _, s := range scopes {
+		if s.Name == name && s.ID != "" {
+			return s.ID, nil
+		}
+	}
+	return "", nil
 }
 
 func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName string) (string, error) {
@@ -464,7 +637,7 @@ func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName 
 			}
 			// Merge, because Keycloak's group update replaces the attribute map
 			// wholesale and this is not its only writer. The tenant identity Job
-			// writes the keys an AppProfile declares, the App Store writes the
+			// writes the keys a ComponentProfile declares, the App Store writes the
 			// default-grant marker, and an administrator sets others by hand in
 			// the console. Sending only our own keys deleted everyone else's on
 			// every pass.

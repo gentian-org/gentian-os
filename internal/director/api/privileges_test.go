@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package api_test
@@ -32,7 +26,7 @@ func reason(text string) string { return `{"reason":"` + text + `"}` }
 // A tenant administrator answers for egress: the traffic leaves the tenant's
 // own namespace, and can_approve_privilege is model v1's verb for it.
 func TestTheTenantAdministratorApprovesEgress(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, body := h.do(t, "PUT", egressPath, tom, reason("agreed in the security review on the 14th"))
@@ -67,7 +61,7 @@ func TestTheTenantAdministratorApprovesEgress(t *testing.T) {
 // it. A tenant administrator's authority inside their own tenant is not that,
 // however complete it is there.
 func TestATenantAdministratorCannotWaivePodSecurity(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	before := h.tip(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
@@ -91,7 +85,7 @@ func TestATenantAdministratorCannotWaivePodSecurity(t *testing.T) {
 // administrator to do so -- which is the whole reason the check follows the
 // kind rather than the route's relation.
 func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	sam := h.token(t, "gentian", "sam")
 
 	code, body := h.do(t, "PUT", waiverPath, sam, reason("the converter forks as root; reviewed 2026-09-20"))
@@ -113,7 +107,7 @@ func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
 // says alice has can_configure and can_approve: false, and this is what that
 // distinction is worth.
 func TestConfiguringTheClusterIsNotApprovingForIt(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	before := h.tip(t)
 	alice := h.token(t, "gentian", "alice")
 
@@ -129,7 +123,7 @@ func TestConfiguringTheClusterIsNotApprovingForIt(t *testing.T) {
 // why it wants the privilege; this is the record of why somebody agreed, and
 // it is the only part of the entry a caller supplies.
 func TestAGrantNeedsAReason(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	before := h.tip(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
@@ -151,7 +145,7 @@ func TestAGrantNeedsAReason(t *testing.T) {
 // An expiry that has already passed grants nothing, so committing it would
 // read as an approval while the component went on waiting.
 func TestAnExpiryInThePastIsRefused(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	body := `{"reason":"agreed for one quarter only","expiresAt":"2020-01-01T00:00:00Z"}`
@@ -166,7 +160,7 @@ func TestAnExpiryInThePastIsRefused(t *testing.T) {
 // A kind that is not one of the three is a 404: the route exists, the
 // privilege named on it does not.
 func TestAnUnknownPrivilegeKindIsNotFound(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/rootShell/everything",
@@ -179,7 +173,7 @@ func TestAnUnknownPrivilegeKindIsNotFound(t *testing.T) {
 // Somebody who cannot see the tenant cannot approve for it either, which the
 // route's own relation settles before any of the above runs.
 func TestApprovingNeedsToSeeTheTenantAtAll(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	before := h.tip(t)
 	tina := h.token(t, "tenant-solo", "tina")
 

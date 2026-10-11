@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authn_test
@@ -82,6 +76,47 @@ func TestVerifyRefuses(t *testing.T) {
 				t.Fatalf("err = %v, want ErrUnauthenticated", err)
 			}
 		})
+	}
+}
+
+// The edge reads an ID token where the Authorization header is not its to
+// read. It is held against the zone's client, it must say it is an ID token,
+// and nothing that takes a bearer accepts it.
+func TestAnIDTokenIsAcceptedOnlyAsOneAndOnlyForItsClient(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian")
+	v := verifier(t, is)
+	const client = "gentian-edge-kernel"
+	idToken := directortest.Claims{Realm: "gentian", Subject: "u-1", Audience: client, Type: "ID", Email: "ada@example.com"}
+
+	id, err := v.VerifyIDToken(context.Background(), is.Token(t, idToken), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Subject != "u-1" || id.SessionID != "sid-u-1" || id.Email != "ada@example.com" {
+		t.Fatalf("identity = %+v", id)
+	}
+
+	refused := map[string]struct{ raw, client string }{
+		"another client's ID token": {is.Token(t, idToken), "gentian-edge-acme"},
+		"no client named":           {is.Token(t, idToken), ""},
+		"an access token":           {is.Token(t, with(idToken, func(c *directortest.Claims) { c.Type = "Bearer" })), client},
+		"a token of no stated kind": {is.Token(t, with(idToken, func(c *directortest.Claims) { c.Type = "" })), client},
+		"the director's access token": {is.Token(t, directortest.Claims{
+			Realm: "gentian", Subject: "u-1", Audience: audience}), audience},
+		"expired": {is.Token(t, with(idToken, func(c *directortest.Claims) { c.Expiry = time.Now().Add(-time.Hour) })), client},
+	}
+	for name, c := range refused {
+		t.Run(name, func(t *testing.T) {
+			if _, err := v.VerifyIDToken(context.Background(), c.raw, c.client); !errors.Is(err, authn.ErrUnauthenticated) {
+				t.Fatalf("err = %v, want ErrUnauthenticated", err)
+			}
+		})
+	}
+	// And the other way round: an ID token is not a bearer, even when its
+	// audience is the one the verifier was configured with.
+	asBearer := is.Token(t, with(idToken, func(c *directortest.Claims) { c.Audience = audience }))
+	if _, err := v.Verify(context.Background(), asBearer); !errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("an ID token passed for an access token: %v", err)
 	}
 }
 

@@ -4,13 +4,12 @@ letsencryptEmail: ""
 kernelDomain: ""
 
 # Where cert-manager runs, which is also where it reads a DNS credential and
-# writes an issued Certificate's Secret. The v4 layout gave it a namespace of
-# its own; the v5 layout puts it at the edge, with the Gateway that serves what
-# it issues.
-certManagerNamespace: cert-manager
+# writes an issued Certificate's Secret: at the edge, with the Gateway that
+# serves what it issues.
+certManagerNamespace: kernel-edge
 
 # The Gateway the HTTP-01 solver routes through.
-gatewayNamespace: platform-kernel
+gatewayNamespace: kernel-edge
 gatewayName: perimeter
 
 # Who hosts the zone. A key in the `dnsProviders` table; its `solver` block is

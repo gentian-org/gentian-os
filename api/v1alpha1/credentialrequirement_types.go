@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -27,7 +29,7 @@ import (
 //
 // It is deliberately a plain CRD rather than a Crossplane XRD. It composes
 // nothing: an XRD requires a Composition producing managed resources, and there
-// are none to produce. It sits beside AppProfile as catalogue.
+// are none to produce. It sits beside ComponentProfile as catalogue.
 //
 // There is no controller. Each requirement emits an ExternalSecret, and ESO's
 // sync status IS the satisfaction probe — path absent in OpenBao gives
@@ -72,7 +74,7 @@ type CredentialRequirementSpec struct {
 	// Phase decides whether an unsatisfied requirement blocks installation.
 	//
 	// bootstrap: the installer prompts for it and will not proceed without it.
-	// runtime:   deferrable to the on-cluster credential manager.
+	// runtime:   deferrable to the on-cluster custodian.
 	//
 	// The bootstrap set is expected to number under five, and every member must
 	// be validatable with curl or openssl alone — anything needing an SDK or a
@@ -160,7 +162,7 @@ type CredentialValidation struct {
 	// Only these are implementable in curl or openssl, which is the ceiling on
 	// what the installer validates. s3 and dns-provider need request signing or
 	// a provider SDK, so credentials using them are runtime by construction and
-	// are validated by the on-cluster credential manager instead.
+	// are validated by the on-cluster custodian instead.
 	//
 	// noop is rejected for phase: bootstrap — a bootstrap credential with no
 	// probe is a design error, resolved by reclassifying it as runtime.

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -27,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -52,14 +47,14 @@ import (
 // director could only drift from the first, and while it existed an installed
 // app could not appear on the portal without a director release.
 //
-// So the catalogue is projected from what is actually routed, and the director
+// So the catalogue is projected from what is actually routed, and the usher
 // is left with the question it exists to answer: which of these may this
 // caller open. A tile whose route does not exist is not in the catalogue,
 // which means a console the cluster does not serve yet cannot be advertised as
 // a broken link.
 //
 // The projection is one ConfigMap in the control namespace, beside the
-// director, and it is declarative like the rest: an app uninstalled loses its
+// usher, and it is declarative like the rest: an app uninstalled loses its
 // tile because the projection is rebuilt, not because anything remembers to
 // delete it.
 
@@ -87,6 +82,14 @@ type TileProjectionReconciler struct {
 	// name is the tenant's domain.
 	KernelDomain string
 	TenancyMode  string
+	// LicenceReporting is whether this cluster reports what it runs: half of
+	// whether it offers an App Store, which is written beside the tiles.
+	LicenceReporting bool
+	// WatchClusterClaim re-runs the projection when the Cluster claim
+	// changes, so that a store named or withdrawn there is in the catalogue
+	// without waiting out the floor. Off where the claim's kind is not
+	// installed, which a watch would never get past.
+	WatchClusterClaim bool
 }
 
 // primaryExposureName is what a component's own host is called: the first
@@ -129,17 +132,17 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 		{
 			route:       kernelRouteHeadlamp,
 			name:        "headlamp",
-			displayName: "Cluster",
+			displayName: "Headlamp",
 			description: "The cluster as Kubernetes sees it — nodes, workloads, events — with your own identity.",
-			icon:        "cluster",
+			icon:        "bulb",
 			anyOf:       []string{"can_configure", "can_operate_system", "can_audit"},
 		},
 		{
 			route:       kernelRouteArgoCD,
 			name:        "argocd",
-			displayName: "Deployments",
+			displayName: "ArgoCD",
 			description: "What git says the cluster should run, and whether it does.",
-			icon:        "sync",
+			icon:        "kube",
 			// The sign-in entry, not the front page. Argo CD's front page is a
 			// login form with a button that starts the realm's flow; the
 			// person following this tile has a session already, so the tile
@@ -156,9 +159,9 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			// of its own name.
 			route:       kernelRouteKeycloakAdmin,
 			name:        "keycloak",
-			displayName: "Identity",
+			displayName: "Keycloak",
 			description: "Realms, clients and the people in them.",
-			icon:        "identity",
+			icon:        "key",
 			// Keycloak is served under /auth, and its administration console
 			// is per realm: a link to /admin/ alone lands on the master
 			// realm's console, which a kernel-realm administrator may not
@@ -166,6 +169,17 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			// a wrong address, so the realm is named here.
 			path:  fmt.Sprintf("/auth/admin/%s/console/", kernelRealm),
 			anyOf: []string{"can_configure"},
+		},
+		{
+			// Routed only where the claim switches it on
+			// (llm.console.enabled), so on most clusters this row finds no
+			// route and yields no tile. The relation is the route's own.
+			route:       kernelRouteLiteLLM,
+			name:        "llm",
+			displayName: "Model gateway",
+			description: "The models this cluster offers, the keys that may call them and what they spend.",
+			icon:        "analytics",
+			anyOf:       []string{"can_configure"},
 		},
 	}
 }
@@ -200,6 +214,20 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("project the component tiles: %w", err)
 	}
 	catalogue.Tiles = append(catalogue.Tiles, apps...)
+
+	// Whether the cluster offers an App Store, by the verdict that also
+	// places the App Store app on tenants (store_offer.go). A cluster with no
+	// claim kind at all has no claim naming a store; any other failure to
+	// read is retried rather than written down as "no store".
+	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
+	switch {
+	case err == nil:
+	case meta.IsNoMatchError(err) || errors.IsNotFound(err):
+		offer = storeOffer{reason: tilecatalogue.AppStoreReasonNoStore}
+	default:
+		return ctrl.Result{}, fmt.Errorf("read whether the cluster offers an App Store: %w", err)
+	}
+	catalogue.AppStore = &tilecatalogue.AppStore{Offered: offer.offered(), Reason: offer.reason}
 
 	if err := r.write(ctx, catalogue); err != nil {
 		return ctrl.Result{}, fmt.Errorf("write the tile catalogue: %w", err)
@@ -411,14 +439,20 @@ func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) str
 	return "app:" + tenant + "/" + profile
 }
 
-// write puts the catalogue in the control namespace, creating the ConfigMap
-// the first time and patching it only when the content differs.
+// write puts the catalogue in the control namespace, beside the usher that
+// mounts it and is its only reader, creating the ConfigMap the first time and
+// patching it only when the content differs. The bouncer's route table is a
+// different object and stays in the edge namespace, where the bouncer is.
 func (r *TileProjectionReconciler) write(ctx context.Context, catalogue tilecatalogue.Catalogue) error {
 	rendered, err := tilecatalogue.Marshal(catalogue)
 	if err != nil {
 		return err
 	}
-	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
+	return r.writeTo(ctx, layout.Namespace(layout.Control), rendered)
+}
+
+func (r *TileProjectionReconciler) writeTo(ctx context.Context, namespace, rendered string) error {
+	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: namespace}
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      key.Name,
@@ -429,7 +463,7 @@ func (r *TileProjectionReconciler) write(ctx context.Context, catalogue tilecata
 	}
 
 	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, key, existing)
+	err := r.Get(ctx, key, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
@@ -455,11 +489,14 @@ func (r *TileProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	one := handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
 		return []reconcile.Request{{}}
 	})
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		Named("tile-projection").
 		For(&gentianov1alpha1.Component{}, builder.WithPredicates()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, one).
 		Watches(&gentianov1alpha1.Tenant{}, one).
-		Watches(&gatewayv1.HTTPRoute{}, one).
-		Complete(r)
+		Watches(&gatewayv1.HTTPRoute{}, one)
+	if r.WatchClusterClaim {
+		b = b.Watches(clusterClaimObject(), one, builder.WithPredicates(storeAddressChanged()))
+	}
+	return b.Complete(r)
 }

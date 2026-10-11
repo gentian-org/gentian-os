@@ -4,7 +4,7 @@
 # B-01: its children need the Cluster claim's AppProject, the ESO store and
 # the seeded paths to exist. The layout goes in as a value, so the wrapper
 # can resolve namespaces by function.
-{{- if .Values.appsets.enabled }}
+{{- if eq (toString .Values.appsets.enabled) "true" }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -24,7 +24,7 @@ spec:
     jsonPointers:
     - /metadata/finalizers
   source:
-    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     path: kernel/appsets
     helm:
@@ -46,8 +46,10 @@ spec:
         relayHost: {{ .Values.smtpHost | default "" | quote }}
         egressHost: {{ .Values.mailEgressHost | default "" | quote }}
         storageClass: {{ .Values.storageClass | default "" | quote }}
-        llmGpuAcceleration: {{ .Values.llmGpuAcceleration | default "false" | quote }}
-        llmExternalProviders: {{ .Values.llmExternalProviders | default "false" | quote }}
+        {{- /* The stores' NetworkPolicies: on unless the cluster says
+             "false". Compared as a string, the way the phase switches are:
+             the installer passes it with --set-string. */}}
+        storeNetworkPolicies: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
         namespaces:
           {{- toYaml .Values.namespaces | nindent 10 }}
   destination:

@@ -1,0 +1,58 @@
+{
+  "$description": "The Gentian brand: what every page shows when the cluster sets no Branding. W3C Design Tokens Community Group format, 2025.10.",
+  "color": {
+    "$type": "color",
+    "brand": {
+      "$description": "The primary scale: actions, links, focus.",
+      "50":  { "$value": { "colorSpace": "srgb", "components": [0.925, 0.925, 0.969], "hex": "#ECECF7" } },
+      "100": { "$value": { "colorSpace": "srgb", "components": [0.835, 0.835, 0.933], "hex": "#D5D5EE" } },
+      "200": { "$value": { "colorSpace": "srgb", "components": [0.678, 0.678, 0.875], "hex": "#ADADDF" } },
+      "300": { "$value": { "colorSpace": "srgb", "components": [0.471, 0.471, 0.8], "hex": "#7878CC" } },
+      "400": { "$value": { "colorSpace": "srgb", "components": [0.29, 0.29, 0.702], "hex": "#4A4AB3" } },
+      "500": { "$value": { "colorSpace": "srgb", "components": [0.149, 0.149, 0.588], "hex": "#262696" } },
+      "600": { "$value": { "colorSpace": "srgb", "components": [0.106, 0.102, 0.51], "hex": "#1B1A82" } },
+      "700": { "$value": { "colorSpace": "srgb", "components": [0.075, 0.075, 0.439], "hex": "#131370" } },
+      "800": { "$value": { "colorSpace": "srgb", "components": [0.039, 0.039, 0.2], "hex": "#0A0A33" } }
+    },
+    "ink": {
+      "$description": "Text, darkest first.",
+      "0": { "$value": { "colorSpace": "srgb", "components": [0.027, 0.031, 0.102], "hex": "#07081A" } },
+      "1": { "$value": { "colorSpace": "srgb", "components": [0.078, 0.082, 0.18], "hex": "#14152E" } },
+      "2": { "$value": { "colorSpace": "srgb", "components": [0.137, 0.145, 0.278], "hex": "#232547" } },
+      "3": { "$value": { "colorSpace": "srgb", "components": [0.271, 0.282, 0.42], "hex": "#45486B" } },
+      "4": { "$value": { "colorSpace": "srgb", "components": [0.455, 0.467, 0.604], "hex": "#74779A" } },
+      "5": { "$value": { "colorSpace": "srgb", "components": [0.627, 0.639, 0.753], "hex": "#A0A3C0" } }
+    },
+    "paper": {
+      "$description": "Surfaces: page, raised, inset, card.",
+      "0": { "$value": { "colorSpace": "srgb", "components": [0.957, 0.945, 0.918], "hex": "#F4F1EA" } },
+      "1": { "$value": { "colorSpace": "srgb", "components": [0.925, 0.91, 0.875], "hex": "#ECE8DF" } },
+      "2": { "$value": { "colorSpace": "srgb", "components": [0.871, 0.851, 0.8], "hex": "#DED9CC" } },
+      "3": { "$value": { "colorSpace": "srgb", "components": [1, 1, 1], "hex": "#FFFFFF" } }
+    },
+    "status": {
+      "info":       { "$value": { "colorSpace": "srgb", "components": [0.294, 0.373, 0.702], "hex": "#4B5FB3" } },
+      "info-bg":    { "$value": { "colorSpace": "srgb", "components": [0.898, 0.914, 0.965], "hex": "#E5E9F6" } },
+      "success":    { "$value": { "colorSpace": "srgb", "components": [0.31, 0.42, 0.227], "hex": "#4F6B3A" } },
+      "success-bg": { "$value": { "colorSpace": "srgb", "components": [0.894, 0.922, 0.839], "hex": "#E4EBD6" } },
+      "warning":    { "$value": { "colorSpace": "srgb", "components": [0.698, 0.404, 0.106], "hex": "#B2671B" } },
+      "warning-bg": { "$value": { "colorSpace": "srgb", "components": [0.957, 0.898, 0.796], "hex": "#F4E5CB" } },
+      "danger":     { "$value": { "colorSpace": "srgb", "components": [0.608, 0.176, 0.176], "hex": "#9B2D2D" } },
+      "danger-bg":  { "$value": { "colorSpace": "srgb", "components": [0.949, 0.851, 0.851], "hex": "#F2D9D9" } }
+    }
+  },
+  "font": {
+    "family": {
+      "$type": "fontFamily",
+      "sans":    { "$value": ["Hanken Grotesk", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"] },
+      "display": { "$value": "{font.family.sans}" },
+      "mono":    { "$value": ["Commit Mono", "ui-monospace", "SF Mono", "Menlo", "Consolas", "monospace"] }
+    }
+  },
+  "radius": {
+    "$type": "dimension",
+    "1": { "$value": { "value": 6, "unit": "px" } },
+    "2": { "$value": { "value": 10, "unit": "px" } },
+    "3": { "$value": { "value": 16, "unit": "px" } }
+  }
+}

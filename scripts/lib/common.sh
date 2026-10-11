@@ -67,6 +67,30 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 # Pre-flight checks run before any phase begins and would otherwise have no
 # heading at all. GENTIAN_CURRENT_STEP is what tells the two apart — the driver
 # sets it around each step and unsets it after.
+# gentian_read_only — whether this run promised to change nothing.
+#
+# --dry-run and --validate both promise it, and each used to be tested for by
+# name at the places somebody had thought of. The places nobody had thought of
+# are the fault this exists for: a dry run committed and pushed the cluster's
+# definition, generated a signing key to do it with, and rewrote
+# ~/.gentian/config -- all before the first step's check() ran. One question,
+# asked by everything that writes, so a new writer has one thing to ask.
+#
+# What it covers: the cluster, the deployments checkout and its remote, the
+# keyring, and every file this host keeps (~/.gentian, ~/.local/bin, the
+# installer's state file). Reading is not covered -- a dry run still asks the
+# cluster and the remote what is there.
+gentian_read_only() {
+    [[ "${GENTIAN_DRY_RUN:-0}" == "1" || "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]
+}
+
+# gentian_would <what an install would do> — say it, where a read-only run
+# stops short of doing it. One wording, so the plan a dry run prints can be
+# read off its output: every line an install would act on begins the same way.
+gentian_would() {
+    info "Would $* — not done: this run changes nothing."
+}
+
 banner() {
     [[ -n "${GENTIAN_CURRENT_STEP:-}" ]] && return 0
     echo -e "\n${CYAN}── $* ───────────────────────────────────────────${NC}\n"
@@ -206,6 +230,61 @@ gentian_dns_resolves() {
 
     # Local resolver, negative cache and all. Only ever too pessimistic.
     getent hosts "${host}" >/dev/null 2>&1
+}
+
+# gentian_dns_wait_for <hosts, one per line> — wait for public names to resolve.
+# D-02 waits for id before D-03; D-05 for the console D-03 creates. Never
+# fatal: the steps that need a name wait for it in their own right.
+gentian_dns_wait_for() {
+    local timeout="${GENTIAN_DNS_WAIT_SECS:-900}"
+    local deadline=$(( SECONDS + timeout ))
+    local host hosts="$1" pending reported=0
+
+    if [[ -z "${hosts}" ]]; then
+        info "No kernel domain resolved from the claim; nothing to wait for."
+        return 0
+    fi
+
+    # external-dns first: until it runs, nothing is publishing anything, and
+    # saying so is more useful than a name that will not resolve for reasons the
+    # operator cannot see.
+    if ! kubectl get deploy -n "$(ns_kernel edge)" -l app.kubernetes.io/name=external-dns \
+        -o name 2>/dev/null | grep -q .; then
+        info "Waiting for external-dns to be deployed (Argo CD delivers it)..."
+    fi
+
+    while (( SECONDS < deadline )); do
+        pending=""
+        while IFS= read -r host; do
+            [[ -n "${host}" ]] || continue
+            # The zone's own nameservers, not this machine's resolver: see
+            # gentian_dns_resolves. A resolver that asked before the record
+            # existed caches "no" for the zone's negative TTL, which is longer
+            # than this wait and would time out on DNS that is already live.
+            gentian_dns_resolves "${host}" "${KERNEL_DOMAIN:-}" \
+                || pending="${pending}${host} "
+        done <<< "${hosts}"
+
+        if [[ -z "${pending}" ]]; then
+            success "Kernel hostnames resolve: $(printf '%s' "${hosts}" | tr '\n' ' ')"
+            return 0
+        fi
+
+        if (( reported == 0 )) || (( SECONDS % 60 < 10 )); then
+            info "  waiting for DNS: ${pending%% }"
+            reported=1
+        fi
+        sleep 10
+    done
+
+    # Not an error. The steps after this one wait for what they need in their own
+    # right, and a cluster whose DNS an operator publishes by hand is a supported
+    # arrangement rather than a fault.
+    warn "Kernel hostnames did not resolve within $(( timeout / 60 ))m: ${pending%% }"
+    warn "  external-dns publishes them from the Gateway's hostnames once it is"
+    warn "  running, and its Cloudflare credential must cover this zone."
+    warn "  Continuing — the steps that need a public name wait for it themselves."
+    return 0
 }
 
 # _helm_retry — the same idea as _kubectl_retry, for helm.
@@ -385,7 +464,27 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # purge_local_state — which reads this variable, so the purge follows the file
 # without needing to know where it went.
 OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}"
+# 0 (--no-cluster-infra) leaves the kernel wildcard certificate unissued
+# (install_kernel_wildcard) and nothing else.
 INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
+# A vanilla installation comes with the store's extensions -- the
+# Operations Console and the API-extension grant its service needs. 1 leaves
+# them out of the scaffold; the OS installs and runs the same either way.
+GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
+# A vanilla installation reports what it runs to the licence report address,
+# once a day (docs/design/operations.md). 1 turns that off: nothing is sent,
+# and the App Store is not offered. The address itself is the bootstrap
+# chart's default (kernel/bootstrap/chart/values.yaml) unless
+# GENTIAN_LICENCE_REPORT_URL names another.
+# Unset says nothing either way, and a cluster that already has the report
+# turned off then keeps it off (gentian_licence_report_enabled); 0 turns it on.
+GENTIAN_NO_LICENCE_REPORT="${GENTIAN_NO_LICENCE_REPORT:-}"
+GENTIAN_LICENCE_REPORT_URL="${GENTIAN_LICENCE_REPORT_URL:-}"
+# The profiles a vanilla installation materialises for every tenant: https
+# addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
+# comma separated, each optionally pinned with @sha256:<digest>. Unset means
+# the Operations Console from the store's catalogue, at the digest that
+# catalogue's index lists; empty means none.
 # Operator-managed env files (config + secrets). These are optional, but when
 # present they are sourced automatically before prompting so installs can be
 # fully declarative and non-interactive.
@@ -398,62 +497,22 @@ INSTALL_VERIFY_ONLY="${INSTALL_VERIFY_ONLY:-0}"
 # re-runs do not re-prompt. Gitignored. Set INSTALL_STATE_FILE=/dev/null to
 # disable persistence.
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
-CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
+CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
 
 # Input precedence (highest -> lowest):
-#   1) CLI flags / existing shell environment
-#   2) installer config files (install.env, install.secrets.env)
-#   3) local caches (.install-secrets.env, .install-state.env)
-#   4) gentian-deployments cluster-settings.env (overrides 3 for cluster runtime)
-#   5) OpenBao backfill for missing values
-#   6) interactive prompts for missing required values
+#   1) CLI flags / the exported environment install.sh was started with (and
+#      what --recover loaded from a kit)
+#   2) the installer config file (install.env)
+#   3) the Cluster claim in the deployments repository
+#      (clusters/<cluster>/kernel/claims/cluster.yaml), for the settings of the
+#      cluster; a cluster-settings.env left by an older install still overrides
+#   4) OpenBao backfill for missing values
+#   5) interactive prompts for missing required values
 #
-# Cluster runtime vars (KERNEL_DOMAIN, MAIL_SERVICE_MODE, …) belong in
-# clusters/<cluster>/kernel/cluster-settings.env; .install-state.env keeps only
-# installer-local state (see save_install_state).
-INPUT_HIERARCHY_VARS=(
-    MASTER_PASSWORD
-    SMTP_RELAY_USERNAME
-    SMTP_RELAY_PASSWORD
-    MAIL_SERVICE_MODE
-    EXTERNAL_SMTP_HOST
-    EXTERNAL_SMTP_PORT
-    EXTERNAL_SMTP_SSL
-    EXTERNAL_SMTP_STARTTLS
-    KERNEL_DOMAIN
-    TENANCY_MODE
-    NODE_IP
-    NETWORK_MODE
-    SKIP_TOOLS
-    OPENBAO_INIT_FILE
-    LETSENCRYPT_EMAIL
-    ROUTING_MODE
-    GENTIAN_APPS_REPO
-    GENTIAN_APPS_BRANCH
-    GENTIAN_APPS_AUTH
-    GENTIAN_UI_REPO
-    GENTIAN_UI_BRANCH
-    GENTIAN_UI_AUTH
-    GENTIAN_OS_AUTH
-    GENTIAN_DEPLOYMENTS_REPO
-    GENTIAN_DEPLOYMENTS_BRANCH
-    GENTIAN_DEPLOYMENTS_AUTH
-    EDGE_INGRESS
-    GENTIAN_DEPLOYMENTS_PATH
-    GENTIAN_DEPLOYMENTS_CLUSTER_ID
-    GENTIAN_DEPLOYMENTS_STAGE
-    GENTIAN_DEPLOYMENTS_GIT_TOKEN
-    GENTIAN_DEPLOYMENTS_GIT_USERNAME
-    GENTIAN_NONINTERACTIVE
-    INSTALL_CLUSTER_INFRA
-    GENTIAN_MANAGED_CERT_MANAGER
-    CF_API_TOKEN
-    CF_ZONE_NAME
-    SECRET_MODE
-    INFRA_CHART_PRIVATE
-    INFRA_CHART_REPO
-    STORAGE_CLASS
-)
+# 1 over 2 is load_env_file's doing, for every variable and not for a list of
+# them: a value exported for one run beats the file. 2 over 3 is reported on
+# every run (load_deployments_cluster_settings), because the claim is where a
+# cluster setting belongs.
 
 # ─── Versions ────────────────────────────────────────────────────────────────
 # Pinned in versions.yaml, read here. See scripts/lib/versions.sh for why the
@@ -461,31 +520,12 @@ INPUT_HIERARCHY_VARS=(
 ESO_CHART_VERSION="$(gentian_pin external-secrets chart)"
 export ESO_CHART_VERSION
 ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-$(gentian_pin envoy-gateway chart)}"
-ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
 GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
-
-usage() {
-    cat <<'EOF'
-Usage: ./install.sh [options]
-
-Options:
-  --no-cluster-infra   Skip cluster infra installation (cert-manager, reloader, CNPG)
-  --cluster-infra      Force cluster infra installation (default)
-  --config-file PATH   Source non-secret installer config from PATH
-  --secrets-file PATH  Source secret installer values from PATH
-  --no-config-files    Disable auto-loading of install.env
-    --verify-only        Skip install steps and only run ArgoCD health verification
-  --validate, --check  Validate config and secrets; print a report and exit (no
-                       cluster actions are taken)
-  -h, --help           Show this help
-
-Environment overrides:
-  INSTALL_CLUSTER_INFRA=1|0
-  INSTALL_CONFIG_FILE=/path/to/install.env
-  INSTALL_VALIDATE_ONLY=1
-EOF
-}
-
+# The oldest Kubernetes minor this release installs on. It is the pinned Envoy
+# Gateway's: 1.9 is tested on 1.33 to 1.36, and nothing else the installer pulls
+# asks for more. Raise it with the pin that raises it.
+GENTIAN_MIN_KUBERNETES_MINOR=33
 
 load_env_file() {
     local file="$1"
@@ -499,14 +539,22 @@ load_env_file() {
     [[ "${file}" == "/dev/null" ]] && return 0
     [[ -r "${file}" ]] || return 0
 
-    # Do not let a lower-precedence source override values that are already
-    # set by higher-precedence sources.
-    for var in "${INPUT_HIERARCHY_VARS[@]}"; do
-        if [[ -n "${!var+x}" ]]; then
-            before_keys+=("${var}")
-            before_vals+=("${!var}")
-        fi
-    done
+    # The exported environment beats the file: every variable that is exported
+    # with a value now has that value afterwards, whatever the file says.
+    #
+    # Every variable, not a list of them. This kept a list, and a setting that
+    # was not on it went the other way round -- GENTIAN_OS_BRANCH, the stage,
+    # the issuer mode -- so an export for one run was silently undone by the
+    # file. Exported and non-empty, not merely set: the installer's own
+    # defaults (GENTIAN_DISABLE_API_EXTENSIONS, GENTIAN_NO_LICENCE_REPORT, ...)
+    # are assigned before this runs and are not exported, and a default that
+    # counted as "already set" was a setting the file could never change.
+    while IFS= read -r var; do
+        # $_ is the shell's own and changes with every command.
+        [[ "${var}" != "_" && -n "${!var:-}" ]] || continue
+        before_keys+=("${var}")
+        before_vals+=("${!var}")
+    done < <(compgen -e)
 
     set -a
     # shellcheck disable=SC1090
@@ -519,7 +567,11 @@ load_env_file() {
 
     local i
     for i in "${!before_keys[@]}"; do
-        declare -gx "${before_keys[$i]}=${before_vals[$i]}"
+        var="${before_keys[$i]}"
+        [[ "${!var:-}" == "${before_vals[$i]}" ]] && continue
+        export "${var}=${before_vals[$i]}"
+        # The name only: an exported value may be a credential.
+        info "${var} is set in the environment; that value is used, not the one in ${file}."
     done
 
     info "Loaded ${label} from ${file}."
@@ -547,9 +599,15 @@ load_env_file_override() {
     info "Loaded ${label} from ${file} (overrides prior values)."
 }
 
-# validate_config checks that all required environment variables are set and
-# that key values pass basic format validation. Exits 0 on success, 1 on
-# failure. No cluster actions are taken.
+# validate_config reports which settings and credentials this configuration
+# has and whether key values pass basic format validation. Returns 0 when the
+# configuration is ready and 1 when it is not; the caller decides what follows
+# (--validate goes on to the pre-flight). It used to exit either way, so the
+# pre-flight that --validate is documented to run was never reached.
+#
+# A value an install asks for is not an error here. MASTER_PASSWORD and
+# KERNEL_DOMAIN do not exist before a first install, and reporting them as
+# missing made the command fail exactly when it is first run.
 validate_config() {
     local errors=0 warnings=0
     local deployments_root cluster
@@ -561,7 +619,7 @@ validate_config() {
     # its declarative half moved onto the claim, and these messages went on
     # naming it — telling an operator to fix a value in a file that no longer
     # exists, on the one screen whose whole purpose is saying what to fix.
-    cluster_claim_file="${deployments_root}/clusters/${cluster}/claims/cluster.yaml"
+    cluster_claim_file="${deployments_root}/clusters/${cluster}/kernel/claims/cluster.yaml"
 
     _file_header() {
         local file="$1" role="$2"
@@ -595,7 +653,11 @@ validate_config() {
     }
 
     _file_header "the environment" "Secrets checks (environment, ~/.gentian cache, or OpenBao)"
-    _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "the environment"
+    if [[ -n "${MASTER_PASSWORD:-}" ]]; then
+        echo "  [OK]       MASTER_PASSWORD"
+    else
+        echo "  [PENDING]  MASTER_PASSWORD  — not in the environment, the ~/.gentian cache or this cluster's OpenBao. An install asks for it; an unattended one needs it exported."
+    fi
     _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "the environment"
     if [[ -z "${CF_ZONE_NAME:-}" ]]; then
         echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset)"
@@ -607,15 +669,15 @@ validate_config() {
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "system" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_claim_file})"
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'system' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
-        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when kernel)"
+        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when system)"
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
         _opt_from EXTERNAL_SMTP_HOST "relay address — mail.host on the Cluster claim" "claims/cluster.yaml"
         _opt_from EXTERNAL_SMTP_PORT "relay port, default 587 — mail.port on the claim" "claims/cluster.yaml"
-        echo "  [OK]       SMTP relay credentials  (runtime: supplied to the credential manager after install)"
+        echo "  [OK]       SMTP relay credentials  (runtime: supplied to the custodian after install)"
     else
         echo "  [OK]       SMTP relay  (not used for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
     fi
@@ -663,9 +725,7 @@ validate_config() {
 
     _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
     _opt_from LETSENCRYPT_EMAIL  "the ACME account address — certManager.letsencryptEmail on the claim; defaults to admin@\${KERNEL_DOMAIN}" "${cluster_claim_file}"
-    _opt_from GENTIAN_APPS_REPO       "defaults to https://git.example.domain/gentian-apps" "${INSTALL_CONFIG_FILE}"
-    _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
-    _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://git.example.domain/gentian-deployments" "${INSTALL_CONFIG_FILE}"
+    _req_from GENTIAN_DEPLOYMENTS_REPO    "the address of this cluster's deployments repository; no default" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push" "the environment"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "the environment"
@@ -717,14 +777,13 @@ validate_config() {
     echo ""
     if (( errors > 0 )); then
         echo -e "${RED}Result: ${errors} error(s), ${warnings} warning(s) — config is NOT ready.${NC}"
-        exit 1
+        return 1
     elif (( warnings > 0 )); then
         echo -e "${YELLOW}Result: 0 errors, ${warnings} warning(s) — config is ready (with caveats).${NC}"
-        exit 0
     else
         echo -e "${GREEN}Result: all checks passed — config is ready.${NC}"
-        exit 0
     fi
+    return 0
 }
 
 # load_operator_config sources declarative operator-provided env files before
@@ -744,47 +803,33 @@ load_operator_config() {
 
 
 # =============================================================================
-# Prompt for the gentian-apps and gentian-deployments repo URLs/branches.
-# Defaults use example.domain placeholders — override via GENTIAN_*_REPO env vars.
+# Prompt for the gentian-deployments repo URL/branch, cluster id and stage.
+# The repository's address has no default: it is this cluster's own, and an
+# invented one is an install that runs until the first thing reads it.
 # Persist results to ~/.gentian/config (bash-sourceable) so the kubectl-gentian
 # plugin can locate the deployments repo when running `kubectl gentian apps install/uninstall`.
 # =============================================================================
 prompt_app_repos() {
-    local default_apps_repo="https://git.example.domain/gentian-apps"
-    local default_apps_branch="main"
-    local default_deploy_repo="https://git.example.domain/gentian-deployments"
     local default_deploy_branch="main"
     local default_deploy_cluster="default-cluster"
     local default_deploy_stage="${ENV:-dev}"
     local v
 
-    if [[ -z "${GENTIAN_APPS_REPO:-}" ]]; then
-        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            GENTIAN_APPS_REPO="${default_apps_repo}"
-        else
-            echo ""
-            info "App catalogue and deployment repositories (missing values only):"
-            read -rp "  gentian-apps repo URL [${default_apps_repo}]: " v
-            GENTIAN_APPS_REPO="${v:-${default_apps_repo}}"
-        fi
-    fi
-
-    if [[ -z "${GENTIAN_APPS_BRANCH:-}" ]]; then
-        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            GENTIAN_APPS_BRANCH="${default_apps_branch}"
-        else
-            read -rp "  gentian-apps branch [${default_apps_branch}]: " v
-            GENTIAN_APPS_BRANCH="${v:-${default_apps_branch}}"
-        fi
-    fi
-
     if [[ -z "${GENTIAN_DEPLOYMENTS_REPO:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            GENTIAN_DEPLOYMENTS_REPO="${default_deploy_repo}"
-        else
-            read -rp "  gentian-deployments repo URL [${default_deploy_repo}]: " v
-            GENTIAN_DEPLOYMENTS_REPO="${v:-${default_deploy_repo}}"
+            error "GENTIAN_DEPLOYMENTS_REPO is not set and GENTIAN_NONINTERACTIVE=1; aborting."
+            error "  It is the address of the deployments repository this cluster is defined in"
+            error "  and Argo CD reads; there is no default. Set it in ${INSTALL_CONFIG_FILE:-install.env}"
+            error "  or export it, and run again."
+            exit 1
         fi
+        echo ""
+        info "Deployment repository (missing values only):"
+        v=""
+        while [[ -z "${v}" ]]; do
+            read -rp "  gentian-deployments repo URL: " v
+        done
+        GENTIAN_DEPLOYMENTS_REPO="${v}"
     fi
 
     if [[ -z "${GENTIAN_DEPLOYMENTS_BRANCH:-}" ]]; then
@@ -814,15 +859,11 @@ prompt_app_repos() {
         fi
     fi
 
-    : "${GENTIAN_APPS_REPO:=${default_apps_repo}}"
-    : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
-    : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
         : "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:=${default_deploy_cluster}}"
         : "${GENTIAN_DEPLOYMENTS_STAGE:=${default_deploy_stage}}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
-    export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH \
-            GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH \
+    export GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH \
             GENTIAN_DEPLOYMENTS_CLUSTER_ID GENTIAN_DEPLOYMENTS_STAGE \
             GENTIAN_DEPLOYMENTS_PATH
 
@@ -851,12 +892,17 @@ prompt_app_repos() {
     # plugin's expectations (GENTIAN_DEPLOYMENTS_PATH / GENTIAN_DEPLOYMENTS_REPO).
     local cfg_dir="${HOME}/.gentian"
     local cfg_file="${cfg_dir}/config"
+    # Not under --dry-run or --validate: the file carries a timestamp, so
+    # even an unchanged configuration rewrote it, and a preview of another
+    # cluster's install repointed kubectl-gentian at that cluster.
+    if gentian_read_only; then
+        gentian_would "save the deployments repository's address to ${cfg_file}, for kubectl gentian"
+        return 0
+    fi
     mkdir -p "$cfg_dir"
     cat >"$cfg_file" <<EOF
 # Auto-generated by gentian-os/install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ).
 # Sourced by the kubectl-gentian plugin (~/.gentian/config).
-GENTIAN_APPS_REPO="${GENTIAN_APPS_REPO}"
-GENTIAN_APPS_BRANCH="${GENTIAN_APPS_BRANCH}"
 GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}"
 GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH}"
 GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
@@ -866,14 +912,12 @@ EOF
     chmod 0600 "$cfg_file"
     success "App repo configuration saved to ${cfg_file}"
 
-    # No default+export for GENTIAN_DEPLOYMENTS_GIT_USERNAME here — this runs
-    # before collect_bootstrap_credentials, so defaulting it this early wins
-    # the "already set" race against the 0600 cache and OpenBao recovery
-    # (_load_credential_cache / try_load_creds_from_openbao both skip a var
-    # that's already non-empty). A cluster whose username genuinely is
-    # x-access-token still gets it — _validate_requirement's own
-    # "${!user_var:-x-access-token}" fallback applies it at the point of use,
-    # after recovery has had its chance.
+    # GENTIAN_DEPLOYMENTS_GIT_USERNAME is deliberately given no default here.
+    # This runs before the credentials are collected, and both the local cache
+    # and the recovery from OpenBao leave alone any variable that already has
+    # a value: a default set this early would be kept in place of the username
+    # the cluster really uses. Where the username is used, x-access-token is
+    # the fallback, and by then recovery has had its turn.
 }
 
 
@@ -1026,8 +1070,9 @@ load_deployments_cluster_settings() {
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
-             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
-             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV DNS01_RECURSIVE_NAMESERVERS; do
+             LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
+             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
+             DNS01_RECURSIVE_NAMESERVERS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1052,11 +1097,16 @@ load_deployments_cluster_settings() {
         claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
         # Which Let's Encrypt endpoint. Read here rather than from the stage
         # profile that deployment.md points at, because the issuers are applied
-        # at A-06 and a stage profile is Helm values Argo CD renders later —
+        # at A-09 and a stage profile is Helm values Argo CD renders later —
         # unreadable at the moment the answer is needed. The claim is a file
         # before it is an object, which is exactly why it can serve both.
         claim_setting ACME_ENV          certificates.acmeEnv         "${claim_file}"
-        # Where cert-manager checks DNS-01 propagation. Read at A-05, which is
+        # Who issues the certificates. Step 0 asks once and writes the answer
+        # here; every later run reads it back, so a self-signed or HTTP-01
+        # cluster is not asked for a DNS credential and A-09 has the mode
+        # before the Cluster object exists to be asked.
+        claim_setting CERT_ISSUER_MODE  certificates.issuerMode      "${claim_file}"
+        # Where cert-manager checks DNS-01 propagation. Read at A-02, which is
         # before the Cluster XR exists, for the same reason as ACME_ENV.
         claim_setting DNS01_RECURSIVE_NAMESERVERS certificates.dns01RecursiveNameservers "${claim_file}"
         # The external relay, when mail.serviceMode is external. Same object,
@@ -1075,16 +1125,15 @@ load_deployments_cluster_settings() {
         claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
         claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
         claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
-        # Whether this cluster routes to any external provider. A count, not a
-        # switch on the claim: the provider list is the declaration, and a second
-        # boolean beside it could disagree with it. What needs the boolean is the
-        # appset template, which substitutes literals and cannot project a list.
-        if [[ -z "${LLM_EXTERNAL_PROVIDERS:-}" ]]; then
-            if [[ "$(yq_get '.spec.llm.providers | length' "${claim_file}" 2>/dev/null || echo 0)" -gt 0 ]]; then
-                export LLM_EXTERNAL_PROVIDERS=true
-            else
-                export LLM_EXTERNAL_PROVIDERS=false
-            fi
+        # The model gateway's console, llm.<kernelDomain>. Off unless the
+        # claim switches it on, and a claim written before the setting existed
+        # does not state it: a cluster that had the console loses its route
+        # on the next run. Said once per run, because nothing else would
+        # tell the administrator where the console went.
+        claim_setting LLM_CONSOLE             llm.console.enabled      "${claim_file}"
+        if [[ "${LLM_SUPPORT:-}" == "true" && "${LLM_CONSOLE:-}" != "true" && -z "${_LLM_CONSOLE_NOTED:-}" ]]; then
+            _LLM_CONSOLE_NOTED=1
+            info "The model gateway's console (llm.<kernelDomain>) is off: no route, and the edge is not admitted to the gateway. spec.llm.console.enabled: true on the Cluster claim switches it on, for platform administrators."
         fi
         # Where this cluster runs, and who hosts its zone. Two dimensions, kept
         # apart on purpose: a Hetzner cluster on a Cloudflare zone is ordinary,
@@ -1096,15 +1145,13 @@ load_deployments_cluster_settings() {
         # requirement.
         claim_setting     PLATFORM        platform        "${claim_file}"
         claim_map_setting PLATFORM_PARAMS platformParams  "${claim_file}"
-        # One specific platformParams key, read directly rather than parsed out
-        # of PLATFORM_PARAMS' comma-joined string — gates whether the Kyverno
-        # host-namespace exception MetalLB's speaker needs gets deployed at all
-        # (kernel/appsets/raw/05b-metallb-exception.yaml).
-        claim_setting     METALLB_EXCEPTION platformParams.metallb "${claim_file}"
         claim_setting     EDGE_ADDRESS_REF addressRef     "${claim_file}"
+        # platformParams.metallb on its own, because it is a switch and not a
+        # value to pass on: "false" keeps MetalLB's namespace under the
+        # baseline policies. See ns_ensure_kernel.
+        claim_setting     METALLB_ALLOWED platformParams.metallb "${claim_file}"
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
-        claim_setting     EXTERNAL_DNS_ENABLED certificates.externalDns "${claim_file}"
 
         # lbProvider was PLATFORM's name while the edge load balancer was the
         # only thing it selected. Kept readable so a claim written before the
@@ -1123,7 +1170,7 @@ load_deployments_cluster_settings() {
 # =============================================================================
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
 # which all kernel UIs — Keycloak, Gentian portal, and Argo CD — are served, and
-# which provides the tenant app zone fallback when Tenant.spec.domain is unset
+# which tenant app zones are derived from
 # (shape depends on TENANCY_MODE — see docs/design/multi-tenancy.md §3).
 #
 # Persisted via cluster-settings.env in gentian-deployments when set there;
@@ -1143,7 +1190,7 @@ prompt_kernel_domain() {
 
     echo ""
     info "Kernel domain (single platform-wide DNS suffix used for all kernel UIs"
-    info "and as the default base for tenant apps without a vanity domain):"
+    info "and as the base every tenant's apps are served under):"
     info "  examples: platform.example.com, apps.example.org"
 
     local v=""
@@ -1180,6 +1227,29 @@ prompt_kernel_domain() {
 # waits for a certificate that will never be issued, and the symptom names a
 # missing Secret rather than an unreachable ACME endpoint.
 # =============================================================================
+# _decided <text> — a setting step 0 settled from an earlier answer.
+#
+# Said out loud, because a question that is never asked is otherwise a
+# decision nobody saw being made: a tunnel cluster is never asked about mail,
+# and without a line saying why, that reads as the installer forgetting.
+_decided() {
+    info "  → $*"
+}
+
+# explain_network_mode — what the exposure answer settles. Interview only.
+explain_network_mode() {
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        if [[ -n "${NODE_IP:-}" ]]; then
+            _decided "nodeIp ${NODE_IP}: DNS points straight at this address."
+        else
+            _decided "nodeIp: detected from the node at install; DNS points straight at it."
+        fi
+    else
+        _decided "nodeIp: not asked — traffic arrives through the tunnel, not at a node address."
+    fi
+    return 0
+}
+
 prompt_issuer_mode() {
     local valid="acme-dns01 acme-http01 private-ca self-signed"
     if [[ -n "${CERT_ISSUER_MODE:-}" ]]; then
@@ -1215,6 +1285,28 @@ prompt_issuer_mode() {
     export CERT_ISSUER_MODE="$v"
 }
 
+# explain_issuer_mode — what the issuer answer settles, with the exposure one.
+explain_issuer_mode() {
+    case "${CERT_ISSUER_MODE:-acme-dns01}" in
+        acme-dns01)
+            _decided "a DNS API token for the zone is asked for with the credentials."
+            if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+                _decided "external-dns is installed and writes every record of the zone, pointing at nodeIp."
+            else
+                _decided "external-dns is installed and writes every record of the zone, pointing at the tunnel."
+            fi
+            ;;
+        acme-http01)
+            _decided "port 80 must reach this cluster from the internet; no wildcard certificate."
+            _decided "dnsProvider: not asked — only DNS-01 uses it."
+            ;;
+        *)
+            _decided "acmeEnv and dnsProvider: not asked — only the ACME issuers use them."
+            ;;
+    esac
+    return 0
+}
+
 # =============================================================================
 # prompt_mail_mode — where this cluster's mail goes.
 #
@@ -1224,19 +1316,31 @@ prompt_issuer_mode() {
 # or a password reset, and nothing reports that until someone tries.
 # =============================================================================
 prompt_mail_mode() {
-    if [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
+    # "kernel" is what this question used to offer and what install.env files
+    # may still say; the claim's word for it is "system". Written verbatim,
+    # "kernel" is a claim the schema refuses.
+    [[ "${MAIL_SERVICE_MODE:-}" == "kernel" ]] && MAIL_SERVICE_MODE="system"
+    if [[ -z "${MAIL_SERVICE_MODE:-}" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
+        # Not a question on a tunnel: the tunnel carries HTTP and HTTPS only,
+        # so nothing can deliver mail to the cluster on port 25, and in-cluster
+        # mail is not on offer.
+        MAIL_SERVICE_MODE="external"
+        echo ""
+        _decided "mail.serviceMode: external — a tunnel carries HTTP(S) only, so mail goes out through a relay. In-cluster mail needs networkMode static-ip."
+    elif [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
             MAIL_SERVICE_MODE="external"
         else
             echo ""
             info "Mail — how this cluster sends mail:"
             info "  external : relay through an SMTP provider. Needs its address and credentials."
-            info "  kernel   : in-cluster Postfix/Dovecot. Requires networkMode=static-ip."
+            info "  system   : in-cluster Postfix/Dovecot, at nodeIp."
             local v
             while true; do
-                read -rp "  mail.serviceMode [external|kernel] (default: external): " v
+                read -rp "  mail.serviceMode [external|system] (default: external): " v
                 v="${v:-external}"
-                [[ "$v" == "external" || "$v" == "kernel" ]] && break
+                [[ "$v" == "kernel" ]] && v="system"
+                [[ "$v" == "external" || "$v" == "system" ]] && break
                 warn "Invalid value '${v}'."
             done
             MAIL_SERVICE_MODE="$v"
@@ -1245,7 +1349,7 @@ prompt_mail_mode() {
     export MAIL_SERVICE_MODE
 
     if [[ "${MAIL_SERVICE_MODE}" == "system" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
-        error "mail.serviceMode=kernel requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
+        error "mail.serviceMode=system requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
         error "  Choose external, or re-run with NETWORK_MODE=static-ip."
         exit 1
     fi
@@ -1262,7 +1366,7 @@ prompt_mail_mode() {
             echo ""
             info "  The relay's ADDRESS only — its hostname, e.g. smtp.gmail.com."
             info "  The username and password are supplied after the install, through"
-            info "  the credential manager. They are not asked for here and are not"
+            info "  the custodian. They are not asked for here and are not"
             info "  written to Git."
             while true; do
                 read -rp "  mail.host [blank to set later]: " EXTERNAL_SMTP_HOST
@@ -1273,7 +1377,7 @@ prompt_mail_mode() {
                 if [[ "${EXTERNAL_SMTP_HOST}" == *"@"* ]]; then
                     warn "That looks like an account, not a hostname."
                     warn "  The relay for user@gmail.com is smtp.gmail.com."
-                    warn "  The username goes to the credential manager after the install."
+                    warn "  The username goes to the custodian after the install."
                     continue
                 fi
                 if [[ "${EXTERNAL_SMTP_HOST}" != *.* ]]; then
@@ -1299,6 +1403,8 @@ prompt_mail_mode() {
         # which stopped step 0 before it wrote anything at all.
         if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then
             export EXTERNAL_SMTP_HOST
+        else
+            _decided "mail.host: unset — nothing sends mail until it is set on the claim."
         fi
     fi
     return 0
@@ -1368,75 +1474,73 @@ prompt_cluster_settings() {
     prompt_claim_value PLATFORM "platform (blank = detect from the nodes)" "" \
         "self-hosted openstack infomaniak hetzner aws gcp azure none"
     prompt_claim_value STORAGE_CLASS "storageClass (blank = the cluster default)" ""
+    if [[ -z "${TENANCY_MODE:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        info "  tenancyMode — who this cluster is for:"
+        info "    multi  : the platform tenant plus any number of user tenants (an MSP, a shared cluster)."
+        info "    single : the platform tenant plus exactly one user tenant, on the cluster's own domain"
+        info "             (one organisation). The install creates that tenant after the handover."
+    fi
     prompt_claim_value TENANCY_MODE "tenancyMode" multi "multi single"
+    explain_tenancy_mode
     prompt_claim_value SECRET_MODE "secretMode" derived "derived random"
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == acme-* ]]; then
-        # Staging on dev: a dev cluster is rebuilt often, and Let's Encrypt
-        # allows five duplicate certificates per name per week.
-        local acme_default=production
-        [[ "${GENTIAN_DEPLOYMENTS_STAGE:-dev}" == "dev" ]] && acme_default=staging
-        prompt_claim_value ACME_ENV "certificates.acmeEnv" "${acme_default}" "staging production"
+        # Production on every stage: see the scaffold in bootstrap.sh for why
+        # staging stopped being the dev default.
+        prompt_claim_value ACME_ENV "certificates.acmeEnv" production "production staging"
+        if [[ "${ACME_ENV}" == "staging" ]]; then
+            warn "  acmeEnv staging: not needed for rebuilds (the issued wildcard is kept"
+            warn "  across purges), and the kernel sign-in (D-03) will not come up --"
+            warn "  Envoy Gateway does not trust a staging chain. May be removed."
+        else
+            _decided "rebuilds reuse the issued wildcard (kept in ~/.gentian/certs), so"
+            _decided "  a purge-and-reinstall orders no new certificate."
+        fi
     fi
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
         prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
             "cloudflare route53 clouddns azuredns rfc2136 hetzner infomaniak"
     fi
+    # Written to the platform tenant, not the claim: the same spec.admin every
+    # tenant's administrator is handed over by.
+    prompt_claim_value CLUSTER_ADMIN_REQUIRE_MFA \
+        "cluster administrator must set up a second factor when activating" true "true false"
     prompt_claim_value BACKUP_ESCROW_IDENTITY \
         "backup.escrowIdentity (also keep the backup key in OpenBao)" true "true false"
     prompt_claim_value LLM_SUPPORT "llm.enabled (this cluster serves models)" false "true false"
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         prompt_claim_value GPU_ACCELERATION "llm.gpuAcceleration (the cluster has GPUs)" false "true false"
+    else
+        _decided "llm.gpuAcceleration: not asked — this cluster serves no models."
+    fi
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        _decided "secretMode random: generated credentials exist only in OpenBao, and nothing backs it up — snapshot OpenBao yourself."
     fi
     return 0
 }
 
-# =============================================================================
-# prompt_tenant_identity — the three things a tenant file cannot be written
-# without: its name, what to call it, and who administers it.
+# explain_tenancy_mode — what the tenancyMode answer settles: which addresses
+# the cluster has, and whether the install creates a tenant for users.
 #
-# Everything else on a Tenant has a workable default or belongs to the cluster's
-# shared defaults component, so asking for it here would be asking an operator
-# to decide something before they have any reason to.
-# =============================================================================
-prompt_tenant_identity() {
-    if [[ -z "${GENTIAN_TENANT_NAME:-}" ]]; then
-        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            error "No tenant name given and this is a non-interactive run."
-            error "  ./install.sh --prepare-tenant <name>"
-            exit 1
-        fi
-        echo ""
-        info "Tenant name — the Kubernetes object name, its namespace suffix and"
-        info "its subdomain. Lower-case letters, digits and hyphens."
-        local v
-        while true; do
-            read -rp "  Tenant name: " v
-            # The same shape Kubernetes will insist on, checked here so the
-            # failure is a re-prompt rather than a rejected push.
-            if [[ "${v}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ && ${#v} -le 40 ]]; then
-                break
-            fi
-            warn "Not a valid name. Lower-case letters, digits and hyphens; must start and end with one."
-        done
-        GENTIAN_TENANT_NAME="${v}"
+# Said at the question because it is the one setting that moves every address
+# a person will be given, and because single makes the install go on after
+# the handover. Either way the platform admin's addresses are the same.
+explain_tenancy_mode() {
+    local domain="${KERNEL_DOMAIN:-<kernel-domain>}"
+    _decided "the platform admin signs in at platform.${domain} (admin console: admin.platform.${domain})."
+    if [[ "${TENANCY_MODE:-multi}" == "single" ]]; then
+        _decided "single: the platform tenant plus exactly one user tenant, named user."
+        _decided "  Its desktop is desktop.${domain}, its admin console admin.${domain}, its apps"
+        _decided "  <app>.${domain}; ${domain} itself leads to the desktop. The install creates it"
+        _decided "  after the handover and hands its administrator -- the user admin -- a link."
+    else
+        _decided "multi: the platform tenant plus any number of user tenants, each at"
+        _decided "  desktop.<tenant>.${domain}; ${domain} asks for an e-mail address. The install"
+        _decided "  creates none: the platform admin does, in the admin console or with"
+        _decided "  kubectl gentian tenants create."
     fi
-    export GENTIAN_TENANT_NAME
-
-    if [[ -z "${GENTIAN_TENANT_DISPLAY_NAME:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
-        local d
-        read -rp "  Display name (default: ${GENTIAN_TENANT_NAME}): " d
-        GENTIAN_TENANT_DISPLAY_NAME="${d:-${GENTIAN_TENANT_NAME}}"
-    fi
-    GENTIAN_TENANT_DISPLAY_NAME="${GENTIAN_TENANT_DISPLAY_NAME:-${GENTIAN_TENANT_NAME}}"
-    export GENTIAN_TENANT_DISPLAY_NAME
-
-    # No administrator address is asked for.
-    #
-    # It is derived — admin@<tenant>.<kernelDomain> — and it is the Keycloak
-    # username as well, so there is nothing here for an operator to choose.
-    # Asking would invite a contact address at some third party, which is an
-    # account the tenant cannot receive password resets for.
+    return 0
 }
+
 
 prompt_network_mode() {
     if [[ -n "${NETWORK_MODE:-}" ]]; then
@@ -1690,7 +1794,12 @@ check_prereqs() {
 
     local missing_age=0
     for cmd in "${base_tools[@]}" "${extra_tools[@]}"; do
-        if ! command -v "$cmd" &>/dev/null; then
+        if [[ "$cmd" == "bao" ]] && gentian_read_only && ! command -v bao &>/dev/null; then
+            # The one tool the installer fetches itself, and a read-only run
+            # does not fetch (_ensure_bao). Its absence is what an install
+            # would repair, not a missing prerequisite.
+            warn "bao not found — an install fetches it; checks that ask OpenBao cannot answer in this run."
+        elif ! command -v "$cmd" &>/dev/null; then
             error "Required command not found: $cmd"
             missing=$((missing + 1))
             case "$cmd" in age|age-keygen) missing_age=1 ;; esac
@@ -1729,15 +1838,64 @@ check_prereqs() {
         missing=$((missing + 1))
     else
         success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
+        # The cluster's own version, read from the API server. Managed
+        # clusters report a minor like "33+", so only the digits are compared.
+        local k8s_major k8s_minor
+        k8s_major="$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.major // empty' 2>/dev/null | tr -cd '0-9')"
+        k8s_minor="$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.minor // empty' 2>/dev/null | tr -cd '0-9')"
+        if [[ -z "${k8s_major}" || -z "${k8s_minor}" ]]; then
+            warn "Could not read the cluster's Kubernetes version; this release needs 1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer."
+        elif (( k8s_major == 1 && k8s_minor < GENTIAN_MIN_KUBERNETES_MINOR )); then
+            error "Kubernetes ${k8s_major}.${k8s_minor} is older than this release supports: 1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer is required."
+            error "  The edge (Envoy Gateway $(gentian_pin envoy-gateway chart)) is not tested on anything older."
+            missing=$((missing + 1))
+        else
+            success "Kubernetes ${k8s_major}.${k8s_minor} (1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer required)"
+        fi
         # These two HEAL rather than check: they delete orphaned webhooks and
         # re-reconcile failed Releases. Preflight runs before the --dry-run gate,
         # so without this guard `--dry-run` would mutate the cluster — which is
         # exactly the command someone runs to find out whether it is safe to.
-        if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        if gentian_read_only; then
             info "Dry run: skipping the self-heal hooks (they would mutate the cluster)."
         else
             cleanup_orphaned_kyverno_webhooks
             force_reconcile_failed_helm_releases
+        fi
+
+        # ── The tunnel, on a cluster that is reached through one ─────────────
+        # The installer neither creates the Cloudflare Tunnel nor runs
+        # cloudflared. All it has of the tunnel is its id, read at B-08 from
+        # the Secret cloudflared runs with, and that is the only source there
+        # is: the operator is given <id>.cfargotunnel.com and, without it,
+        # programs no edge at all -- no route and no DNS record for any
+        # hostname. That used to be one warning in the middle of B-08, and the
+        # install went on to wait at D-02 and fail at D-03 on a sign-in address
+        # that never resolved. Asked here, before the first step.
+        if [[ "${GENTIAN_DIRECTION:-forward}" == "forward" && "$(_edge_ingress_provider)" == "cf-tunnel" ]]; then
+            if [[ -n "$(_cloudflare_tunnel_id)" ]]; then
+                success "Cloudflare Tunnel found (its Secret in the namespace default)"
+            else
+                local _say=error
+                gentian_read_only && _say=warn
+                "${_say}" "This cluster's network mode is tunnel, and the cluster does not hold the tunnel."
+                "${_say}" "  The installer does not create the Cloudflare Tunnel and does not run"
+                "${_say}" "  cloudflared. It reads the tunnel's id from the Secret cloudflared runs"
+                "${_say}" "  with, in the namespace default, and found neither of the two it knows."
+                "${_say}" "  Without the id no hostname of this cluster gets a route or a DNS record."
+                "${_say}" "  Create the tunnel in the Cloudflare account, then one of:"
+                "${_say}" "    kubectl create secret generic cf-tunnel -n default \\"
+                "${_say}" "        --from-literal=token=<the tunnel's token>"
+                "${_say}" "    kubectl create secret generic tunnel-credentials -n default \\"
+                "${_say}" "        --from-file=<tunnel-id>.json=<the tunnel's credentials file>"
+                "${_say}" "  and run cloudflared in the cluster with it. If this cluster has no"
+                "${_say}" "  tunnel, set networkMode: static-ip on the Cluster claim."
+                if gentian_read_only; then
+                    warn "  An install stops here for that reason; this run goes on."
+                else
+                    missing=$((missing + 1))
+                fi
+            fi
         fi
     fi
 
@@ -1750,7 +1908,7 @@ check_prereqs() {
     local kubelet_args_file="/var/snap/microk8s/current/args/kubelet"
     # Also a mutation, and a privileged one: it edits a root-owned file and
     # restarts microk8s. Same reasoning as the heal hooks above.
-    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && [[ -f "${kubelet_args_file}" ]]; then
+    if gentian_read_only && [[ -f "${kubelet_args_file}" ]]; then
         info "Dry run: skipping the microk8s max-pods adjustment."
     elif [[ -f "${kubelet_args_file}" ]]; then
         local cur_max_pods
@@ -1777,7 +1935,7 @@ check_prereqs() {
     fi
 
     # ── Required environment variables ───────────────────────────────────────
-    # A dry run collects no credentials, and neither does a teardown, so their
+    # A dry run or a validation collects no credentials, and neither does a teardown, so their
     # absence is the expected state rather than a missing prerequisite. Counting
     # it as one aborts over values the run was never going to use — and on a
     # teardown that means refusing to remove a cluster because the operator no
@@ -1785,8 +1943,8 @@ check_prereqs() {
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     export MAIL_SERVICE_MODE
 
-    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
-        info "Dry run: credential variables not checked (none were collected)."
+    if gentian_read_only; then
+        info "Dry run or validation: credential variables not checked (none were collected)."
     elif [[ "${GENTIAN_DIRECTION:-forward}" == "reverse" ]]; then
         info "Teardown: credential variables not checked (none were collected)."
     else
@@ -1817,7 +1975,7 @@ check_prereqs() {
             else
                 info "SMTP relay credentials not supplied — mail will not send until they are."
                 info "  They are a runtime credential: supply them after the install with"
-                info "  the credential manager. 'make check-credentials' lists what is open."
+                info "  the custodian. 'make check-credentials' lists what is open."
             fi
         else
             info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: relay credentials not used (in-cluster Postfix)"
@@ -1830,12 +1988,11 @@ check_prereqs() {
     fi
 
     # ── Operator image ────────────────────────────────────────────────────────
-    # The tag the cluster will actually run. ArgoCD reconciles the chart from
-    # clusters/<id>/kernel/values.yaml continuously, so that file wins over the
-    # installer's --set: checking GENTIAN_OS_IMAGE_TAG alone would pass while
-    # the cluster pulled something else.
+    # The tags the cluster may run: the one in clusters/<id>/kernel/values.yaml
+    # and the one this run renders (GENTIAN_OS_IMAGE_TAG). Both are checked
+    # below, for the reason given there.
     local _os_repo _os_tag _os_values
-    _os_repo="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
+    _os_repo="ghcr.io/gentian-org/gentian-os"
     _os_values="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/values.yaml"
     # yq_get, not a bare `yq`: mikefarah/yq takes `eval` and kislyuk/yq takes a
     # jq filter, and both ship as `yq`. Calling one syntax directly fails
@@ -1890,7 +2047,11 @@ check_prereqs() {
         # Check that the edge LoadBalancer service has an external IP.
         local lb_ip lb_label
         if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-            lb_label='app.kubernetes.io/name=gateway-helm'
+            # The data plane's Service, which Envoy Gateway labels with the
+            # GatewayClass it serves. Not app.kubernetes.io/name=gateway-helm:
+            # that is the controller's own Service, a ClusterIP that never has
+            # an external address, so looking there always reported none.
+            lb_label="gateway.envoyproxy.io/owning-gatewayclass=${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
             lb_ip=$(kubectl get svc -A -l "${lb_label}" \
                 -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         fi
@@ -2043,41 +2204,17 @@ gentian_report_abort() {
 # =============================================================================
 # gentian_services_namespace — where the kernel SERVICES live
 #
-# Kernel services (the public Gateway, Keycloak, OpenFGA, the portal) live in
-# platform-kernel. That is the operator's servicesNamespace, whose chart default
-# is platform-kernel (charts/gentian-os/values.yaml) and which it uses to place
-# the Gateway, so it is the authoritative value.
+# The edge: the Gateways, their routes and their reference grants. That is the
+# operator's servicesNamespace (charts/gentian-os/values.yaml), which it uses
+# to place the Gateway, so it is the authoritative value.
 #
-# The shell half used to default to "gentian-<env>" instead, so the two halves
+# The shell half used to answer a namespace of its own, so the two halves
 # disagreed about which namespace was "services". That is what made the wildcard
 # certificate land somewhere the Gateway could not see it, leaving the cluster
 # serving nothing. Both halves now resolve to the same place.
-#
-# The mail namespace resolves to the same place — see gentian_mail_namespace
-# below. It used to be deliberately different, and this line used to say so.
 # =============================================================================
 gentian_services_namespace() {
-    echo "${SERVICES_NAMESPACE:-platform-kernel}"
-}
-
-# =============================================================================
-# gentian_mail_namespace — where kernel Postfix/Dovecot live
-#
-# The services namespace, resolved identically to gentian_services_namespace
-# above: kernel Postfix and Dovecot are kernel services and are deployed
-# alongside the others.
-#
-# The two must agree, and agreeing is not enough — they have to be one
-# resolution. When this returned gentian-<env> while the mail charts deployed
-# into platform-kernel, D-04 looked for its own ConfigMap in an empty namespace
-# and reported a working mail stack missing. The operator wrote the map to the
-# services namespace and was right; the lookup was wrong.
-#
-# _mail_kernel_namespace in mail-lib.sh delegates here for that reason. One
-# definition, so a future move cannot leave half the callers behind.
-# =============================================================================
-gentian_mail_namespace() {
-    echo "${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE:-platform-kernel}}"
+    echo "${SERVICES_NAMESPACE:-$(ns_kernel edge)}"
 }
 
 # =============================================================================
@@ -2108,6 +2245,32 @@ gentian_mail_service_mode() {
 }
 
 # =============================================================================
+# gentian_licence_report_enabled — "true" or "false": does this cluster report
+# what it runs?
+#
+# --no-licence-report (GENTIAN_NO_LICENCE_REPORT=1) says no and
+# GENTIAN_NO_LICENCE_REPORT=0 says yes. A run that says neither keeps what the
+# cluster has: the flag is typed once, and a later run of one step without it
+# must not start sending reports from a cluster whose owner turned them off.
+# A cluster that has no operator Application yet has said nothing, and
+# reports.
+# =============================================================================
+gentian_licence_report_enabled() {
+    case "${GENTIAN_NO_LICENCE_REPORT:-}" in
+        1) echo false; return 0 ;;
+        0) echo true; return 0 ;;
+    esac
+    local have
+    have="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.licenceReport.enabled}' 2>/dev/null || true)"
+    if [[ "${have}" == "false" ]]; then
+        echo false
+    else
+        echo true
+    fi
+}
+
+# =============================================================================
 # gentian_cluster_derivation_salt — the salt this cluster's secrets were
 # derived with, asked of the cluster.
 #
@@ -2127,26 +2290,12 @@ gentian_mail_service_mode() {
 gentian_cluster_derivation_salt() {
     local salt
     salt="$(kubectl get secret gentian-os-master-password \
-        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+        -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
         -o jsonpath='{.data.salt}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     [[ -n "${salt}" ]] || return 1
     printf '%s' "${salt}"
 }
 
-# =============================================================================
-# gentian_kernel_namespaces — the namespaces the installer owns, in one place.
-#
-# A-03 checks this list and create_namespaces creates it. They used to be two
-# hand-kept lists and had drifted apart in both directions: the check demanded
-# gentian-infra-<stage>, which nothing created, so the step reported unsatisfied
-# on every run forever while cheerfully announcing that all nine namespaces
-# already existed; and gentian-<stage> was created by nothing at all, so the
-# mail step failed applying a ConfigMap into a namespace that did not exist.
-#
-# The stage-scoped pair is deliberately here and not on the Cluster XR, which
-# composes only gentian-system and platform-kernel. Two owners for one namespace
-# is worse than one owner in the wrong phase.
-# =============================================================================
 # =============================================================================
 # load_status_context — the configuration a read-only pass needs, and no more.
 #
@@ -2169,20 +2318,6 @@ load_status_context() {
     # stage, and a dozen namespace and hostname lookups are built from it.
     ENV="${ENV:-${GENTIAN_DEPLOYMENTS_STAGE:-dev}}"
     export ENV
-}
-
-gentian_kernel_namespaces() {
-    local ns seen=""
-    for ns in openbao external-secrets argocd gentian-system platform-kernel \
-              "${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}" \
-              "$(gentian_services_namespace)" \
-              "$(gentian_mail_namespace)"; do
-        # SERVICES_NAMESPACE defaults to platform-kernel, so the list can name
-        # the same namespace twice.
-        case " ${seen} " in *" ${ns} "*) continue ;; esac
-        seen="${seen} ${ns}"
-    done
-    echo "${seen# }"
 }
 
 # =============================================================================
@@ -2221,12 +2356,12 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # resolve_gentian_os_branch — the git ref every in-cluster Application tracks
 # back to this repo.
 #
-# Exports GENTIAN_OS_BRANCH for apply_bootstrap_application, which passes it to
-# the bootstrap chart as gentianOsBranch. install.env states it; the template
-# ships it uncommented so that choosing is an act rather than an omission.
+# Exports GENTIAN_OS_BRANCH, which B-01 passes to the bootstrap chart as
+# gentianOsBranch. install.env may state it, and has to for a release tag.
 #
-# Where it is unset, the checkout's own branch answers — an observation, not a
-# guess, and it cannot disagree with the code doing the installing.
+# Where it is unset, the checkout's own branch answers (gentian_os_ref) — an
+# observation, not a guess, and it cannot disagree with the code doing the
+# installing.
 #
 # What this refuses to do is guess. A detached checkout — which is what `git
 # checkout v0.4.0` gives you — returns the literal "HEAD" from rev-parse, and
@@ -2250,13 +2385,38 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # An unpublished local branch reads from rev-parse exactly like a real one and
 # fails identically, so both paths are checked, not just the typo-able one.
 # =============================================================================
+# gentian_os_ref — the gentian-os ref this run installs, read without the
+# network: GENTIAN_OS_BRANCH, else the branch of the checkout the installer is
+# run from, else nothing (a detached checkout, or no .git).
+#
+# The one place that default lives. The Repository claim step 0 writes, the
+# bootstrap chart B-01 renders and the catalogue a new claim names each had
+# their own -- main, develop and the checkout's branch -- so a run with
+# GENTIAN_OS_BRANCH unset could describe three different refs.
+gentian_os_ref() {
+    local ref="${GENTIAN_OS_BRANCH:-}"
+    if [[ -z "${ref}" ]]; then
+        ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        [[ "${ref}" != "HEAD" ]] || ref=""
+    fi
+    printf '%s\n' "${ref}"
+}
+
+# The gentian-ui ref a cluster follows when install.env names none: the branch
+# gentian-ui publishes its charts from (it has no main). GENTIAN_UI_BRANCH is
+# the branch written to the gentian-ui Repository claim, PORTAL_IMAGE_TAG the
+# branch whose charts are installed; both default to this one name.
+GENTIAN_UI_DEFAULT_REF="develop"
+gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_REF}}"; }
+gentian_ui_chart_branch()  { printf '%s\n' "${PORTAL_IMAGE_TAG:-${GENTIAN_UI_DEFAULT_REF}}"; }
+
 resolve_gentian_os_branch() {
     local branch
     if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
         branch="${GENTIAN_OS_BRANCH}"
     else
-        branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-        if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        branch="$(gentian_os_ref)"
+        if [[ -z "${branch}" ]]; then
             error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read."
             error "  Every in-cluster Application tracks this ref, so it decides which"
             error "  gentian-os a cluster runs. It cannot be inferred from a detached"
@@ -2405,6 +2565,10 @@ _verify_gentian_os_ref_exists() {
 # advances the pin, which is one command and is honest about what it does.
 # =============================================================================
 resolve_gentian_os_image_tag() {
+    # The ref first, whether or not the tag is given: every Application
+    # follows it either way. With GENTIAN_OS_IMAGE_TAG set this returned
+    # before the ref was settled, and B-01 then rendered its own default.
+    resolve_gentian_os_branch
     if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
         export GENTIAN_OS_IMAGE_TAG
         case "${GENTIAN_OS_IMAGE_TAG}" in
@@ -2418,7 +2582,6 @@ resolve_gentian_os_image_tag() {
         esac
         return 0
     fi
-    resolve_gentian_os_branch
     case "${GENTIAN_OS_BRANCH}" in
         v[0-9]*.[0-9]*.[0-9]*)
             export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH#v}"
@@ -2720,6 +2883,8 @@ _wait_prewarm_pod() {
 
 save_install_state() {
     [[ "${INSTALL_STATE_FILE}" == "/dev/null" ]] && return 0
+    # A file in the installer's own checkout is still a file this run wrote.
+    gentian_read_only && return 0
     local tmp
     local val
     tmp="$(mktemp)"

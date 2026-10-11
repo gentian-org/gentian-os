@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -47,14 +41,12 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-a"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Isolation A",
-			Domain:      "iso-a.example.com",
 		},
 	}
 	tenantB := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-b"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Isolation B",
-			Domain:      "iso-b.example.com",
 		},
 	}
 
@@ -90,7 +82,6 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-ingress"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Ingress Check",
-			Domain:      "iso-ingress.example.com",
 		},
 	}
 
@@ -136,7 +127,6 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-egress"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Egress Check",
-			Domain:      "iso-egress.example.com",
 		},
 	}
 
@@ -181,7 +171,6 @@ func TestIsolation_ResourceQuotaAllFields(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-quota"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Quota Check",
-			Domain:      "iso-quota.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -220,7 +209,6 @@ func TestIsolation_LimitRangeDefaults(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-limits"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Limits Check",
-			Domain:      "iso-limits.example.com",
 		},
 	}
 
@@ -263,16 +251,16 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pgProfile := newFullAppProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
-	mariaProfile := newFullAppProfile("del-mariaapp", gentianov1alpha1.DatabaseEngineMariaDB, true, false, true)
+	pgProfile := newFullComponentProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
+	mariaProfile := newFullComponentProfile("del-mariaapp", gentianov1alpha1.DatabaseEngineMariaDB, true, false, true)
 
 	if err := testClient.Create(ctx, pgProfile); err != nil {
-		t.Fatalf("create pg AppProfile: %v", err)
+		t.Fatalf("create pg ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, pgProfile) })
 
 	if err := testClient.Create(ctx, mariaProfile); err != nil {
-		t.Fatalf("create maria AppProfile: %v", err)
+		t.Fatalf("create maria ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, mariaProfile) })
 
@@ -280,7 +268,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "del-full"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "del-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "del-pgapp"},
@@ -308,12 +295,19 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	}
 	// Cleanup Jobs must finish before purgeTenantKernelResources runs; otherwise
 	// incomplete delete Jobs survive after the Tenant finalizer is removed.
+	// In the order the reconciler runs them, which is the inventory's
+	// teardown order (backup.TeardownOrder: provisioning's, reversed): each
+	// stage waits for its Jobs before the next stage's are made. The cache
+	// first, then the buckets with the backup bucket, then the databases,
+	// and the realm -- which holds every app's group and client -- last.
 	cleanupJobs := []string{
-		"keycloak-realm-delete-del-full",
-		"mariadb-delete-del-full-del-mariaapp",
+		"redis-acl-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
-		"redis-acl-delete-del-full-del-pgapp",
+		"s3-delete-del-full-gentian-backup",
+		"mariadb-delete-del-full-del-mariaapp",
+		"pg-delete-del-full-del-pgapp",
+		"keycloak-realm-delete-del-full",
 	}
 	for _, jobName := range cleanupJobs {
 		waitForKernelJob(t, jobName, "del-full")
@@ -329,9 +323,11 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	// Completed cleanup Jobs should be purged as final destructive cleanup.
 	for _, jobName := range []string{
 		"keycloak-realm-delete-del-full",
+		"pg-delete-del-full-del-pgapp",
 		"mariadb-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
+		"s3-delete-del-full-gentian-backup",
 		"redis-acl-delete-del-full-del-pgapp",
 	} {
 		t.Run("purges "+jobName, func(t *testing.T) {
@@ -373,7 +369,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	profile := newFullAppProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
+	profile := newFullComponentProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
 	if err := testClient.Create(ctx, profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -383,7 +379,6 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "ret-full"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "ret-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "ret-app"}},
@@ -488,8 +483,8 @@ func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string
 // Helpers
 // ---------------------------------------------------------------------------
 
-// newFullAppProfile builds an AppProfile with multiple kernel requirements.
-func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
+// newFullComponentProfile builds a ComponentProfile with multiple kernel requirements.
+func newFullComponentProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
 	kr := &gentianov1alpha1.ServiceRequirements{
 		Database: &gentianov1alpha1.DatabaseRequirement{
 			Engine:            dbEngine,

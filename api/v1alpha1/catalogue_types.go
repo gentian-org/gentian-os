@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,11 +12,13 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
 
-// Catalogue label keys index AppProfile revisions by logical identity.
+// Catalogue label keys index ComponentProfile revisions by logical identity.
 // The App Store controller ensures these labels are present on every profile.
 const (
 	LabelProfileName             = "gentianos.io/profile-name"
@@ -31,19 +33,12 @@ const (
 const (
 	AnnotationProfileDeploymentRole = "gentianos.io/deployment-role"
 
-	// AnnotationProfileRequiresEntitlement marks an entry that must be paid
-	// for before it may be activated. It is an annotation rather than a spec
-	// field because AD-3 moves the licence itself to the store's listing,
-	// outside the cluster — but whether something needs paying for is an
-	// authorization question and the thing that enforces it runs in here.
-	AnnotationProfileRequiresEntitlement = "gentianos.io/requires-entitlement"
-
 	// GatewayRootRedirect is an HTTPRoute redirect target for GET / on the app host.
 	AnnotationProfileGatewayRootRedirect = "gentianos.io/gateway-root-redirect"
 	// GatewayAPIBackends is a JSON array of extra path→Service routes on the app host.
 	// Shape: [{"pathPrefix":"/api","serviceName":"my-api","port":8080}]
 	AnnotationProfileGatewayAPIBackends = "gentianos.io/gateway-api-backends"
-	// OIDCDefaultRedirectURIs is a JSON array used when spec.kernelRequirements.identity.oidc.redirectUris is empty.
+	// OIDCDefaultRedirectURIs is a JSON array used when spec.requires.services.identity.oidc.redirectUris is empty.
 	// Supports ${TENANT_DOMAIN} substitution.
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
 	// KernelEgressNamespaces is a comma-separated list of extra cluster namespaces the
@@ -99,11 +94,13 @@ const (
 //	ce — community edition, as published by the upstream organisation
 //	pe — private edition: somebody's own profile, in their own catalogue
 //	me — maintained edition: ce plus active maintenance by Gentian
-//	ee — enterprise edition: commercially licensed, entitlement-gated
+//	ee — enterprise edition: commercially licensed, supported by its supplier
 //
-// The four are technically interchangeable; what decides whether one may run
-// is authorization, and addon/base compatibility is managed by version. See
-// gentian-os/docs/app-customization.md §4.2.
+// An edition describes who maintains and supports an entry. The four are
+// technically interchangeable and the platform gates none of them: whether a
+// paid entry arrives is decided at the repository it is pulled from, by the
+// credential the tenant holds for it. Addon/base compatibility is managed by
+// version. See gentian-os/docs/app-customization.md §4.2.
 //
 // The split that matters operationally is not free against paid but WHERE the
 // entry comes from. ce and pe are entries a cluster can hold and install on
@@ -125,13 +122,15 @@ const (
 	// to be reachable for it to be installed -- which is exactly why the
 	// cluster's own catalogue view exists.
 	EditionPE Edition = "pe"
-	// EditionME is the community edition plus active maintenance by Gentian:
-	// the editions Gentian Technologies itself runs and keeps current.
+	// EditionME is the community edition plus active maintenance: an edition
+	// its maintainer itself runs and keeps current.
 	EditionME Edition = "me"
-	// EditionEE is the enterprise edition: commercially licensed and requiring
-	// an entitlement. It says the entry is paid-for, not who publishes it --
-	// spec.author names the supplier, which may be the upstream organisation
-	// or a third party packaging it.
+	// EditionEE is the enterprise edition: commercially licensed, and
+	// maintained and supported by its supplier. It says the entry is
+	// paid-for, not who publishes it -- spec.author names the supplier, which
+	// may be the upstream organisation or a third party packaging it. Nothing
+	// in the platform gates it; its supply is controlled at the repository
+	// it is pulled from.
 	EditionEE Edition = "ee"
 )
 
@@ -155,7 +154,7 @@ const (
 	TrustTierExperimental TrustTier = "experimental"
 )
 
-// ProfileIdentity uniquely identifies an immutable AppProfile catalogue revision
+// ProfileIdentity uniquely identifies an immutable ComponentProfile catalogue revision
 // within the tuple (family, catalogueVersion, edition).
 type ProfileIdentity struct {
 	// Family is the stable logical application id (e.g. "demo-app").
@@ -170,16 +169,16 @@ type ProfileIdentity struct {
 	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
 	CatalogueVersion string `json:"catalogueVersion"`
 
-	// Edition selects the edition (ce, me, ee).
+	// Edition selects the edition (ce, pe, me, ee).
 	// +optional
 	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`
 }
 
-// ProfileReference resolves to exactly one AppProfile CR — either by metadata.name
+// ProfileReference resolves to exactly one ComponentProfile — either by metadata.name
 // (explicit pin) or by ProfileIdentity (dimensional selector).
 type ProfileReference struct {
-	// Name is the AppProfile metadata.name. When set, this is the exact profile CR to use.
+	// Name is the ComponentProfile metadata.name. When set, this is the exact profile CR to use.
 	// +optional
 	Name string `json:"name,omitempty"`
 

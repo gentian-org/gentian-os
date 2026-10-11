@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -19,444 +13,774 @@ package applifecycle
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	authv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/remotecommand"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/backup"
-	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-const mariadbDeleteScript = "" +
-	"set -euo pipefail\n" +
-	"if ! echo \"${DB_NAME}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
-	"  echo \"ERROR: invalid DB_NAME '${DB_NAME}'\" >&2; exit 1\n" +
-	"fi\n" +
-	"if ! echo \"${DB_USER}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
-	"  echo \"ERROR: invalid DB_USER '${DB_USER}'\" >&2; exit 1\n" +
-	"fi\n" +
-	"MARIADB=\"mariadb -h${MYSQL_HOST} -P${MYSQL_TCP_PORT} -u${MYSQL_ADMIN_USER}\"\n" +
-	"$MARIADB -e \"REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${DB_USER}'@'%';\" 2>/dev/null || true\n" +
-	"$MARIADB -e \"DROP USER IF EXISTS '${DB_USER}'@'%';\"\n" +
-	"$MARIADB -e \"DROP DATABASE IF EXISTS ${DB_NAME};\"\n" +
-	"echo \"deleted database ${DB_NAME} and user ${DB_USER}\"\n"
+// Purging an app: destroying what uninstalling it kept.
+//
+// Uninstalling takes an app's workloads and its sign-in client away and keeps
+// everything it stored. A purge is the other act, asked for separately, and
+// it is the one that cannot be undone. Two rules shape everything below.
+//
+// It is one request, answered when it is over. Nothing here continues in the
+// background and nothing reconciles towards "purged": a person asked for data
+// to be destroyed and is told, in the answer to that request, what was.
+//
+// It fails loudly. A step that could not do its work ends the purge there and
+// the answer names the step, what had been destroyed before it and what was
+// not attempted. Nothing is skipped because a pod, a token or a profile could
+// not be found, and no command's failure is discarded. Every step can be
+// repeated, so the remedy for a purge that did not complete is to ask again.
 
+// The kinds of data an app can leave behind, as the shared inventory names
+// them (backup.AppKinds). The purge reports in these words, and so does the
+// read of what uninstalled apps still hold (retained.go), so that one can be
+// matched against the other.
 const (
-	// A purge must not return while volumes are still Terminating; NFS in
-	// particular can take a while, so allow generously before declaring failure.
-	pvcDeletionTimeout = 3 * time.Minute
-	pvcPollInterval    = 3 * time.Second
+	KindDatabase      = string(backup.KindDatabase)
+	KindObjectStorage = string(backup.KindObjectStorage)
+	KindCache         = string(backup.KindCache)
+	KindFiles         = string(backup.KindFiles)
+	KindCredentials   = string(backup.KindCredentials)
+	KindAccessGroup   = string(backup.KindAccessGroup)
+	KindRecords       = string(backup.KindRecords)
+	KindModelAccess   = string(backup.KindModelAccess)
+	KindSignInScope   = string(backup.KindSignInScope)
 )
 
-func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) []string {
-	var warnings []string
-	dbEngine, s3Req, redisReq := profileKernelReqs(profile)
-	if profile == nil {
-		dbEngine = gentianov1alpha1.DatabaseEnginePostgreSQL
-	}
-	switch dbEngine {
-	case gentianov1alpha1.DatabaseEnginePostgreSQL:
-		warnings = append(warnings, s.purgePostgres(ctx, tenant, app)...)
-	case gentianov1alpha1.DatabaseEngineMariaDB:
-		warnings = append(warnings, s.runMariaDBDeleteJob(ctx, tenant, app)...)
-	case "":
-	default:
-		warnings = append(warnings, fmt.Sprintf("unsupported database engine %q for %q; skipped DB purge", dbEngine, app))
-	}
-	if s3Req {
-		warnings = append(warnings, s.runS3DeleteJob(ctx, tenant, app)...)
-	}
-	if redisReq {
-		warnings = append(warnings, s.runRedisDeleteJob(ctx, tenant.Name, app)...)
-	}
-	sidecars := sidecarNames(profile)
-	warnings = append(warnings, s.purgeOpenBaoSecrets(ctx, tenant.Name, app, sidecars)...)
-	warnings = append(warnings, s.purgeClusterArtifacts(ctx, tenant.Name, app)...)
-	warnings = append(warnings, s.purgePVCs(ctx, tenant.Name, app, profile)...)
-	return warnings
+// kindLabels are the kinds as a person reads them.
+var kindLabels = map[string]string{
+	KindDatabase:      "database",
+	KindObjectStorage: "object storage",
+	KindCache:         "cache",
+	KindFiles:         "files",
+	KindCredentials:   "stored credentials",
+	KindAccessGroup:   "access group",
+	KindRecords:       "provisioning records",
+	KindModelAccess:   "model key",
+	KindSignInScope:   "sign-in scope",
 }
 
-func profileKernelReqs(profile *gentianov1alpha1.ComponentProfile) (db gentianov1alpha1.DatabaseEngine, s3, redis bool) {
-	stores := backup.ProfileStores(profile)
-	return stores.Database, stores.S3, stores.Redis
+// The bounds of one purge.
+//
+// purgeBudget is all the time a purge has, from the moment it holds the app's
+// lock. It is the number its caller's deadline is set against: the director
+// waits lifecycle.PurgeDeadline for this action, which is longer, so a purge
+// is never cut off by the request that asked for it -- it either finishes or
+// gives up by itself and says where. The waits below are each shorter than
+// the budget and several can follow one another, so the budget is what ends a
+// purge that is going badly; a wait that hits it reports that, and the retry
+// starts with every finished step already done.
+//
+// Variables so that a test does not take minutes; nothing else assigns them.
+var (
+	purgeBudget = 4*time.Minute + 30*time.Second
+	// purgeJobWait bounds one deletion Job, from created to finished.
+	purgeJobWait = 2 * time.Minute
+	// pvcDeletionTimeout bounds the wait for deleted volume claims to be
+	// gone. A purge must not return while they are still Terminating: the
+	// next install of the app would not schedule.
+	pvcDeletionTimeout = 2 * time.Minute
+	// purgeRecordWait bounds the wait for a deleted record to be gone.
+	purgeRecordWait = 30 * time.Second
+	purgePoll       = 3 * time.Second
+)
+
+// purgeJobDeadlineSeconds ends a deletion Job that hangs before the wait for
+// it does, so the Job reports that it failed rather than the purge reporting
+// only that it stopped waiting.
+const purgeJobDeadlineSeconds = int64(backup.DestroyWithinARequest)
+
+// PurgeError is a purge that did not complete.
+type PurgeError struct {
+	Tenant  string
+	Profile string
+	// Step is the kind whose destruction failed.
+	Step string
+	// Destroyed are the kinds destroyed before it, in order. They stay
+	// destroyed: nothing is rolled back.
+	Destroyed []string
+	// Pending are the kinds that were not attempted.
+	Pending []string
+	Err     error
 }
 
-func sidecarNames(profile *gentianov1alpha1.ComponentProfile) []string {
-	return backup.SidecarNames(profile)
+func (e *PurgeError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "the purge of %s in %s did not complete: destroying its %s failed: %v.",
+		e.Profile, e.Tenant, kindLabels[e.Step], e.Err)
+	if len(e.Destroyed) > 0 {
+		fmt.Fprintf(&b, " Already destroyed: %s.", labelled(e.Destroyed))
+	} else {
+		b.WriteString(" Nothing had been destroyed before that.")
+	}
+	if len(e.Pending) > 0 {
+		fmt.Fprintf(&b, " Not attempted: %s.", labelled(e.Pending))
+	}
+	b.WriteString(" Nothing is rolled back. Retry the purge: every step is safe to repeat, and it continues with what is left.")
+	return b.String()
 }
 
-func (s *Service) purgePostgres(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
-	// The database and the role are named differently -- see pgRoleName -- and
-	// conflating them meant the role always survived a purge.
-	dbName := databaseName(tenant, app)
-	roleName := pgRoleName(tenant.Name, app)
-	pod, err := s.postgresPod(ctx)
-	if err != nil || pod == "" {
-		return []string{fmt.Sprintf("Postgres pod not found; skipped purge for %s", dbName)}
-	}
-	// Apps that declare allowDynamicDatabaseCreation own every database their
-	// users made, not just the provisioned one. Dropping the role would fail
-	// while it still owns objects, and leaving them would strand tenant data on
-	// the shared cluster under a role nobody can log in as any more. Ownership
-	// is the join: CREATE DATABASE makes the creating role the owner, so this
-	// finds them without the platform having to track names it never chose.
-	extra, err := s.databasesOwnedBy(ctx, pod, roleName)
-	if err != nil {
-		return []string{fmt.Sprintf("Postgres purge could not list databases owned by %s: %v", roleName, err)}
-	}
+func (e *PurgeError) Unwrap() error { return e.Err }
 
-	var statements []string
-	for _, db := range extra {
-		statements = append(statements,
-			fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", db),
-			fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, db),
-		)
+func labelled(kinds []string) string {
+	out := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		out = append(out, kindLabels[k])
 	}
-	statements = append(statements,
-		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", dbName),
-		fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, dbName),
-		// Anything the role still owns outside its own databases would block
-		// the drop and strand the role; DROP OWNED clears those grants first.
-		// Guarded because DROP OWNED errors on a missing role, and purge has to
-		// stay re-runnable -- it is retried whenever an uninstall is repeated.
-		fmt.Sprintf(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') `+
-			`THEN EXECUTE 'DROP OWNED BY "%s"'; END IF; END $$;`, roleName, roleName),
-		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, roleName),
-	)
+	return strings.Join(out, ", ")
+}
 
-	for _, sql := range statements {
-		if out, err := s.execPostgres(ctx, pod, sql); err != nil || strings.Contains(strings.ToUpper(out), "ERROR") {
-			return []string{fmt.Sprintf("Postgres purge failed for %s: %s", dbName, out)}
+// purgeStep destroys one kind of data. run returns nil only when the kind is
+// gone: destroyed now, or found already absent.
+type purgeStep struct {
+	kind string
+	run  func(ctx context.Context) error
+}
+
+// purgeSteps is what a purge of this app does, in order.
+//
+// The order is the shared inventory's teardown order -- provisioning's,
+// reversed -- and the same one the deletion of a tenant follows: the files
+// first, then the stores, then the access group, the stored credentials and
+// last the records, which the purge's own Jobs add to. A kind the app does
+// not have is not a step. Which stores it has is declared by its profile and
+// by nothing else, which is why a purge is refused without one.
+//
+// recorded is what the tenant's record says was provisioned for the app. A
+// store it names is destroyed whether or not the profile still declares it:
+// a profile that has since dropped its bucket has not removed the bucket.
+func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned) []purgeStep {
+	inv := backup.InventoryOf(tenant, app, profile)
+	extensions := backup.SidecarNames(profile)
+	owned := backup.MergeStores(inv.Stores, recorded)
+	stores := backup.StoreDestroyJobs(tenant, app, owned, backup.DestroyWithinARequest)
+	how := map[backup.Kind]func(ctx context.Context) error{
+		backup.KindFiles: func(ctx context.Context) error {
+			return s.purgePVCs(ctx, tenant, app, profile)
+		},
+		backup.KindCredentials: func(ctx context.Context) error {
+			return s.purgeCredentials(ctx, tenant, app, extensions)
+		},
+		backup.KindAccessGroup: func(ctx context.Context) error {
+			return s.purgeAccessGroup(ctx, tenant, app, extensions)
+		},
+		backup.KindRecords: func(ctx context.Context) error {
+			return s.purgeClusterArtifacts(ctx, tenant, app)
+		},
+	}
+	// The key the app called models with, when one is on record: on a
+	// cluster that serves models.
+	if recorded.ModelKey != "" {
+		how[backup.KindModelAccess] = func(ctx context.Context) error {
+			return s.purgeModelKey(ctx, tenant.Name, app, recorded.ModelKey)
 		}
+	}
+	// The client scope the app's sign-in pack describes, when its profile
+	// signs anybody in.
+	if signsIn(profile) {
+		how[backup.KindSignInScope] = func(ctx context.Context) error {
+			return s.purgeSignInScopes(ctx, tenant, app, profile)
+		}
+	}
+	for kind, job := range stores {
+		how[kind] = func(ctx context.Context) error {
+			if err := s.runKernelJob(ctx, job); err != nil {
+				return err
+			}
+			// What recorded the store goes only now that the store has: it
+			// is what says an uninstalled app still holds one, and removing
+			// it first would leave a store nothing reports if the Job had
+			// failed.
+			if kind == backup.KindDatabase && owned.Database == gentianov1alpha1.DatabaseEnginePostgreSQL {
+				if err := s.deleteDatabaseRecord(ctx, tenant.Name, app); err != nil {
+					return err
+				}
+			}
+			return s.forgetProvisioned(ctx, tenant.Name, app, kind)
+		}
+	}
+	var steps []purgeStep
+	for _, kind := range backup.AppPurgeOrder() {
+		if run, ok := how[kind]; ok {
+			steps = append(steps, purgeStep{string(kind), run})
+		}
+	}
+	return steps
+}
+
+// ErrCannotPurgeNow is a purge that was not begun because something it needs
+// in order to finish is not there. Nothing was destroyed.
+var ErrCannotPurgeNow = errors.New("the purge cannot be completed now")
+
+// purgePreflight establishes, before anything is destroyed, everything that
+// can be known beforehand about whether the purge can finish: the realm the
+// app's group is in and that the identity provider answers for it, that the
+// vault answers, that the database server has a primary to drop on, and that
+// the app's database is of an engine this platform can drop. A purge that
+// would have stopped half-way for any of these stops here instead, with
+// everything still in place.
+func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, recorded backup.Provisioned) error {
+	refuse := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s. Nothing was destroyed; ask again once that is put right",
+			ErrCannotPurgeNow, fmt.Sprintf(format, args...))
+	}
+	switch engine := backup.MergeStores(backup.ProfileStores(profile), recorded).Database; engine {
+	case "", gentianov1alpha1.DatabaseEngineMariaDB:
+	case gentianov1alpha1.DatabaseEnginePostgreSQL:
+		if _, err := s.postgresPrimary(ctx); err != nil {
+			return refuse("%v", err)
+		}
+	default:
+		return refuse("this platform cannot drop a %q database", engine)
+	}
+	if s.vault == nil {
+		return refuse("the operator has no connection to the vault (BAO_ADDR is not set), so the app's stored credentials could not be deleted")
+	}
+	if _, err := s.vault.ListChildren(ctx, secrets.AppsPath(tenant.Name)); err != nil {
+		return refuse("the vault does not answer: %v", err)
+	}
+	if recorded.ModelKey != "" {
+		gateway, present, err := s.modelGateway(ctx)
+		if err != nil {
+			return refuse("the model gateway cannot be asked: %v", err)
+		}
+		if present {
+			if _, err := gateway.KeyExists(ctx, recorded.ModelKey); err != nil {
+				return refuse("the model gateway does not answer: %v", err)
+			}
+		}
+	}
+	realm := keycloak.RealmName(tenant)
+	groups, err := s.accessGroups(ctx)
+	if err != nil {
+		return refuse("the identity provider cannot be asked: %v", err)
+	}
+	if _, err := groups.GroupNames(ctx, realm, keycloak.TenantAppGroup(tenant.Name, "")); err != nil {
+		return refuse("the identity provider does not answer for the tenant's realm %s: %v", realm, err)
 	}
 	return nil
 }
 
-// databasesOwnedBy lists databases owned by role, excluding the app's own
-// provisioned database, which the caller drops last.
-func (s *Service) databasesOwnedBy(ctx context.Context, pod, role string) ([]string, error) {
-	out, err := s.execPostgres(ctx, pod, fmt.Sprintf(
-		"SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "+
-			"WHERE r.rolname = '%s' AND d.datname <> '%s' AND NOT d.datistemplate;", role, role))
-	if err != nil {
-		return nil, err
-	}
-	if strings.Contains(strings.ToUpper(out), "ERROR") {
-		return nil, fmt.Errorf("%s", strings.TrimSpace(out))
-	}
-	var names []string
-	for _, line := range strings.Split(out, "\n") {
-		name := strings.TrimSpace(line)
-		// psql's default output frames the rows with a header, a rule and a
-		// "(N rows)" footer; only the indented value lines are database names.
-		if name == "" || strings.HasPrefix(name, "datname") || strings.HasPrefix(name, "-") ||
-			strings.HasPrefix(name, "(") {
-			continue
+// purge runs the steps in order and stops at the first that fails.
+//
+// Stopping is deliberate. A step that failed leaves the app in a state nobody
+// has looked at, and carrying on would destroy more on the strength of it.
+func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned) (destroyed []string, err error) {
+	logger := log.FromContext(ctx).WithName("purge").WithValues("tenant", tenant.Name, "app", app)
+	steps := s.purgeSteps(tenant, profile, app, recorded)
+	for i, step := range steps {
+		if err := step.run(ctx); err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				err = fmt.Errorf("the purge ran out of the %s it is given (%w)", purgeBudget, err)
+			}
+			pending := make([]string, 0, len(steps)-i-1)
+			for _, later := range steps[i+1:] {
+				pending = append(pending, later.kind)
+			}
+			logger.Error(err, "a purge step failed", "step", step.kind, "destroyed", destroyed, "pending", pending)
+			return destroyed, &PurgeError{
+				Tenant: tenant.Name, Profile: app, Step: step.kind,
+				Destroyed: destroyed, Pending: pending, Err: err,
+			}
 		}
-		names = append(names, name)
+		logger.Info("purged", "kind", step.kind)
+		destroyed = append(destroyed, step.kind)
 	}
-	return names, nil
+	return destroyed, nil
 }
 
-func (s *Service) postgresPod(ctx context.Context) (string, error) {
-	pods, err := s.clientset.CoreV1().Pods(layout.System("postgresql")).List(ctx, metav1.ListOptions{
-		LabelSelector: "cnpg.io/cluster=postgres",
-	})
-	if err != nil || len(pods.Items) == 0 {
-		return "", err
+// wait pauses for one poll interval, or returns why the purge must stop.
+func wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(purgePoll):
+		return nil
 	}
-	return pods.Items[0].Name, nil
 }
 
-func (s *Service) execPostgres(ctx context.Context, pod, sql string) (string, error) {
-	req := s.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(pod).
-		Namespace(layout.System("postgresql")).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: "postgres",
-			Command:   []string{"psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql},
-			Stdout:    true,
-			Stderr:    true,
-		}, parameterCodec)
-	exec, err := remoteCommandExecutor(req.URL())
+// --- database ---------------------------------------------------------------
+
+// deleteDatabaseRecord removes the CloudNativePG Database object the tenant's
+// provisioning made for the app, and waits for it to be gone.
+func (s *Service) deleteDatabaseRecord(ctx context.Context, tenant, app string) error {
+	name := cnpgDatabaseName(tenant, app)
+	key := func() *unstructured.Unstructured {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(cnpgDatabaseGVK)
+		obj.SetName(name)
+		obj.SetNamespace(layout.System("postgresql"))
+		return obj
+	}
+	if err := s.client.Delete(ctx, key()); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete the database record %s: %w", name, err)
+	}
+	deadline := time.Now().Add(purgeRecordWait)
+	for {
+		obj := key()
+		err := s.client.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("look for the database record %s: %w", name, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the database record %s is still there %s after it was deleted", name, purgeRecordWait)
+		}
+		if err := wait(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// --- the record of what was provisioned -------------------------------------
+
+// provisioned reads the tenant's record of what provisioning made, by app. A
+// tenant without a record has had nothing recorded.
+func (s *Service) provisioned(ctx context.Context, tenantName string) (map[string]backup.Provisioned, error) {
+	record := &corev1.ConfigMap{}
+	key := backup.ProvisionedRecordKey(tenantName)
+	if err := s.client.Get(ctx, key, record); err != nil {
+		if apierrors.IsNotFound(err) {
+			return map[string]backup.Provisioned{}, nil
+		}
+		return nil, fmt.Errorf("read the record of what was provisioned for %s (%s/%s): %w", tenantName, key.Namespace, key.Name, err)
+	}
+	return backup.ReadProvisioned(record)
+}
+
+// forgetProvisioned takes one kind out of the app's entry in the record, now
+// that its store is destroyed.
+func (s *Service) forgetProvisioned(ctx context.Context, tenantName, app string, kind backup.Kind) error {
+	key := backup.ProvisionedRecordKey(tenantName)
+	for attempt := 0; ; attempt++ {
+		record := &corev1.ConfigMap{}
+		if err := s.client.Get(ctx, key, record); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("read the record of what was provisioned (%s/%s): %w", key.Namespace, key.Name, err)
+		}
+		changed, err := backup.ForgetProvisioned(record, app, kind)
+		if err != nil || !changed {
+			return err
+		}
+		err = s.client.Update(ctx, record)
+		if err == nil {
+			return nil
+		}
+		// The tenant's reconciler writes the same object when an app is
+		// installed; read it again and take the kind out of what is there now.
+		if !apierrors.IsConflict(err) || attempt >= 4 {
+			return fmt.Errorf("update the record of what was provisioned (%s/%s): %w", key.Namespace, key.Name, err)
+		}
+	}
+}
+
+var cnpgDatabaseGVK = schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"}
+
+// postgresPrimary is the one instance of the shared cluster that accepts
+// writes.
+//
+// The database is dropped by a Job that connects through the cluster's
+// read-write Service, which is the primary whichever pod that is; this is
+// the check, made before anything is destroyed, that there is one. A purge
+// used to exec into whichever pod the API server listed first, and a replica
+// refuses DROP DATABASE.
+func (s *Service) postgresPrimary(ctx context.Context) (string, error) {
+	const selector = "cnpg.io/cluster=postgres,cnpg.io/instanceRole=primary"
+	ns := layout.System("postgresql")
+	pods, err := s.clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("look for the PostgreSQL primary in %s: %w", ns, err)
 	}
-	var buf bytes.Buffer
-	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdout: &buf,
-		Stderr: &buf,
-	})
-	return buf.String(), err
+	var running []string
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning {
+			running = append(running, pod.Name)
+		}
+	}
+	switch len(running) {
+	case 1:
+		return running[0], nil
+	case 0:
+		return "", fmt.Errorf("no running PostgreSQL primary in %s (%s); nothing was dropped", ns, selector)
+	default:
+		return "", fmt.Errorf("%d pods in %s claim to be the PostgreSQL primary (%s); nothing was dropped",
+			len(running), ns, strings.Join(running, ", "))
+	}
 }
 
-func (s *Service) runKernelJob(ctx context.Context, job *batchv1.Job) []string {
-	_ = s.clientset.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
+// --- deletion Jobs ----------------------------------------------------------
+
+// The Jobs themselves, and the scripts they run, are the shared ones in
+// internal/backup/teardown.go: the deletion of a tenant runs the same.
+
+// runKernelJob runs one deletion Job to its end and reports how it ended.
+func (s *Service) runKernelJob(ctx context.Context, job *batchv1.Job) error {
+	jobs := s.clientset.BatchV1().Jobs(job.Namespace)
+	// A Job left by an earlier purge of the same app: it has to be gone
+	// before this one can be created under the same name.
+	err := jobs.Delete(ctx, job.Name, metav1.DeleteOptions{
 		PropagationPolicy: ptr(metav1.DeletePropagationBackground),
 	})
-	if _, err := s.clientset.BatchV1().Jobs(job.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
-		return []string{fmt.Sprintf("create job %s: %v", job.Name, err)}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("remove the previous Job %s/%s: %w", job.Namespace, job.Name, err)
 	}
-	deadline := time.Now().Add(5 * time.Minute)
-	for time.Now().Before(deadline) {
-		j, err := s.clientset.BatchV1().Jobs(job.Namespace).Get(ctx, job.Name, metav1.GetOptions{})
+	deadline := time.Now().Add(purgeJobWait)
+	for {
+		_, err := jobs.Get(ctx, job.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			break
+		}
 		if err != nil {
-			return []string{fmt.Sprintf("get job %s: %v", job.Name, err)}
+			return fmt.Errorf("look for the previous Job %s/%s: %w", job.Namespace, job.Name, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the previous Job %s/%s was still there after %s", job.Namespace, job.Name, purgeJobWait)
+		}
+		if err := wait(ctx); err != nil {
+			return err
+		}
+	}
+	if _, err := jobs.Create(ctx, job, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create Job %s/%s: %w", job.Namespace, job.Name, err)
+	}
+	deadline = time.Now().Add(purgeJobWait)
+	for {
+		j, err := jobs.Get(ctx, job.Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get Job %s/%s: %w", job.Namespace, job.Name, err)
 		}
 		for _, c := range j.Status.Conditions {
 			if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
 				return nil
 			}
 			if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-				return []string{fmt.Sprintf("job %s failed", job.Name)}
+				return fmt.Errorf("the Job %s/%s failed (%s %s)%s", job.Namespace, job.Name,
+					c.Reason, c.Message, s.jobOutput(ctx, job))
 			}
 		}
-		select {
-		case <-ctx.Done():
-			return []string{ctx.Err().Error()}
-		case <-time.After(3 * time.Second):
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the Job %s/%s had not finished after %s%s", job.Namespace, job.Name,
+				purgeJobWait, s.jobOutput(ctx, job))
+		}
+		if err := wait(ctx); err != nil {
+			return err
 		}
 	}
-	return []string{fmt.Sprintf("job %s did not complete in time", job.Name)}
 }
 
-func (s *Service) runMariaDBDeleteJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
-	dbName := databaseName(tenant, app)
-	dbUser := mariadbUserName(tenant.Name, app)
-	job := kernelDeleteJob(layout.System("mariadb"), mariadbDeleteJobName(tenant.Name, app), tenant.Name, app,
-		kernel.MariaDBProvisionerImage(), "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
-			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
-			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
-		))
-	return s.runKernelJob(ctx, job)
-}
-
-func (s *Service) runS3DeleteJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
-	bucket := s3BucketName(tenant, app)
-	script := fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc rb --force "gentian/%s" 2>/dev/null || echo "bucket %s already gone"
-echo "bucket %s removed"`, bucket, bucket, bucket)
-	job := kernelDeleteJob(layout.System("s3"), s3DeleteJobName(tenant.Name, app), tenant.Name, app,
-		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", "delete-bucket", script, minioAdminEnv())
-	return s.runKernelJob(ctx, job)
-}
-
-func (s *Service) runRedisDeleteJob(ctx context.Context, tenant, app string) []string {
-	user := redisACLUsername(tenant, app)
-	script := fmt.Sprintf(`set -euo pipefail
-redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL DELUSER %s 2>/dev/null || echo "user %s already absent"
-echo done`, user, user)
-	job := kernelDeleteJob(layout.System("cache"), redisACLDeleteJobName(tenant, app), tenant, app,
-		kernel.RedisProvisionerImage(), "del-acl-user", script, redisAdminEnv())
-	return s.runKernelJob(ctx, job)
-}
-
-func kernelDeleteJob(ns, name, tenant, app, image, container, script string, env []corev1.EnvVar) *batchv1.Job {
-	ttl := int32(3600)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
-			Labels: map[string]string{
-				meta.TenantLabel:    tenant,
-				"gentianos.io/app":  app,
-				meta.ManagedByLabel: meta.ManagedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{{
-						Name:    container,
-						Image:   image,
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						Env:     env,
-					}},
-				},
-			},
-		},
+// jobOutput is the end of what a Job's last pod printed, for the message
+// about its failure. Empty when it cannot be read: the failure is reported
+// either way, and this only adds the reason to it.
+func (s *Service) jobOutput(ctx context.Context, job *batchv1.Job) string {
+	pods, err := s.clientset.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-name=" + job.Name,
+	})
+	if err != nil || len(pods.Items) == 0 {
+		return ""
 	}
+	last := pods.Items[0]
+	for _, p := range pods.Items[1:] {
+		if p.CreationTimestamp.After(last.CreationTimestamp.Time) {
+			last = p
+		}
+	}
+	raw, err := s.clientset.CoreV1().Pods(job.Namespace).
+		GetLogs(last.Name, &corev1.PodLogOptions{TailLines: ptr(int64(10))}).DoRaw(ctx)
+	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	return "; its output ended: " + strings.Join(strings.Fields(string(raw)), " ")
 }
 
-func mysqlAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MYSQL_HOST", "mariadb-admin", "host"),
-		meta.SecretEnv("MYSQL_TCP_PORT", "mariadb-admin", "port"),
-		meta.SecretEnv("MYSQL_PWD", "mariadb-admin", "password"),
-		meta.SecretEnv("MYSQL_ADMIN_USER", "mariadb-admin", "username"),
-	}
+// --- stored credentials -----------------------------------------------------
+
+// CredentialStore is the vault as a purge and the retained-data read use it:
+// remove a subtree, and name what is below a path. *secrets.KVClient is one.
+type CredentialStore interface {
+	DeleteTree(ctx context.Context, logicalPath string) error
+	ListChildren(ctx context.Context, logicalPath string) ([]string, error)
 }
 
-func minioAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MINIO_ENDPOINT", "minio-admin", "endpoint"),
-		meta.SecretEnv("MINIO_ACCESS_KEY", "minio-admin", "accessKey"),
-		meta.SecretEnv("MINIO_SECRET_KEY", "minio-admin", "secretKey"),
-	}
+// ownedKeys is the shared inventory's (backup.OwnedKeys).
+func ownedKeys(tenant *gentianov1alpha1.Tenant, app string, extensions []string) []string {
+	return backup.OwnedKeys(tenant, app, extensions)
 }
 
-func redisAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("REDIS_HOST", "redis-admin", "host"),
-		meta.SecretEnv("REDIS_PORT", "redis-admin", "port"),
-		meta.SecretEnv("REDIS_PASSWORD", "redis-admin", "password"),
+// credentialPaths are the vault subtrees one app owns: its own, and one per
+// extension. Everything provisioning seeds for the app (its database, bucket,
+// cache, mail and sign-in credentials) and every secret generated for it is
+// below one of these.
+//
+// A contract's path (…/contracts/<name>) is not among them: it is shared by
+// the app that offers it and every app that consumes it, and belongs to none.
+func credentialPaths(tenant *gentianov1alpha1.Tenant, app string, extensions []string) []string {
+	var paths []string
+	for _, key := range ownedKeys(tenant, app, extensions) {
+		paths = append(paths, secrets.AppPath(tenant.Name, key))
 	}
+	return paths
 }
 
-func (s *Service) purgeOpenBaoSecrets(ctx context.Context, tenant, app string, sidecars []string) []string {
-	keys := []string{app}
-	for _, sc := range sidecars {
-		keys = append(keys, app+"-"+sc)
+// purgeCredentials deletes every vault path the app owns, all versions and
+// their metadata, over the operator's own authenticated session.
+//
+// This used to exec a script into the vault's pod. The script addressed the
+// vault at a name it does not answer on, and every command in it ended in
+// `|| true`: it deleted nothing and the purge reported the credentials
+// destroyed. A path that cannot be deleted fails the purge
+// now, and so does a cluster where the operator has no vault to talk to.
+func (s *Service) purgeCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, extensions []string) error {
+	if s.vault == nil {
+		return errors.New("the operator has no connection to the vault (BAO_ADDR is not set); no credential was deleted")
 	}
-	var warnings []string
-	for _, key := range keys {
-		warnings = append(warnings, s.purgeOpenBaoPath(ctx, tenant, key)...)
-	}
-	return warnings
-}
-
-func (s *Service) purgeOpenBaoPath(ctx context.Context, tenant, appKey string) []string {
-	token, err := s.operatorToken(ctx)
-	if err != nil || token == "" {
-		return []string{fmt.Sprintf("OpenBao purge skipped for %q (operator token unavailable)", appKey)}
-	}
-	pod, err := s.openbaoPod(ctx)
-	if err != nil || pod == "" {
-		return []string{fmt.Sprintf("OpenBao purge skipped for %q (pod unavailable)", appKey)}
-	}
-	base := fmt.Sprintf("gentian-os/tenants/%s/apps/%s", tenant, appKey)
-	// https and the pod's own CA. The listener has only ever been https, so the
-	// http address was reset by the peer — and every command in the script below
-	// ends in `|| true`, so the purge reported success while deleting nothing.
-	// Addressed by service DNS because the certificate carries no IP SAN.
-	script := fmt.Sprintf(`set -eu
-BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200
-BAO_CACERT=/openbao/tls/ca.crt
-BAO_TOKEN='%s'
-BASE='%s'
-purge_kv_tree() {
-  path="$1"
-  listed=$(bao kv list -mount=secret "${path}" 2>/dev/null || true)
-  if [ -z "${listed}" ]; then
-    bao kv metadata delete -mount=secret "${path}" 2>/dev/null || true
-    return 0
-  fi
-  printf '%%s\n' "${listed}" | while IFS= read -r entry; do
-    [ -z "${entry}" ] && continue
-    case "${entry}" in
-      */) purge_kv_tree "${path}/${entry%%/}"
-           ;;
-      *) bao kv metadata delete -mount=secret "${path}/${entry}" 2>/dev/null || true
-         ;;
-    esac
-  done
-  bao kv metadata delete -mount=secret "${path}" 2>/dev/null || true
-}
-purge_kv_tree "${BASE}"
-echo "OpenBao path ${BASE} purged"`, token, base)
-	if out, err := s.execShell(ctx, s.opts.OpenBaoNamespace, pod, script); err != nil {
-		return []string{fmt.Sprintf("OpenBao purge for %q failed: %s", appKey, out)}
+	for _, path := range credentialPaths(tenant, app, extensions) {
+		if err := s.vault.DeleteTree(ctx, path); err != nil {
+			return fmt.Errorf("delete the vault path %s: %w", path, err)
+		}
 	}
 	return nil
 }
 
-func (s *Service) operatorToken(ctx context.Context) (string, error) {
-	tr := &authv1.TokenRequest{
-		Spec: authv1.TokenRequestSpec{
-			ExpirationSeconds: ptr(int64(600)),
-		},
+// --- access group -----------------------------------------------------------
+
+// AccessGroups is the identity provider as a purge and the retained-data read
+// use it. *authz.KeycloakAdminClient is one.
+type AccessGroups interface {
+	DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error)
+	GroupNames(ctx context.Context, realm, prefix string) ([]string, error)
+	DeleteClientScope(ctx context.Context, realm, name string) (existed bool, err error)
+}
+
+// --- sign-in scope ----------------------------------------------------------
+
+// signsIn reports whether an app, or one of its extensions, signs people in
+// through an OIDC client.
+func signsIn(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile == nil {
+		return false
 	}
-	out, err := s.clientset.CoreV1().ServiceAccounts(s.opts.OperatorNamespace).CreateToken(
-		ctx, s.opts.OperatorSA, tr, metav1.CreateOptions{})
+	if svc := profile.Services(); svc != nil && svc.Identity != nil && svc.Identity.OIDC != nil {
+		return true
+	}
+	for _, ext := range profile.Spec.Extensions {
+		if ext.ServiceRequirements != nil && ext.ServiceRequirements.Identity != nil && ext.ServiceRequirements.Identity.OIDC != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// packScopes are the client scopes the sign-in packs of an app and of its
+// extensions describe: what the tenant's identity Job made in the realm for
+// them. A client with no pack, or a pack that is a service client, has none.
+func (s *Service) packScopes(ctx context.Context, tenantName, app string, profile *gentianov1alpha1.ComponentProfile) ([]string, error) {
+	var scopes []string
+	add := func(key string) error {
+		pack, _, found, err := oidc.ResolvePack(ctx, s.client, key)
+		if err != nil {
+			return fmt.Errorf("read the sign-in pack %s: %w", key, err)
+		}
+		if found && !pack.ServiceClient && pack.ScopeName != "" {
+			scopes = append(scopes, pack.ScopeName)
+		}
+		return nil
+	}
+	// The pack is the one the profile names, else the one called what the
+	// client is; a client is called what the profile says, else after the
+	// tenant and the app. The same resolution provisioning makes.
+	packKey := func(spec *gentianov1alpha1.OIDCClientSpec, name string) string {
+		switch {
+		case spec.OIDCPackRef != "":
+			return spec.OIDCPackRef
+		case spec.ClientID != "":
+			return spec.ClientID
+		}
+		return tenantName + "-" + name
+	}
+	if profile == nil {
+		return nil, nil
+	}
+	if svc := profile.Services(); svc != nil && svc.Identity != nil && svc.Identity.OIDC != nil {
+		if err := add(packKey(svc.Identity.OIDC, app)); err != nil {
+			return nil, err
+		}
+	}
+	for _, ext := range profile.Spec.Extensions {
+		if ext.ServiceRequirements == nil || ext.ServiceRequirements.Identity == nil || ext.ServiceRequirements.Identity.OIDC == nil {
+			continue
+		}
+		if err := add(packKey(ext.ServiceRequirements.Identity.OIDC, gentianov1alpha1.SidecarAppName(app, ext.Name))); err != nil {
+			return nil, err
+		}
+	}
+	return scopes, nil
+}
+
+// purgeSignInScopes removes the client scopes the app's sign-in packs
+// describe from the tenant's realm, with their protocol mappers.
+//
+// The app's client went when it was uninstalled, and what was part of the
+// client -- its role, its default scopes, the group's mapping to the role --
+// went with it. The scope did not: it is the realm's, made by the tenant's
+// identity Job, and nothing ever removed one.
+//
+// A scope is left where an app the tenant still has uses a pack that names
+// the same one -- two profiles may name one pack -- and one of Keycloak's own
+// scopes is never touched, whatever a catalogue called its pack's.
+func (s *Service) purgeSignInScopes(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) error {
+	scopes, err := s.packScopes(ctx, tenant.Name, app, profile)
+	if err != nil || len(scopes) == 0 {
+		return err
+	}
+	inUse := map[string]bool{}
+	profiles := s.profileLookup(ctx)
+	for _, installed := range tenant.Spec.Apps {
+		other, err := profiles(installed.Profile)
+		if err != nil {
+			return err
+		}
+		used, err := s.packScopes(ctx, tenant.Name, installed.Profile, other)
+		if err != nil {
+			return err
+		}
+		for _, name := range used {
+			inUse[name] = true
+		}
+	}
+	groups, err := s.accessGroups(ctx)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return out.Status.Token, nil
+	realm := keycloak.RealmName(tenant)
+	logger := log.FromContext(ctx).WithName("purge").WithValues("app", app, "realm", realm)
+	for _, name := range scopes {
+		switch {
+		case inUse[name]:
+			logger.Info("leaving a client scope an installed app's sign-in pack names too", "scope", name)
+			continue
+		case authz.IsBuiltInClientScope(name):
+			logger.Info("leaving a client scope that is the identity provider's own", "scope", name)
+			continue
+		}
+		if _, err := groups.DeleteClientScope(ctx, realm, name); err != nil {
+			return fmt.Errorf("delete the client scope %s in realm %s: %w", name, realm, err)
+		}
+	}
+	return nil
 }
 
-func (s *Service) openbaoPod(ctx context.Context) (string, error) {
-	pods, err := s.clientset.CoreV1().Pods(s.opts.OpenBaoNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao",
-	})
-	if err == nil && len(pods.Items) > 0 {
-		return pods.Items[0].Name, nil
-	}
-	pods, err = s.clientset.CoreV1().Pods(s.opts.OpenBaoNamespace).List(ctx, metav1.ListOptions{})
-	if err != nil || len(pods.Items) == 0 {
-		return "", err
-	}
-	return pods.Items[0].Name, nil
+// --- model key --------------------------------------------------------------
+
+// ModelKeys is the model gateway as a purge uses it. *modelgateway.Client is
+// one.
+type ModelKeys interface {
+	KeyExists(ctx context.Context, alias string) (bool, error)
+	DeleteKey(ctx context.Context, alias string) (existed bool, err error)
 }
 
-func (s *Service) execShell(ctx context.Context, ns, pod, script string) (string, error) {
-	req := s.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").Name(pod).Namespace(ns).SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Command: []string{"sh", "-lc", script},
-			Stdout:  true,
-			Stderr:  true,
-		}, parameterCodec)
-	exec, err := remoteCommandExecutor(req.URL())
+// modelGateway is the cluster's model gateway. present is false when the
+// cluster runs none.
+func (s *Service) modelGateway(ctx context.Context) (ModelKeys, bool, error) {
+	if s.models != nil {
+		return s.models(ctx)
+	}
+	gateway, present, err := modelgateway.FromCluster(ctx, s.client)
+	if err != nil || !present {
+		return nil, false, err
+	}
+	return gateway, true, nil
+}
+
+// purgeModelKey removes the key the app called models with, and takes it
+// off the record. On a cluster that no longer runs a gateway there is no key
+// left to remove: the gateway's keys went with it.
+func (s *Service) purgeModelKey(ctx context.Context, tenantName, app, alias string) error {
+	gateway, present, err := s.modelGateway(ctx)
 	if err != nil {
-		return "", err
+		return err
 	}
-	var buf bytes.Buffer
-	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdout: &buf,
-		Stderr: &buf,
-	})
-	return buf.String(), err
+	if present {
+		if _, err := gateway.DeleteKey(ctx, alias); err != nil {
+			return fmt.Errorf("delete the model key %s: %w", alias, err)
+		}
+	}
+	return s.forgetProvisioned(ctx, tenantName, app, backup.KindModelAccess)
 }
 
-func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string) []string {
-	var warnings []string
+// purgeAccessGroup removes the app's group, and with it everybody's
+// membership of it; and the same for each of its extensions, which has a
+// group of its own when it signs people in.
+//
+// The group is what says who may use the app. Uninstalling keeps it, so that
+// an app installed again is open to the people it was open to; a purge is the
+// end of the app in this tenant, and a group left behind would hand a later
+// app of the same name to whoever had the old one.
+//
+// The realm is the tenant's own (keycloak.RealmName), which need not be
+// called what the tenant is; the group's name always carries the tenant's.
+func (s *Service) purgeAccessGroup(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, extensions []string) error {
+	groups, err := s.accessGroups(ctx)
+	if err != nil {
+		return err
+	}
+	realm := keycloak.RealmName(tenant)
+	for _, key := range ownedKeys(tenant, app, extensions) {
+		name := keycloak.TenantAppGroup(tenant.Name, key)
+		if _, err := groups.DeleteGroup(ctx, realm, name); err != nil {
+			return fmt.Errorf("delete the group %s in realm %s: %w", name, realm, err)
+		}
+	}
+	return nil
+}
+
+// --- provisioning records ---------------------------------------------------
+
+func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) error {
+	tenantNS := tenantNamespace(tenant)
 	selector := fmt.Sprintf("%s=%s,gentianos.io/app=%s,%s=%s",
-		meta.TenantLabel, tenant, app, meta.ManagedByLabel, meta.ManagedByValue)
-	jobs, err := s.listPlatformJobs(ctx, selector)
-	if err != nil {
-		return []string{fmt.Sprintf("list kernel jobs: %v", err)}
-	}
-	for _, job := range jobs.Items {
-		_ = s.clientset.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
-			PropagationPolicy: ptr(metav1.DeletePropagationBackground),
-		})
-	}
-	// Jobs the operator creates directly in the tenant namespace (the app-admins
-	// sync among them) have no owner that Crossplane deletes with the App claim,
-	// so sweeping only the kernel namespace left them behind — and a finished
-	// Job's pod keeps its logs and its mounted member list with it.
-	tenantJobs, err := s.clientset.BatchV1().Jobs(tenantNamespace(tenant)).
-		List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("list tenant jobs: %v", err))
-	} else {
-		for _, job := range tenantJobs.Items {
-			if err := s.clientset.BatchV1().Jobs(tenantNamespace(tenant)).
-				Delete(ctx, job.Name, metav1.DeleteOptions{
-					PropagationPolicy: ptr(metav1.DeletePropagationBackground),
-				}); err != nil && !apierrors.IsNotFound(err) {
-				warnings = append(warnings, fmt.Sprintf("delete tenant job %s: %v", job.Name, err))
+		meta.TenantLabel, tenant.Name, app, meta.ManagedByLabel, meta.ManagedByValue)
+	background := metav1.DeleteOptions{PropagationPolicy: ptr(metav1.DeletePropagationBackground)}
+
+	// Jobs: the kernel's, and the ones the operator creates directly in the
+	// tenant namespace (the app-admins sync among them), which have no owner
+	// that Crossplane deletes with the App claim.
+	for _, ns := range append(platformNamespaces(), tenantNS) {
+		jobs, err := s.clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return fmt.Errorf("list the app's Jobs in %s: %w", ns, err)
+		}
+		for _, job := range jobs.Items {
+			if err := s.clientset.BatchV1().Jobs(ns).Delete(ctx, job.Name, background); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete Job %s/%s: %w", ns, job.Name, err)
 			}
 		}
 	}
@@ -465,103 +789,63 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	// pods exactly this way, so a purged app left completed pods sitting in the
 	// namespace with their logs and mounted config. Sweeping by the app selector
 	// catches them whatever orphaned them; live pods of the app itself are gone
-	// with the Helm release long before this runs.
-	tenantPods, err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+	// with the Helm release before a purge is admitted.
+	tenantPods, err := s.clientset.CoreV1().Pods(tenantNS).
 		List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("list tenant pods: %v", err))
-	} else {
-		for _, pod := range tenantPods.Items {
-			if err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
-				Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-				warnings = append(warnings, fmt.Sprintf("delete tenant pod %s: %v", pod.Name, err))
-			}
+		return fmt.Errorf("list the app's pods: %w", err)
+	}
+	for _, pod := range tenantPods.Items {
+		if err := s.clientset.CoreV1().Pods(tenantNS).
+			Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete pod %s: %w", pod.Name, err)
 		}
 	}
-	for _, ns := range platformNamespaces() {
-		secrets, err := s.clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("list kernel secrets in %s: %v", ns, err))
-			continue
-		}
-		for _, sec := range secrets.Items {
-			_ = s.clientset.CoreV1().Secrets(ns).Delete(ctx, sec.Name, metav1.DeleteOptions{})
-		}
-	}
-	// The operator also writes Secrets into the tenant's own namespace — the LLM
-	// credentials among them — and this only ever swept the kernel namespace, so
-	// every install left one behind forever. The demo tenant had accumulated ten,
-	// including some for profiles renamed out of existence months earlier.
+	// Secrets: the kernel's, and the ones the operator writes into the
+	// tenant's own namespace — the LLM credentials among them.
 	//
 	// The selector is app-scoped, so tenant-wide Secrets such as
 	// gentian-trust-anchor-tls (labelled managed-by and tenant, but no app) are not
 	// matched. Secrets owned by an ExternalSecret are already removed with it when
 	// Crossplane deletes the App claim.
-	tenantSecrets, err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).
-		List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("list tenant secrets: %v", err))
-	} else {
-		for _, sec := range tenantSecrets.Items {
-			if err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).
-				Delete(ctx, sec.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-				warnings = append(warnings, fmt.Sprintf("delete tenant secret %s: %v", sec.Name, err))
+	for _, ns := range append(platformNamespaces(), tenantNS) {
+		list, err := s.clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return fmt.Errorf("list the app's Secrets in %s: %w", ns, err)
+		}
+		for _, sec := range list.Items {
+			if err := s.clientset.CoreV1().Secrets(ns).Delete(ctx, sec.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete Secret %s/%s: %w", ns, sec.Name, err)
 			}
 		}
 	}
-
-	dbCR := cnpgDatabaseName(tenant, app)
-	dbObj := &unstructured.Unstructured{}
-	dbObj.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database",
-	})
-	dbObj.SetName(dbCR)
-	dbObj.SetNamespace(layout.System("postgresql"))
-	if err := s.client.Delete(ctx, dbObj); err != nil && !apierrors.IsNotFound(err) {
-		warnings = append(warnings, fmt.Sprintf("delete CNPG database %s: %v", dbCR, err))
-	}
-	return warnings
+	return nil
 }
 
-func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, profile *gentianov1alpha1.ComponentProfile) []string {
-	var warnings []string
-	ns := tenantNamespace(tenantName)
+// --- files ------------------------------------------------------------------
+
+// appVolumes are the claims in the tenant's namespace that are this app's:
+// what a purge deletes, what the retained-data read reports and what an
+// export copies. The rule is the shared inventory's (backup.AppVolumes).
+func appVolumes(claims []corev1.PersistentVolumeClaim, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) (own []string, vetoed map[string]string) {
+	return backup.AppVolumes(claims, tenant, app, profile)
+}
+
+func ownsRelease(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile, release string) bool {
+	return backup.OwnsRelease(tenant, app, profile, release)
+}
+
+func (s *Service) purgePVCs(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {
+	ns := tenantNamespace(tenant)
 	pvcs, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return []string{fmt.Sprintf("list tenant PVCs: %v", err)}
+		return fmt.Errorf("list the volume claims in %s: %w", ns, err)
 	}
-
-	// What a PVC's app.kubernetes.io/name is likely to be when it is not the
-	// install's own name: the chart's. This was spec.family, which AD-3 moves
-	// to the store listing — and the chart name is the more direct answer
-	// anyway, because it is what the chart actually labels its objects with.
-	//
-	// Empty only narrows the match (see PVCBelongsToApp), so a profile with no
-	// chart leaves a volume behind rather than taking a sibling's with it,
-	// which is the right way round for a purge.
-	family := ""
-	if chart := profile.Chart(); chart != nil {
-		family = chart.Name
-	}
-
+	doomed, vetoed := appVolumes(pvcs.Items, tenant, appName, profile)
 	logger := log.FromContext(ctx).WithName("purge").WithValues("app", appName)
-
-	var doomed []string
-	for _, pvc := range pvcs.Items {
-		if !pvcBelongsToApp(pvc, appName, family) {
-			continue
-		}
-		if rel, other := ownedByOtherRelease(pvc.Annotations, appName); other {
-			// Deliberately not a warning: skipping is the correct outcome, and
-			// warnings fail the purge.
-			logger.Info("skipping PVC owned by another Helm release",
-				"pvc", pvc.Name, "release", rel)
-			continue
-		}
-		doomed = append(doomed, pvc.Name)
+	for name, rel := range vetoed {
+		// Not a failure: leaving it is the correct outcome.
+		logger.Info("leaving a volume claim that is on record as another Helm release's", "pvc", name, "release", rel)
 	}
 	if len(doomed) == 0 {
 		return nil
@@ -575,47 +859,20 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 	// Terminating forever, and worse, a reinstall then cannot schedule ("claim is
 	// being deleted") while its own Pending pods add fresh references. That is a
 	// deadlock that never resolves on its own.
-	warnings = append(warnings, s.releasePVCHolders(ctx, ns, doomed)...)
-
+	if err := s.releasePVCHolders(ctx, ns, doomed); err != nil {
+		return err
+	}
 	for _, name := range doomed {
 		err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			warnings = append(warnings, fmt.Sprintf("delete PVC %s/%s: %v", ns, name, err))
+			return fmt.Errorf("delete volume claim %s/%s: %w", ns, name, err)
 		}
 	}
 
 	// Wait for them to actually go. A purge that returns while volumes are still
 	// Terminating reports success for work it has not finished, and the caller has
 	// no way to know the next install will be blocked by it.
-	if err := s.waitForPVCsGone(ctx, ns, doomed); err != nil {
-		warnings = append(warnings, err.Error())
-	}
-	return warnings
-}
-
-// ownedByOtherRelease reports whether a Helm-managed object belongs to some
-// release other than this app's, returning the release name for the log line.
-//
-// This is a veto over the matching below, and it exists because the damage is
-// asymmetric. provider-helm reconciles release *state*, not cluster contents:
-// it compares the desired chart and values against the recorded release and
-// does nothing when they agree. Delete an object out from under a live release
-// and nothing puts it back — not the next sync, not selfHeal, not a pod
-// restart — until someone changes the chart version or a value. The app just
-// runs without it. Meanwhile the cost of skipping wrongly is a leftover volume,
-// which the next purge or an operator can remove.
-//
-// pvcBelongsToApp falls back to a name substring, which is broad enough to
-// reach a sibling app's volume when two profiles share a family (purging
-// nextcloud-base-ce matches anything containing "nextcloud"). That is precisely
-// the case where deleting is unrecoverable, so Helm's own ownership record wins.
-//
-// Releases for one app are named after it — "<profile>-<suffix>-release" for
-// the app itself, "<tenant>-<profile>-<sidecar>" for its sidecars — so a
-// substring test identifies our own releases without needing the composite,
-// which is already gone by the time purge runs.
-func ownedByOtherRelease(annotations map[string]string, appName string) (string, bool) {
-	return backup.OwnedByOtherRelease(annotations, appName)
+	return s.waitForPVCsGone(ctx, ns, doomed)
 }
 
 // pvcBelongsToApp reports whether a PVC was provisioned for this app.
@@ -625,7 +882,7 @@ func pvcBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) b
 
 // releasePVCHolders deletes pods referencing any of the named claims so the
 // pvc-protection finalizer can clear.
-func (s *Service) releasePVCHolders(ctx context.Context, ns string, claims []string) []string {
+func (s *Service) releasePVCHolders(ctx context.Context, ns string, claims []string) error {
 	doomed := make(map[string]struct{}, len(claims))
 	for _, c := range claims {
 		doomed[c] = struct{}{}
@@ -633,20 +890,18 @@ func (s *Service) releasePVCHolders(ctx context.Context, ns string, claims []str
 
 	pods, err := s.clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return []string{fmt.Sprintf("list pods holding PVCs in %s: %v", ns, err)}
+		return fmt.Errorf("list the pods holding volume claims in %s: %w", ns, err)
 	}
-
-	var warnings []string
 	for _, pod := range pods.Items {
 		if !podReferencesAny(pod, doomed) {
 			continue
 		}
 		err := s.clientset.CoreV1().Pods(ns).Delete(ctx, pod.Name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			warnings = append(warnings, fmt.Sprintf("delete pod %s/%s holding a purged PVC: %v", ns, pod.Name, err))
+			return fmt.Errorf("delete pod %s/%s, which holds a volume claim being purged: %w", ns, pod.Name, err)
 		}
 	}
-	return warnings
+	return nil
 }
 
 func podReferencesAny(pod corev1.Pod, claims map[string]struct{}) bool {
@@ -668,24 +923,24 @@ func (s *Service) waitForPVCsGone(ctx context.Context, ns string, claims []strin
 		var remaining []string
 		for _, name := range claims {
 			_, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
-			if err == nil {
-				remaining = append(remaining, name)
-			} else if !apierrors.IsNotFound(err) {
-				remaining = append(remaining, name)
+			if apierrors.IsNotFound(err) {
+				continue
 			}
+			if err != nil {
+				return fmt.Errorf("look for volume claim %s/%s: %w", ns, name, err)
+			}
+			remaining = append(remaining, name)
 		}
 		if len(remaining) == 0 {
 			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf(
-				"PVCs still present after %s: %s — the next install of this app will not schedule until they are gone",
+				"volume claims still present %s after they were deleted: %s — the next install of this app will not schedule until they are gone",
 				pvcDeletionTimeout, strings.Join(remaining, ", "))
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(pvcPollInterval):
+		if err := wait(ctx); err != nil {
+			return fmt.Errorf("waiting for volume claims %s to be gone: %w", strings.Join(remaining, ", "), err)
 		}
 	}
 }
@@ -713,16 +968,4 @@ func platformNamespaces() []string {
 		out = append(out, ns)
 	}
 	return out
-}
-
-func (s *Service) listPlatformJobs(ctx context.Context, selector string) (*batchv1.JobList, error) {
-	out := &batchv1.JobList{}
-	for _, ns := range platformNamespaces() {
-		page, err := s.clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			return nil, err
-		}
-		out.Items = append(out.Items, page.Items...)
-	}
-	return out, nil
 }

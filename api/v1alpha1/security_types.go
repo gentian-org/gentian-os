@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -20,7 +22,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 )
 
-// SecuritySpec declares platform security requests for an AppProfile catalogue entry.
+// SecuritySpec declares platform security requests for a catalogue entry.
 // Cluster administrators approve subsets via PlatformSecurityPolicy; the operator
 // intersects requests with the allowlist before compositions apply MAC labels.
 type SecuritySpec struct {
@@ -49,7 +51,7 @@ type MacWaiverRequest struct {
 
 // AllowedMacWaiver is a cluster-admin approved MAC waiver for a catalogue profile.
 type AllowedMacWaiver struct {
-	// Profile is the AppProfile metadata.name that may use this waiver.
+	// Profile is the ComponentProfile metadata.name that may use this waiver.
 	// +kubebuilder:validation:Required
 	Profile string `json:"profile"`
 
@@ -57,9 +59,24 @@ type AllowedMacWaiver struct {
 	// +kubebuilder:validation:Required
 	Policy string `json:"policy"`
 
-	// Scope matches MacWaiverRequest.scope on the AppProfile.
+	// Scope matches MacWaiverRequest.scope on the profile.
 	// +kubebuilder:validation:Required
 	Scope string `json:"scope"`
+}
+
+// AllowedClusterRole permits one of the platform's cluster roles for one
+// catalogue profile on this cluster.
+type AllowedClusterRole struct {
+	// Profile is the ComponentProfile metadata.name that may be bound to it.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Profile string `json:"profile"`
+
+	// Role is the platform's name of the role, as a profile asks for it in
+	// requires.privileges.clusterRoles[].name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Role string `json:"role"`
 }
 
 // MacWaiverLabelKey returns the pod label key for an approved waiver.

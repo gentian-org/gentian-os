@@ -1,30 +1,29 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 )
@@ -47,21 +46,56 @@ func tenantNameFromNamespace(namespace string) string {
 	return strings.TrimPrefix(namespace, prefix)
 }
 
-// exportJobName builds a Job name that is unique per export, app and unit, and
-// short enough to survive Kubernetes' 63-character limit on the pod labels
-// derived from it. Long profile names are truncated from the middle of the
-// composite rather than the end, so the unit suffix always survives.
-func exportJobName(exportName, appName, unit string) string {
-	name := fmt.Sprintf("tx-%s-%s-%s", exportName, appName, unit)
+// tenantNamespaceByName is the namespace of the tenant called name, by the one
+// rule there is (backup.TenantNamespace). The helpers that pause, resume and
+// exec into an app are handed a tenant's name, sometimes after the Tenant is
+// gone -- resuming what an export paused must still work then -- so a tenant
+// that is not found is given the namespace the rule gives a tenant that sets
+// nothing. Any other error is returned: not knowing where a tenant's
+// workloads are is not a reason to look somewhere else.
+func tenantNamespaceByName(ctx context.Context, c client.Reader, name string) (string, error) {
+	tenant := &gentianov1alpha1.Tenant{}
+	err := c.Get(ctx, types.NamespacedName{Name: name}, tenant)
+	if apierrors.IsNotFound(err) {
+		tenant = &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	} else if err != nil {
+		return "", fmt.Errorf("read tenant %s to find its namespace: %w", name, err)
+	}
+	return backup.TenantNamespace(tenant), nil
+}
+
+// exportJobName builds the name of a Job or staged Secret of one run: unique
+// per tenant, run, app and unit, and short enough to survive Kubernetes'
+// 63-character limit on the pod labels derived from it.
+//
+// The tenant is part of it because these objects are made in namespaces every
+// tenant's runs share (beside the object store, a database, the identity
+// provider), and a run's name is unique in its tenant only: two tenants with a
+// schedule of the same name make exports of the same name in the same minute.
+// Without the tenant, the second found the first's finished Job under its own
+// name and recorded the work as done, and its passphrase replaced the
+// first's. A name too long is cut and carries a digest of the whole, so that
+// two names differing only in what was cut stay different.
+func exportJobName(tenantName, exportName, appName, unit string) string {
+	name := fmt.Sprintf("tx-%s-%s-%s-%s", tenantName, exportName, appName, unit)
 	const max = 52
 	if len(name) <= max {
 		return name
 	}
-	keep := max - len(unit) - 1
+	sum := sha256.Sum256([]byte(tenantName + "\x00" + exportName + "\x00" + appName + "\x00" + unit))
+	tail := "-" + hex.EncodeToString(sum[:4]) + "-" + unit
+	keep := max - len(tail)
 	if keep < 1 {
 		keep = 1
 	}
-	return name[:keep] + "-" + unit
+	return strings.TrimRight(name[:keep], "-.") + tail
+}
+
+// runObjectIsOurs reports whether an object found under a run's name was made
+// for that run. Names carry the tenant, so anything else is a name two runs
+// share by accident; it is never taken for this run's work.
+func runObjectIsOurs(labels map[string]string, tenantName, runName string) bool {
+	return labels[tenantLabel] == tenantName && labels[backup.ExportLabel] == runName
 }
 
 // appStatus returns this app's status entry, creating it on first use so the
@@ -189,12 +223,53 @@ func unitKinds(units []captureUnit) []string {
 	return kinds
 }
 
+// unitArtefacts is what a set of capture units produced, as the status and
+// the manifest record it.
+func unitArtefacts(units []captureUnit) []gentianov1alpha1.BundleArtefact {
+	out := make([]gentianov1alpha1.BundleArtefact, 0, len(units))
+	for _, unit := range units {
+		out = append(out, gentianov1alpha1.BundleArtefact{
+			Kind: unit.Kind, Name: unit.Name, Path: unit.Path, Release: unit.Release, Claim: unit.Claim,
+		})
+	}
+	return out
+}
+
+// manifestStores is one entry per artefact captured for the app: its kind,
+// what it was captured from and where in the bundle it is.
 func manifestStores(app gentianov1alpha1.AppExportStatus) []backup.ManifestStore {
-	stores := make([]backup.ManifestStore, 0, len(app.Stores))
-	for _, kind := range app.Stores {
-		stores = append(stores, backup.ManifestStore{Kind: kind, Name: app.Name})
+	stores := make([]backup.ManifestStore, 0, len(app.Artefacts))
+	for _, a := range app.Artefacts {
+		stores = append(stores, backup.ManifestStore{Kind: a.Kind, Name: a.Name, Path: a.Path, Release: a.Release, Claim: manifestClaim(a.Claim)})
 	}
 	return stores
+}
+
+// manifestClaim and statusClaim are one record of a claim in its two
+// places: the bundle's manifest and a run's status.
+func manifestClaim(c *gentianov1alpha1.BundleClaim) *bundle.ManifestClaim {
+	if c == nil {
+		return nil
+	}
+	return &bundle.ManifestClaim{Size: c.Size, AccessModes: c.AccessModes, StorageClass: c.StorageClass, Labels: c.Labels, Annotations: c.Annotations}
+}
+
+func statusClaim(c *bundle.ManifestClaim) *gentianov1alpha1.BundleClaim {
+	if c == nil {
+		return nil
+	}
+	return &gentianov1alpha1.BundleClaim{Size: c.Size, AccessModes: c.AccessModes, StorageClass: c.StorageClass, Labels: c.Labels, Annotations: c.Annotations}
+}
+
+// tenantAppDigest is the digest the tenant pins the app's build to, "" when
+// it pins none.
+func tenantAppDigest(tenant *gentianov1alpha1.Tenant, appName string) string {
+	for _, app := range tenant.Spec.Apps {
+		if app.Profile == appName {
+			return app.Digest
+		}
+	}
+	return ""
 }
 
 func ptrNow() *metav1.Time {
@@ -216,7 +291,7 @@ func timeOrEmpty(t *metav1.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// resolveProfile looks up the AppProfile backing an installed app, so every
+// resolveProfile looks up the ComponentProfile backing an installed app, so every
 // capture decision is driven by the catalogue rather than by the app's name.
 //
 // A missing profile is an error rather than a shrug: without it there is no
@@ -239,7 +314,7 @@ func resolveProfile(
 		return nil, fmt.Errorf("app %q is not installed for tenant %q", appName, tenant.Name)
 	}
 
-	index, err := loadAppProfileIndex(ctx, c)
+	index, err := loadComponentProfileIndex(ctx, c)
 	if err != nil {
 		return nil, err
 	}

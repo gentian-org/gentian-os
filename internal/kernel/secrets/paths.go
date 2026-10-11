@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package secrets
@@ -29,8 +23,22 @@ func CategoryPath(tenant, app, category string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/%s", tenant, app, category)
 }
 
+// AppPath is everything stored for one app of a tenant: each category the
+// kernel provisions for it and each secret generated for it is below this. An
+// extension of an app has a subtree of its own beside it, keyed
+// "{app}-{extension}". Purging an app's credentials is deleting these.
+func AppPath(tenant, app string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s", tenant, app)
+}
+
+// AppsPath is where a tenant's per-app subtrees are: listing it names every
+// app, installed or not, that still has something stored.
+func AppsPath(tenant string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/apps", tenant)
+}
+
 // InternalPath returns the canonical KV v2 logical path for a per-app internal
-// secret (an AppProfile.spec.appSecrets entry). The value is stored with a
+// secret (a ComponentProfile.spec.secrets.generated entry). The value is stored with a
 // single "value" key so the ExternalSecret can read it generically.
 func InternalPath(tenant, app, name string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, app, name)

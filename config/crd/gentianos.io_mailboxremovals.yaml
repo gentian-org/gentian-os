@@ -1,0 +1,269 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: mailboxremovals.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: MailboxRemoval
+    listKind: MailboxRemovalList
+    plural: mailboxremovals
+    shortNames:
+    - mbxr
+    singular: mailboxremoval
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.tenant
+      name: Tenant
+      type: string
+    - jsonPath: .spec.address
+      name: Address
+      type: string
+    - jsonPath: .spec.mailbox
+      name: Choice
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          MailboxRemoval records what whoever removed a person decided about that
+          person's mailbox, and what became of it.
+
+          The registrar writes it, when a person is removed from a tenant that keeps
+          mailboxes on the cluster's own mail server; the operator carries it out,
+          by a Job beside the mail server's volume, and reports here. For as long as
+          the mailbox is archived this is also the record an administrator reads the
+          archive from, and where its deletion is asked for.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MailboxRemovalSpec is the decision.
+            properties:
+              address:
+                description: Address is the address the removed person received mail
+                  at.
+                maxLength: 320
+                minLength: 3
+                type: string
+              deleteArchive:
+                description: |-
+                  DeleteArchive, once set, asks for the archived mailbox to be deleted,
+                  and says who asked. It is how an archive is destroyed on purpose,
+                  later.
+                properties:
+                  at:
+                    description: At is when they asked.
+                    format: date-time
+                    type: string
+                  name:
+                    description: |-
+                      Name is how the person is shown: their address or name at the time.
+                      For display only.
+                    maxLength: 256
+                    type: string
+                  requestID:
+                    description: |-
+                      RequestID joins this to the registrar's record of the authority and to
+                      the identity provider's own event.
+                    maxLength: 64
+                    type: string
+                  subject:
+                    description: Subject is the person's id at the identity provider.
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - subject
+                type: object
+              mailbox:
+                description: 'Mailbox is the choice: archive or delete.'
+                enum:
+                - archive
+                - delete
+                type: string
+              requestedBy:
+                description: RequestedBy is who removed the person and made the choice.
+                properties:
+                  at:
+                    description: At is when they asked.
+                    format: date-time
+                    type: string
+                  name:
+                    description: |-
+                      Name is how the person is shown: their address or name at the time.
+                      For display only.
+                    maxLength: 256
+                    type: string
+                  requestID:
+                    description: |-
+                      RequestID joins this to the registrar's record of the authority and to
+                      the identity provider's own event.
+                    maxLength: 64
+                    type: string
+                  subject:
+                    description: Subject is the person's id at the identity provider.
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - subject
+                type: object
+              restored:
+                description: |-
+                  Restored says this record was not written at a removal: a restore
+                  wrote it, for an archived mailbox it put back from a backup, so that
+                  the archive is listed and can be deleted. Nothing is moved or removed
+                  for such a record; the operator only reports what it states.
+                properties:
+                  address:
+                    description: |-
+                      Address is the address the removed person received at, in the domain
+                      of the tenant restored into.
+                    maxLength: 320
+                    type: string
+                  archive:
+                    description: Archive is the archived mailbox's name in the domain's
+                      archive.
+                    maxLength: 128
+                    type: string
+                  archivedAt:
+                    description: |-
+                      ArchivedAt is when it was archived, where the bundle was taken; By who
+                      chose that, as they were shown there.
+                    format: date-time
+                    type: string
+                  by:
+                    maxLength: 256
+                    type: string
+                  domain:
+                    description: Domain is the mail domain whose archive it is in.
+                    maxLength: 253
+                    type: string
+                  messages:
+                    format: int64
+                    type: integer
+                  sizeBytes:
+                    format: int64
+                    type: integer
+                required:
+                - archive
+                type: object
+              tenant:
+                description: Tenant is the tenant the person was removed from.
+                pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$
+                type: string
+            required:
+            - address
+            - mailbox
+            - requestedBy
+            - tenant
+            type: object
+            x-kubernetes-validations:
+            - message: the tenant, the address and the choice are what was decided
+                and do not change
+              rule: self.tenant == oldSelf.tenant && self.address == oldSelf.address
+                && self.mailbox == oldSelf.mailbox
+            - message: whether the archived mailbox came from a backup does not change
+              rule: has(self.restored) == has(oldSelf.restored)
+            - message: what a backup brings back is an archived mailbox
+              rule: '!has(self.restored) || self.mailbox == ''archive'''
+            - message: a request to delete the archived mailbox is not withdrawn
+              rule: '!has(oldSelf.deleteArchive) || has(self.deleteArchive)'
+            - message: only an archived mailbox can be deleted later
+              rule: '!has(self.deleteArchive) || self.mailbox == ''archive'''
+          status:
+            description: MailboxRemovalStatus is what became of the mailbox.
+            properties:
+              archive:
+                description: Archive is the archived mailbox's name in the domain's
+                  archive.
+                type: string
+              archivedAt:
+                description: |-
+                  ArchivedAt is when the mailbox was archived; DeletedAt when the
+                  mailbox, or later its archive, was deleted.
+                format: date-time
+                type: string
+              attempts:
+                description: |-
+                  Attempts counts the Jobs that failed, and LastFailureAt is when the
+                  last one did: the next is started later each time.
+                format: int32
+                type: integer
+              deletedAt:
+                format: date-time
+                type: string
+              domain:
+                description: Domain is the mail domain the mailbox was in.
+                type: string
+              lastFailureAt:
+                format: date-time
+                type: string
+              message:
+                description: Message says, in a sentence, what happened or what is
+                  waited for.
+                type: string
+              messages:
+                format: int64
+                type: integer
+              phase:
+                description: MailboxRemovalPhase is where a removed person's mailbox
+                  stands.
+                enum:
+                - Pending
+                - Archived
+                - Deleted
+                - NoMailbox
+                - Failed
+                type: string
+              refused:
+                description: |-
+                  Refused is set when the operator will not act on this record at all:
+                  the address is not one of the tenant's mailboxes, or still belongs to
+                  a person. Nothing was changed, and nothing is tried again.
+                type: boolean
+              signInGoneAt:
+                description: |-
+                  SignInGoneAt is when the operator last saw that no mail password of
+                  the address is left with the mail server. The mailbox is touched only
+                  some time after that, once the server has read the change.
+                format: date-time
+                type: string
+              sizeBytes:
+                description: |-
+                  SizeBytes and Messages are what the mailbox held when it was archived
+                  or deleted.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,21 +1,15 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package tilecatalogue is the tile catalogue's format: what the operator
-// writes and what the director reads.
+// writes and what the usher reads.
 //
 // It is its own package, and not part of internal/tiles, because that one is
 // the portal's icon set. The two share a word and nothing else, and the
@@ -45,8 +39,7 @@ import (
 
 const (
 	// ConfigMapName is the one ConfigMap the catalogue is projected into. It
-	// lives in the control namespace, beside both the operator that writes it
-	// and the director that reads it.
+	// lives in the control namespace, beside the usher that reads it.
 	ConfigMapName = "gentian-tiles"
 
 	// Key is the entry within it. The content is YAML rather than one key per
@@ -98,15 +91,47 @@ type Tile struct {
 // Catalogue is the file's whole content.
 type Catalogue struct {
 	Tiles []Tile `json:"tiles"`
+	// AppStore is whether this cluster offers an App Store, as the operator
+	// decided it. Beside the tiles because it is the same kind of statement:
+	// something the operator knows about the cluster and the usher hands on.
+	// Absent means the operator said nothing, which is read as not offered.
+	AppStore *AppStore `json:"appStore,omitempty"`
 }
+
+// AppStore is the operator's verdict on whether the cluster offers an App
+// Store. It is the same verdict that places the App Store app on tenants, so
+// what the usher answers and whether the app is there cannot differ.
+type AppStore struct {
+	// Offered is whether licence reporting is on and the Cluster claim names
+	// a store that is not one of this cluster's own hosts.
+	Offered bool `json:"offered"`
+	// Reason says why not, as one of the AppStoreReason words.
+	Reason string `json:"reason,omitempty"`
+}
+
+// Why a cluster offers no App Store.
+const (
+	// AppStoreReasonNoLicenceReport: the cluster does not report what it
+	// runs, and an app installed through a store is what the report lists.
+	AppStoreReasonNoLicenceReport = "licence-report-disabled"
+	// AppStoreReasonNoStore: the Cluster claim names no store
+	// (spec.catalogue.storeUrl), or names one that is not an https address.
+	AppStoreReasonNoStore = "no-store-configured"
+	// AppStoreReasonOwnHost: the address the Cluster claim names has the host
+	// this cluster serves a tenant's App Store app on (store.<the tenant's
+	// domain>), so what answers there is the app and not a store.
+	AppStoreReasonOwnHost = "store-address-is-own-host"
+)
 
 // header explains the projected file to whoever opens the ConfigMap, which is
 // the one place a person meets it without reading this package first.
-const header = `# The tiles this cluster offers, projected by the operator.
+const header = `# The tiles this cluster offers, projected by the operator, and whether it
+# offers an App Store (appStore: licence reporting is on and the Cluster claim
+# names a store).
 #
 # Every entry is something the operator routes: a kernel console it composes an
 # HTTPRoute for, or an exposure of an installed component whose profile
-# declares a tile. Nothing here decides who sees what. The director asks the
+# declares a tile. Nothing here decides who sees what. The usher asks the
 # authorization graph, per caller, whether that person holds one of the
 # relations in anyOf on the object, and answers with the tiles that survive.
 #
@@ -144,7 +169,7 @@ func Parse(data []byte) (Catalogue, error) {
 		}
 		kept = append(kept, t)
 	}
-	return Catalogue{Tiles: kept}, nil
+	return Catalogue{Tiles: kept, AppStore: c.AppStore}, nil
 }
 
 // URL is <scheme>://<host><path>, with the front page when no path is given.

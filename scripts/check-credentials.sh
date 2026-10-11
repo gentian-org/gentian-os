@@ -226,7 +226,7 @@ main() {
     if [[ ${MISSING} -gt 0 ]]; then
         echo ""
         echo "${RED}Unsatisfied required credentials:${NC} ${UNSATISFIED_REQUIRED[*]}"
-        echo "Supply them through the credential manager, or with the installer for phase: bootstrap."
+        echo "Supply them through the custodian, or with the installer for phase: bootstrap."
         exit 1
     fi
     exit 0

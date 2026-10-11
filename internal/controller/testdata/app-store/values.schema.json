@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gentian App Store chart values",
+  "description": "The App Store app's chart values. Publishing this schema is what makes configuration machine-checkable: a typo fails at install time instead of at pod start.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "api",
+    "web",
+    "existingSecret"
+  ],
+  "properties": {
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Pins the name every object derives from. A ComponentProfile routes to Services by name, so the profile sets this in extraValues and names its backends <fullnameOverride>-api and -web."
+    },
+    "api": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/workload"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "replicaCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "At most one: the API keeps pending store sign-ins, store tokens and in-flight repository credentials in its own memory, and a second replica would not see the first one's."
+            }
+          }
+        }
+      ]
+    },
+    "web": {
+      "$ref": "#/$defs/workload"
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "parentGatewayName": {
+          "type": "string"
+        }
+      }
+    },
+    "existingSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Pattern A: the chart consumes a Secret created by ExternalSecret. Credentials are never chart values. Empty means this component asked the platform for nothing that comes with credentials, so no Secret is written for it and none is mounted.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "type": "boolean",
+          "description": "Local development only. The backend refuses to start with this true in production."
+        },
+        "mode": {
+          "enum": [
+            "pkce",
+            "edge"
+          ],
+          "description": "pkce: the bundle runs the code flow. edge: the platform's Gateway holds the session and forwards the zone's token; the bundle holds nothing."
+        },
+        "issuer": {
+          "type": "string",
+          "description": "The issuer the forwarded token is verified against. The operator sets it under edge."
+        },
+        "clientId": {
+          "type": "string",
+          "description": "The client whose tokens the API accepts: the zone's under edge."
+        },
+        "audience": {
+          "type": "string",
+          "description": "The audience the forwarded token must carry under edge: the director's."
+        },
+        "scopes": {
+          "type": "string"
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Facts of the cluster this component runs in, set by the operator from the profile's valueMapping.platform. Not chosen here.",
+      "properties": {
+        "tenant": {
+          "type": "string"
+        },
+        "kernelDomain": {
+          "type": "string"
+        },
+        "realm": {
+          "type": "string"
+        },
+        "zoneKind": {
+          "enum": [
+            "",
+            "kernel",
+            "tenant"
+          ]
+        },
+        "defaultLanguage": {
+          "type": "string",
+          "description": "Accepted so that a profile mapping it is not refused, since this object admits no unknown key. The app takes the language from the person's browser."
+        }
+      }
+    },
+    "custodian": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where a repository's credential is set. Empty leaves that step of an install answering that it is not configured.",
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "usher": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where the cluster's own view of the tenant's apps is read. Empty leaves progress and the installed view saying it is not configured.",
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "director": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where the director answers: who may install, what is installed, declaring a repository, installing. cluster is the cluster's id; it is never sent to a store.",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "cluster": {
+          "type": "string"
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        }
+      }
+    },
+    "podSecurity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runAsNonRoot": {
+          "type": "boolean"
+        },
+        "runAsUser": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fsGroup": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "host": {
+      "type": "string",
+      "pattern": "^$|^store\\.([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9-]{2,63}$",
+      "description": "This app's own public host, store.<the tenant's base domain>: lower case, no scheme, port or path. The redirect address of a store sign-in is https://<host>/oauth/callback, and the tenant URL stated at sign-in is https://<host without its first label>. Empty leaves sign-in to a store unavailable."
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The store outside the cluster. url is the base address of its API (catalogue.storeUrl on the Cluster claim). Empty means the cluster names no store.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^$|^https://[^\\s/?#]+(/[^\\s?#]*[^\\s/?#])?$",
+          "description": "https, no trailing slash, no query."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "workload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Pinned; never 'latest' for a released chart."
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "resources": {
+          "type": "object"
+        },
+        "securityContext": {
+          "type": "object"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

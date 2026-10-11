@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -32,7 +26,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newOIDCProfile creates a minimal AppProfile that requires OIDC.
+// newOIDCProfile creates a minimal ComponentProfile that requires OIDC.
 func newOIDCProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -110,17 +104,8 @@ func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 	t.Helper()
 	// No portal-public: that client and its openbao-audience mapper are
 	// Composition resources now, so no Job appears for this helper to wait on.
-	for _, suffix := range []string{
-		"kernel-tenant-broker",
-	} {
-		jobName := "keycloak-" + suffix + "-" + tenantName
-		waitFor(t, jobAppearTimeout, func() bool {
-			j := &batchv1.Job{}
-			return testClient.Get(context.Background(),
-				types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, j) == nil
-		})
-		markJobComplete(t, jobName, layout.Namespace(layout.Authentication))
-	}
+	// Nor the kernel broker Job: it is switched off with the kernel identity
+	// provider (kernelBroker), so none appears.
 	// SMTP realm config is only provisioned when cluster SMTP credentials exist.
 	smtpJob := "keycloak-tenant-smtp-" + tenantName
 	j := &batchv1.Job{}
@@ -177,7 +162,6 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "noidc"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No OIDC Co",
-			Domain:      "noidc.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -235,7 +219,6 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "realmtest"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Realm Test Co",
-			Domain:      "realmtest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app1"}},
 		},
 	}
@@ -279,7 +262,6 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "clienttest"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Client Test Co",
-			Domain:      "clienttest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app2"}},
 		},
 	}
@@ -348,7 +330,6 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nopack"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Pack Co",
-			Domain:      "nopack.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-nopack"}},
 		},
 	}
@@ -404,7 +385,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "allready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "All Ready Co",
-			Domain:      "allready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app3"}},
 		},
 	}
@@ -477,7 +457,6 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "admintest"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Admin Test Co",
-			Domain:      "admintest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app-admin"}},
 		},
 	}
@@ -514,8 +493,12 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	if _, ok := envNames["TENANT_ADMIN_USERNAME"]; !ok {
 		t.Error("expected TENANT_ADMIN_USERNAME env var in admin Job")
 	}
-	if _, ok := envNames["TENANT_ADMIN_PASSWORD"]; !ok {
-		t.Error("expected TENANT_ADMIN_PASSWORD env var in admin Job")
+	// No password reaches the Job: the account is activated by link.
+	if _, ok := envNames["TENANT_ADMIN_PASSWORD"]; ok {
+		t.Error("the admin Job must carry no password: the account is activated by link")
+	}
+	if envNames["TENANT_ADMIN_REQUIRE_MFA"] != "true" {
+		t.Errorf("a second factor is required by default, got %q", envNames["TENANT_ADMIN_REQUIRE_MFA"])
 	}
 
 	markJobComplete(t, "keycloak-admin-admintest", layout.Namespace(layout.Authentication))
@@ -545,7 +528,6 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "identdelete"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "identdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app4"}},
 		},
@@ -585,7 +567,6 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "identretain"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "identretain.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app5"}},
 		},

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authz
@@ -32,7 +26,7 @@ type Change struct {
 // Changes returns a page of the store's changelog for one object type, from
 // the continuation token of the previous page, and the token for the next.
 // The last page's token is what to poll with: OpenFGA answers it with the
-// changes since, which is how the shim learns of a revocation or a membership
+// changes since, which is how the bouncer learns of a revocation or a membership
 // change without a push stream (networking.md §4).
 func (c *OpenFGA) Changes(ctx context.Context, objectType, token string) ([]Change, string, error) {
 	q := url.Values{"page_size": {"100"}}

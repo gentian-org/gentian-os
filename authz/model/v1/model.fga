@@ -57,6 +57,14 @@ type cluster
     define can_edit_raw: break_glass          # /v1/files
     define can_audit: auditor or security_officer or admin
 
+    # Kernel and system credentials, asked by the custodian before OpenBao
+    # sees the request. Writing one is administering the cluster. Reading is
+    # never reading the VALUE -- the custodian returns none -- it is seeing
+    # that a credential is required, whether it is set, and who set it, which
+    # is what an auditor is for.
+    define can_write_credential: admin
+    define can_read_credential: can_write_credential or can_audit
+
 type tenant
   relations
     define cluster: [cluster]
@@ -66,14 +74,14 @@ type tenant
     # chain (R4, principle 5), so there is no tuple to forget to remove.
     #
     # operated_by is CONSENT, not structure: this tenant lets the cluster's
-    # administrators act inside it. The director writes it at tenant deploy
-    # and always for tenant:platform; a tenant that administers itself removes
+    # administrators act inside it. The operator writes it when it first
+    # attaches a tenant to the cluster, and always for tenant:platform; a tenant that administers itself removes
     # that one tuple, and every platform-admin verb in it — users, secrets,
     # installs — goes with it. `cluster` above stays: it is what audit and
     # approval derive through, and it is not removable.
     define operated_by: [cluster]
     define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
-    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
+    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter; and :admins where the manifest says so
     define member: [group#member]              # gentian:tenant:<t>:members
 
     # reach — the desktop host at L2. An admin account must get in to
@@ -88,11 +96,21 @@ type tenant
     define can_grant: admin               # AppGrant: integration consent
     define can_manage_users: admin
     define can_approve_privilege: admin   # tenant-scope privilege requests (§ component-profile 3.1)
-    # Publishing to the internet is its own grant. The roles stay distinct,
-    # but most tenants do not staff them separately: at tenant creation the
-    # director writes the admins group into perimeter_approver, and a tenant
-    # that wants the separation removes that one tuple.
-    define can_expose: perimeter_approver
+    # Publishing to the internet is its own grant, asked as its own relation
+    # and never as admin. Three ways to hold it:
+    #
+    #   - a member of the tenant's perimeter group, which exists from the day
+    #     the tenant does;
+    #   - the cluster's administrators, while the tenant is operated by its
+    #     cluster: `admin from operated_by` is the cluster's admin relation
+    #     alone, not the tenant's, and it goes with the consent tuple like
+    #     every other platform-admin verb here;
+    #   - the tenant's own administrators, only where the cluster's
+    #     administrator said so on the tenant's manifest
+    #     (spec.perimeter.adminsApprove): the operator then writes the admins
+    #     group into perimeter_approver, and removes it when the manifest
+    #     stops saying so.
+    define can_expose: perimeter_approver or admin from operated_by
     define can_view: member or admin or can_audit from cluster
 
     # Admin tiles on the desktop. Not an app permission: app#can_use excludes
@@ -100,21 +118,19 @@ type tenant
     # which in tenant-platform would be every tile the console has.
     define can_administer: admin
 
-# A catalogue source is a repository of profile bundles named on the Cluster
-# claim: the store's, or one a platform administrator added. Opening a source
-# to a tenant is that administrator's act (can_configure), recorded as a tuple;
-# an entry of an open source installs without any statement from the store.
-# Nothing is open by default.
-type catalogue_source
-  relations
-    define open: [tenant]                         # written by the director from the Cluster claim
+    # The tenant's own credentials, asked by the custodian. A platform
+    # administrator writes them only through `admin from operated_by`, so a
+    # tenant that withdraws that consent withdraws this with it; the cluster's
+    # auditors still see that they exist and who set them, never what they are.
+    define can_write_credential: admin
+    define can_read_credential: can_write_credential or can_audit from cluster
 
-type catalogue_entry
-  relations
-    define source: [catalogue_source]
-    define entitled: [tenant with grant_valid]   # written by the director from a signed grant
-    define can_install: entitled or open from source   # checked with user = tenant:<t>
-
+# There is no type for a catalogue source and no relation for a tenant's
+# right to an app. A source named on the Cluster claim is offered to every
+# tenant. Installing is asked of the person (tenant#can_install_app); whether
+# the app then arrives is decided where its artefacts are pulled, by the
+# credential the tenant holds for their repository. The platform does no
+# licence gating.
 type app
   relations
     define tenant: [tenant]
@@ -148,10 +164,12 @@ type app
                                                   # admin tiles are tenant#can_administer
     define can_administer: admin
 
-    # Secret writes for this component, checked by the credential manager
-    # before OpenBao sees the request: OpenBao's policy then bounds the PATH,
-    # it does not make the decision (principle 2).
+    # Secret writes for this component, asked by the custodian before OpenBao
+    # sees the request: OpenBao's policy then bounds the PATH, it does not
+    # make the decision (principle 2). Reads follow the tenant's, and are of
+    # a credential's state, never its value.
     define can_write_credential: admin from tenant
+    define can_read_credential: can_read_credential from tenant
 
 type contract
   relations
@@ -183,14 +201,10 @@ type session
   relations
     # A Keycloak session the issuer has ended. Written by the director when a
     # zone client's back-channel logout arrives, removed once that session's
-    # longest token has expired. The shim asks it at L2; because it is a stored
-    # tuple, every shim replica sees it on the ReadChanges poll it already
+    # longest token has expired. The bouncer asks it at L2; because it is a stored
+    # tuple, every bouncer replica sees it on the ReadChanges poll it already
     # runs, and nothing is lost when a replica restarts (AD-13).
     define revoked: [user]
-
-condition grant_valid(current_time: timestamp, expires_at: timestamp) {
-  current_time < expires_at
-}
 
 # Wave 2 (security-gap-closing G9) adds, without changing anything above:
 #

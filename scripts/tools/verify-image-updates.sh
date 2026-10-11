@@ -36,7 +36,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; NC=$'\033[0m'
 
-APP_NS="${GENTIAN_ARGOCD_NAMESPACE:-argocd}"
+APP_NS="${GENTIAN_ARGOCD_NAMESPACE:-kernel-gitops}"
 APP="${GENTIAN_OS_APPLICATION:-gentian-os}"
 ANN="argocd-image-updater.argoproj.io"
 

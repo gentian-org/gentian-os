@@ -1,28 +1,19 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"fmt"
-	"net/url"
-	"strconv"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -39,14 +30,6 @@ type ingressIntent struct {
 	appProfile string
 	profile    *gentianov1alpha1.ComponentProfile
 	ingress    *gentianov1alpha1.ExposureSpec
-}
-
-func appHTTPRouteName(tenantName, appProfile string) string {
-	return fmt.Sprintf("httproute-%s-%s", tenantName, appProfile)
-}
-
-func appBackendTrafficPolicyName(tenantName, appProfile string) string {
-	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
 }
 
 func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
@@ -96,218 +79,6 @@ func pathMatch(t gatewayv1.PathMatchType, value string) gatewayv1.HTTPRouteMatch
 
 func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	return pathMatch(gatewayv1.PathMatchPathPrefix, prefix)
-}
-
-// appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.
-func appHTTPRoutesForIntents(
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	intents []ingressIntent,
-	effectiveDomain, kernelDomain string,
-) []*gatewayv1.HTTPRoute {
-	routes := make([]*gatewayv1.HTTPRoute, 0, len(intents))
-	for _, intent := range intents {
-		routes = append(routes, buildAppHTTPRoute(tenant, nsName, intent, effectiveDomain, kernelDomain))
-	}
-	return routes
-}
-
-func buildAppHTTPRoute(
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	intent ingressIntent,
-	effectiveDomain, kernelDomain string,
-) *gatewayv1.HTTPRoute {
-	host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-	ingress := intent.ingress
-	svcName := ingress.Backend.Service
-	if svcName == "" {
-		svcName = intent.appProfile
-	}
-	svcPort := ingress.Backend.Port
-	if svcPort == 0 {
-		svcPort = defaultServicePort
-	}
-	port := gatewayv1.PortNumber(svcPort)
-
-	rule := gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
-		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{
-				BackendRef: gatewayv1.BackendRef{
-					BackendObjectReference: gatewayv1.BackendObjectReference{
-						Name: gatewayv1.ObjectName(svcName),
-						Port: &port,
-					},
-				},
-			},
-		},
-	}
-
-	if intent.profile != nil && intent.profile.IsAPI() && intent.profile.Spec.Package.API != nil {
-		api := intent.profile.Spec.Package.API
-		switch api.Runtime {
-		case gentianov1alpha1.APIIntegrationRuntimeRedirect:
-			u, err := url.Parse(api.BaseURL)
-			if err == nil {
-				scheme := u.Scheme
-				if scheme == "" {
-					scheme = "https"
-				}
-				hostname := gatewayv1.PreciseHostname(u.Hostname())
-
-				var portVal gatewayv1.PortNumber
-				if u.Port() != "" {
-					p, _ := strconv.Atoi(u.Port())
-					portVal = gatewayv1.PortNumber(p)
-				} else if scheme == "https" {
-					portVal = 443
-				} else {
-					portVal = 80
-				}
-
-				pathType := gatewayv1.FullPathHTTPPathModifier
-				targetPath := u.Path
-				if targetPath == "" {
-					targetPath = "/"
-				}
-				if api.TenantBinding == gentianov1alpha1.APIIntegrationTenantBindingDomain {
-					sep := "?"
-					if strings.Contains(targetPath, "?") || u.RawQuery != "" {
-						sep = "&"
-					}
-					rawQuery := u.RawQuery
-					if rawQuery != "" {
-						targetPath += sep + rawQuery + "&tenantDomain=" + effectiveDomain
-					} else {
-						targetPath += sep + "tenantDomain=" + effectiveDomain
-					}
-				} else if u.RawQuery != "" {
-					targetPath += "?" + u.RawQuery
-				}
-
-				statusCode := 302
-				rule = gatewayv1.HTTPRouteRule{
-					Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
-					Filters: []gatewayv1.HTTPRouteFilter{{
-						Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-						RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-							Scheme:     &scheme,
-							Hostname:   &hostname,
-							Port:       &portVal,
-							StatusCode: &statusCode,
-							Path: &gatewayv1.HTTPPathModifier{
-								Type:            pathType,
-								ReplaceFullPath: &targetPath,
-							},
-						},
-					}},
-				}
-			}
-		case gentianov1alpha1.APIIntegrationRuntimePortalProxy:
-			// The tenant's own desktop, the BFF beside this route in the
-			// tenant's namespace (ui-restructure.md §1) -- not a shared one.
-			portVal := gatewayv1.PortNumber(8000)
-			rule = gatewayv1.HTTPRouteRule{
-				Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
-				BackendRefs: []gatewayv1.HTTPBackendRef{
-					{
-						BackendRef: gatewayv1.BackendRef{
-							BackendObjectReference: gatewayv1.BackendObjectReference{
-								Name: gatewayv1.ObjectName(desktopAPIServiceName),
-								Port: &portVal,
-							},
-						},
-					},
-				},
-			}
-		}
-	}
-	// The component's own host, which is the first gateway exposure.
-	mainIngressSubDomain := ""
-	if gateways := intent.profile.GatewayExposures(); len(gateways) > 0 {
-		mainIngressSubDomain = gateways[0].SubDomain
-	}
-	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress); len(filters) > 0 {
-		rule.Filters = filters
-	}
-
-	rules := []gatewayv1.HTTPRouteRule{rule}
-	if apiRules := appAPIBackendRules(intent.profile, svcPort, kernelDomain, effectiveDomain, intent.ingress); len(apiRules) > 0 {
-		rules = append(apiRules, rules...)
-	}
-	if rootRedirect := appRootRedirectRule(intent.profile, host); rootRedirect != nil {
-		rules = append([]gatewayv1.HTTPRouteRule{*rootRedirect}, rules...)
-	}
-
-	return &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      appHTTPRouteName(tenant.Name, intent.appProfile),
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:           tenant.Name,
-				appLabel:              intent.appProfile,
-				managedByLabel:        managedByValue,
-				gatewayComponentLabel: gatewayComponentApp,
-			},
-		},
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				// An app served on the tenant apex belongs to the apex listener;
-				// anything else is a subdomain covered by the tenant wildcard.
-				// An app on the tenant apex is served by the kernel catch-all
-				// listener (the kernel certificate covers <tenant>.<domain>);
-				// anything deeper needs the tenant certificate.
-				// An app on the tenant apex is served by the kernel catch-all
-				// listener (the kernel certificate covers <tenant>.<domain>);
-				// anything deeper needs the tenant certificate's listener.
-				ParentRefs: func() []gatewayv1.ParentReference {
-					section := tenantGatewayListenerName(tenant.Name)
-					if host == effectiveDomain {
-						section = wildcardListenerName
-					}
-					return tenantGatewayParentRefs(section)
-				}(),
-			},
-			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
-			Rules:     rules,
-		},
-	}
-}
-
-func appRootRedirectRule(profile *gentianov1alpha1.ComponentProfile, host string) *gatewayv1.HTTPRouteRule {
-	target := gentianov1alpha1.ProfileGatewayRootRedirect(profile)
-	if target == "" {
-		return nil
-	}
-	scheme := "https"
-	status := 302
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	port := gatewayv1.PortNumber(443)
-	exactPath := gatewayv1.PathMatchExact
-	rootPath := "/"
-	hostname := gatewayv1.PreciseHostname(host)
-	return &gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{{
-			Path: &gatewayv1.HTTPPathMatch{
-				Type:  &exactPath,
-				Value: &rootPath,
-			},
-		}},
-		Filters: []gatewayv1.HTTPRouteFilter{{
-			Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-			RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-				Scheme:   &scheme,
-				Hostname: &hostname,
-				Path: &gatewayv1.HTTPPathModifier{
-					Type:            pathType,
-					ReplaceFullPath: &target,
-				},
-				Port:       &port,
-				StatusCode: &status,
-			},
-		}},
-	}
 }
 
 func appAPIBackendRules(
@@ -401,30 +172,32 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-// consoleOrigins lists every desktop an app of one tenant may be framed by:
-// the tenant's own console, and the platform's, whose tiles open a tenant's
-// apps too. frame-ancestors is checked against the whole ancestor chain and
-// the top frame is whichever console the user came from, so both are named.
+// desktopOrigins is the desktop an app of one tenant may be framed by: the
+// tenant's own, desktop.<its domain>, and no other. Not the platform's:
+// platform administrators do not open tenants' apps, and a desktop allowed to
+// frame every tenant's pages is one place from which all of them can be
+// overlaid.
 //
 // Both the computed default below and the "portal" token in
 // ingressFrameAncestorsPolicy resolve through here. They used to enumerate the
 // hosts separately, and the one route that opts out of the default (Collabora)
 // lost the origin the user was actually on, and every document open failed
 // with "Failed to load Nextcloud Office" while the server side stayed healthy.
-// A console hostname must reach both policies at once.
-func consoleOrigins(kernelDomain, effectiveDomain string) []string {
-	var origins []string
-	if kernelDomain != "" {
-		origins = append(origins, "https://"+consoleHost(kernelDomain))
+// A desktop's hostname must reach both policies at once.
+func desktopOrigins(effectiveDomain string) []string {
+	// Also when the tenant's domain is the cluster's: the user tenant of a
+	// single-tenancy cluster, whose desktop is desktop.<kernel>.
+	if effectiveDomain == "" {
+		return nil
 	}
-	if effectiveDomain != "" && effectiveDomain != kernelDomain {
-		origins = append(origins, "https://"+consoleHost(effectiveDomain))
-	}
-	return origins
+	return []string{"https://" + desktopHost(effectiveDomain)}
 }
 
 func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
-	origins := consoleOrigins(kernelDomain, effectiveDomain)
+	origins := desktopOrigins(effectiveDomain)
+	// Every host under a domain that is the tenant's alone. Not where the
+	// tenant's domain is the cluster's: the platform's desktop and the
+	// kernel's consoles are under that one too.
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
 	}

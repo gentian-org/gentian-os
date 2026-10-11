@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -25,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +36,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gateways/status;httproutes;httproutes/status,verbs=get;list;watch;create;update;patch;delete
@@ -78,8 +74,8 @@ type GatewayPlatformReconciler struct {
 	Cluster string
 	// KernelRealm is the realm the kernel zone's session is established in.
 	KernelRealm string
-	// EdgeAuthzService is the ext-auth shim's Service in the edge namespace.
-	EdgeAuthzService string
+	// BouncerService is the ext-auth bouncer's Service in the edge namespace.
+	BouncerService string
 }
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -100,7 +96,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "reconcile kernel HTTPRoutes")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode); err != nil {
+	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode, r.kernelRealm()); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -175,12 +171,49 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(zoneSecretPredicate),
 		).
-		// A component's route carries a question the shim's table must hold.
+		// A component's key for the rights check: the bouncer's table must
+		// hold its hash, and stop holding it when the Secret goes.
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetLabels()[rightsCheckerLabel] == "true"
+			})),
+		).
+		// A profile that starts or stops declaring a requirement a key is
+		// given for: the Secret does not change then, and the bouncer's
+		// table and the registrar's list must still follow, because a key
+		// counts only while the profile declares what it is for.
+		Watches(
+			&gentianov1alpha1.ComponentProfile{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
+		// A tenant realm's exchange client secret: the bouncer presents it,
+		// from the one Secret this reconciler gathers them into.
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				_, ok := obj.GetLabels()[exchangeRealmLabel]
+				return ok && obj.GetNamespace() == servicesNamespace
+			})),
+		).
+		// A component's route carries a question the bouncer's table must hold.
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-				return obj.GetLabels()[edgeAuthzRouteLabel] == "true"
+				return obj.GetLabels()[bouncerRouteLabel] == "true"
+			})),
+		).
+		// A publishing proxy coming up or going away: the front page of the
+		// main address follows the website's (mainAddressWebsiteServing).
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetLabels()["app.kubernetes.io/name"] == perimeterProxyAppName
 			})),
 		).
 		Complete(r)
@@ -236,10 +269,20 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 	if err := r.List(ctx, tenantList); err != nil {
 		return fmt.Errorf("list tenants for the edge Gateways: %w", err)
 	}
+	// A published host is the entry's own, which the profile says. Components
+	// are named after their profile, so the install names both.
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return fmt.Errorf("list profiles for the perimeter Gateway: %w", err)
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
 	ann := edgeDNSAnnotations(r.Ingress)
 	for _, desired := range []*gatewayv1.Gateway{
 		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
-		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
+		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, r.kernelRealm(), tenantList.Items, profiles),
 	} {
 		if len(ann) > 0 {
 			if desired.Annotations == nil {
@@ -261,7 +304,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 // the ACME HTTP-01 solver answers and everything else is redirected to https.
 // Under mergeGateways a listener is unique per port and hostname across the
 // class, so :80 lives here and nowhere else.
-func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
+func buildPerimeterGateway(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) *gatewayv1.Gateway {
 	idHost := gatewayv1.Hostname("id." + kernelDomain)
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -278,7 +321,7 @@ func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov
 			Listeners: append([]gatewayv1.Listener{
 				withAllowedRoutes(tlsListener(perimeterIDListenerName, idHost, kernelWildcardTLSSecretName, servicesNamespace), true),
 				withAllowedRoutes(httpRedirectListener(), true),
-			}, perimeterTenantListeners(kernelDomain, tenancyMode, tenants)...),
+			}, perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm, tenants, profiles)...),
 		},
 	}
 }
@@ -301,7 +344,7 @@ func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov
 //
 // The certificate is the tenant's own wildcard, which already covers any
 // subdomain of its domain, so publishing a surface issues nothing new.
-func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) []gatewayv1.Listener {
+func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) []gatewayv1.Listener {
 	var out []gatewayv1.Listener
 	seen := map[string]struct{}{}
 	for i := range tenants {
@@ -309,22 +352,42 @@ func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentia
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		domain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if domain == "" {
-			continue
-		}
+		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
 		for j := range tenant.Spec.Exposures {
-			host := publishedHost(&tenant.Spec.Exposures[j], domain)
+			host := publishedHost(&tenant.Spec.Exposures[j], profiles, zone, kernelDomain)
 			if host == "" {
 				continue
+			}
+			// The certificate that names the host. One directly under the
+			// cluster's domain, or that domain itself, is on the cluster's
+			// own: the bare domain the platform tenant publishes, and every
+			// host of the user tenant of a single-tenancy cluster. Anything
+			// deeper is on the tenant's wildcard.
+			secret, secretNamespace := tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant)
+			if directlyUnder(host, kernelDomain) {
+				secret, secretNamespace = kernelWildcardTLSSecretName, servicesNamespace
 			}
 			if _, dup := seen[host]; dup {
 				continue
 			}
 			seen[host] = struct{}{}
 			out = append(out, withAllowedRoutes(tlsListener(
-				perimeterListenerName(host), gatewayv1.Hostname(host),
-				tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant),
+				perimeterListenerName(host), gatewayv1.Hostname(host), secret, secretNamespace,
+			), true))
+		}
+	}
+	// A tenant's website on the cluster's main address answers on the bare
+	// domain, with the cluster's own certificate. The platform's page is
+	// normally published there already and this adds nothing; where it is
+	// not, the website still needs the listener.
+	if holder := mainAddressHolder(mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode, Now: time.Now(),
+	}); holder != nil {
+		if _, dup := seen[kernelDomain]; !dup {
+			out = append(out, withAllowedRoutes(tlsListener(
+				perimeterListenerName(kernelDomain), gatewayv1.Hostname(kernelDomain),
+				kernelWildcardTLSSecretName, servicesNamespace,
 			), true))
 		}
 	}
@@ -332,21 +395,40 @@ func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentia
 	return out
 }
 
-// publishedHost is where one enablement answers: the vanity host it names, or
-// the entry's own name under the tenant's domain.
+// publishedHost is where one enablement answers, by the same rule the route
+// behind it is written with (exposureHostIn): the listener and the route are
+// two halves of one host and must not each have an opinion about its name.
+//
+// An enablement naming a profile or an entry that does not exist, or an entry
+// that is not a perimeter one, has no host and gets no listener. Nor has an
+// approval of another kind than the entry declares: the approval of an entry
+// behind sign-in that keeps the app's own Authorization header publishes
+// nothing, and neither does one given before the entry asked for more.
 //
 // An expired enablement still gets a listener. A listener with no route
 // behind it serves nothing -- the proxy and the route are what the operator
 // takes down at expiry -- and keeping it means a renewal does not have to
 // wait for the Gateway to be reprogrammed before the link works again.
-func publishedHost(e *gentianov1alpha1.TenantExposure, domain string) string {
-	if e.Host != "" {
-		return e.Host
-	}
-	if e.ExposureName == "" {
+//
+// A component held for an address name the platform keeps (HostReserved)
+// gets no listener either. An exact-hostname listener is preferred over the
+// zone's wildcard, so one for desktop.<tenant> here would take the desktop's
+// host off the authenticated Gateway although nothing is routed behind it.
+func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames, kernelDomain string) string {
+	profile := profiles[e.Install]
+	if profile == nil {
 		return ""
 	}
-	return e.ExposureName + "." + domain
+	if hostnames.Check(e.Install, profile, reservedHostZone(zone, kernelDomain)) != nil {
+		return ""
+	}
+	for i := range profile.Spec.Expose {
+		entry := &profile.Spec.Expose[i]
+		if entry.Name == e.ExposureName && entry.Surface == gentianov1alpha1.SurfacePerimeter && entry.ApprovedAs(e.Kind) {
+			return exposureHostIn(zone, e.Install, entry)
+		}
+	}
+	return ""
 }
 
 // perimeterListenerName is a Gateway listener name derived from the host:
@@ -360,6 +442,12 @@ func perimeterListenerName(host string) string {
 	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
 }
 
+// buildAuthenticatedGateway is the edge behind a session: the catch-all
+// listener with the cluster's own certificate, and a listener per tenant whose
+// hosts are deeper than one label under the cluster's domain. That is every
+// tenant with a domain of its own, and the platform tenant, whose consoles
+// are at <label>.platform.<kernel>. It is not the user tenant of a
+// single-tenancy cluster: its hosts are the catch-all's.
 func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
 	// No apex listener. The catch-all HTTPS listener already serves gtn.host —
 	// the kernel certificate carries it alongside *.gtn.host — and a separate
@@ -372,7 +460,7 @@ func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []genti
 			continue
 		}
 		effectiveDomain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if effectiveDomain == "" {
+		if effectiveDomain == "" || servedByKernelEdge(effectiveDomain, kernelDomain) {
 			continue
 		}
 		nsName := tenantNamespaceName(tenant)
@@ -413,6 +501,15 @@ const (
 // tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
 // own certificate for its subdomains. There is no apex variant: the tenant apex
 // is covered by the kernel certificate and served by the catch-all listener.
+// servedByKernelEdge reports a tenant whose domain is the kernel domain: the
+// user tenant of a single-tenancy cluster. The kernel's catch-all listener,
+// certificate and DNS already cover every name under it, so the tenant gets
+// none of its own -- a *.<kernel> tenant listener would be the more specific
+// match for kernel hosts too, and route them nowhere.
+func servedByKernelEdge(effectiveDomain, kernelDomain string) bool {
+	return kernelDomain != "" && effectiveDomain == kernelDomain
+}
+
 func tenantGatewayListenerName(tenantName string) string {
 	return fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
 }

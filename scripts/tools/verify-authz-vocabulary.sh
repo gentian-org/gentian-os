@@ -49,9 +49,10 @@ done
 while IFS= read -r hit; do
   file="${hit%%:*}"; rel="$(grep -oE 'can_[a-z_]+' <<<"${hit#*:}" | head -1)"
   grep -qx "${rel}" <<<"${model}" || fail "${file#"${ROOT}/"} checks ${rel}, which model ${VERSION} does not define"
-done < <(grep -rnoE '"can_[a-z_]+"' "${ROOT}/internal/director" "${ROOT}/cmd/director" --include='*.go' --exclude='*_test.go' || true)
+done < <(grep -rnoE '"can_[a-z_]+"' "${ROOT}/internal/director" "${ROOT}/cmd/director" \
+  "${ROOT}/internal/registrar" "${ROOT}/cmd/registrar" --include='*.go' --exclude='*_test.go' || true)
 
 if [[ ${status} -eq 0 ]]; then
-  echo "OK — authorization vocabulary: $(grep -cE '^can_' <<<"${model}") can_* relations in model ${VERSION}, documents and director agree."
+  echo "OK — authorization vocabulary: $(grep -cE '^can_' <<<"${model}") can_* relations in model ${VERSION}, documents, director and registrar agree."
 fi
 exit ${status}

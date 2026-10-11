@@ -5,6 +5,25 @@ layer may decide. Companion to [roles-and-authorizations.md](roles-and-authoriza
 (who) and [namespace-cleanup.md](namespace-cleanup.md) (where); the rules
 are AD-1, AD-6 and AD-9 in [architectural-decisions.md](architectural-decisions.md).
 
+## Status against the code, 2026-10-09
+
+This document is a plan. The table says, section by section, what of it the
+code holds. "Built" means the code and its tests exist; most of it is built,
+not yet run on a cluster. What is built is described in
+[security.md](../design/security.md), [routing.md](../design/routing.md) and
+[mail.md](../design/mail.md), and those are the documents to read for how it
+works.
+
+| Section | Built | Design only, or built differently |
+| --- | --- | --- |
+| §1 One address, two edges | Two Gateways, `authenticated` and `perimeter`, in `kernel-edge` on one Envoy fleet. Perimeter paths on an app's own host, answered by a publishing proxy in `tenant-<t>-dmz`. The identity provider's realm endpoints and the ACME path as the kernel's two surfaces without a session | TCP and UDP listeners on the perimeter Gateway: mail does not pass the Gateway (note in §5), and neither TURN nor federation on its own port exists. The director has no address on the Gateway (`api.<kernel>` in the diagram). A web application firewall in the proxy image. The diagram's box for Postfix and a Dovecot proxy in the system DMZ |
+| §2 Layers | L0: a limit on sign-in posts at the Gateway, and the publishing proxy's limits per client address. L1: the session per tenant zone. L1′: the proxy removes every identity header and holds a request to one reading of its path, a method, a size and a time. L2: the bouncer, its cache and its eviction. L3, including the sign-in sidecar for an app with no single sign-on of its own. L5: tenant namespaces, the shared stores, the mail servers, the model gateway; the kernel namespaces for ingress, off by default (`KERNEL_NETWORK_POLICIES`) | L0: no limit on a route behind a session or on the token endpoint, and none shared between Envoy pods (that needs a rate limit service). L1: no verification of a bearer token a client sends itself. An app's own bearer token is kept only on an entry that declares `clientAuthorization: app` and that the tenant's perimeter approver approved, with the session still required (AD-13); everywhere else it is removed at the Gateway. L1′: the proxy verifies nothing. It passes the caller's `Authorization` header to the app on an approved entry of `authMode: app` and removes it on every other; `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema until something verifies them (AD-6). L2: nothing denies a session by a recorded revocation (AD-13 withdrew that). L4: the MCP gateway and exchanged tokens; a contract between two apps is built. L5: no kernel or system namespace restricts egress, apart from the mail proxy's |
+| §3 Route classes | Tenant app in a browser, tenant desktop, platform desktop, the user tenant of a single-tenancy cluster, the kernel's own tools, the identity provider, perimeter over HTTP, ACME | A tenant app's API with `bearer` or `jwt` verified at the edge (withdrawn from perimeter entries, AD-6). The director's own host. Perimeter over TCP and UDP through the Gateway. Limits per user name at the identity provider (Keycloak's own brute-force detection is on) |
+| §4 Sessions, caching, logout | One client and one session per tenant zone; the token forwarded only where the entry says `forwardToken`; the decision cache per person, session and route, evicted on OpenFGA's change log; refusal when OpenFGA cannot be reached | The paragraph on logout is withdrawn by AD-13: nothing records a revoked session, and a session ended at Keycloak ends at the edge when its access token runs out. Membership reaches OpenFGA through the operator, not the director. No code revokes a person's sessions when their groups change. No cap on a WebSocket's duration |
+| §5, §6 Stress test | The rows that rest on the above: sharing inside a tenant, public links and public paths through the proxy, sync clients and API callers with a credential the app issued (`authMode: app`, cookies excepted), the bare domain, the desktops, app to app and app to a store, a domain of a tenant's own, certificates | Credentials checked at the proxy (`basic`, `signature`): withdrawn from the schema until built. A client that needs the app's cookies on a public address. Bearer routes for automation and agents. TURN and conferencing media. Federation on a port of its own. Mail as these rows draw it: see the note below the table |
+| §7 What this changes in the tree | The two Gateways, certificates by DNS-01, DNS by external-dns, routes and policies from `expose[]`, the bouncer | A back-channel logout address per zone client (withdrawn with §4). The mail split as written (note there). `system-turn` |
+| §8 Exposure management | The tenant's enablement, written through the director under `can_expose` with a review date and an optional expiry; an expired one is treated as absent. What a tenant's apps ask to publish as a read, approval that refuses an entry no installed app declares, withdrawal, on the command line and in the administration console. §8.7 | The cluster's ceiling (`Cluster.spec.exposure`). Structured proxy logs, the log views and their API. The drift job. The `exposure-policy` contract. Notices ahead of a review or an expiry |
+
 ## 1. One address, two edges
 
 The cluster has one external address (`networkMode: static-ip`) or one
@@ -73,7 +92,7 @@ flowchart TB
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
         AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
-        SHIM["ext-auth shim"]
+        BOUNCER["ext-auth bouncer"]
         ACME["ACME HTTP-01 solver"]
         PG["perimeter Gateway<br/>L0 only<br/>own-hostname surfaces<br/>rate and body limits<br/>TCP/UDP listeners"]
     end
@@ -83,7 +102,7 @@ flowchart TB
     end
 
     subgraph TPLAT["tenant-platform — the platform is a tenant (AD-10)"]
-        CON["platform desktop BFF<br/>console.&lt;kernel&gt;, kernel-realm session"]
+        CON["platform desktop BFF<br/>platform.&lt;kernel&gt;, kernel-realm session"]
     end
 
     subgraph SHR["shared-&lt;app&gt;"]
@@ -132,8 +151,8 @@ flowchart TB
 
 
     NET -->|"https, surface: gateway"| AG
-    AG -->|"headers or token"| SHIM
-    SHIM -->|"Check"| FGA
+    AG -->|"headers or token"| BOUNCER
+    BOUNCER -->|"Check"| FGA
     AG --> DESK
     AG --> SAPP
     AG --> CON
@@ -168,7 +187,7 @@ flowchart TB
     S2 ~~~ TURN
     S2 ~~~ PX
     PX ~~~ S4
-    SHIM ~~~ S3
+    BOUNCER ~~~ S3
     S3 ~~~ DESK
     S3 ~~~ SAPP
     S3 ~~~ CON
@@ -183,7 +202,7 @@ flowchart TB
     classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
     classDef ew fill:#80808026,stroke:#9a9a9a
     classDef spacer fill:none,stroke:none
-    class AG,SHIM,DESK,APP,PEER,SAPP,CON,DIR,LA auth
+    class AG,BOUNCER,DESK,APP,PEER,SAPP,CON,DIR,LA auth
     class PG,PX,MTA,TURN,ACME,LP perim
     class KC,FGA,DB,LLM,STORE,LE ew
     class S2,S3,S4,S5 spacer
@@ -222,10 +241,10 @@ higher one.
 
 | # | Layer | Question | Enforced by | Identity it sees |
 | --- | --- | --- | --- | --- |
-| L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | Envoy listener, `BackendTrafficPolicy` | none |
-| L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc` (one confidential client per tenant zone in that tenant's realm; the kernel realm for `console.<kernel>`) and `SecurityPolicy.jwt` for bearer clients | Keycloak token: `sub`, realm, groups |
-| L1′ | Perimeter authentication | is this credential, signature or source valid? | the **publishing proxy** in the DMZ — a named enforcement point (principle 3): `none`, `basic` and `signature` are verified here and nowhere else. It strips every inbound identity header before forwarding and sets only its own, which is what lets the app trust one at all | the entry's `authMode` credential, or none |
-| L2 | Reachability | may this person reach this component at all? | ext-auth shim → OpenFGA `can_use` on `app` over the stored membership projection (AD-12); cached per `(sub, sid, route)`; a token whose `sid` the shim has seen revoked is denied here | the same token |
+| L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | Envoy listener, `BackendTrafficPolicy`. **Built in part**: a limit per client address on sign-in posts, and the publishing proxy's own limits for a perimeter entry ([security.md §2.14](../design/security.md)); routes behind a session carry none | none |
+| L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc` (one confidential client per tenant zone in that tenant's realm; the kernel realm for the platform tenant's zone, `platform.<kernel>` and the hosts below it, and for the kernel UIs) and `SecurityPolicy.jwt` for bearer clients | Keycloak token: `sub`, realm, groups |
+| L1′ | Perimeter authentication | is this credential, signature or source valid? | the **publishing proxy** in the DMZ — a named enforcement point (principle 3): `none`, `basic` and `signature` were to be verified here and nowhere else (**design only**, and `basic` and `signature` are withdrawn from the schema until that exists). **Built**: `none` forwards the declared paths with no credential, and `app` passes the caller's `Authorization` header on for the app alone to check, at a lower rate per client address, once the entry is approved as that. It strips every inbound identity header before forwarding and sets only its own, which is what lets the app trust one at all (**built**) | the entry's `authMode` credential, or none |
+| L2 | Reachability | may this person reach this component at all? | ext-auth bouncer → OpenFGA `can_use` on `app` over the stored membership projection (AD-12); cached per `(sub, sid, route)`; a token whose `sid` the bouncer has seen revoked is denied here | the same token |
 | L3 | App session and authorization | what may they do inside? | the app: identity headers set by the gateway, or its own silent SSO login with **its own client and audience** and its own cookie, capped by the profile's `sessionMaxAge`. The edge token itself is forwarded only on a route that declares `forwardToken` — the desktop | identity headers, or the app's own session |
 | L4 | Delegated access | may this agent or peer act, and for whom? | MCP gateway and contract bindings: RFC 8693 exchanged tokens carrying `act`; per-tenant contract credentials | agent identity + delegating human |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy derived from `requires` and `integrations`; Kyverno | ServiceAccount, namespace labels |
@@ -237,6 +256,53 @@ perimeter route skips L1–L2 by declaration**: its `authMode` is the whole
 of its authentication, which is why the field is mandatory and `none` is a
 word someone wrote.
 
+**L5 at the shared stores is one rule with two sides.** A tenant's namespace
+denies egress by default and an app's `kernel-access-<app>` policy opens the
+store its profile declares, on that store's port. Each store -- PostgreSQL,
+MariaDB, Redis, MinIO -- carries the other side, a `store-ingress` policy on
+its server's pods: tenant namespaces, the pods of its own namespace (the
+operator's provisioning and destroy Jobs, and the steps of a backup and a
+restore that work on that store), and by name the operator, for MinIO the
+backup and restore pods of the database and identity namespaces and, for
+PostgreSQL's instance manager, CloudNativePG's operator. The server's side keeps out
+everything that is not a tenant namespace or one of those; the tenant's side
+keeps out the apps that declared no such store. The table of who reaches
+which port, and what stays closed, is
+[security.md §2.7](../design/security.md).
+
+The kernel's own PostgreSQL carries the same kind of policy: Keycloak's and
+OpenFGA's namespaces, the registrar and the operator by label, tenant
+namespaces for the desktop of the tenant that adopts the kernel realm, and
+its own namespace. So do the two mail servers, both of which run in
+`system-mail`, and neither of which faces the internet any more: 25, 587
+and 993 are taken by a proxy in `system-mail-dmz` that holds no mail and no
+key and passes each connection on with the client's address. As built it is
+a TCP proxy in front of the one Postfix, not Postfix itself in the DMZ as §5
+and §7 below have it. Dovecot's delivery port and its authentication service
+admit Postfix alone, the ports that read the proxy's header admit the proxy
+alone, and the ports pods use admit tenant namespaces. The table is in
+[security.md §2.8](../design/security.md).
+
+The model gateway is the same rule as a store. An app that declares
+`requires.services.llm` is opened `system-llm` on the gateway's port by its
+`kernel-access-<app>` policy; the gateway's own policy admits tenant
+namespaces, the operator and the Gateway's Envoy pods (its console) on that
+port, and the gateway's database, cache and mock model server each admit the
+gateway alone ([security.md §2.9](../design/security.md)). An app that did
+not declare the gateway has no path to it and no key for it.
+
+The kernel namespaces carry the server's side for everything in them: each
+refuses an ingress that an inventory of callers does not list -- OpenFGA
+admits the programs that ask it, the bouncer's authorization port the Envoy
+proxies alone ([security.md §2.13](../design/security.md)). **Built**, for
+ingress, and off by default (`KERNEL_NETWORK_POLICIES`) until a cluster has
+run it.
+
+Still open at L5: the app-facing mail ports are not narrowed to the apps
+that declared mail, a real vLLM instance has no policy, and no kernel or
+system namespace denies egress -- a pod there is stopped at a server or at a
+kernel namespace by its rules and on the way out by nothing.
+
 ## 3. Route classes
 
 | Class | Hostname | `authMode` | L1 | L2 | Backend |
@@ -245,7 +311,8 @@ word someone wrote.
 | Tenant app, API | same host, API paths, or an `api.` host | `bearer` / `jwt` | JWT verified, no redirect | `can_use` | app |
 | Tenant desktop | `desktop.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_enter` on `tenant:<t>` — members and admins both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | desktop BFF in `tenant-<t>` |
 | Shared app | `<app>.<t>.<kernel>` per granted tenant | `oidc` | tenant-realm session | `can_use` via the tenant's grant | instance in `shared-<app>` |
-| Platform desktop (console) | `console.<kernel>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | desktop BFF in `tenant-platform` (AD-10) — a tenant desktop whose realm is the kernel realm |
+| Platform desktop | `platform.<kernel>`; the platform's admin console at `admin.platform.<kernel>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | desktop BFF in `tenant-platform` (AD-10) — a tenant desktop whose realm is the kernel realm. `admin.platform.<kernel>` is served on a listener for `*.platform.<kernel>` with a wildcard of its own, issued like a tenant's |
+| Single-tenancy cluster: the user tenant | `desktop.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` | `oidc` | session in realm `user` | as a tenant's | components in `tenant-user`, on the catch-all listener and the cluster's own certificate. The kernel's own labels at that level are refused to it (`HostReserved`) |
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
 | Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/auth/admin/*` on `id.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`, or `can_audit` for read-only tools | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
 | Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 **Except `/auth/admin/*`**, which is the same hostname behind the kernel-realm session and `can_configure` — see below. |
@@ -293,7 +360,16 @@ policy. `id-admin.<kernel>` is retired.
   to the director — and gives every other backend identity headers it sets
   after stripping inbound ones. An app that needs a session of its own runs a
   silent login with its own client and audience, exactly as it would on a
-  direct link. The desktop BFF in
+  direct link. **A backend that should not have to believe a header** sets
+  `exchangeToken` on its entry instead. The bouncer then exchanges the
+  session's token at the tenant's realm (RFC 8693) for one whose audience is
+  that app and nothing else, and puts it in the request's `Authorization`
+  header. The exchange is asked by a client of the realm that exists for it,
+  `gentian-edge-exchange`: it signs nobody in, has no token of its own, and
+  is admitted only for a session's token that names it. One exchange serves
+  a session for the token's lifetime, and a request for which none can be
+  had is refused, never let through with the session's token or with none.
+  The desktop BFF in
   particular holds no OIDC client secret: a second confidential client in the
   same realm is a second session with its own lifetime and its own logout,
   and in `tenant-platform` it would put a kernel-realm client secret inside a
@@ -302,38 +378,41 @@ policy. `id-admin.<kernel>` is retired.
   token. Keying on `jti` would make every refresh a cache miss, so load would
   scale with refreshes rather than logins, and no entry could be evicted for a
   session nothing can name. Load on OpenFGA is logins × apps. Eviction, not
-  expiry, is what makes a change visible: the shim polls OpenFGA's
+  expiry, is what makes a change visible: the bouncer polls OpenFGA's
   `ReadChanges` changelog on an interval and evicts by subject. OpenFGA has no
   push stream, so that interval is the stated bound on how long a revoked
   right survives.
-- **Logout is enforced at the shim and recorded by the director.** Envoy
+- **Logout is enforced at the bouncer and recorded by the director.** Envoy
   Gateway's OIDC filter implements only the local `logoutPath`: there is no
   back-channel endpoint, and the edge session is a signed cookie in the
   browser, so there is no server-side session for a logout token to end. The
-  shim is the only component in every request path, so it is where revocation
+  bouncer is the only component in every request path, so it is where revocation
   is *enforced* — but it runs as several replicas and must not keep state of
   its own, or a logout delivered to one replica is unknown to the others and
   lost on restart. So Keycloak's back-channel logout URI for each zone client
   points at the **director**, which already receives Keycloak's events and is
   the store's only writer: it writes `session:<sid>#revoked` and removes the
-  tuple once that session's longest token has expired. Every shim replica
+  tuple once that session's longest token has expired. Every bouncer replica
   sees it on the `ReadChanges` poll it already runs, evicts the session's
   cached decisions, and denies the `sid` at L2. The poll interval, kept to a
   second or two, is the stated bound on how long a logged-out session
   survives. Every app in the zone becomes unreachable whatever its own cookie
   says, and which of thirty apps implement back-channel logout stops
   mattering. Refresh tokens are session-bound and die with the Keycloak
-  session; offline tokens are disabled, because they would survive it.
+  session; offline tokens are to be disabled, because they would survive it
+  (an aim, not built: AD-12).
 - **Platform rights follow the store; app rights follow the token.**
-  Membership reaches OpenFGA from Keycloak's events through the director
+  Membership reaches OpenFGA from Keycloak's events through the operator
+  (**changed 2026-10-09** from "through the director", AD-12)
   sub-second on the normal path, and within one rolling sweep in the worst
-  case (AD-12; the bound is in authorization-model.md §2), and the shim evicts its cached decisions on the
+  case (AD-12; the bound is in authorization-model.md §2), and the bouncer evicts its cached decisions on the
   `ReadChanges` poll, so a revoked platform right is gone within one poll
   interval without any token being touched. Apps, however, read groups from
-  their own tokens, so for *their* rights the rule stays: **a membership
-  change revokes the user's Keycloak sessions.** The operator, on applying
+  their own tokens, so for *their* rights the aim stays: **a membership
+  change revokes the user's Keycloak sessions.** Not built, and stated as an
+  aim since 2026-10-09 (AD-12). As drawn, the operator, on applying
   a group change, calls the admin API's logout for that user; the back-channel
-  logout reaches the director, the shim denies the revoked `sid` at L2; the next
+  logout reaches the director, the bouncer denies the revoked `sid` at L2; the next
   request is a silent re-login with the new groups. The hard bound for
   app-level rights is the **app's own session**, not the access token: L1
   governs whether a request arrives, and does not refresh the group model an
@@ -359,15 +438,16 @@ design cannot do for it.
 | **Public share link** | `/s/<token>` on the app host → DMZ proxy (`none`) → app | the app: the token in the URL is the capability | the edge cannot make a capability URL identified; it can throttle, log, size-limit and refuse malformed requests |
 | **Password-protected share** | same path; the password prompt is the app's | the app | same |
 | **Public WebDAV of a share** | `/public.php/webdav` → DMZ (`none`) | the app | same |
-| **Desktop and mobile sync, calendars, contacts** | `/remote.php/dav/*` → DMZ (`basic`) with an app password from the broker; the proxy validates before forwarding | the broker issued the credential; the app scopes it | a bearer secret outside the session model; expiry and revocation through the broker are its only controls |
+| **Desktop and mobile sync, calendars, contacts** | **Built**: `/remote.php/dav/*` → DMZ (`authMode: app`), the app password passed to the app, which checks it. **Design only**: an app password from a broker that the proxy validates before forwarding (`basic`, withdrawn until then) | built: the app issued the credential and checks it. Design: the broker issued it; the app scopes it | built: the platform does not know the caller, and a removed person's app password works until the app revokes it; a client that needs the app's cookies does not work. Design: expiry and revocation through the broker |
 | **Conference call, members only** (Talk, Element Call, Jitsi) | signalling: the app host over the authenticated edge, WebSocket upgrade under L1–L2. Media: WebRTC over UDP to TURN/SFU in `system-turn` — a DMZ-tier service with its own `UDPRoute`, TURN credentials minted per session with a short HMAC lifetime | L1–L2 for signalling; the app for who is in the room; TURN checks only the time-limited credential | media never passes the gateway; TURN is all edge and holds no data, so its only defence is the credential's lifetime and the app's room membership |
 | **Conference call with an external guest** | a guest link is a perimeter surface (`none`) for the app's guest signalling paths; the app issues a guest identity for that room; TURN as above | the app: room, guest name, host approval | the guest is unidentified to the platform by design; rate limits and the app's lobby are the controls |
 | **Matrix federation** | `matrix.<t>.<kernel>:8448` on the `perimeter` Gateway, `authMode: signature`; `/.well-known/matrix/*` on the app host as a DMZ path (`none`) | Synapse verifies the peer server's signature | federation is a trust decision inside the app; the edge only rate-limits |
-| **Inbound webhook** (payment provider, git host) | a perimeter path with `authMode: signature`; the proxy verifies the HMAC before the app sees the body | the proxy, then the app | replay protection is the app's unless the proxy keeps nonces |
+| **Inbound webhook** (payment provider, git host) | **Design only**: a perimeter path with `authMode: signature`; the proxy verifies the HMAC before the app sees the body (withdrawn from the schema until built). **Built**: a perimeter path with `authMode: none`, or `app` where the provider signs in the `Authorization` header; the app verifies | design: the proxy, then the app. Built: the app | replay protection is the app's unless the proxy keeps nonces |
 | **Automation or agent calling an app API** | `authMode: bearer` on the authenticated edge: JWT verified, no redirect; ext-auth `can_use`; the token is an exchanged one carrying `act` | L2 for reach, L4 for the ceiling | none new |
 | **Agent using tools over MCP** | the MCP gateway, itself an authenticated-edge route with `bearer` | L4 per tool call | none new |
-| **Tenant admin in the console** | `desktop.<t>.<kernel>` → desktop BFF → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
-| **Platform admin** | `console.<kernel>` → the platform tenant's desktop BFF in `tenant-platform`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
+| **Someone types the cluster's bare domain** | Multi-tenancy: `<kernel>` → the concierge, a perimeter surface of the platform tenant (`tenant-platform-dmz`, `authMode: none`), which asks for an address and forwards to that address's desktop; `www.<kernel>` and `desktop.<kernel>` redirect to it. Single-tenancy: the edge redirects `<kernel>/` and `www.<kernel>` to the user tenant's desktop, `desktop.<kernel>` (or its custom domain), once that tenant is Ready; the concierge stays published underneath for `/branding/`. If the user tenant put a website on the main address (§8.7), the bare domain shows it, `www` leads to it, and `<kernel>/sign-in` still leads to the desktop | nobody: neither the page nor the redirect holds a session or asks the server anything | which of the two it is is the cluster's tenancy mode, not a count of tenants; before the user tenant of a single-tenancy cluster is Ready the bare domain shows the form |
+| **Tenant admin in the console** | `admin.<t>.<kernel>` → the administration console's backend → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
+| **Platform admin** | `platform.<kernel>` → the platform tenant's desktop BFF in `tenant-platform`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
 | **App to system service** (database, S3, LLM) | Service-to-Service on the contract port | L5; the granted credential | none |
 | **Outbound mail from an app** | app → Postfix in `system-mail-dmz` on the relay port; DKIM signed by the milter in `system-mail` (keys stay there); out on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |
@@ -377,6 +457,25 @@ design cannot do for it.
 | **Vanity domain, embedded in the desktop** | works only if the desktop is on the same site — `desktop.example.org` — because the edge cookie is per site | same | a desktop on `<kernel>` cannot embed an app on `example.org` (third-party cookie); serve the desktop on the vanity host |
 | **Logout from the desktop** | RP-initiated logout at Keycloak → back-channel to the zone's edge client → session gone | L1 | app cookies live on, unreachable |
 | **Renewing a certificate** | `/.well-known/acme-challenge/*` on port 80 to the solver | none | the only perimeter path the kernel owns; listed so it is never "forgotten" |
+
+**Note, 2026-10-09: mail was built differently from the three mail rows
+above and from §7.** Postfix did not move into `system-mail-dmz`. Postfix and
+Dovecot both run in `system-mail` and neither has a load balancer of its own.
+What faces the internet is a TCP proxy (HAProxy) in `system-mail-dmz` for
+ports 25, 587 and 993, behind the one load balancer mail has. It holds no
+mail, no user, no certificate and no key; TLS passes through it and ends at
+the servers; it hands them the client's address in a PROXY-protocol header,
+on ports of theirs that require the header and admit the proxy alone. This is
+what AD-9 asks for, a stateless edge holding nothing: a mail server in the
+DMZ would keep a queue, which is stored mail, in the namespace that faces the
+internet. The proxy is not a listener of the Gateway's, because a TCP
+listener there has no limit per client address and would open a path from
+the edge namespace to the mail servers. Built, and held by a test that runs
+the rendered proxy in front of the rendered servers; not yet run on a
+cluster. Two things the rows above draw are not built: the three ports are
+open whenever the cluster runs its own mail, not per tenant on a perimeter
+approver's word, and the DKIM signer runs with Postfix, not as a separate
+service. [mail.md](../design/mail.md) describes what is built.
 
 ## 6. What the stress test found
 
@@ -466,7 +565,7 @@ design cannot do for it.
   `HTTPRoute` in the instance's namespace plus a `SecurityPolicy` for its
   `authMode`; per enabled `surface: perimeter` entry, an `HTTPRoute` in
   `tenant-<t>-dmz` targeting the proxy.
-- The ext-auth shim is the new enforcement point of
+- The ext-auth bouncer is the new enforcement point of
   [security-gap-closing.md](security-gap-closing.md) G3; the per-zone edge
   OIDC clients are created alongside the app clients, each with its
   back-channel logout URI pointing at the director, not at the Gateway (§4).
@@ -477,6 +576,10 @@ design cannot do for it.
   only while IMAP exposure is enabled). Postfix stays a single instance;
   DKIM moves from the MTA to a milter inside. `system-turn` is added when
   the first conferencing profile declares it as a requirement.
+
+  **Note, 2026-10-09:** not built this way. Postfix and Dovecot stay in
+  `system-mail`, and `system-mail-dmz` holds a TCP proxy that keeps nothing;
+  the note at the end of §5 says what was built and why.
 
 ## 8. Exposure management
 
@@ -583,7 +686,7 @@ API: `GET /v1/tenants/{t}/exposure` (summary),
 under `/v1/clusters/{c}/exposure`. Authorization: `can_view` on the
 tenant for the tenant views and `can_audit` on the cluster for the rest —
 reads never use the write verb, or a tenant administrator could not see an
-inventory they are not the one to change (operator-split-plan.md §3.5).
+inventory they are not the one to change (operator-split-plan.md §5).
 `can_expose` gates the write that creates or removes an enablement.
 
 ### 8.5 Optional contract: `exposure-policy`
@@ -623,3 +726,72 @@ history of who kept a surface open is as complete as the history of who
 opened it. A cluster with no expiry policy loses nothing but this bound —
 an opaque surface is then exposed for as long as someone remembers to turn
 it off, which is the state every platform without the policy is in today.
+### 8.7 A website on the cluster's main address
+
+On a single-tenancy cluster the user tenant may publish a website on the
+bare domain. It is an ordinary perimeter surface with one more word on it,
+`apex: true`, said twice: by the profile's author on the entry, and by the
+perimeter approver on the enablement. Routes, the table of addresses and the
+conditions are in [routing.md §5](../design/routing.md#5-redirects-and-url-control).
+This section is what it means for the perimeter. All of it is built.
+
+**What it is.** A proxy in `tenant-user-dmz`, like every perimeter surface,
+and a route on the perimeter Gateway's listener for the bare domain. No
+session, no identity headers, no token. The proxy removes `Cookie` and
+`Authorization` from every request and `Set-Cookie` from every answer, as it
+does for every perimeter surface. For this surface it also answers `404` on
+the platform's paths and adds `X-Content-Type-Options: nosniff`. It adds no
+other header: a content security policy is the website's own business.
+
+**The platform's paths.** `/branding/`, `/sign-in`,
+`/.well-known/acme-challenge/` and `/.well-known/pki-validation/` stay the
+platform's. The last two matter because of how certificates are issued:
+port 80 redirects to https, and a certificate authority follows that
+redirect. A website that answered a challenge path could obtain a
+certificate for the cluster's address from any authority. The rest of
+`/.well-known/` is the website's.
+
+**Who approves.** The tenant's perimeter approver (`can_expose`), as for
+every surface. Nothing weaker was added and nothing stronger: the cluster's
+platform admin is not asked. Only the user tenant of a `single` cluster can
+ask, for one surface at a time. On a `multi` cluster the main address belongs
+to all tenants and stays the sign-in form; a tenant there publishes under its
+own hosts or on a domain of its own.
+
+**Cookies: what is safe and what is not.** The platform's session cookies
+are set per host and without a `Domain`. The bare domain has none, the
+website's server receives none, and it cannot set any through its answers.
+
+One thing remains, and the proxy cannot stop it. A script running in a page
+on `<kernel>` can set a cookie for the whole domain (`Domain=<kernel>`). The
+browser then sends that cookie to `desktop.`, `admin.`, `platform.` and
+`id.<kernel>` too, next to the real one. The Gateway reads the first cookie
+of a name it finds (Envoy 1.39's OAuth2 filter). What follows from that:
+
+| Can the website's page... | Answer |
+|---|---|
+| read somebody's session, or forge one | **No.** The cookies are encrypted and signed with a key the page does not have, and the signature covers the host. |
+| stop a visitor from signing in | **Yes.** A cookie with the right name and a wrong value makes the Gateway reject the session. It lasts until the visitor clears their cookies or the planted cookie expires. |
+| sign a visitor in to an account the page's author chose | **Yes.** The author can plant the cookies of a session of their own. The visitor then works in that account without having chosen it. Their own account is not exposed, but what they type goes to the wrong one. |
+
+This is not new with the website. Every host under the cluster's domain that
+serves pages a tenant writes can do the same, and on a single-tenancy cluster
+every app is such a host. What the website adds is exposure: it is public,
+it often has more editors, and public websites commonly load scripts from
+third parties.
+
+What would close it is the `__Host-` cookie name prefix: browsers refuse a
+`Domain` on such a cookie, so a planted one is never sent. It is not a
+configuration change today and was not built:
+
+- Envoy Gateway 1.9.2 lets a policy name two of the seven cookies (the access
+  and ID token). The other five have fixed names (`OauthHMAC-`,
+  `OauthExpires-`, `RefreshToken-`, `OauthNonce-`, `CodeVerifier-`), and two
+  of those are set with a path other than `/`, which the prefix forbids.
+- Keycloak's cookie names on `id.<kernel>` are fixed in its source.
+
+The choices for an owner who does not accept the risk: keep the website off
+the cluster's domain (a domain of its own), or allow on the main address only
+a website whose scripts the organisation controls. A website can protect its
+visitors itself with a strict content security policy and no third-party
+scripts.

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -29,7 +31,7 @@ import (
 //
 // There is deliberately no credential field. The keys for an endpoint are a
 // CredentialRequirement, which the operator derives from this policy and the
-// credential manager fills: the requirement validates the keys before anything
+// custodian fills: the requirement validates the keys before anything
 // depends on them, rotation is one write at one path, and ESO's sync status is
 // the satisfaction probe. A Secret reference here would have been a second,
 // hand-managed way to hold the same credential with none of that.

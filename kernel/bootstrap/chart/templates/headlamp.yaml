@@ -19,7 +19,7 @@ spec:
         replicaCount: 1
         ingress:
           enabled: false
-        {{- if .Values.headlamp.oidc.enabled }}
+        {{- if eq (toString .Values.headlamp.oidc.enabled) "true" }}
         config:
           # Not in-cluster: in that mode Headlamp talks to the API server
           # directly, and the API server has no reason to trust the kernel

@@ -83,12 +83,23 @@ desktop:
 
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
-# The administration console's chart, published by gentian-apps. D-02 resolves
-# the moving prerelease for the branch into the immutable version it names and
-# passes that as chartVersion; empty falls back to the moving one, which
-# installs but never upgrades.
+# The administration console's chart, published by gentian-ui beside the
+# desktop's. D-03 resolves the moving prerelease for the branch into the
+# immutable version it names and passes that as chartVersion; empty falls back
+# to the moving one, which installs but never upgrades.
 adminConsole:
-  chartBranch: main
+  chartBranch: develop
+  chartVersion: ""
+# The concierge's chart, from the same repository and branch, pinned the same
+# way.
+concierge:
+  chartBranch: develop
+  chartVersion: ""
+# The App Store app's chart, from the same repository and branch, pinned the
+# same way. The profile is always shipped; whether a tenant gets the component
+# is the operator's to decide (licence reporting on, and a store named).
+appStore:
+  chartBranch: develop
   chartVersion: ""
 
 operator:
@@ -101,6 +112,29 @@ operator:
   # itself.
   tag: ""
 
+# The licence report (docs/design/operations.md): once a day the operator
+# tells an address what this cluster runs -- its tenants, counts of accounts,
+# and the apps installed through the App Store. No personal data, and nothing
+# on the cluster depends on the answer.
+licenceReport:
+  # On unless the installer is told otherwise (--no-licence-report, or
+  # GENTIAN_NO_LICENCE_REPORT=1 in install.env). Off, nothing is sent and the
+  # App Store is not offered.
+  enabled: "true"
+  # The default report address. This is the one place it is written: the
+  # operator and its chart name no address of their own, and a cluster
+  # installed any other way reports nowhere. It can be changed
+  # (GENTIAN_LICENCE_REPORT_URL in install.env, which arrives as `url` below)
+  # or turned off (above).
+  defaultUrl: https://licence.aluvian.io/api/v1/licence-reports
+  # Another address for this cluster, from the installer. Empty is the default.
+  url: ""
+
+# The ClusterIssuer tenant wildcard certificates are requested from. The
+# installer sets it to the issuer it created; empty leaves the stage
+# profile's, or the operator chart's default.
+tenantDNS01ClusterIssuer: ""
+
 # Which mail stack this cluster runs, from the Cluster claim
 # (spec.mail.serviceMode). `system` deploys Postfix and Dovecot into the system
 # tier; `external` relays through a provider and deploys neither.
@@ -108,6 +142,22 @@ mailServiceMode: external
 # The name mail leaves from, when the cluster sends from an address it owns
 # (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""
+
+# Whether the shared stores of the system tier -- PostgreSQL, MariaDB, Redis,
+# MinIO -- each get the NetworkPolicy that says who may connect to them. On by
+# default. "false" removes all four, and a connection is then checked by its
+# credentials alone. The installer passes STORE_NETWORK_POLICIES.
+# The same switch covers the policies on the kernel's own PostgreSQL
+# (kernel-postgres, whose policy is kept and admits everything when off) and
+# on the mail servers of a cluster that runs its own.
+storeNetworkPolicies: "true"
+
+# Whether the kernel namespaces refuse an ingress their NetworkPolicies do not
+# list (kernel/security/network-policies, applied by the installer's first
+# step). Off by default until a cluster has run them. The installer passes
+# KERNEL_NETWORK_POLICIES; here it only tells the operator, whose two rules
+# that name the Gateway's Envoy pods follow the same switch.
+kernelNetworkPolicies: "false"
 
 # The long key ids Argo CD accepts commits from on the deployments repository
 # (AD-2). Passed by the installer, which reads them out of
@@ -120,3 +170,11 @@ mailEgressHost: ""
 # would fix it.
 signing:
   keys: []
+
+# On the switches above (appsets.enabled, operator.enabled,
+# headlamp.oidc.enabled): the templates compare them to "true" rather than
+# testing them for truth. The installer passes every value with --set-string,
+# and in a template the string "false" is true -- any non-empty string is. A
+# fresh cluster rendered the operator, the appsets and Headlamp's OIDC in B-01,
+# phases before any of them could work, and Headlamp waited on a Secret only
+# D-03 writes.

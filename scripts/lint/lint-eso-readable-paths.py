@@ -86,6 +86,11 @@ OPERATOR_ONLY = {
         "(tenant_cleanup.go). Granting ESO read here would grant it every "
         "tenant secret at once, which is the opposite of what the named "
         "sub-paths are for.",
+    "gentian-os/tenants/+/apps":
+        "where a tenant's per-app subtrees are, addressed only to LIST their "
+        "names (applifecycle/retained.go: which uninstalled apps still have "
+        "something stored). Nothing is stored at this path itself and no "
+        "Secret is made from it.",
     "gentian-os/tenants/+/admin":
         "a derivation salt, not a stored credential (seeder.go). Nothing reads "
         "it back and no Secret is made from it.",
@@ -96,7 +101,7 @@ OPERATOR_ONLY = {
         "could become a Secret would be readable by whoever takes the cluster, "
         "which is the one thing escrow must not come to mean.",
     "gentian-os/tenants/+/backup/identity":
-        "one tenant's escrowed backup key (credentialmgr/backupidentity.go). "
+        "one tenant's escrowed backup key (custodian/backupidentity.go). "
         "Same reasoning one subtree down, and the reason the sibling grant on "
         "tenants/+/backup/* is not enough: the destination credential there "
         "exists to become a Secret, and this must never.",

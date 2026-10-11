@@ -29,6 +29,13 @@ STEP_SETS = ["scripts/steps"]
 
 STEP_RE = re.compile(r"^#\s*step:\s*(\S+)\s*$", re.MULTILINE)
 REQUIRES_RE = re.compile(r"^#\s*requires:\s*(.+?)\s*$", re.MULTILINE)
+PHASE_RE = re.compile(r"^#\s*phase:\s*(\S+)\s*$", re.MULTILINE)
+
+# The phase a step's letter stands for. The installer prints a banner when the
+# phase changes and --phase selects by it, so a step that declares another
+# phase than its letter's splits a phase in two on screen and is skipped by
+# --phase. C-04 once declared "claims" (no such phase) and D-01 "platform".
+PHASES = {"A": "control-plane", "B": "secrets", "C": "platform", "D": "applications", "E": "handover"}
 
 
 def steps_of(directory):
@@ -49,12 +56,14 @@ def steps_of(directory):
                 # step name is checked.
                 if re.fullmatch(r"[A-Z]-\d{2}-[a-z0-9-]+", token):
                     needs.append(token)
-        out.append((path, name.group(1), needs))
+        phase = PHASE_RE.search(text)
+        out.append((path, name.group(1), needs, phase.group(1) if phase else None))
     return out
 
 
 def main():
     findings = []
+    phase_findings = []
     checked = 0
 
     for rel in STEP_SETS:
@@ -62,9 +71,12 @@ def main():
         if not directory.is_dir():
             continue
         steps = steps_of(directory)
-        position = {name: i for i, (_, name, _) in enumerate(steps)}
-        for i, (path, name, needs) in enumerate(steps):
+        position = {name: i for i, (_, name, _, _) in enumerate(steps)}
+        for i, (path, name, needs, phase) in enumerate(steps):
             checked += 1
+            want = PHASES.get(name[:1])
+            if want is not None and phase != want:
+                phase_findings.append((path.relative_to(ROOT), name, phase, want))
             for need in needs:
                 where = position.get(need)
                 if where is None:
@@ -87,6 +99,17 @@ def main():
 
     for path, name, need, why in findings:
         print(f"{path}: {name} requires {need}, which {why}")
+    for path, name, phase, want in phase_findings:
+        print(f"{path}: {name} declares phase {phase!r}; a {name[:1]} step is {want!r}")
+
+    if phase_findings:
+        print()
+        print(
+            f"{len(phase_findings)} step(s) in another phase than their letter's: "
+            "the banner splits the phase on screen and --phase skips them."
+        )
+        if not findings:
+            return 1
 
     if findings:
         print()

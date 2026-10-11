@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: tenant-render-fixture-provisioning-jobs
-  namespace: platform-kernel
+  namespace: kernel-provisioning
   labels:
     gentianos.io/config-type: tenant-provisioning-jobs
     gentianos.io/tenant: render-fixture
@@ -14,7 +14,7 @@ data:
         "kind": "Job",
         "metadata": {
           "name": "keycloak-realm-render-fixture",
-          "namespace": "platform-kernel",
+          "namespace": "kernel-authentication",
           "labels": {
             "gentianos.io/tenant": "render-fixture"
           }
@@ -38,7 +38,7 @@ data:
         "kind": "Job",
         "metadata": {
           "name": "keycloak-admin-render-fixture",
-          "namespace": "platform-kernel",
+          "namespace": "kernel-authentication",
           "labels": {
             "gentianos.io/tenant": "render-fixture"
           }

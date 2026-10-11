@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -39,7 +33,9 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -59,7 +55,7 @@ const (
 )
 
 // externalSecretGVK is used unstructured rather than through ESO's Go types,
-// for the reason the credential manager already records: adding external-secrets
+// for the reason the custodian already records: adding external-secrets
 // to go.mod for a handful of fields couples this build to an API version that
 // has already moved once.
 var externalSecretGVK = schema.GroupVersionKind{
@@ -75,6 +71,10 @@ var externalSecretGVK = schema.GroupVersionKind{
 // time an export runs, the question "where does this go, and can we
 // authenticate to it" has already been answered and published.
 type BackupPolicyReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 }
@@ -93,7 +93,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// The credential comes first: a destination whose keys are missing is a
 	// policy that will fail at 03:00, and the whole point of routing it
-	// through the credential manager is that the failure surfaces now.
+	// through the custodian is that the failure surfaces now.
 	if err := r.ensureDestinationCredential(ctx, policy); err != nil {
 		if apierrors.IsConflict(err) {
 			// Someone wrote the same object between our read and our write.
@@ -127,7 +127,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// supply keys. Reported as a false condition so the console can
 			// show a field to fill rather than a failure to debug.
 			setPolicyCondition(policy, metav1.ConditionFalse, "CredentialUnsatisfied",
-				fmt.Sprintf("supply %s in the credential manager: %s", eff.CredentialName, why))
+				fmt.Sprintf("supply %s in the custodian: %s", eff.CredentialName, why))
 			logger.Info("policy awaiting its credential", "policy", policy.Name, "requirement", eff.CredentialName)
 			return ctrl.Result{}, r.persistPolicy(ctx, policy)
 		}
@@ -192,7 +192,7 @@ func (r *BackupPolicyReconciler) ensureManagedSchedule(
 	}
 
 	name := managedScheduleName
-	namespace := backup.TenantNamespace(tenant.Name)
+	namespace := backup.TenantNamespace(tenant)
 	existing := &gentianov1alpha1.TenantExportSchedule{}
 	getErr := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
 
@@ -412,7 +412,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 
 // ensureProbe creates the satisfaction probe: an ExternalSecret that creates
 // no Secret and exists only so ESO's Ready condition answers "has this been
-// supplied". The credential manager reads exactly this object.
+// supplied". The custodian reads exactly this object.
 func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPath, scope string) error {
 	return r.applyExternalSecret(ctx, credentialProbePrefix+name, meta.OperatorNamespace, vaultPath, "None", map[string]string{
 		"gentianos.io/credential-requirement": name,
@@ -461,9 +461,11 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 		},
 		"spec": map[string]any{
 			"refreshInterval": "1h",
-			"secretStoreRef":  map[string]any{"name": "openbao", "kind": "ClusterSecretStore"},
-			"target":          map[string]any{"creationPolicy": creationPolicy},
-			"data":            data,
+			// The kernel's store: both ExternalSecrets are in kernel
+			// namespaces, also where the path is a tenant's.
+			"secretStoreRef": secrets.StoreRef(secrets.KernelStore),
+			"target":         map[string]any{"creationPolicy": creationPolicy},
+			"data":           data,
 		},
 	}}
 	desired.SetLabels(labels)
@@ -495,7 +497,7 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 }
 
 // credentialSatisfied reads ESO's verdict from the probe, the same way the
-// credential manager does.
+// custodian does.
 func (r *BackupPolicyReconciler) credentialSatisfied(ctx context.Context, name string) (bool, string) {
 	es := &unstructured.Unstructured{}
 	es.SetGroupVersionKind(externalSecretGVK)
@@ -623,5 +625,5 @@ func (r *BackupPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.NewPredicateFuncs(isCredentialProbe)),
 		).
 		Named("backuppolicy").
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.BackupPolicy{}, r))
 }

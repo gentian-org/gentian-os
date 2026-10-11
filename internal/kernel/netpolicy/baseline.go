@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package netpolicy
@@ -76,15 +70,23 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 		}
 	}
 
+	// The edge: the Gateways' data plane runs in the edge function's
+	// namespace, and it is what reaches a tenant's routed pods.
+	edge := namespaceIngress(layout.Namespace(layout.Edge))
+	if cfg.NarrowEdge {
+		// Its Envoy pods and no other pod there: they are what sets the
+		// identity headers an app trusts, so cert-manager, external-dns
+		// and the bouncer, which share the namespace, have no path to an
+		// app on which to say who a caller is.
+		edge.From[0].PodSelector = &metav1.LabelSelector{MatchLabels: EdgeProxyPodLabels()}
+	}
 	ingress := []networkingv1.NetworkPolicyIngressRule{
-		// The edge: the Gateways' data plane runs in the edge function's
-		// namespace, and it is what reaches a tenant's routed pods.
-		namespaceIngress(layout.Namespace(layout.Edge)),
+		edge,
 		// Keycloak calls an app's back-channel logout endpoint, so the
 		// authentication function may reach tenant pods; nothing else kernel does.
 		namespaceIngress(layout.Namespace(layout.Authentication)),
 		// The operator itself provisions *into* running tenant apps over their
-		// own admin APIs — AppProfile.spec.provisioning.privilegedRole is the
+		// own admin APIs — ComponentProfile.spec.hooks.provisioning.privilegedRole is the
 		// first such case (see app_privilege_reconciler.go). It runs in
 		// OperatorNamespace, not KernelNamespace, so without this it cannot
 		// reach the very workloads it reconciles. This grants no new authority:
@@ -108,6 +110,19 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 			Egress:  egress,
 		},
 	}
+}
+
+// EdgeProxyPodLabels select the Gateway's Envoy proxy pods in the edge
+// namespace.
+//
+// The label is Envoy Gateway's own, on every proxy pod it creates
+// (EnvoyAppLabel in its internal/infrastructure/kubernetes/proxy), and the
+// one the model gateway's policy and the EnvoyProxy's spread constraint
+// already select by. The kernel namespaces' rules name the same pods
+// (internal/kernel/kernelnet, peer envoy) and a test there holds the two
+// equal.
+func EdgeProxyPodLabels() map[string]string {
+	return map[string]string{"app.kubernetes.io/name": "envoy"}
 }
 
 // namespacePeer selects a namespace by its immutable metadata.name label.

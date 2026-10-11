@@ -81,7 +81,7 @@ report() {
 }
 
 # ── gentian-cluster-config: what Compositions and the operator read ──────────
-CC="$(kubectl get cm gentian-cluster-config -n crossplane-system -o jsonpath='{.data}' 2>/dev/null)"
+CC="$(kubectl get cm gentian-cluster-config -n kernel-provisioning -o jsonpath='{.data}' 2>/dev/null)"
 cc_value() {
     printf '%s' "${CC}" | python3 -c "
 import json,sys
@@ -97,7 +97,7 @@ for pair in "mail.serviceMode:mail.serviceMode" "mail.egressHost:mail.egressHost
 done
 
 # ── gentian-appsets: Helm parameters the installer wrote once ────────────────
-APPSET_PARAMS="$(kubectl get application gentian-appsets -n argocd \
+APPSET_PARAMS="$(kubectl get application gentian-appsets -n kernel-gitops \
     -o jsonpath='{.spec.source.helm.parameters}' 2>/dev/null)"
 param_value() {
     printf '%s' "${APPSET_PARAMS}" | python3 -c "

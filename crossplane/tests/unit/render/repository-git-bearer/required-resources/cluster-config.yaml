@@ -1,0 +1,15 @@
+# What the Cluster composition publishes about this cluster's layout. The
+# Repository composition takes both namespaces it writes to from here and has
+# no name of its own for either: without this file the claim is refused, with
+# a sentence that says so (repository-no-cluster-config).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: kernel-provisioning
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  kernel.controlNamespace: kernel-control
+  kernel.gitopsNamespace: kernel-gitops
+  kernel.layout: v5

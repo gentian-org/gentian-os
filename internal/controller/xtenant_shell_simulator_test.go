@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -339,4 +333,36 @@ func createIfMissing(ctx context.Context, c client.Client, obj client.Object) {
 	if errors.IsNotFound(err) {
 		_ = c.Create(ctx, obj)
 	}
+}
+
+// startNamespaceFinalizer stands in for the namespace controller, which
+// envtest does not run: a namespace that has been deleted stays Terminating
+// for ever here, because nothing removes the "kubernetes" finalizer from its
+// spec. A tenant's deletion waits for its namespace to be gone, so the suite
+// finishes the namespaces the way the real controller would once they are
+// empty.
+func startNamespaceFinalizer(ctx context.Context, c client.Client) {
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				list := &corev1.NamespaceList{}
+				if err := c.List(ctx, list); err != nil {
+					continue
+				}
+				for i := range list.Items {
+					ns := &list.Items[i]
+					if ns.DeletionTimestamp == nil || len(ns.Spec.Finalizers) == 0 {
+						continue
+					}
+					ns.Spec.Finalizers = nil
+					_ = c.SubResource("finalize").Update(ctx, ns)
+				}
+			}
+		}
+	}()
 }

@@ -57,6 +57,7 @@ rules:
     verbs:
     - get
     - list
+    - create
     - delete
   - apiGroups:
     - ''
@@ -81,9 +82,63 @@ rules:
     verbs:
     - get
   - apiGroups:
+    - apiextensions.crossplane.io
+    resources:
+    - compositions
+    verbs:
+    - get
+    - list
+    - delete
+  - apiGroups:
+    - apiextensions.k8s.io
+    resources:
+    - customresourcedefinitions
+    resourceNames:
+    - appgrants.gentianos.io
+    - apppackages.gentianos.io
+    - apps.gentianos.io
+    - backuppolicies.gentianos.io
+    - brandings.gentianos.io
+    - clusters.gentianos.io
+    - componentprofiles.gentianos.io
+    - components.gentianos.io
+    - credentialrequirements.gentianos.io
+    - customizations.gentianos.io
+    - integrationbindings.gentianos.io
+    - mailboxremovals.gentianos.io
+    - oidcpackcatalogs.gentianos.io
+    - platformsecuritypolicies.gentianos.io
+    - repositories.gentianos.io
+    - resourceplans.gentianos.io
+    - suze.gentianos.io
+    - tenantbackuppolicies.gentianos.io
+    - tenantdomains.gentianos.io
+    - tenantexports.gentianos.io
+    - tenantexportschedules.gentianos.io
+    - tenantrestores.gentianos.io
+    - tenants.gentianos.io
+    - xapps.gentianos.io
+    - xclusters.gentianos.io
+    - xrepositories.gentianos.io
+    - xsuze.gentianos.io
+    - xtenants.gentianos.io
+    verbs:
+    - get
+  - apiGroups:
     - apps
     resources:
     - deployments
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - apps
+    resources:
     - statefulsets
     verbs:
     - get
@@ -103,6 +158,12 @@ rules:
     - update
     - patch
     - delete
+  - apiGroups:
+    - authentication.k8s.io
+    resources:
+    - tokenreviews
+    verbs:
+    - create
   - apiGroups:
     - batch
     resources:
@@ -216,25 +277,11 @@ rules:
     - gentianos.io
     resources:
     - appgrants
-    - apps
-    - backuppolicies
-    - components
-    - credentialrequirements
-    - integrationbindings
-    - platformsecuritypolicies
-    - repositories
-    - tenantexports
-    - tenantexportschedules
-    - tenantrestores
-    - tenants
-    - xtenants
     verbs:
     - get
     - list
     - watch
-    - create
     - update
-    - patch
     - delete
   - apiGroups:
     - gentianos.io
@@ -253,9 +300,11 @@ rules:
     resources:
     - appgrants/status
     - backuppolicies/status
+    - brandings/status
     - components/status
     - customizations/status
     - integrationbindings/status
+    - mailboxremovals/status
     - platformsecuritypolicies/status
     - resourceplans/status
     - tenantexports/status
@@ -269,15 +318,48 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - apps
+    - backuppolicies
+    - components
+    - credentialrequirements
+    - integrationbindings
+    - platformsecuritypolicies
+    - tenantexports
+    - tenantexportschedules
+    - tenantrestores
+    - tenants
+    - xtenants
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - brandings
     - clusters
-    - componentprofiles
-    - oidcpackcatalogs
+    - repositories
     - resourceplans
+    - tenantdomains
     - xapps
     verbs:
     - get
     - list
     - watch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - componentprofiles
+    - oidcpackcatalogs
+    verbs:
+    - get
+    - list
+    - watch
+    - delete
   - apiGroups:
     - gentianos.io
     resources:
@@ -288,6 +370,17 @@ rules:
     - watch
     - update
     - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - mailboxremovals
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - delete
   - apiGroups:
     - helm.crossplane.io
     resources:
@@ -332,6 +425,14 @@ rules:
     - openidclient.keycloak.crossplane.io
     resources:
     - clients
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - postgresql.cnpg.io
+    resources:
+    - clusters
     verbs:
     - get
     - list

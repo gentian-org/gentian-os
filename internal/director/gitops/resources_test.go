@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package gitops_test
@@ -185,5 +179,42 @@ func TestTheWaiverAllowlistIsWrittenAsOneObject(t *testing.T) {
 	}
 	if len(declared) != 0 {
 		t.Fatalf("emptying the list left %+v", declared)
+	}
+}
+
+// The two lists of the cluster's security policy are one object and two
+// writes, and neither write may empty the other's list.
+func TestPermittedClusterRolesAndWaiversDoNotOverwriteEachOther(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	meta := gitops.Meta{Author: gitops.Person{Name: "Beth", Email: "beth@example.com"}, Subject: "beth"}
+
+	if _, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{
+		{Profile: "element", Policy: "gentian-require-non-root", Scope: "synapse"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{
+		{Profile: "dashboard", Role: "read-nodes"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	waivers, err := g.PlatformSecurity(ctx)
+	if err != nil || len(waivers) != 1 {
+		t.Fatalf("permitting a cluster role changed the waivers: %+v (%v)", waivers, err)
+	}
+
+	if _, err := g.SetPlatformSecurity(ctx, nil, meta); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := g.PlatformClusterRoles(ctx)
+	if err != nil || len(roles) != 1 || roles[0].Profile != "dashboard" || roles[0].Role != "read-nodes" {
+		t.Fatalf("emptying the waivers changed the permitted cluster roles: %+v (%v)", roles, err)
+	}
+
+	// A name that is not a name is refused, and nothing is written.
+	if _, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{{Profile: "dashboard", Role: "*"}}, meta); err == nil {
+		t.Fatal("a wildcard was taken as a role")
 	}
 }

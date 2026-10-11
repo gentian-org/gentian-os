@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -36,15 +30,18 @@ const (
 )
 
 func (h *HTTPServer) registerResourceRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources", h.handleResourceState)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
+	mux.Read("GET /v1/tenants/{tenant}/resources", h.handleResourceState)
+	// Every tenant's state in one answer, for the cluster's view.
+	mux.Read("GET /v1/resources", h.handleAllResourceStates)
+	mux.Read("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
 	// No PUT. Choosing a plan is a commit to the deployments repository, and
 	// the director is the one writer to it: it checks can_set_plan, writes
 	// the tenant's resource-plan.yaml as the person, and this API reads the
 	// result back once Argo CD has synced it. The reads here are what the
-	// director relays and what it validates a choice against.
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/usage", h.handleResourceUsage)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/report", h.handleResourceReport)
+	// usher answers a person with and what the director validates a choice
+	// against.
+	mux.Read("GET /v1/tenants/{tenant}/resources/usage", h.handleResourceUsage)
+	mux.Read("GET /v1/tenants/{tenant}/resources/report", h.handleResourceReport)
 }
 
 func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +51,18 @@ func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// handleAllResourceStates answers every tenant the cluster holds. A tenant
+// whose state cannot be worked out is named under unavailable rather than
+// dropped, so the view never silently shows fewer tenants than exist.
+func (h *HTTPServer) handleAllResourceStates(w http.ResponseWriter, r *http.Request) {
+	states, unavailable, err := h.Service.AllResourceStates(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": states, "unavailable": unavailable})
 }
 
 func (h *HTTPServer) handleResourcePlans(w http.ResponseWriter, r *http.Request) {

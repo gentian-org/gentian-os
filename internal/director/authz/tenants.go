@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package authz
@@ -37,22 +31,64 @@ var tenantRoleGroups = []struct{ relation, suffix string }{
 	{"perimeter_approver", "perimeter"},
 }
 
+// TenantRights is one tenant as the projection is given it: its name, and
+// what its manifest says about who holds a right in it.
+type TenantRights struct {
+	Name string
+	// AdminsApprove is spec.perimeter.adminsApprove: the tenant's own
+	// administrators may approve its public addresses.
+	AdminsApprove bool
+}
+
+// TenantsNamed is tenants whose manifests say nothing beyond their names.
+func TenantsNamed(names ...string) []TenantRights {
+	out := make([]TenantRights, 0, len(names))
+	for _, name := range names {
+		out = append(out, TenantRights{Name: name})
+	}
+	return out
+}
+
+// adminsApprove is the entry that lets a tenant's own administrators approve
+// its public addresses: the admins group written into perimeter_approver.
+//
+// It is the projection's alone, like an app's `entitled`: written while the
+// tenant's manifest says so and removed when it does not, so an entry of this
+// shape that somebody wrote into the store by hand does not outlive the next
+// projection, and a backup does not carry it (StoreOnlyOf). The switch is the
+// manifest's, which only the cluster's administrator writes.
+func adminsApprove(tenant string) (Tuple, error) {
+	group, err := Group("gentian:tenant:" + tenant + ":admins")
+	if err != nil {
+		return Tuple{}, fmt.Errorf("tenant %s: %w", tenant, err)
+	}
+	return Tuple{User: group + "#member", Relation: "perimeter_approver", Object: Tenant(tenant)}, nil
+}
+
 // ReconcileTenants makes each named tenant known to the store: attached to
 // its cluster, and its three role relations held by the tenant's groups.
 //
-// Written at start from what git lists under clusters/<c>/tenants/, so a
-// cluster rebuilt from git arrives at the same place. `cluster` is what audit
+// Written by the operator from the Tenant objects of the cluster
+// (AuthzProjectionReconciler), which are what git lists under
+// clusters/<c>/tenants/, so a cluster rebuilt from git arrives at the same
+// place. `cluster` is what audit
 // and approval derive through and is written whenever it is missing. The
 // role tuples are the same. `operated_by` is consent (model v1): written when
 // a tenant is first attached, so a fresh deploy is operated by its cluster,
 // and always for the platform tenant; a tenant that later withdraws it is not
 // second-guessed here, because the missing tuple is then the tenant's answer.
 //
+// Whether the tenant's administrators approve its public addresses is the
+// manifest's (adminsApprove): that entry is written when the manifest says
+// so and deleted when it does not. Never for the platform tenant, whose
+// administrators are the cluster's and approve through operated_by.
+//
 // Membership is not touched: it is a projection of Keycloak.
-func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants []string) error {
+func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants []TenantRights) error {
 	clusterObj := Cluster(cluster)
-	var writes []Tuple
-	for _, tenant := range tenants {
+	var writes, deletes []Tuple
+	for _, rights := range tenants {
+		tenant := rights.Name
 		obj := Tenant(tenant)
 		attached, err := c.Read(ctx, Tuple{User: clusterObj, Relation: "cluster", Object: obj})
 		if err != nil {
@@ -70,28 +106,45 @@ func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants 
 				writes = append(writes, Tuple{User: clusterObj, Relation: "operated_by", Object: obj})
 			}
 		}
-		for _, role := range tenantRoleGroups {
-			group, err := Group("gentian:tenant:" + tenant + ":" + role.suffix)
-			if err != nil {
-				return fmt.Errorf("tenant %s: %w", tenant, err)
-			}
-			t := Tuple{User: group + "#member", Relation: role.relation, Object: obj}
+		// The role tuples, by the list a backup tells the store's own
+		// entries from the derived ones by (tenantDefaults).
+		standing, _, err := tenantDefaults(cluster, tenant)
+		if err != nil {
+			return err
+		}
+		for _, t := range standing[1:] {
 			have, err := c.Read(ctx, t)
 			if err != nil {
-				return fmt.Errorf("read %s on %s: %w", role.relation, obj, err)
+				return fmt.Errorf("read %s on %s: %w", t.Relation, obj, err)
 			}
 			if len(have) == 0 {
 				writes = append(writes, t)
 			}
 		}
+		approve, err := adminsApprove(tenant)
+		if err != nil {
+			return err
+		}
+		have, err := c.Read(ctx, approve)
+		if err != nil {
+			return fmt.Errorf("read %s on %s: %w", approve.Relation, obj, err)
+		}
+		switch want := rights.AdminsApprove && tenant != PlatformTenant; {
+		case want && len(have) == 0:
+			writes = append(writes, approve)
+		case !want && len(have) > 0:
+			deletes = append(deletes, approve)
+		}
 	}
-	if len(writes) == 0 {
+	if len(writes) == 0 && len(deletes) == 0 {
 		return nil
 	}
 	sort.Slice(writes, func(i, j int) bool { return key(writes[i]) < key(writes[j]) })
-	if err := c.Write(ctx, writes, nil); err != nil {
+	sort.Slice(deletes, func(i, j int) bool { return key(deletes[i]) < key(deletes[j]) })
+	if err := c.Write(ctx, writes, deletes); err != nil {
 		return fmt.Errorf("reconcile tenants: %w", err)
 	}
-	c.log.InfoContext(ctx, "tenants reconciled", "cluster", cluster, "tenants", len(tenants), "written", len(writes))
+	c.log.InfoContext(ctx, "tenants reconciled", "cluster", cluster, "tenants", len(tenants),
+		"written", len(writes), "removed", len(deletes))
 	return nil
 }

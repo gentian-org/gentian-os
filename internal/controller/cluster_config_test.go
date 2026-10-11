@@ -1,23 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,6 +21,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 func fakeClusterConfigClient(t *testing.T, objs ...client.Object) client.Client {
@@ -86,5 +83,100 @@ func TestClusterLLMEnabledFallsBackToEnv(t *testing.T) {
 	}
 	if clusterLLMEnabled(ctx, nil) {
 		t.Fatal("nil client and env false: expected disabled")
+	}
+}
+
+// The model gateway's console is routed only where the claim switches it on,
+// and only on a cluster that serves models. Nothing else may answer for the
+// claim: a ConfigMap that does not carry the key -- every cluster's, before
+// the key existed -- means no console, and there is no environment variable
+// that says otherwise.
+func TestTheModelGatewayConsoleIsOffUnlessTheClaimSwitchesItOn(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("LLM_SUPPORT", "true")
+	cases := map[string]struct {
+		data map[string]string
+		want bool
+	}{
+		"no ConfigMap":                         {nil, false},
+		"a ConfigMap written before the key":   {map[string]string{clusterConfigLLMKey: "true"}, false},
+		"the claim says off":                   {map[string]string{clusterConfigLLMKey: "true", clusterConfigLLMConsoleKey: "false"}, false},
+		"the claim says on":                    {map[string]string{clusterConfigLLMKey: "true", clusterConfigLLMConsoleKey: "true"}, true},
+		"on, on a cluster that serves nothing": {map[string]string{clusterConfigLLMKey: "false", clusterConfigLLMConsoleKey: "true"}, false},
+	}
+	for name, c := range cases {
+		var objs []client.Object
+		if c.data != nil {
+			objs = append(objs, clusterConfigWith(c.data))
+		}
+		if got := clusterLLMConsoleRouted(ctx, fakeClusterConfigClient(t, objs...)); got != c.want {
+			t.Errorf("%s: console routed = %v, want %v", name, got, c.want)
+		}
+	}
+	if clusterLLMConsoleRouted(ctx, nil) {
+		t.Error("no client to ask the claim with, and the console is routed")
+	}
+}
+
+// The claim's secretMode reaches the Seeder through the ConfigMap. A cluster
+// whose ConfigMap does not say reads as derived, which is what it was doing.
+func TestClusterSecretModeFollowsTheClaim(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		objs []client.Object
+		want secrets.Mode
+	}{
+		"random":           {[]client.Object{clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "random"})}, secrets.ModeRandom},
+		"derived":          {[]client.Object{clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "derived"})}, secrets.ModeDerived},
+		"key not written":  {[]client.Object{clusterConfigWith(map[string]string{clusterConfigTenancyKey: "multi"})}, secrets.ModeDerived},
+		"no ConfigMap yet": {nil, secrets.ModeDerived},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ClusterSecretMode(fakeClusterConfigClient(t, tc.objs...))(ctx)
+			if err != nil || got != tc.want {
+				t.Fatalf("mode = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// unreadable fails every read, as an API server does that is away.
+type unreadable struct{ client.Reader }
+
+func (unreadable) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return errors.New("api server away")
+}
+
+// What cannot be known is not guessed: an unreadable ConfigMap and a value
+// that is neither mode are errors, so nothing is made until the answer is in.
+func TestClusterSecretModeDoesNotGuess(t *testing.T) {
+	ctx := context.Background()
+	if got, err := ClusterSecretMode(unreadable{})(ctx); err == nil {
+		t.Errorf("an unreadable ConfigMap read as %q", got)
+	}
+	if got, err := ClusterSecretMode(nil)(ctx); err == nil {
+		t.Errorf("no client read as %q", got)
+	}
+	c := fakeClusterConfigClient(t, clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "Random"}))
+	if got, err := ClusterSecretMode(c)(ctx); err == nil {
+		t.Errorf("a misspelt mode read as %q", got)
+	}
+}
+
+// One answer serves the passes that follow it closely, and a failed read is
+// asked again rather than remembered.
+func TestClusterSecretModeIsReadOncePerInterval(t *testing.T) {
+	ctx := context.Background()
+	cm := clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "random"})
+	c := fakeClusterConfigClient(t, cm)
+	mode := ClusterSecretMode(c)
+	if got, err := mode(ctx); err != nil || got != secrets.ModeRandom {
+		t.Fatalf("first read: %q, %v", got, err)
+	}
+	if err := c.Delete(ctx, cm); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := mode(ctx); err != nil || got != secrets.ModeRandom {
+		t.Fatalf("within the interval: %q, %v; want the answer already held", got, err)
 	}
 }

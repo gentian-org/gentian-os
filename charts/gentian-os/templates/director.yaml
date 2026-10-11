@@ -7,6 +7,15 @@
   nothing. Every request it serves is authorised against OpenFGA with the
   caller's own Keycloak token.
 
+  Its ServiceAccount is still how the operator knows it: the pod mounts a
+  token for that account issued for the operator's listener and for nothing
+  else (appLifecycle.audience). The API server does not accept that token,
+  and the account's token for the API server is not mounted.
+
+  It holds no Keycloak credential. People, groups and the realm's settings are
+  the registrar's (registrar.yaml), which holds the per-realm credential they
+  need; nothing of it is mounted or named here.
+
   The one thing it needs from the cluster, the tile catalogue the operator
   projects, is mounted rather than fetched: handing it the file keeps the
   division intact, where reading one ConfigMap through the API would mean
@@ -32,7 +41,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "gentian-os.fullname" . }}-director
+  name: {{ include "gentian-os.directorServiceAccountName" . }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
     app.kubernetes.io/component: director
@@ -59,6 +68,33 @@ spec:
       remoteRef:
         key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
         property: {{ .Values.director.openfgaTokenSecretRef.property }}
+---
+{{- end }}
+{{- if .Values.director.signingKeySecret }}
+# AD-2: the director's private signing key, which B-10 writes to the vault.
+# Without this projection the Deployment's optional mount stays empty, the
+# director commits unsigned, and Argo CD refuses every change it makes to the
+# deployments repository -- a tenant created in the console never syncs.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.director.signingKeySecret | quote }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ .Values.director.signingKeySecret | quote }}
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: private.asc
+      remoteRef:
+        key: gentian-os/kernel/signing/director
+        property: private
 ---
 {{- end }}
 apiVersion: v1
@@ -96,7 +132,7 @@ spec:
         {{- include "gentian-os.labels" . | nindent 8 }}
         app.kubernetes.io/component: director
     spec:
-      serviceAccountName: {{ include "gentian-os.fullname" . }}-director
+      serviceAccountName: {{ include "gentian-os.directorServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -212,67 +248,17 @@ spec:
               value: {{ $deployments.repo | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $deployments.cluster | quote }}
-            - name: DIRECTOR_ENTITLEMENTS
-              value: {{ .Values.director.entitlements | quote }}
-            # internal/tiles.ConfigMapName and internal/tiles.Key, as the
-            # operator's projection writes them.
-            - name: DIRECTOR_TILES_PATH
-              value: /etc/gentian/tiles/tiles.yaml
             # The operator's app-lifecycle API, beside this pod: the one
             # cluster question the director asks. A tenant's enforced
             # ceiling and the plans it may move to come from here; the plan
             # chosen goes to git, and the operator reads it back from there.
-            {{- with (.Values.appLifecycle).tokenSecretName }}
-            # The same Secret the operator mounts: this API is the director's
-            # and nobody else's, and this is what says so.
-            - name: APP_LIFECYCLE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . | quote }}
-                  key: token
-                  optional: true
-            {{- end }}
+            # The director is admitted there by its ServiceAccount. The token
+            # is projected below for the operator's audience and no other,
+            # and is read from this file on every request.
+            - name: DIRECTOR_LIFECYCLE_TOKEN_FILE
+              value: /var/run/secrets/gentian/operator/token
             - name: DIRECTOR_APP_LIFECYCLE_URL
               value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
-            {{- /* Where the director reads its Keycloak credentials.
-
-                 One file per realm, written by the operator's Keycloak
-                 platform reconciler: it holds the admin credential and the
-                 director does not, so the credentials are handed over rather
-                 than fetched -- the same division as the tile catalogue.
-
-                 A realm the director holds no file for is a realm it cannot
-                 name, let alone reach. That is the confinement: a missed
-                 authorization check cannot cross into another tenant's realm
-                 because there is no credential for it to cross with. */}}
-            - name: DIRECTOR_REALM_CREDENTIALS_PATH
-              value: /etc/gentian/realms
-            {{- /* The durable record of WHO WAS ALLOWED to ask for a change
-                 to a person (S7A.17).
-
-                 A database and not a commit, and this is the one place the
-                 platform chooses that deliberately: git's append-only history
-                 is what makes it right for configuration and wrong for a
-                 record about people. This one has a retention horizon.
-
-                 Optional. A cluster whose director database has not been
-                 provisioned starts anyway and keeps only the log line, because
-                 taking the console down over an audit trail is the worse
-                 failure. The director warns at start which it is. */}}
-            {{- with .Values.director.recordDatabase }}
-            {{- if .secretName }}
-            - name: DIRECTOR_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .secretName | quote }}
-                  key: {{ .secretKey | default "uri" | quote }}
-                  optional: true
-            {{- end }}
-            {{- with .retention }}
-            - name: DIRECTOR_RECORD_RETENTION
-              value: {{ . | quote }}
-            {{- end }}
-            {{- end }}
             {{- if .Values.director.signingKeySecret }}
             # AD-2: what the director writes is signed, and Argo CD syncs the
             # deployments repository only for commits carrying a key the
@@ -289,14 +275,6 @@ spec:
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL
               value: {{ .Values.director.committer.email | quote }}
-            {{- if .Values.director.storeKeysSecretRef.name }}
-            - name: DIRECTOR_STORE_KEYS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.director.storeKeysSecretRef.name }}
-                  key: {{ .Values.director.storeKeysSecretRef.key }}
-                  optional: true
-            {{- end }}
             {{- /* No listener key here any more.
 
                  Keycloak states a user's groups to the operator, which
@@ -365,11 +343,9 @@ spec:
               mountPath: {{ $checkout }}
             - name: tmp
               mountPath: /tmp
-            - name: tiles
-              mountPath: /etc/gentian/tiles
               readOnly: true
-            - name: realm-credentials
-              mountPath: /etc/gentian/realms
+            - name: operator-token
+              mountPath: /var/run/secrets/gentian/operator
               readOnly: true
             {{- if .Values.director.signingKeySecret }}
             - name: signing-key
@@ -386,20 +362,7 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
-        # Optional: the projection is the operator's, and the director serves
-        # an empty catalogue until it exists rather than refusing to start.
-        - name: tiles
-          configMap:
-            name: gentian-tiles
-            optional: true
-        # Optional, and re-read rather than read once: the operator writes a
-        # realm's key when the realm appears, which for every tenant is after
-        # this pod started. A director that read the directory at boot would
-        # never speak for a tenant created since.
-        - name: realm-credentials
-          secret:
-            secretName: gentian-director-realms
-            optional: true
+        {{- include "gentian-os.operatorTokenVolume" . | nindent 8 }}
         {{- if .Values.director.signingKeySecret }}
         # Optional for the same reason as the git credential: B-10 writes the
         # key to the vault and External Secrets projects it, which may happen

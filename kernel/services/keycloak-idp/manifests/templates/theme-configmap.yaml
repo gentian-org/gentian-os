@@ -32,22 +32,26 @@ data:
      * Keycloak from its own origin and cannot reach the desktop's assets.
      */
 
+    /* Every --gtn-* below reads a --brand-* token and keeps the platform's own
+     * value when the token is absent. Nothing loads the tokens on this page: the
+     * brand is not served from the identity provider's host. */
+
     :root {
-      --gtn-ink-0: #07081a;
-      --gtn-ink-1: #14152e;
-      --gtn-ink-3: #45486b;
-      --gtn-ink-4: #74779a;
-      --gtn-paper-0: #f4f1ea;
-      --gtn-paper-1: #ece8df;
-      --gtn-paper-2: #ded9cc;
-      --gtn-paper-3: #ffffff;
-      --gtn-500: #262696;
-      --gtn-600: #1b1a82;
-      --gtn-700: #131370;
+      --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+      --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+      --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+      --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+      --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+      --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+      --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+      --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1b1a82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
       --gtn-border: rgba(20, 21, 46, 0.1);
       --gtn-border-strong: rgba(20, 21, 46, 0.22);
-      --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
-        Roboto, "Helvetica Neue", Arial, sans-serif;
+      --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif);
 
       /* Surfaces */
       --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
@@ -119,22 +123,26 @@ data:
      * Keycloak from its own origin and cannot reach the desktop's assets.
      */
 
+    /* Every --gtn-* below reads a --brand-* token and keeps the platform's own
+     * value when the token is absent. Nothing loads the tokens on this page: the
+     * brand is not served from the identity provider's host. */
+
     :root {
-      --gtn-ink-0: #07081a;
-      --gtn-ink-1: #14152e;
-      --gtn-ink-3: #45486b;
-      --gtn-ink-4: #74779a;
-      --gtn-paper-0: #f4f1ea;
-      --gtn-paper-1: #ece8df;
-      --gtn-paper-2: #ded9cc;
-      --gtn-paper-3: #ffffff;
-      --gtn-500: #262696;
-      --gtn-600: #1b1a82;
-      --gtn-700: #131370;
+      --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+      --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+      --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+      --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+      --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+      --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+      --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+      --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1b1a82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
       --gtn-border: rgba(20, 21, 46, 0.1);
       --gtn-border-strong: rgba(20, 21, 46, 0.22);
-      --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
-        Roboto, "Helvetica Neue", Arial, sans-serif;
+      --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif);
 
       /* Surfaces */
       --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
@@ -313,26 +321,31 @@ data:
      *     theme into a derived Keycloak image where binary assets belong.
      */
 
+    /* The brand's --brand-* custom properties arrive in a stylesheet js/brand.js
+     * links from the cluster's bare domain, where the concierge serves it. Every
+     * --gtn-* below reads its token and keeps the platform's own value when the
+     * token is absent, or when the file is. */
+
     :root {
-      --gtn-paper-0: #F4F1EA;
-      --gtn-paper-3: #FFFFFF;
+      --gtn-paper-0: var(--brand-color-paper-0, #F4F1EA);
+      --gtn-paper-3: var(--brand-color-paper-3, #FFFFFF);
       --gtn-border: rgba(20, 21, 46, 0.10);
-      --gtn-ink-1: #14152E;
-      --gtn-ink-2: #232547;
-      --gtn-400: #4A4AB3;
-      --gtn-500: #262696;
-      --gtn-600: #1B1A82;
-      --gtn-700: #131370;
-      --gtn-50: #ECECF7;
-      --gtn-r1: 6px;
-      --gtn-r2: 10px;
+      --gtn-ink-1: var(--brand-color-ink-1, #14152E);
+      --gtn-ink-2: var(--brand-color-ink-2, #232547);
+      --gtn-400: var(--brand-color-brand-400, #4A4AB3);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1B1A82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
+      --gtn-50: var(--brand-color-brand-50, #ECECF7);
+      --gtn-r1: var(--brand-radius-1, 6px);
+      --gtn-r2: var(--brand-radius-2, 10px);
       --gtn-shadow-3: 0 12px 28px -8px rgba(20, 21, 46, 0.14);
       --gtn-focus-ring: 0 0 0 3px rgba(74, 74, 179, 0.30);
-      --gtn-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --gtn-font-sans: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
       --gtn-dur-2: 200ms;
       --gtn-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-      --gtn-madder: #9B2D2D;
-      --gtn-madder-bg: #F2D9D9;
+      --gtn-madder: var(--brand-color-status-danger, #9B2D2D);
+      --gtn-madder-bg: var(--brand-color-status-danger-bg, #F2D9D9);
     }
 
     html, body { height: 100%; margin: 0; }
@@ -746,6 +759,107 @@ data:
        login page; the portal's form had neither. */
     .gentian-hidden, #kc-registration, #kc-registration-container,
     #kc-social-providers, #kc-info { display: none !important; }
+  login__resources__js__brand.js: |-
+    /* The brand on the sign-in card: its colours, its name and its logo.
+     *
+     * The operator renders the brand from the Branding and the concierge serves
+     * it on the cluster's bare domain, which is this host without its first
+     * label (id.<kernel>). The colours are a stylesheet of --brand-* custom
+     * properties, linked here; the name and the logo are content, read from
+     * brand.json. Without either the card keeps the platform's own.
+     */
+    (function () {
+      var host = location.hostname;
+      if (location.protocol !== "https:" || host.indexOf("id.") !== 0) return;
+      var BASE = "https://" + host.slice(3) + "/branding/";
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = BASE + "brand.css";
+      document.head.appendChild(link);
+      function apply(brand) {
+        if (!brand || typeof brand.name !== "string" || !brand.name) return;
+        var titles = document.querySelectorAll(".gentian-login__title");
+        for (var i = 0; i < titles.length; i++) titles[i].textContent = brand.name;
+        var logos = document.querySelectorAll(".gentian-login__logo");
+        var icon = null;
+        (brand.icons || []).forEach(function (ic) {
+          if (!icon && ic && typeof ic.src === "string" && (!ic.purpose || ic.purpose.split(" ").indexOf("any") >= 0)) icon = ic;
+        });
+        for (var j = 0; j < logos.length; j++) {
+          logos[j].setAttribute("aria-label", brand.name);
+          if (icon) {
+            var url = new URL(icon.src, BASE).href;
+            if (/^https:\/\//.test(url)) logos[j].style.backgroundImage = 'url("' + url.replace(/"/g, "") + '")';
+          }
+        }
+        document.title = document.title.replace(/Gentian|Keycloak/g, brand.name);
+      }
+      function load() {
+        fetch(BASE + "brand.json", { cache: "no-cache", credentials: "omit" })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(apply)
+          .catch(function () {});
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", load);
+      } else {
+        load();
+      }
+    })();
+  login__resources__js__login-hint.js: |-
+    /* The address the concierge was given, filled in for the person.
+     *
+     * The router sends the browser to the workspace's desktop with the address on
+     * it as ?login_hint=. The desktop is behind the edge, which starts the
+     * sign-in and passes the address it was asked for to this page inside the
+     * request's `state` -- so the hint is in this page's own URL, and reading it
+     * needs no cookie and nothing stored anywhere.
+     *
+     * The edge's `state` is its own format and has changed between releases:
+     * "url=<address>&nonce=..." or the same fields as base64url JSON. Both are
+     * read. One this does not recognise fills nothing, which is the safe way to
+     * be wrong. The hint only ever becomes the value of the username field, and
+     * only when the person has not typed one.
+     */
+    (function () {
+      function original(state) {
+        if (!state) return "";
+        var plain = new URLSearchParams(state).get("url");
+        if (plain) return plain;
+        try {
+          var padded = state.replace(/-/g, "+").replace(/_/g, "/");
+          while (padded.length % 4) padded += "=";
+          var parsed = JSON.parse(atob(padded));
+          return typeof parsed.url === "string" ? parsed.url : "";
+        } catch (e) {
+          return "";
+        }
+      }
+      function hint() {
+        try {
+          var url = original(new URLSearchParams(window.location.search).get("state"));
+          if (!url) return "";
+          var value = new URL(url).searchParams.get("login_hint") || "";
+          // A username or an address, nothing longer or stranger.
+          return /^[^\s<>"'\\]{1,254}$/.test(value) ? value : "";
+        } catch (e) {
+          return "";
+        }
+      }
+      function fill() {
+        var value = hint();
+        var field = document.getElementById("username");
+        if (!value || !field || field.value) return;
+        field.value = value;
+        var password = document.getElementById("password");
+        if (password) password.focus();
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fill);
+      } else {
+        fill();
+      }
+    })();
   login__theme.properties: |-
     # Gentian login theme.
     #
@@ -756,6 +870,9 @@ data:
     import=common/keycloak
 
     styles=css/gentian-login.css
+    # login-hint fills the username from the concierge's hint; brand sets
+    # the card's name and logo from the cluster's brand. See the files.
+    scripts=js/login-hint.js js/brand.js
 
     # keycloak.v2's template.ftl renders <body class="${properties.kcBodyClass!}">,
     # which is what the stylesheet centres the card against.

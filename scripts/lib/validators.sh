@@ -9,7 +9,7 @@
 #
 # Scope is deliberately small and fixed. These validators cover the
 # `phase: bootstrap` set only; every `phase: runtime` credential is validated by
-# the on-cluster credential manager, which has SDKs and a real HTTP client.
+# the on-cluster custodian, which has SDKs and a real HTTP client.
 #
 # The rule that keeps this file from growing: **every validator here is
 # expressible in curl or openssl.** A credential needing request signing (s3) or
@@ -96,20 +96,19 @@ validate_oci_registry() {
 # git-https — the smart-HTTP ref advertisement, the cheapest authenticated read
 # =============================================================================
 validate_git_https() {
-    local repo="$1" user="$2" token="$3" authtype="${4:-basic}" url code auth=()
+    local repo="$1" user="$2" token="$3" url code auth=()
+    local mode="${4:-basic}"
     repo="${repo%.git}"; repo="${repo%/}"
     url="${repo}.git/info/refs?service=git-upload-pack"
 
     # Only send credentials when there are some. Passing -u with an empty
     # password makes a public repository answer 401, which would report a
     # perfectly good public repo as a rejected credential.
-    if [[ -n "${token}" ]]; then
-        if [[ "${authtype}" == "bearer" ]]; then
-            auth=(-H "Authorization: Bearer ${token}")
-        else
-            auth=(-u "${user}:${token}")
-        fi
-    fi
+    case "${token:+${mode}}" in
+        "")     ;;
+        bearer) auth=(-H "Authorization: Bearer ${token}") ;;
+        *)      auth=(-u "${user}:${token}") ;;
+    esac
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -23,6 +25,40 @@ import (
 )
 
 // TenantSpec defines the desired state of a Tenant.
+// TenantAdmin is the handover of a tenant's administrator account.
+type TenantAdmin struct {
+	// RequireMFA makes enrolling a second factor part of activating the
+	// account. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	RequireMFA *bool `json:"requireMFA,omitempty"`
+}
+
+// TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.
+type TenantDeletion struct {
+	// KeepBundles keeps the tenant's backup bucket and the bundles in it
+	// when everything else is deleted: the offboarding case, where the
+	// tenant was handed a copy and a provider keeps one under contract.
+	// Off by default -- a purge that leaves the backups behind has not
+	// purged.
+	// +optional
+	KeepBundles bool `json:"keepBundles,omitempty"`
+}
+
+// KeepsBundles reports whether a Delete spares the backup bucket.
+func (t *Tenant) KeepsBundles() bool {
+	return t.Spec.Deletion != nil && t.Spec.Deletion.KeepBundles
+}
+
+// AdminRequiresMFA reports whether the administrator must enrol a second
+// factor; true unless the tenant says otherwise.
+func (t *Tenant) AdminRequiresMFA() bool {
+	if t.Spec.Admin == nil || t.Spec.Admin.RequireMFA == nil {
+		return true
+	}
+	return *t.Spec.Admin.RequireMFA
+}
+
 type TenantSpec struct {
 	// DisplayName is a human-readable name for this tenant/organisation.
 	// +kubebuilder:validation:Required
@@ -30,15 +66,13 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxLength=256
 	DisplayName string `json:"displayName"`
 
-	// Domain is the optional custom domain for this tenant's app zone (e.g.
-	// `acme.com`). When unset, the effective domain depends on cluster
-	// tenancy mode: multi → `<tenant-name>.<KERNEL_DOMAIN>`; single →
-	// `<KERNEL_DOMAIN>` (flat URLs). See docs/design/multi-tenancy.md §3.
-	// In both cases the operator issues a per-tenant wildcard TLS certificate
-	// for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
+	// Admin is how the tenant's administrator account is handed over. The
+	// account is created with no password: its holder sets one through a
+	// single-use, expiring link, mailed to a recovery address when the person
+	// activating it gives one and otherwise shown, once, to them. The address
+	// is not here: a person's address committed to git outlives the account.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
-	Domain string `json:"domain,omitempty"`
+	Admin *TenantAdmin `json:"admin,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
@@ -71,9 +105,35 @@ type TenantSpec struct {
 	// +kubebuilder:default=Retain
 	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
 
+	// Deletion refines what a Delete leaves behind.
+	// +optional
+	Deletion *TenantDeletion `json:"deletion,omitempty"`
+
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// Catalogue is where this tenant may install from beside the catalogues
+	// the whole cluster offers: the catalogues only this tenant sees, and
+	// whether its own administrators may add them.
+	//
+	// The director reads and writes it, in the tenant's manifest in git.
+	// Nothing in the cluster acts on it: what an install may use is decided
+	// when the director resolves a coordinate, and what a tenant may roll out
+	// is decided by the origin a materialised profile carries.
+	// +optional
+	Catalogue *TenantCatalogue `json:"catalogue,omitempty"`
+
+	// Perimeter says who, beside the members of the tenant's perimeter group
+	// and the cluster's administrators, may approve what this tenant
+	// publishes to the internet.
+	//
+	// The director writes it, in the tenant's manifest in git, for the
+	// cluster's administrator alone. The operator projects it into the
+	// rights store: the grant is there while the manifest says so, and gone
+	// when it stops.
+	// +optional
+	Perimeter *TenantPerimeter `json:"perimeter,omitempty"`
 
 	// Locales are the languages this tenant's realm renders its login and
 	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
@@ -141,20 +201,26 @@ type TenantExposure struct {
 	// +kubebuilder:validation:MaxLength=253
 	Install string `json:"install"`
 
-	// ExposureName names an entry of that component's profile whose surface
-	// is perimeter. An entry that is not is never published here: the
-	// operator checks, because enabling a gateway entry by name would
-	// otherwise put the component's authenticated surface on the internet.
+	// ExposureName names an entry of that component's profile that asks for
+	// approval: one whose surface is perimeter, or one behind sign-in that
+	// declares the Authorization header the app's own. Only a perimeter
+	// entry is ever published: the operator checks the entry's surface,
+	// because enabling a gateway entry by name would otherwise put the
+	// component's authenticated surface on the internet.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
 
-	// Host is the public hostname. Empty means the entry's default in the
-	// tenant's zone.
+	// Kind is what was approved, set by the director from what the profile's
+	// entry declared when the approver said yes: a public address, a public
+	// address that passes the caller's Authorization header to the app, or
+	// an entry behind sign-in whose Authorization header is the app's own.
+	// Empty is a public address, which is all an approval was before kinds
+	// were recorded. The operator acts on an approval only while the entry
+	// still declares this kind, so a profile that later asks for more is
+	// not given it on the strength of an earlier yes.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
-	// +kubebuilder:validation:MaxLength=253
-	Host string `json:"host,omitempty"`
+	Kind ExposureKind `json:"kind,omitempty"`
 
 	// Owner is the subject that published it, set by the director from the
 	// caller's token.
@@ -162,28 +228,66 @@ type TenantExposure struct {
 	// +kubebuilder:validation:MaxLength=256
 	Owner string `json:"owner"`
 
-	// ExpiresAt is when it stops answering, and it is required. A public
-	// surface with no end is not something anybody decided.
-	ExpiresAt metav1.Time `json:"expiresAt"`
-
-	// ReviewAt is when the owner and the approver are asked to renew.
+	// ExpiresAt is when it stops answering, for a surface published for a
+	// while. Optional: one meant to stay has none.
 	// +optional
-	ReviewAt *metav1.Time `json:"reviewAt,omitempty"`
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// ReviewAt is when the owner and the approver look at it again. Always
+	// set; overdue is reported and takes nothing down.
+	ReviewAt metav1.Time `json:"reviewAt"`
 
 	// Reason is why this is public, in the approver's words.
 	// +optional
 	// +kubebuilder:validation:MaxLength=2000
 	Reason string `json:"reason,omitempty"`
+
+	// PublishedAt is when it was first published. It does not change when
+	// the entry is reviewed.
+	// +optional
+	PublishedAt *metav1.Time `json:"publishedAt,omitempty"`
+
+	// LastReviewedBy is the subject that last confirmed this should stay
+	// public, and LastReviewedAt when. Publishing is the first review, and
+	// the owner may well be the reviewer every time: what is asked for is a
+	// regular look, not a second person.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
+	// +optional
+	LastReviewedAt *metav1.Time `json:"lastReviewedAt,omitempty"`
+
+	// Apex is the approver saying that this surface is for the cluster's
+	// main address: the bare domain. The profile's entry must say apex too;
+	// neither alone publishes anything. It is honoured for the one user
+	// tenant of a single-tenancy cluster and for one surface at a time.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
+
+	// ApexAcknowledgedBy is the subject that acknowledged the rule for a
+	// website on the main address, and ApexAcknowledgedAt when: only a site
+	// whose scripts the organisation itself controls. A script on the bare
+	// domain can set cookies the browser sends to the sign-in addresses, and
+	// the platform cannot check what a site loads, so the approver is told
+	// and says so. Set by the director from the caller's token, on an apex
+	// entry only. It is a record: the operator publishes by Apex, and an
+	// entry approved before the rule was asked carries neither.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
+	// +optional
+	ApexAcknowledgedAt *metav1.Time `json:"apexAcknowledgedAt,omitempty"`
 }
 
 // Enablement is this entry as the Component carries it.
 func (e *TenantExposure) Enablement() ExposureEnablement {
 	return ExposureEnablement{
 		ExposureName: e.ExposureName,
-		Host:         e.Host,
+		Kind:         e.Kind,
 		Owner:        e.Owner,
 		ExpiresAt:    e.ExpiresAt,
 		ReviewAt:     e.ReviewAt,
+		Apex:         e.Apex,
 	}
 }
 
@@ -276,10 +380,6 @@ type TenantMail struct {
 	// +kubebuilder:default=selfhosted
 	Mode MailMode `json:"mode,omitempty"`
 
-	// Domain is the mail domain. Defaults to spec.domain.
-	// +optional
-	Domain string `json:"domain,omitempty"`
-
 	// SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
 	// kernel namespace that contains SMTP relay credentials for external mail
 	// delivery. Required when mode=external.
@@ -340,29 +440,119 @@ type TenantQuotas struct {
 	MaxPods int32 `json:"maxPods,omitempty"`
 }
 
+// TenantPerimeter is who may approve a tenant's public addresses beyond the
+// two who always may: the members of gentian:tenant:<t>:perimeter, and the
+// cluster's administrators while the tenant is operated by its cluster.
+type TenantPerimeter struct {
+	// AdminsApprove says the tenant's own administrators may approve and
+	// withdraw public addresses for this tenant. Off unless the cluster's
+	// administrator turns it on; a tenant's administrator cannot.
+	// +optional
+	AdminsApprove bool `json:"adminsApprove,omitempty"`
+}
+
+// TenantCatalogue is a tenant's own catalogues and who may add them.
+type TenantCatalogue struct {
+	// Delegated says the tenant's own administrators may add and remove
+	// catalogues for this tenant. Off unless the cluster's administrator
+	// turns it on; a tenant's administrator cannot.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
+
+	// Sources are the catalogues only this tenant sees.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Sources []TenantCatalogueSource `json:"sources,omitempty"`
+}
+
+// TenantCatalogueSource is one catalogue of a tenant: an address that serves
+// index.yaml and profiles/<name>.yaml, or a directory of the cluster's own
+// deployments repository that holds them.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.path)",message="a catalogue states where it is read from once: url, or path"
+// +kubebuilder:validation:XValidation:rule="!has(self.path) || !has(self.addedBy) || self.addedBy == 'cluster'",message="a catalogue kept in the deployments repository (path) is added by the cluster's administrator: addedBy must be cluster"
+type TenantCatalogueSource struct {
+	// Name is the catalogue's name: the first half of a coordinate,
+	// <name>/<app>. It is not the name of a catalogue of the whole cluster,
+	// nor of another catalogue of this tenant.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// URL is the https address the catalogue is served from.
+	// +kubebuilder:validation:Pattern=`^https://`
+	// +kubebuilder:validation:MaxLength=2048
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Path is the directory of the cluster's own deployments repository the
+	// catalogue is kept in, in place of an address: names separated by '/',
+	// from the top of the repository, none beginning with a dot. The
+	// director reads it from the checkout it already holds. Only the
+	// cluster's administrator declares one. clusters/<cluster>/catalogue,
+	// where the director writes the profiles tenants installed, is never a
+	// catalogue: the director refuses it and does not read it, which the
+	// schema leaves to it.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$`
+	// +kubebuilder:validation:MaxLength=255
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// AddedBy says who added it: the cluster's administrator, or the
+	// tenant's own under delegation. A tenant's administrator removes only
+	// what the tenant added.
+	// +kubebuilder:validation:Enum=cluster;tenant
+	// +kubebuilder:default=cluster
+	// +optional
+	AddedBy string `json:"addedBy,omitempty"`
+}
+
+// Who added a tenant's catalogue.
+const (
+	CatalogueAddedByCluster = "cluster"
+	CatalogueAddedByTenant  = "tenant"
+)
+
 // TenantApp specifies a desired application installation for a tenant.
 //
 // +kubebuilder:validation:XValidation:rule="has(self.profile) || has(self.profileRef)",message="either profile or profileRef is required"
 type TenantApp struct {
-	// Profile is the name of the AppProfile CR to install.
+	// Profile is the name of the ComponentProfile to install.
 	// When profileRef is set, the operator resolves it to a concrete profile name
 	// and may populate this field for observability.
 	// +optional
 	Profile string `json:"profile,omitempty"`
 
-	// ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+	// ProfileRef selects a ComponentProfile by catalogue identity (family, version, edition,
 	// offering tier). Takes precedence over profile when resolving installs.
 	// +optional
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
 
+	// Digest pins the profile bundle this app was installed from: the build
+	// the install asked for. It is a field of the install and not part of the
+	// profile's name, so the same app keeps one name across builds.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest,omitempty"`
+
+	// Catalogue is the catalogue the pinned build was fetched from: the first
+	// half of its coordinate, <catalogue>/<profile>. It is written with the
+	// digest by an install that fetched the bundle from that catalogue's
+	// source, and is absent on every other entry.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Catalogue string `json:"catalogue,omitempty"`
+
 	// Config provides per-tenant overrides for this app installation.
-	// Values here are merged over the AppProfile's extraValues.
+	// Values here are merged over the profile's package.extraValues.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *TenantAppConfig `json:"config,omitempty"`
 
 	// Addons lists the addon profiles activated inside this app for this tenant —
-	// customization-ladder rung L3. Each entry names an AppProfile carrying
+	// customization-ladder rung L3. Each entry names a ComponentProfile carrying
 	// gentianos.io/deployment-role: addon in the same family as this app.
 	//
 	// Addons are activation state *inside* the installed app, not separate
@@ -371,12 +561,70 @@ type TenantApp struct {
 	// (Odoo `-i`, Nextcloud `occ app:enable`).
 	//
 	// The App Store writes this list — pre-filled from an AppPackage preset when
-	// one is chosen, then editable afterwards. Entries the tenant is not entitled
-	// to are rejected; entitlement is what gates an ee addon, not compatibility.
-	// See gentian-os/docs/app-customization.md §4.2.
+	// one is chosen, then editable afterwards. Every entry that resolves is
+	// activated, whatever its edition: the platform gates none, and a paid
+	// addon arrives only where the tenant holds a credential for the
+	// repository it is pulled from. See gentian-os/docs/app-customization.md §4.2.
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
+
+	// AddonPins pins addons of this app to the build each was installed
+	// from, like digest and catalogue do for the app itself. It is keyed by
+	// the addon's name and stands beside addons rather than inside it: addons
+	// stays the list of names every reader walks, and an addon with no entry
+	// here is activated unpinned, as before.
+	//
+	// A pinned addon is rolled out only from a profile shown to be that
+	// build. Until it is, the base it activates inside is held as it runs.
+	// An entry naming an addon that is not in addons pins nothing.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+
+	// DefaultGrant says every member of the tenant has access to this app by
+	// default. The people who are members when the app's group first exists
+	// are added to it, once, and the group is marked so that somebody invited
+	// later has the app pre-selected. It is applied once per install
+	// (status.defaultGrantedApps): a person an administrator removes from the
+	// group afterwards stays removed.
+	//
+	// Absent or false, access is given per person.
+	// +optional
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
+}
+
+// AddonPin is the build one addon was installed from.
+type AddonPin struct {
+	// Name is the addon's profile name, as addons lists it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Digest pins the addon's profile bundle: the build the install asked
+	// for.
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest"`
+
+	// Catalogue is the catalogue the pinned build was fetched from: the first
+	// half of its coordinate, <catalogue>/<name>.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Catalogue string `json:"catalogue,omitempty"`
+}
+
+// PinOf answers the digest an addon of this app is pinned to, or "" for an
+// addon that is not pinned.
+func (a TenantApp) PinOf(addon string) string {
+	for _, pin := range a.AddonPins {
+		if pin.Name == addon {
+			return pin.Digest
+		}
+	}
+	return ""
 }
 
 // TenantAppConfig holds per-tenant application overrides.
@@ -386,14 +634,14 @@ type TenantAppConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// ExtraValues deep-merges Helm values over the AppProfile defaults.
+	// ExtraValues deep-merges Helm values over the profile's defaults.
 	// Must not contain secrets — use valueMapping for credentials.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// DropIns supply tenant-authored files into drop-in directories the target
-	// AppProfile declares as tenantEditable. This is rung L1 at tenant scope —
+	// ComponentProfile declares as tenantEditable. This is rung L1 at tenant scope —
 	// the highest rung a tenant admin may reach unaided, and the only one where
 	// self-service makes sense: content, never code.
 	//
@@ -409,7 +657,7 @@ type TenantAppConfig struct {
 
 // TenantAppDropIn is tenant-authored content for one declared drop-in directory.
 type TenantAppDropIn struct {
-	// Name must match an AppProfile.spec.customization.dropIns[].name entry that
+	// Name must match a ComponentProfile.spec.customization.dropIns[].name entry that
 	// sets tenantEditable: true. Tenants cannot invent mount paths — that would be
 	// repackaging (L4) at tenant scope.
 	// +kubebuilder:validation:Required
@@ -541,6 +789,17 @@ type TenantStatus struct {
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
 
+	// DefaultGrantedApps lists the apps whose default grant
+	// (spec.apps[].defaultGrant) has been applied: the tenant's members at
+	// that moment were added to the app's group. An app listed here is not
+	// granted again, which is what keeps a person removed from the group
+	// since then removed. An entry leaves the list when the app is
+	// uninstalled or no longer declares the grant, so declaring it again
+	// applies it again.
+	// +optional
+	// +listType=set
+	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
+
 	// AppCount is the total number of apps requested in spec.
 	// +optional
 	AppCount int `json:"appCount,omitempty"`
@@ -560,6 +819,12 @@ type TenantStatus struct {
 	// tenant whose domain changes shows the new one here once reconciled.
 	// +optional
 	AdminEmail string `json:"adminEmail,omitempty"`
+
+	// Domain is the custom domain a TenantDomain binds this tenant to, copied
+	// here by the operator so every consumer of EffectiveDomain reads it from
+	// the tenant itself. Empty when no TenantDomain names this tenant.
+	// +optional
+	Domain string `json:"domain,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -568,6 +833,14 @@ type TenantStatus struct {
 	// Operators must publish these values in the tenant's DNS zone.
 	// +optional
 	Mail *TenantMailStatus `json:"mail,omitempty"`
+
+	// MailboxDomain is the domain this tenant's people have mailboxes under
+	// on the cluster's own mail server. Empty when the tenant has none: the
+	// cluster runs no mail server of its own, or the tenant's mail is not
+	// hosted on it. It is what tells whoever removes a person that there is
+	// a mailbox to decide about.
+	// +optional
+	MailboxDomain string `json:"mailboxDomain,omitempty"`
 
 	// ResourcePlan is the plan whose selection was last recorded in the
 	// tenant's usage history: the value of the resource-plan annotation at
@@ -644,10 +917,16 @@ const TenantAdminLocalPart = "admin"
 
 // AdminEmailOrDefault is the tenant administrator's address — and its login.
 //
-// admin@<tenant-domain>: admin@corp.gtn.host in multi mode, admin@<kernelDomain>
-// in single, spec.domain when a tenant has a vanity one. The tenant's own
+// admin@<tenant-domain>: admin@corp.gtn.host for a tenant with a domain of
+// its own, the custom domain when a TenantDomain binds one. The tenant's own
 // domain is what makes `admin` unambiguous, so no tenant name appears in the
 // local part; it would name the tenant twice.
+//
+// One tenant has no domain of its own: the user tenant of a single-tenancy
+// cluster lives on the cluster's domain, where admin@<kernelDomain> is
+// already the platform administrator, in the kernel realm. Its administrator
+// is user-admin@<kernelDomain> (SingleUserAdminLocalPart): another realm, and
+// an address that is not the platform administrator's.
 //
 // Derived, never configured. spec.adminEmail is gone: an address an operator
 // could type is an address pointing outside the tenant, and this account is
@@ -663,6 +942,9 @@ func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
 		// No domain configured at all: .invalid is reserved by RFC 2606 and can
 		// never resolve, which is the honest representation of "unknown".
 		domain = t.Name + ".invalid"
+	}
+	if kernelDomain != "" && domain == kernelDomain {
+		return SingleUserAdminLocalPart + "@" + domain
 	}
 	return TenantAdminLocalPart + "@" + domain
 }
@@ -682,32 +964,26 @@ func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing
-// for this tenant. It returns spec.domain if set. When spec.domain is unset,
-// multi-tenancy mode uses "<tenant-name>.<kernelDomain>"; single-tenancy mode
-// uses "<kernelDomain>" (flat app hostnames). An empty kernelDomain combined
-// with an empty spec.domain returns the empty string — callers must treat that
-// as a configuration error and skip ingress provisioning.
+// for this tenant: the custom domain a TenantDomain bound it to (status.domain)
+// when there is one; otherwise "<tenant-name>.<kernelDomain>", except for the
+// one user tenant of a single-tenancy cluster (OnClusterDomain), whose domain
+// is "<kernelDomain>" itself (flat app hostnames). The platform tenant is
+// "platform.<kernelDomain>" under either mode. An empty kernelDomain without
+// a custom domain returns the empty string — callers must treat that as a
+// configuration error and skip ingress provisioning.
 //
 // See docs/design/multi-tenancy.md §3.
 func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
-	if t.Spec.Domain != "" {
-		return t.Spec.Domain
+	if t.Status.Domain != "" {
+		return t.Status.Domain
 	}
 	if kernelDomain == "" {
 		return ""
 	}
-	if NormalizeTenancyMode(tenancyMode) == TenancyModeSingle {
+	if t.OnClusterDomain(tenancyMode) {
 		return kernelDomain
 	}
 	return t.Name + "." + kernelDomain
-}
-
-// HasVanityDomain reports whether the tenant has an explicit custom app domain
-// configured (i.e. spec.domain is set). When false, EffectiveDomain() derives
-// the zone from tenancy mode and tenant name. TLS uses the same per-tenant
-// wildcard model in both cases; only the effective domain string differs.
-func (t *Tenant) HasVanityDomain() bool {
-	return t.Spec.Domain != ""
 }
 
 func init() {

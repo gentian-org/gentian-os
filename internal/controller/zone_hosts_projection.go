@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -19,6 +13,7 @@ package controller
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -33,7 +28,7 @@ import (
 )
 
 // A zone's Keycloak client admits a redirect only to a host it lists, and the
-// list was written by hand in the tenant Composition: console, admin, and for
+// list was written by hand in the tenant Composition: desktop, admin, and for
 // the kernel realm argocd, headlamp and id. A component whose profile declares
 // any other subDomain got "Invalid parameter: redirect_uri" on an error page
 // that names neither the component nor a redirect URI list. The administration
@@ -56,6 +51,47 @@ const (
 	// zoneHostsKey is the one key: a sorted, newline-separated list of host
 	// labels, which is what a Composition can read without parsing.
 	zoneHostsKey = "hosts"
+	// zoneExchangeProfilesKey is the second thing the zone's realm has to be
+	// told about the components, in the same shape: the sorted,
+	// newline-separated names of the profiles whose exposures ask for an
+	// exchanged token (exchangeToken). The Composition makes one client scope
+	// in the realm per name, called what AppTokenScope calls it, and that
+	// scope is what the bouncer asks for on the component's routes.
+	//
+	// Here and not on the composite's spec.apps: that list holds what a
+	// tenant installed, and the components every tenant is given -- the
+	// desktop, the administration console -- are not on it. A route of one
+	// of those would name a scope the realm never had. This follows the
+	// Components, as the routes do.
+	zoneExchangeProfilesKey = "exchangeProfiles"
+	// zoneVouchingProfilesKey is the third: the components that vouch for
+	// people at the realm (requires.services.vouching), and for each of them
+	// where the realm fetches the keys its statements are signed with. One
+	// line per profile, sorted, four fields separated by single spaces:
+	//
+	//	<profile> <service> <port> <path>
+	//
+	// for example "scribe scribe-keys 8443 /.well-known/jwks.json". A space is
+	// a safe separator because none of the four can hold one: the first two
+	// are DNS labels, the third is a number and the fourth is held to the
+	// characters of a URL path by the profile's schema. The path is always
+	// written out, the default included, so the Composition does not have to
+	// know what the default is.
+	//
+	// The Composition makes, per line, the identity provider entry and the
+	// client VouchingAlias names, and the Secret VouchingSecretName names. It
+	// puts the service's address together itself, because the namespace in it
+	// is the tenant's and that is the Composition's to say.
+	//
+	// Here for the reason the exchange profiles are: a component every tenant
+	// is given may vouch as well as an installed one may.
+	zoneVouchingProfilesKey = "vouchingProfiles"
+
+	// vouchingKeysDefaultPath is where a component's keys are fetched from
+	// when its profile names no path: the default the profile's schema
+	// states, repeated for a profile that was never defaulted by an API
+	// server.
+	vouchingKeysDefaultPath = "/.well-known/jwks.json"
 )
 
 // zoneHostsConfigMapName is one ConfigMap per tenant, in the control
@@ -65,7 +101,8 @@ const (
 func zoneHostsConfigMapName(tenant string) string { return "gentian-zone-hosts-" + tenant }
 
 // projectZoneHosts writes, for every tenant, the host labels its components'
-// gateway exposures serve.
+// gateway exposures serve, the profiles among them that ask for an exchanged
+// token, and the ones that vouch for people.
 //
 // Labels and not full hostnames: the Composition builds the redirect URI from
 // the tenant's effective domain, which it knows and this does not -- a tenant
@@ -91,8 +128,12 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	// need nothing added", and its absence would be indistinguishable from
 	// "the operator has not looked yet".
 	hosts := map[string]map[string]bool{}
+	exchange := map[string]map[string]bool{}
+	vouching := map[string]map[string]string{}
 	for i := range tenants.Items {
 		hosts[tenants.Items[i].Name] = map[string]bool{}
+		exchange[tenants.Items[i].Name] = map[string]bool{}
+		vouching[tenants.Items[i].Name] = map[string]string{}
 	}
 
 	for i := range components.Items {
@@ -111,6 +152,18 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 				continue
 			}
 			return err
+		}
+		if asksForExchangedToken(profile) {
+			// The profile's name and not the component's: the route builder
+			// names the scope after the profile (AppTokenScope), and two
+			// components of one profile share the one audience.
+			exchange[tenant][profile.Name] = true
+		}
+		if wantsVouching(profile) {
+			// By the profile's name, as above and for the same reason: the
+			// realm knows the component as VouchingAlias(profile), and two
+			// components of one profile are one issuer with one set of keys.
+			vouching[tenant][profile.Name] = vouchingLine(profile)
 		}
 		for j := range profile.Spec.Expose {
 			e := &profile.Spec.Expose[j]
@@ -132,11 +185,47 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	}
 
 	for tenant, set := range hosts {
-		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set)); err != nil {
+		vouchingLines := make([]string, 0, len(vouching[tenant]))
+		for _, line := range vouching[tenant] {
+			vouchingLines = append(vouchingLines, line)
+		}
+		// Every line starts with its profile's name and no two share one, so
+		// sorting the lines sorts by profile.
+		sort.Strings(vouchingLines)
+		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// asksForExchangedToken reports whether any exposure of the profile declares
+// exchangeToken. One entry is enough: the scope is the app's, not the
+// entry's, and every route of the app that asks is given the same one.
+//
+// Deliberately wider than the route builder, which also wants the entry
+// behind a session and not already forwarding the session's own token. A
+// scope no route asks for costs the realm one unused object; a route asking
+// for a scope the realm does not hold costs the person the page.
+func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
+	for i := range profile.Spec.Expose {
+		if profile.Spec.Expose[i].ExchangeToken {
+			return true
+		}
+	}
+	return false
+}
+
+// vouchingLine is a vouching profile's entry in the projection: its name and
+// where its keys are published, in the form zoneVouchingProfilesKey
+// describes. Only called for a profile wantsVouching says yes to.
+func vouchingLine(profile *gentianov1alpha1.ComponentProfile) string {
+	keys := profile.Services().Vouching.Keys
+	path := keys.Path
+	if path == "" {
+		path = vouchingKeysDefaultPath
+	}
+	return strings.Join([]string{profile.Name, keys.Service, strconv.Itoa(int(keys.Port)), path}, " ")
 }
 
 func sortedKeys(set map[string]bool) []string {
@@ -151,7 +240,7 @@ func sortedKeys(set map[string]bool) []string {
 // writeZoneHosts creates the ConfigMap the first time and patches it only
 // when the content differs, so a projection that did not change does not wake
 // every Composition that reads it.
-func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts []string) error {
+func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles []string) error {
 	key := types.NamespacedName{
 		Name:      zoneHostsConfigMapName(tenant),
 		Namespace: layout.Namespace(layout.Control),
@@ -166,7 +255,11 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 				tenantLabel:                tenant,
 			},
 		},
-		Data: map[string]string{zoneHostsKey: strings.Join(hosts, "\n")},
+		Data: map[string]string{
+			zoneHostsKey:            strings.Join(hosts, "\n"),
+			zoneExchangeProfilesKey: strings.Join(exchangeProfiles, "\n"),
+			zoneVouchingProfilesKey: strings.Join(vouchingProfiles, "\n"),
+		},
 	}
 
 	existing := &corev1.ConfigMap{}

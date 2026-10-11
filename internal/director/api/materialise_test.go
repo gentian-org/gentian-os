@@ -1,24 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package api_test
 
 import (
-	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -26,7 +20,12 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 const elementProfile = `apiVersion: gentianos.io/v1alpha1
@@ -66,7 +65,7 @@ func catalogueSource(t *testing.T, body string) *httptest.Server {
 }
 
 // A profile arrives when a tenant installs it, and is committed at the digest
-// the store named (AD-3).
+// the install asked for (AD-3).
 func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
@@ -83,7 +82,7 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	// Compared by DIGEST rather than by string, and trimmed, because the
 	// helper reads through `git show`, which does not promise the trailing
 	// byte back. The digest is the thing that has to hold anyway: what was
-	// committed must be what the store named, and a test that compared some
+	// committed must be what was asked for, and a test that compared some
 	// other way would be checking something weaker than the code does.
 	path := "clusters/" + dt.Cluster + "/catalogue/element.yaml"
 	got := dt.RemoteFile(t, h.remote, path)
@@ -95,11 +94,96 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	if !strings.Contains(k, "element.yaml") {
 		t.Fatalf("kustomization:\n%s", k)
 	}
+	// Beside it, the same bytes again: the bundle the operator checks a
+	// pinned install against at rollout, as a patch the kustomization applies
+	// to the profile. Derived from what was served and from nothing else.
+	bundle := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/catalogue/"+gitops.BundleFile("element"))
+	if !strings.Contains(k, "patches:\n- path: element.bundle.yaml") {
+		t.Fatalf("the kustomization does not apply the bundle:\n%s", k)
+	}
+	var patch struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+		Metadata   struct {
+			Name        string            `json:"name"`
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+	}
+	if err := yaml.Unmarshal([]byte(bundle), &patch); err != nil {
+		t.Fatalf("the bundle is not a document: %v\n%s", err, bundle)
+	}
+	if patch.APIVersion != "gentianos.io/v1alpha1" || patch.Kind != "ComponentProfile" || patch.Metadata.Name != "element" {
+		t.Fatalf("the bundle patches something other than the profile: %+v", patch)
+	}
+	carried, err := base64.StdEncoding.DecodeString(patch.Metadata.Annotations[profilebundle.Annotation])
+	if err != nil || string(carried) != elementProfile {
+		t.Fatalf("the bundle does not carry the bytes that were served: %v\n%s", err, carried)
+	}
+	// And the two halves meet: the profile as the cluster then holds it --
+	// the document with the patch's annotation on it -- is what the operator
+	// accepts for an install pinned to this digest, and for no other.
+	live := &gentianov1alpha1.ComponentProfile{}
+	if err := yaml.Unmarshal([]byte(got), live); err != nil {
+		t.Fatal(err)
+	}
+	live.Annotations = patch.Metadata.Annotations
+	if r := profilebundle.Verify(live, sha(elementProfile)); r != nil {
+		t.Fatalf("the operator would hold what the director just installed: %s", r.Message)
+	}
+	if r := profilebundle.Verify(live, sha("another build")); r == nil {
+		t.Fatal("the committed profile verifies against a digest it is not")
+	}
 	// The commit says which digest was checked, so a reviewer need not hash
-	// the file to know whether it is the entry the store meant.
+	// the file to know whether it is the build that was asked for.
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-3", "main")
 	if !strings.Contains(log, "materialise element at sha256:") {
 		t.Fatalf("no materialise commit:\n%s", log)
+	}
+	// And the tenant's entry is pinned to the same build, as a field.
+	tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	if !strings.Contains(tenant, "  - profile: element\n    digest: "+sha(elementProfile)+"\n") {
+		t.Fatalf("the install does not record its digest:\n%s", tenant)
+	}
+	// And it says which catalogue the build was fetched from, which with the
+	// name is the coordinate.
+	if !strings.Contains(tenant, "    catalogue: main\n") {
+		t.Fatalf("the install does not record its catalogue:\n%s", tenant)
+	}
+}
+
+// A second tenant installing the same entry at the same digest finds the
+// profile and its bundle already there, and commits neither again.
+func TestInstallingWhatIsAlreadyMaterialisedCommitsItOnce(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", h.token(t, "tenant-demo", "tom"), body); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if code, out := h.do(t, "POST", "/v1/tenants/solo/apps/element", h.token(t, "tenant-solo", "tina"), body); code != http.StatusAccepted {
+		t.Fatalf("second install = %d %v", code, out)
+	}
+	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "main")
+	if n := strings.Count(log, "materialise element at sha256:"); n != 1 {
+		t.Fatalf("the entry was materialised %d times:\n%s", n, log)
+	}
+}
+
+// An entry too large for its bytes to travel with it is refused outright. It
+// could be committed, and the install would then be pinned to a digest the
+// operator can never check, which holds it at rollout for good.
+func TestAnEntryTooLargeToCarryItsBundleInstallsNothing(t *testing.T) {
+	huge := elementProfile + "# " + strings.Repeat("x", profilebundle.MaxBytes) + "\n"
+	src := catalogueSource(t, huge)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	before := h.tip(t)
+	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(huge))
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", h.token(t, "tenant-demo", "tom"), body)
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("install = %d %v, want 422", code, out)
+	}
+	if h.tip(t) != before {
+		t.Fatal("it committed anyway")
 	}
 }
 
@@ -114,7 +198,7 @@ func TestATamperedBundleInstallsNothing(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 	before := h.tip(t)
 
-	// The digest the STORE named, against bytes the SOURCE changed.
+	// The digest the REQUEST named, against bytes the SOURCE changed.
 	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
 	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body)
 	if code != http.StatusBadGateway {
@@ -145,76 +229,135 @@ func TestMaterialisingNeedsTheDigest(t *testing.T) {
 	}
 }
 
-// A catalogue this cluster has no source for is left alone: a cluster may
-// name a source for one and sync another wholesale.
-func TestAnUnknownCatalogueInstallsAsBefore(t *testing.T) {
+// An install comes from a catalogue source the cluster declares. A coordinate
+// in any other catalogue is refused before anything is written: it used to
+// proceed with no fetch, and the digest beside it was recorded unverified.
+func TestACoordinateFromAnUndeclaredCatalogueIsRefused(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+
+	for name, body := range map[string]string{
+		"with a digest":    fmt.Sprintf(`{"coordinate":"elsewhere/element","digest":%q}`, sha(elementProfile)),
+		"without a digest": `{"coordinate":"elsewhere/element"}`,
+		"for everyone":     fmt.Sprintf(`{"coordinate":"elsewhere/element","digest":%q,"defaultGrant":true}`, sha(elementProfile)),
+	} {
+		code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body)
+		if code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: install = %d %v, want 422", name, code, out)
+		}
+		// The refusal names the catalogue asked for and the ones there are.
+		said := fmt.Sprint(out["error"])
+		if !strings.Contains(said, `"elsewhere"`) || !strings.Contains(said, "This tenant's catalogues: main.") {
+			t.Fatalf("%s: the refusal does not say what is declared: %q", name, said)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused install moved the repository")
+	}
+}
+
+// A cluster that declares no source at all refuses every coordinate, and says
+// that it has none.
+func TestACoordinateIsRefusedWhereNoSourceIsDeclared(t *testing.T) {
+	h := startSeeded(t, nil, nil, withFetcher(nil))
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile)))
+	if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "has no catalogue to install from") {
+		t.Fatalf("install = %d %v, want 422 saying no source is declared", code, out)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused install moved the repository")
+	}
+}
+
+// A digest with no coordinate is a digest nothing can verify: there is no
+// source to fetch the bytes from. It is refused, on a new install and on one
+// that is there already.
+func TestADigestWithoutACoordinateIsRefused(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
 
-	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
-		`{"coordinate":"elsewhere/element"}`)
-	if code != http.StatusAccepted {
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, ""); code != http.StatusAccepted {
 		t.Fatalf("install = %d %v", code, out)
 	}
-	// Nothing was materialised for a catalogue with no source.
-	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-5", "main")
-	if strings.Contains(log, "materialise") {
-		t.Fatalf("it materialised from a source it does not have:\n%s", log)
-	}
-}
-
-// AD-14: a catalogue the Cluster claim opened to a tenant installs without a
-// statement from the store, and only for the tenants the claim names.
-//
-// Needs the model to decide, because what is being tested IS the model: the
-// entry's source is open to this tenant, therefore the entry is installable.
-// A table would only restate the answer.
-func TestATenantInstallsFromACatalogueTheClaimOpenedToIt(t *testing.T) {
-	src := catalogueSource(t, elementProfile)
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL})
-	if h.graph == nil {
-		t.Skip("needs OpenFGA deciding: make test-director-contract")
-	}
-	ctx := context.Background()
-	if err := h.graph.ReconcileCatalogueSources(ctx, []string{"demo", "solo"},
-		map[string][]string{"in-house": {"demo"}}); err != nil {
-		t.Fatal(err)
-	}
-
-	body := fmt.Sprintf(`{"coordinate":"in-house/element","digest":%q}`, sha(elementProfile))
-	tom := h.token(t, "tenant-demo", "tom")
-	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body); code != http.StatusAccepted {
-		t.Fatalf("install from an open catalogue = %d %v", code, out)
-	}
-
-	// And a tenant the claim did not name gets nothing, from the same source.
-	tina := h.token(t, "tenant-solo", "tina")
 	before := h.tip(t)
-	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/element", tina, body); code != http.StatusForbidden {
-		t.Fatalf("a tenant the claim did not name installed anyway: %d", code)
+	for _, app := range []string{"element", "wiki"} {
+		code, out := h.do(t, "POST", "/v1/tenants/demo/apps/"+app, tom, fmt.Sprintf(`{"digest":%q}`, sha(elementProfile)))
+		if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "coordinate") {
+			t.Fatalf("%s: install = %d %v, want 422 asking for the coordinate", app, code, out)
+		}
 	}
 	if h.tip(t) != before {
-		t.Fatal("a refused install committed something")
+		t.Fatal("a refused install moved the repository")
+	}
+	if tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(tenant, "digest:") {
+		t.Fatalf("an unverified digest was recorded:\n%s", tenant)
 	}
 }
 
-// The other half: an entry of an ENTITLED source still needs the store to
-// have said so, and recording which catalogue serves it grants nothing.
-func TestBindingAnEntryToItsSourceGrantsNothingByItself(t *testing.T) {
+// A request with neither coordinate nor digest is not a pin and keeps working:
+// it installs a profile the cluster already holds, and on an installed app it
+// states who the app is for and nothing else.
+func TestAnInstallWithNeitherCoordinateNorDigestStillWorks(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL})
-	if h.graph == nil {
-		t.Skip("needs OpenFGA deciding: make test-director-contract")
-	}
-	if err := h.graph.ReconcileCatalogueSources(context.Background(),
-		[]string{"demo", "solo"}, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	body := fmt.Sprintf(`{"coordinate":"in-house/element","digest":%q}`, sha(elementProfile))
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body); code != http.StatusForbidden {
-		t.Fatalf("an entry of a source nothing opened installed: %d", code)
+	digest := sha(elementProfile)
+
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, ""); code != http.StatusAccepted || out["status"] != "installed" {
+		t.Fatalf("a bare install = %d %v", code, out)
+	}
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, digest)); code != http.StatusAccepted {
+		t.Fatalf("a pinned install = %d %v", code, out)
+	}
+	// The access switch: defaultGrant alone, on a pinned app. The pin stays.
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"defaultGrant":true}`); code != http.StatusAccepted || out["status"] != "updated" {
+		t.Fatalf("stating who the app is for = %d %v", code, out)
+	}
+	tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	if !strings.Contains(tenant, "    digest: "+digest+"\n    catalogue: main\n    defaultGrant: true\n") {
+		t.Fatalf("the pin did not survive the access switch:\n%s", tenant)
+	}
+}
+
+// A coordinate that names another app than the one being installed is refused:
+// it would commit one profile and install another.
+func TestTheCoordinateMustNameTheAppBeingInstalled(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+
+	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, body); code != http.StatusBadRequest {
+		t.Fatalf("install = %d %v, want 400", code, out)
+	}
+	if h.tip(t) != before {
+		t.Fatal("it committed anyway")
+	}
+}
+
+// An install from a source is asked of the person and of nothing else: there
+// is no question about the source, which the Cluster claim offers to every
+// tenant.
+func TestInstallingFromASourceAsksOnlyWhetherThePersonMayInstall(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
+
+	tina := h.token(t, "tenant-solo", "tina")
+	h.asked.reset()
+	if code, out := h.do(t, "POST", "/v1/tenants/solo/apps/element", tina, body); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if got := h.asked.questions(); len(got) != 1 || got[0] != "user:tina can_install_app tenant:solo" {
+		t.Fatalf("the install asked %q", got)
 	}
 }

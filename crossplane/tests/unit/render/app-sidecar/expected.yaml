@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-admin-password-kv, demo-app-admin-password-seed-secret,
-      demo-app-client-role, and 13 more'
+      demo-app-client-role, and 14 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -34,7 +34,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: render-demo-app-fixture-admin-password-seed
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/tenants/demo/apps/demo-app/internal/admin_password
   managementPolicies:
@@ -65,7 +65,7 @@ spec:
       kind: Secret
       metadata:
         name: render-demo-app-fixture-admin-password-seed
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       stringData:
         data.json: '{"value":"0c872744d729b26421a470dc9d285c3fcf85d849d9f6704d5ade94ed0cbb6c31"}'
       type: Opaque
@@ -158,7 +158,7 @@ spec:
         refreshInterval: 1h
         secretStoreRef:
           kind: ClusterSecretStore
-          name: openbao
+          name: openbao-tenant-demo
         target:
           creationPolicy: Owner
           deletionPolicy: Retain
@@ -193,6 +193,45 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keep-volumes
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-keep-volumes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        patch.yaml: |
+          patches:
+            - target:
+                version: v1
+                kind: PersistentVolumeClaim
+              patch: |-
+                apiVersion: v1
+                kind: PersistentVolumeClaim
+                metadata:
+                  name: every-claim-of-the-release
+                  annotations:
+                    helm.sh/resource-policy: keep
+      kind: ConfigMap
+      metadata:
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+  providerConfigRef:
+    name: kubernetes
+---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
 metadata:
@@ -216,7 +255,7 @@ spec:
     clientSecretSecretRef:
       key: client-secret
       name: render-demo-app-fixture-oidc-client-creds
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     directAccessGrantsEnabled: false
     fullScopeAllowed: false
     name: Demo App
@@ -329,7 +368,7 @@ spec:
         refreshInterval: 1h
         secretStoreRef:
           kind: ClusterSecretStore
-          name: openbao
+          name: openbao-tenant-demo
         target:
           creationPolicy: Owner
           deletionPolicy: Retain
@@ -342,6 +381,7 @@ kind: Release
 metadata:
   annotations:
     crossplane.io/composition-resource-name: demo-app-mcp-release
+    crossplane.io/external-name: demo-app-mcp-release
   labels:
     crossplane.io/composite: render-demo-app-fixture
   name: render-demo-app-fixture-mcp-release
@@ -359,6 +399,12 @@ spec:
       repository: oci://example.invalid/demo-app-mcp
       version: 0.1.0
     namespace: tenant-demo
+    patchesFrom:
+    - configMapKeyRef:
+        key: patch.yaml
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+        optional: false
     set:
     - name: auth.password
       valueFrom:
@@ -402,7 +448,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: render-demo-app-fixture-mcp-service-password-seed
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/tenants/demo/apps/demo-app-mcp/internal/service_password
   managementPolicies:
@@ -433,7 +479,7 @@ spec:
       kind: Secret
       metadata:
         name: render-demo-app-fixture-mcp-service-password-seed
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       stringData:
         data.json: '{"value":"2ec8b2732400ff1b7589edbda917557c9dd441505d6247a566d2e90b421776c3"}'
       type: Opaque
@@ -470,7 +516,7 @@ spec:
           protocol: TCP
           targetPort: 8765
         selector:
-          app.kubernetes.io/instance: render-demo-app-fixture-mcp-release
+          app.kubernetes.io/instance: demo-app-mcp-release
   providerConfigRef:
     name: kubernetes
 ---
@@ -496,7 +542,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: render-demo-app-fixture-oidc-client-creds
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       spec:
         data:
         - remoteRef:
@@ -518,6 +564,7 @@ kind: Release
 metadata:
   annotations:
     crossplane.io/composition-resource-name: demo-app-release
+    crossplane.io/external-name: demo-app-release
   labels:
     crossplane.io/composite: render-demo-app-fixture
   name: render-demo-app-fixture-release
@@ -535,6 +582,12 @@ spec:
       repository: oci://example.invalid/demo-app
       version: 1.0.0
     namespace: tenant-demo
+    patchesFrom:
+    - configMapKeyRef:
+        key: patch.yaml
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+        optional: false
     set:
     - name: demo-app.oidc.secret
       valueFrom:

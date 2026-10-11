@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 // Command director-dev runs the real director API on a laptop, with stand-ins
 // for everything it depends on, so a UI can be built against it before there is
@@ -27,8 +21,6 @@ limitations under the License.
 //     are set.
 //   - gentian-deployments is a bare repository in a temporary directory, seeded
 //     with two tenants. Inspect it with git: the commits are the real ones.
-//   - The App Store is a throwaway signing key. GET /dev/statement signs an
-//     entitlement statement.
 //   - The operator's tile catalogue is a file written at start, holding the
 //     three kernel consoles a cluster routes. In a cluster the operator
 //     projects it into a ConfigMap and the director reads it mounted; here
@@ -40,7 +32,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -60,10 +51,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/membership"
-	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
 const (
@@ -100,63 +89,34 @@ var facts = map[string]bool{
 	"user:alice can_configure cluster:dev-cluster": true,
 }
 
-// decisions answers from the table, and for entitlements from the tuples the
-// director itself wrote, evaluating grant_valid as the model does.
+// decisions answers from the table.
 type decisions struct {
-	log    *slog.Logger
-	tuples map[string]authz.Tuple
+	log *slog.Logger
 }
-
-func key(t authz.Tuple) string { return t.User + " " + t.Relation + " " + t.Object }
 
 func (d *decisions) Check(_ context.Context, requestID, user, relation, object string) (bool, error) {
 	allowed := facts[user+" "+relation+" "+object]
-	if relation == "can_install" {
-		if t, ok := d.tuples[key(authz.Tuple{User: user, Relation: "entitled", Object: object})]; ok && t.Condition != nil {
-			until, err := time.Parse(time.RFC3339, fmt.Sprint(t.Condition.Context["expires_at"]))
-			allowed = err == nil && time.Now().Before(until)
-		}
-	}
 	d.log.Info("authz decision", "request_id", requestID, "user", user, "relation", relation, "object", object, "allowed", allowed)
 	return allowed, nil
-}
-
-func (d *decisions) Read(_ context.Context, f authz.Tuple) ([]authz.Tuple, error) {
-	if t, ok := d.tuples[key(f)]; ok {
-		return []authz.Tuple{t}, nil
-	}
-	return nil, nil
-}
-
-func (d *decisions) Write(_ context.Context, writes, deletes []authz.Tuple) error {
-	for _, t := range deletes {
-		delete(d.tuples, key(t))
-	}
-	for _, t := range writes {
-		d.tuples[key(t)] = t
-	}
-	return nil
 }
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8090", "address to serve on")
 	origins := flag.String("cors", "http://localhost:5173", "comma-separated origins allowed to call the API from a browser")
 	public := flag.String("url", "", "URL the API is reached at, when it differs from http://<listen> (a published container port)")
-	entitlements := flag.Bool("entitlements", false, "require an entitlement to install, as a cluster with a store does")
-	storeKeys := flag.String("store-keys", "", "pin a store's keys, as DIRECTOR_STORE_KEYS does (id=base64,…); default: a throwaway key that /dev/statement signs with")
-	clusterID := flag.String("cluster", cluster, "the cluster id statements must be addressed to")
+	clusterID := flag.String("cluster", cluster, "the cluster id this director serves")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if *public == "" {
 		*public = "http://" + *listen
 	}
-	if err := run(log, *listen, strings.TrimRight(*public, "/"), strings.Split(*origins, ","), *entitlements, *storeKeys, *clusterID); err != nil {
+	if err := run(log, *listen, strings.TrimRight(*public, "/"), strings.Split(*origins, ","), *clusterID); err != nil {
 		log.Error("director-dev stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, listen, base string, origins []string, enforce bool, storeKeys, cluster string) error {
+func run(log *slog.Logger, listen, base string, origins []string, cluster string) error {
 	work, err := os.MkdirTemp("", "director-dev-")
 	if err != nil {
 		return err
@@ -170,49 +130,28 @@ func run(log *slog.Logger, listen, base string, origins []string, enforce bool, 
 	if err != nil {
 		return err
 	}
-	storePub, storeKey, _ := ed25519.GenerateKey(rand.Reader)
-	pinned := map[string]ed25519.PublicKey{"dev-store": storePub}
-	if storeKeys != "" {
-		external, err := membership.ParseKeys(storeKeys)
-		if err != nil {
-			return err
-		}
-		for id, k := range external {
-			pinned[id] = k
-		}
-	}
-
 	verifier, err := authn.NewVerifier(authn.Config{IssuerBase: base, Audience: audience})
 	if err != nil {
 		return err
 	}
-	var checker authz.Checker
-	var tuples entitlement.Store
+	var checker authz.Checker = &decisions{log: log}
 	if url := os.Getenv("OPENFGA_API_URL"); url != "" {
 		fga, err := authz.NewOpenFGA(authz.Options{BaseURL: url, APIToken: os.Getenv("OPENFGA_API_TOKEN"),
 			StoreID: os.Getenv("OPENFGA_STORE_ID"), ModelID: os.Getenv("OPENFGA_MODEL_ID"), Logger: log})
 		if err != nil {
 			return err
 		}
-		checker, tuples = fga, fga
-	} else {
-		d := &decisions{log: log, tuples: map[string]authz.Tuple{}}
-		checker, tuples = d, d
+		checker = fga
 	}
 	repo := gitops.NewGitOps(filepath.Join(work, "checkout"), remote, cluster, gitops.Person{})
-	storeVerifier, err := entitlement.NewVerifier(pinned, cluster)
-	if err != nil {
-		return err
-	}
-	tilesPath, err := seedTiles(work, cluster)
-	if err != nil {
-		return err
-	}
-	director, err := api.New(api.Config{
-		Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce, Cluster: cluster,
-		Store:     &api.StoreConfig{Verifier: storeVerifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
-		TilesPath: tilesPath,
-	})
+	// The real fetcher: a catalogue added here is fetched from, with the
+	// address checks a cluster's director makes, so only public https
+	// addresses work on a laptop as well.
+	// One kept in a directory of the repository itself is read from it.
+	entries := catalogue.NewFetcher()
+	entries.Repo = repo
+	director, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, Cluster: cluster,
+		Catalogue: entries})
 	if err != nil {
 		return err
 	}
@@ -254,36 +193,6 @@ func run(log *slog.Logger, listen, base string, origins []string, enforce bool, 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": token, "token_type": "Bearer"})
 	})
-	mux.HandleFunc("GET /dev/statement", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		granted := q.Get("granted") != "false"
-		now := time.Now()
-		c := entitlement.Claims{
-			Issuer: "director-dev", Audience: "cluster:" + cluster, Subject: "tenant:" + q.Get("tenant"),
-			ID: fmt.Sprintf("dev-%d", now.UnixNano()), IssuedAt: now.Unix(),
-			Coordinate: q.Get("coordinate"), Granted: granted,
-		}
-		if granted {
-			c.Expiry = now.Add(30 * 24 * time.Hour).Unix()
-		} else {
-			c.Reason = "revoked from director-dev"
-		}
-		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: storeKey},
-			(&jose.SignerOptions{}).WithHeader("kid", "dev-store"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		payload, _ := json.Marshal(c)
-		jws, err := signer.Sign(payload)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		compact, _ := jws.CompactSerialize()
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"grant": compact})
-	})
 
 	fmt.Printf(`
 director-dev — the real director API with local stand-ins
@@ -291,7 +200,6 @@ director-dev — the real director API with local stand-ins
   API          %[1]s/v1/...
   people       curl %[1]s/dev/people
   a token      curl '%[1]s/dev/token?user=tom'
-  a statement  curl '%[1]s/dev/statement?tenant=demo&coordinate=main/wiki'
   the repo     git --git-dir %[2]s log --format='%%h %%an | %%s%%n  %%(trailers:key=Gentian-Authz,valueonly)' main
 
   TOKEN=$(curl -s '%[1]s/dev/token?user=tom' | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
@@ -325,46 +233,6 @@ func cors(next http.Handler, origins []string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// seedTiles writes the catalogue the operator would have projected for a
-// cluster serving all three kernel consoles on k.example, which is the domain
-// the seeded claim declares. The director filters it per caller exactly as it
-// does in a cluster; what is missing here is only the operator that keeps it
-// in step with the routes.
-func seedTiles(work, cluster string) (string, error) {
-	body, err := tilecatalogue.Marshal(tilecatalogue.Catalogue{Tiles: []tilecatalogue.Tile{
-		{
-			Name: "headlamp", DisplayName: "Cluster",
-			Description: "The cluster as Kubernetes sees it — nodes, workloads, events — with your own identity.",
-			Icon:        "cluster", URL: "https://headlamp.k.example/",
-			Object: "cluster:" + cluster,
-			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
-		},
-		{
-			Name: "argocd", DisplayName: "Deployments",
-			Description: "What git says the cluster should run, and whether it does.",
-			Icon:        "sync", URL: "https://argocd.k.example/auth/login",
-			Object: "cluster:" + cluster,
-			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
-		},
-		{
-			Name: "keycloak", DisplayName: "Identity",
-			Description: "Realms, clients and the people in them.",
-			Icon:        "identity", URL: "https://id.k.example/auth/admin/kernel/console/",
-			Object: "cluster:" + cluster,
-			AnyOf:  []string{"can_configure"},
-		},
-	}})
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(work, "tiles")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, tilecatalogue.Key)
-	return path, os.WriteFile(path, []byte(body), 0o644)
 }
 
 // seed creates the bare repository with tenants demo and solo.

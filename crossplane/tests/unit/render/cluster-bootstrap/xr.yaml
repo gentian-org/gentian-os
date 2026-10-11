@@ -8,17 +8,17 @@ spec:
   kernelDomain: platform.example.test
   masterPasswordSecretRef:
     name: gentian-os-master-password
-    namespace: crossplane-system
+    namespace: kernel-provisioning
   openbao:
-    server: https://openbao.openbao.svc.cluster.local:8200
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
     kvMount: secret
     authMount: kubernetes
     kubernetesHost: https://kubernetes.default.svc
   argocd:
-    namespace: argocd
+    namespace: kernel-gitops
     sourceRepos: []
   eso:
-    namespace: external-secrets
+    namespace: kernel-secrets
     serviceAccount: external-secrets
   certManager:
     letsencryptEmail: admin@platform.example.test

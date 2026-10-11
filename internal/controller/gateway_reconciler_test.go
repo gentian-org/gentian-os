@@ -1,22 +1,17 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"strings"
@@ -82,7 +77,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	// A listener's hostname both selects it by SNI and gates which routes may
 	// attach, and a route only attaches where its hostnames intersect. The
 	// kernel certificate covers platform.example.test and *.platform.example.test, so a
-	// browser may coalesce console.platform.example.test onto an existing
+	// browser may coalesce desktop.platform.example.test onto an existing
 	// platform.example.test connection; with a listener scoped to the apex that
 	// request had nowhere to attach and Envoy returned a bare 404. Serving every
 	// name the certificate covers from one listener removes the hole.
@@ -114,7 +109,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	if _, exists := byName[httpRedirectListenerName]; exists {
 		t.Fatalf("listener %q on the authenticated Gateway; :80 belongs to the perimeter", httpRedirectListenerName)
 	}
-	perimeter := buildPerimeterGateway("platform.example.test", "", nil)
+	perimeter := buildPerimeterGateway("platform.example.test", "", "kernel", nil, nil)
 	if perimeter.Name != PerimeterGatewayName || perimeter.Namespace != servicesNamespace {
 		t.Fatalf("perimeter Gateway = %s/%s", perimeter.Namespace, perimeter.Name)
 	}
@@ -216,84 +211,14 @@ func TestTenantGatewayName(t *testing.T) {
 	}
 }
 
-func TestBuildAppHTTPRoute(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.ExposureSpec{
-		SubDomain: "app",
-	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
-		appProfile: "catalogue-test-app",
-		ingress:    ingress,
-	}, "demo.platform.example.test", "platform.example.test")
-	if route.Name != "httproute-demo-catalogue-test-app" {
-		t.Fatalf("name = %q", route.Name)
-	}
-	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.platform.example.test" {
-		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
-	}
-	// One parent: the kernel Gateway, pinned to this tenant's listener.
-	if len(route.Spec.ParentRefs) != 1 {
-		t.Fatalf("parent refs = %d, want 1", len(route.Spec.ParentRefs))
-	}
-	if route.Spec.ParentRefs[0].Name != AuthenticatedGatewayName {
-		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[0].Name)
-	}
-	if route.Spec.ParentRefs[0].Namespace == nil || string(*route.Spec.ParentRefs[0].Namespace) != servicesNamespace {
-		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[0].Namespace)
-	}
-	if route.Spec.ParentRefs[0].SectionName == nil ||
-		string(*route.Spec.ParentRefs[0].SectionName) != tenantGatewayListenerName("demo") {
-		t.Fatalf("kernel parent sectionName = %v", route.Spec.ParentRefs[0].SectionName)
-	}
-	if len(route.Spec.Rules[0].Filters) == 0 {
-		t.Fatal("expected embedding response filters")
-	}
-}
-
-func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.ExposureSpec{
-		SubDomain: "app",
-		Backend:   gentianov1alpha1.BackendRef{Service: "ui"},
-	}
-	profile := &gentianov1alpha1.ComponentProfile{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "multi-route-app",
-			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/ui/",
-				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/ui/api","serviceName":"api"}]`,
-			},
-		},
-	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
-		appProfile: "multi-route-app",
-		profile:    profile,
-		ingress:    ingress,
-	}, "demo.platform.example.test", "platform.example.test")
-	if len(route.Spec.Rules) != 3 {
-		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
-	}
-	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
-	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/ui/" {
-		t.Fatalf("redirect = %+v", redirect)
-	}
-	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "api" {
-		t.Fatalf("api backend rule = %+v", route.Spec.Rules[1].BackendRefs)
-	}
-	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "ui" {
-		t.Fatalf("ui backend rule = %+v", route.Spec.Rules[2].BackendRefs)
-	}
-}
-
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
 	policy := computeGatewayFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "app")
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if policy.Origins != "https://console.platform.example.test https://console.demo.platform.example.test https://*.demo.platform.example.test" {
+	// The tenant's own desktop and its own domain. Not the platform's desktop.
+	if policy.Origins != "https://desktop.demo.platform.example.test https://*.demo.platform.example.test" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -318,13 +243,14 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	if !strings.Contains(policy.Origins, "https://cloud.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
-	if !strings.Contains(policy.Origins, "https://console.platform.example.test") {
-		t.Fatalf("origins = %q", policy.Origins)
+	// "portal" is the tenant's desktop. It is not also the platform's.
+	if strings.Contains(policy.Origins, "https://platform.platform.example.test") {
+		t.Fatalf("the platform's desktop may frame a tenant's app: origins = %q", policy.Origins)
 	}
-	// The tenant's own console is the host a tenant user is normally signed
+	// The tenant's own desktop is the host a tenant user is normally signed
 	// in on. Leaving it out passes every server-side check and still blocks
 	// the iframe in the browser, so assert it explicitly.
-	if !strings.Contains(policy.Origins, "https://console.demo.platform.example.test") {
+	if !strings.Contains(policy.Origins, "https://desktop.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -346,7 +272,7 @@ func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *test
 	if !ok {
 		t.Fatal("expected custom policy")
 	}
-	want := strings.Join(consoleOrigins("platform.example.test", "demo.platform.example.test"), " ")
+	want := strings.Join(desktopOrigins("demo.platform.example.test"), " ")
 	if policy.Origins != want {
 		t.Fatalf("origins = %q, want %q", policy.Origins, want)
 	}
@@ -421,8 +347,9 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	if modifier == nil || len(modifier.Set) != 1 {
 		t.Fatalf("modifier = %+v", modifier)
 	}
-	if !strings.Contains(modifier.Set[0].Value, "https://console.platform.example.test") {
-		t.Fatalf("csp = %q", modifier.Set[0].Value)
+	if got := modifier.Set[0].Value; !strings.Contains(got, "https://desktop.demo.platform.example.test") ||
+		strings.Contains(got, "https://platform.platform.example.test") {
+		t.Fatalf("csp = %q: the tenant's own desktop and not the platform's", got)
 	}
 }
 
@@ -447,47 +374,18 @@ func TestBuildTenantReferenceGrantObjects(t *testing.T) {
 	}
 }
 
-func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.ExposureSpec{
-		Annotations: map[string]string{
-			gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
-		},
-	}
-	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "catalogue-test-app", ingress)
-	if obj == nil {
-		t.Fatal("expected BackendTrafficPolicy object")
-	}
-	if obj.GetName() != "btp-demo-catalogue-test-app" {
-		t.Fatalf("name = %q", obj.GetName())
-	}
-	refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "targetRefs")
-	if len(refs) != 1 {
-		t.Fatalf("targetRefs = %v", refs)
-	}
-	ref, _ := refs[0].(map[string]interface{})
-	if ref["name"] != "httproute-demo-catalogue-test-app" {
-		t.Fatalf("target route = %v", ref["name"])
-	}
-
-	if buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "plain", &gentianov1alpha1.ExposureSpec{}) != nil {
-		t.Fatal("expected nil for ingress without policy annotations")
-	}
-}
-
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, kernelFrontDoor{})
 	// One route per kernel host, plus one per tenant apex sending the browser
-	// to that tenant's console. Asserted by name rather than by count, so
+	// to that tenant's desktop. Asserted by name rather than by count, so
 	// adding a route does not fail a test that has nothing to do with it.
 	byName := map[string]kernelHTTPRouteSpec{}
 	for _, s := range specs {
 		byName[s.name] = s
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteWWWRedirect, kernelRouteKernelApex,
+		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteWWWRedirect,
 		kernelRouteArgoCD, kernelRouteHTTPRedirect, "tenant-demo-apex",
 	} {
 		if _, ok := byName[want]; !ok {
@@ -579,42 +477,36 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if got := string(redirect.Spec.ParentRefs[0].Name); got != PerimeterGatewayName {
 		t.Fatalf("http redirect parent = %q, want the perimeter Gateway", got)
 	}
-	// www is an alias of the platform console, by redirect; a tenant's apex
-	// is an alias of the tenant's own.
+	// www is an alias of the bare domain, by redirect; a tenant's apex is an
+	// alias of the tenant's own desktop.
 	www := buildKernelHTTPRoute(byName[kernelRouteWWWRedirect])
 	if string(www.Spec.Hostnames[0]) != "www.platform.example.test" {
 		t.Fatalf("www host = %v", www.Spec.Hostnames[0])
 	}
-	if got := *www.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "console.platform.example.test" {
+	if got := *www.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "platform.example.test" {
 		t.Fatalf("www redirects to %q", got)
 	}
 	apex := buildKernelHTTPRoute(byName["tenant-demo-apex"])
-	if got := *apex.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "console.demo.platform.example.test" {
+	if got := *apex.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "desktop.demo.platform.example.test" {
 		t.Fatalf("tenant apex redirects to %q", got)
 	}
 }
 
-// A redirect to a console that does not exist is a public dead end, so
+// A redirect to a desktop that does not exist is a public dead end, so
 // without a desktop profile no name is sent to one -- and before the kernel
-// zone exists there is no platform console to send the kernel names to.
-func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
+// zone exists there is no platform desktop to send the kernel names to.
+func TestNoDesktopRedirectsWithoutADesktop(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false)
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false, kernelFrontDoor{})
 	for _, s := range specs {
 		switch s.name {
-		case kernelRouteWWWRedirect, kernelRouteKernelApex, "tenant-demo-apex":
+		case "tenant-demo-apex":
 			t.Errorf("route %q published with no desktop behind it", s.name)
 		}
 	}
 	specs = kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true)
-	for _, s := range specs {
-		switch s.name {
-		case kernelRouteWWWRedirect, kernelRouteKernelApex:
-			t.Errorf("route %q published before the kernel zone exists", s.name)
-		}
-	}
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true, kernelFrontDoor{})
 	// The routes that do not depend on the desktop are still there.
 	var sawIDP bool
 	for _, s := range specs {
@@ -627,17 +519,90 @@ func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 	}
 }
 
+// The model gateway's console has a route only where the claim switches it
+// on (clusterLLMConsoleRouted). Off, nothing claims llm.<kernel domain>: no
+// route, so no hostname for the tunnel or a DNS record to carry, and no line
+// in the bouncer's table.
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, kernelFrontDoor{})
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
-			t.Fatalf("kernel-llm route present with llm disabled")
+			t.Fatalf("kernel-llm route present with the console off")
+		}
+		if spec.host == "llm.platform.example.test" {
+			t.Fatalf("%s claims the console's host with the console off", spec.name)
+		}
+	}
+	table, err := bouncerRouteTable(specs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(table, "llm.platform.example.test") {
+		t.Fatalf("the bouncer's table names the console's host with the console off:\n%s", table)
+	}
+}
+
+// Switched on, the console is a kernel console like the others: behind the
+// kernel session, for whoever may configure the cluster. Its pages send
+// LiteLLM's own key in the Authorization header, so the edge leaves that
+// header alone and hands LiteLLM no token of the platform's.
+func TestTheModelGatewayConsoleKeepsItsOwnBearer(t *testing.T) {
+	t.Parallel()
+	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, kernelFrontDoor{}) {
+		if s.name != kernelRouteLiteLLM {
+			continue
+		}
+		if s.authz == nil || s.authz.relation != "can_configure" || s.authz.object != "cluster:c1" {
+			t.Fatalf("the console is for whoever may configure the cluster: %+v", s.authz)
+		}
+		if !s.authz.keepClientToken || s.authz.forwardToken {
+			t.Fatalf("the edge must neither replace the console's bearer nor send its own: %+v", s.authz)
+		}
+		table, err := bouncerRouteTable([]kernelHTTPRouteSpec{s}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"host: llm.platform.example.test", "relation: can_configure", "authMode: oidc",
+			"keepClientToken: true", "idTokenAudience: " + edgeKernelClientID,
+			// The session's cookies are taken out before the backend.
+			edgeKernelAccessTokenCookie, edgeKernelIDTokenCookie,
+		} {
+			if !strings.Contains(table, want) {
+				t.Fatalf("the bouncer's line for the console lacks %q:\n%s", want, table)
+			}
+		}
+		if strings.Contains(table, "forwardToken") {
+			t.Fatalf("the bouncer would pass the edge's token on to LiteLLM:\n%s", table)
+		}
+		// The policy Envoy reads: the session's access token is not put in
+		// the Authorization header, and the ID token goes in the header the
+		// bouncer reads and removes.
+		oidc := kernelSecurityPolicySpec("platform.example.test", "kernel", s.name, *s.authz, "gentian-os-bouncer")["oidc"].(map[string]interface{})
+		if oidc["forwardAccessToken"] != false {
+			t.Fatalf("forwardAccessToken = %v: the gateway would replace the console's own bearer", oidc["forwardAccessToken"])
+		}
+		if header := oidc["forwardIDToken"].(map[string]interface{})["header"]; header != edgeIDTokenHeader {
+			t.Fatalf("forwardIDToken.header = %v, want %s", header, edgeIDTokenHeader)
+		}
+		return
+	}
+	t.Fatal("the console's route is missing with the console on")
+}
+
+// No kernel zone, no console, whatever the claim says: there is no session
+// to put it behind.
+func TestTheModelGatewayConsoleWaitsForTheKernelZone(t *testing.T) {
+	t.Parallel()
+	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", false, true, kernelFrontDoor{}) {
+		if s.name == kernelRouteLiteLLM {
+			t.Fatal("the console is routed before the kernel zone exists")
 		}
 	}
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, kernelFrontDoor{})
 	// By name, not by count: adding a kernel route should not fail a test
 	// about the LLM one. The LLM route is still appended last, which is what
 	// the specs[len-1] lookup below relies on.
@@ -646,7 +611,7 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 		byName[s.name] = struct{}{}
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteWWWRedirect, kernelRouteKernelApex,
+		kernelRouteKeycloakIDP, kernelRouteWWWRedirect,
 		kernelRouteArgoCD, kernelRouteHTTPRedirect, kernelRouteLiteLLM,
 	} {
 		if _, ok := byName[want]; !ok {
@@ -697,17 +662,17 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 
 func TestConsoleRedirectRule(t *testing.T) {
 	t.Parallel()
-	rule := consoleRedirectRule("console.platform.example.test")
+	rule := hostRedirectRule("desktop.platform.example.test")
 	if len(rule.Filters) != 1 || rule.Filters[0].RequestRedirect == nil {
 		t.Fatalf("rule = %+v", rule)
 	}
 	redirect := rule.Filters[0].RequestRedirect
-	if redirect.Hostname == nil || string(*redirect.Hostname) != "console.platform.example.test" {
+	if redirect.Hostname == nil || string(*redirect.Hostname) != "desktop.platform.example.test" {
 		t.Fatalf("hostname = %v", redirect.Hostname)
 	}
 	// Path and query travel: an alias by redirect loses nothing of the request.
 	if redirect.Path != nil {
-		t.Fatalf("console redirect rewrites the path: %+v", redirect.Path)
+		t.Fatalf("the redirect rewrites the path: %+v", redirect.Path)
 	}
 }
 
@@ -729,7 +694,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 		nil,
 		[]string{"demo"},
 		true,
-		"c1", true, true)
+		"c1", true, true, kernelFrontDoor{})
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
 	}
@@ -745,7 +710,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{})
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {
@@ -801,7 +766,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{})
 	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
 		var spec *kernelHTTPRouteSpec
 		for i := range specs {
@@ -818,11 +783,12 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 		}
 		m := f[0].ResponseHeaderModifier
 		// X-Frame-Options cannot express an exception, so it goes; the policy
-		// that can names the kernel domain and nothing wider.
+		// that can names the platform's desktop and nothing wider -- not the
+		// kernel domain, under which a tenant's apps may be too.
 		if len(m.Remove) != 1 || m.Remove[0] != "X-Frame-Options" {
 			t.Errorf("%s: removes %v, want X-Frame-Options", name, m.Remove)
 		}
-		if len(m.Set) != 1 || m.Set[0].Value != "frame-ancestors 'self' https://*.platform.example.test" {
+		if len(m.Set) != 1 || m.Set[0].Value != "frame-ancestors 'self' https://platform.platform.example.test" {
 			t.Errorf("%s: sets %v", name, m.Set)
 		}
 	}
@@ -835,7 +801,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 // an application that is not the admin console".
 func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{})
 	for _, s := range specs {
 		if s.name != kernelRouteKeycloakAdmin {
 			continue
@@ -848,14 +814,268 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 		}
 		// And the two must reach their two destinations: the table line the
 		// authorization service reads, and the policy Envoy reads.
-		table, err := edgeAuthzRouteTable([]kernelHTTPRouteSpec{s}, nil, "platform.example.test", "kernel")
+		table, err := bouncerRouteTable([]kernelHTTPRouteSpec{s}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(table, "keepClientToken: true") || strings.Contains(table, "forwardToken") {
 			t.Fatalf("the table line the authorization service reads:\n%s", table)
 		}
+		// The session on this route is proved by its ID token, held against
+		// the kernel zone's client.
+		if !strings.Contains(table, "idTokenAudience: "+edgeKernelClientID) {
+			t.Fatalf("the route names no client to hold the session's ID token against:\n%s", table)
+		}
 		return
 	}
 	t.Fatal("the admin console route is missing")
+}
+
+// On a single-tenancy cluster the user tenant is on the kernel domain, which
+// the kernel's catch-all listener already serves. A *.<kernel> tenant
+// listener beside it would be the more specific match for argocd.<kernel> and
+// every other kernel host, and route them nowhere. The platform tenant keeps
+// its own, for *.platform.<kernel>.
+func TestTheUserTenantOfASingleTenancyClusterAddsNoListener(t *testing.T) {
+	t.Parallel()
+	user := gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.SingleUserTenantName}}
+	tenants := []gentianov1alpha1.Tenant{*platformTenantFixture(), user}
+	gw := buildAuthenticatedGateway("example.org", gentianov1alpha1.TenancyModeSingle, tenants)
+	hosts := map[string]string{}
+	for _, l := range gw.Spec.Listeners {
+		if l.Hostname != nil && string(*l.Hostname) == "*.example.org" {
+			t.Fatalf("listener %s claims the kernel domain", l.Name)
+		}
+		if string(l.Name) == tenantGatewayListenerName(gentianov1alpha1.SingleUserTenantName) {
+			t.Fatalf("the user tenant got a listener of its own: %+v", l)
+		}
+		if l.Hostname != nil {
+			hosts[string(l.Name)] = string(*l.Hostname)
+		}
+	}
+	if hosts[tenantGatewayListenerName("platform")] != "*.platform.example.org" {
+		t.Fatalf("the platform tenant's listener = %q, want *.platform.example.org", hosts[tenantGatewayListenerName("platform")])
+	}
+	// Under multi the same name is an ordinary tenant with a zone of its own.
+	gw = buildAuthenticatedGateway("example.org", gentianov1alpha1.TenancyModeMulti, tenants)
+	found := false
+	for _, l := range gw.Spec.Listeners {
+		if string(l.Name) == tenantGatewayListenerName("user") && l.Hostname != nil && string(*l.Hostname) == "*.user.example.org" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("under multi, a tenant named user has no listener for *.user.<kernel>")
+	}
+}
+
+// The cluster's bare domain is not a kernel route: it is a perimeter surface
+// of the platform tenant, published from that tenant's DMZ. Nothing here
+// routes it, the identity provider's route carries nothing but the identity
+// provider, and www is sent to the bare domain.
+func TestTheBareDomainIsNotAKernelRoute(t *testing.T) {
+	t.Parallel()
+	var www string
+	for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{}) {
+		if spec.host == "k.example" {
+			t.Fatalf("route %q serves the bare domain from the kernel", spec.name)
+		}
+		switch spec.name {
+		case kernelRouteWWWRedirect:
+			www = string(*spec.rules[0].Filters[0].RequestRedirect.Hostname)
+		case kernelRouteKeycloakIDP:
+			for _, rule := range spec.rules {
+				if v := rule.Matches[0].Path.Value; v == nil || !strings.HasPrefix(*v, "/auth/") {
+					t.Fatalf("the identity provider's public route carries a path that is not its own: %v", v)
+				}
+			}
+		}
+	}
+	if www != "k.example" {
+		t.Fatalf("www -> %q, want the bare domain", www)
+	}
+}
+
+// Every tenant with hosts deeper than one label under the cluster's domain
+// gets a listener, apps or not, because its desktop and consoles are served
+// on it. The platform tenant is one of them: its administration console is
+// admin.platform.<kernel>, which the cluster's own certificate does not name,
+// so it has a listener for *.platform.<kernel> with its own wildcard.
+func TestThePlatformTenantHasAListenerForItsConsoles(t *testing.T) {
+	t.Parallel()
+	platform := *platformTenantFixture()
+	acme := *acmeTenantFixture()
+	gw := buildAuthenticatedGateway("k.example", "multi", []gentianov1alpha1.Tenant{platform, acme})
+	listeners := map[string]gatewayv1.Listener{}
+	for _, l := range gw.Spec.Listeners {
+		listeners[string(l.Name)] = l
+	}
+	pl, ok := listeners[tenantGatewayListenerName("platform")]
+	if !ok {
+		t.Fatal("the platform tenant has no listener: admin.platform.<kernel> would be served with a certificate that does not name it")
+	}
+	if pl.Hostname == nil || string(*pl.Hostname) != "*.platform.k.example" {
+		t.Fatalf("the platform tenant's listener hostname = %v", pl.Hostname)
+	}
+	ref := pl.TLS.CertificateRefs[0]
+	if string(ref.Name) != tenantWildcardSecretName("platform") || ref.Namespace == nil || string(*ref.Namespace) != "tenant-platform" {
+		t.Fatalf("the platform tenant's listener certificate = %+v", ref)
+	}
+	if _, ok := listeners[tenantGatewayListenerName("acme")]; !ok {
+		t.Fatal("a tenant with no catalogue apps lost its listener")
+	}
+}
+
+// A tenant with a zone of its own has one whether or not it installs
+// catalogue apps; the tenant in the kernel zone and one on the kernel domain
+// do not.
+func TestATenantWithoutAppsStillHasItsZone(t *testing.T) {
+	t.Parallel()
+	r := &TenantReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
+	if !r.tenantHasOwnZone(acmeTenantFixture()) {
+		t.Fatal("a tenant with no apps has no zone")
+	}
+	// The platform tenant too: a certificate and a listener for
+	// *.platform.<kernel>, where its administration console is.
+	if !r.tenantHasOwnZone(platformTenantFixture()) {
+		t.Fatal("the platform tenant has no certificate or listener of its own for *.platform.<kernel>")
+	}
+	single := &TenantReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "single"}
+	user := &gentianov1alpha1.Tenant{}
+	user.Name = gentianov1alpha1.SingleUserTenantName
+	if !single.tenantHasOwnZone(platformTenantFixture()) {
+		t.Fatal("under single, the platform tenant lost its certificate and listener")
+	}
+	if single.tenantHasOwnZone(user) {
+		t.Fatal("a tenant on the kernel domain has a zone of its own")
+	}
+}
+
+// A tenant with no catalogue apps still gets what its listener needs: the
+// wildcard certificate and the grants that let the Gateway use it. They were
+// composed only beside app routes, so a tenant with a desktop and no apps
+// had an invalid listener and a console that answered 502.
+func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
+	s := componentDatabaseScheme(t)
+	r := &TenantReconciler{
+		Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s,
+		KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi", RoutingMode: RoutingModeGateway,
+	}
+	objects, err := r.buildTenantEdgeObjects(context.Background(), acmeTenantFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, o := range objects {
+		kinds[o.GetObjectKind().GroupVersionKind().Kind]++
+		if o.GetObjectKind().GroupVersionKind().Kind == "Certificate" {
+			u := o.(*unstructured.Unstructured)
+			names, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "dnsNames")
+			if len(names) != 1 || names[0] != "*.acme.k.example" {
+				t.Fatalf("certificate names = %v", names)
+			}
+		}
+	}
+	if kinds["Certificate"] != 1 || kinds["ReferenceGrant"] < 2 || kinds["HTTPRoute"] != 0 {
+		t.Fatalf("composed %v", kinds)
+	}
+	// The platform tenant as well: its administration console is at
+	// admin.platform.<kernel>, which the cluster's own certificate (<kernel>
+	// and *.<kernel>) does not name, so it is issued a wildcard of its own by
+	// the mechanism every tenant's is, with the grants that let the Gateway
+	// read it.
+	objects, err = r.buildTenantEdgeObjects(context.Background(), platformTenantFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var platformCert []string
+	grants := 0
+	for _, o := range objects {
+		u := o.(*unstructured.Unstructured)
+		switch u.GetKind() {
+		case "Certificate":
+			if u.GetNamespace() != "tenant-platform" || u.GetName() != tenantWildcardCertName("platform") {
+				t.Fatalf("platform certificate is %s/%s", u.GetNamespace(), u.GetName())
+			}
+			platformCert, _, _ = unstructured.NestedStringSlice(u.Object, "spec", "dnsNames")
+			if secret, _, _ := unstructured.NestedString(u.Object, "spec", "secretName"); secret != tenantWildcardSecretName("platform") {
+				t.Fatalf("platform certificate secret = %q", secret)
+			}
+		case "ReferenceGrant":
+			grants++
+		}
+	}
+	if len(platformCert) != 1 || platformCert[0] != "*.platform.k.example" {
+		t.Fatalf("platform certificate names = %v, want exactly *.platform.k.example", platformCert)
+	}
+	if grants < 2 {
+		t.Fatalf("platform: %d ReferenceGrants", grants)
+	}
+	// The user tenant of a single-tenancy cluster is on the cluster's own
+	// certificate: no certificate of its own is asked for.
+	single := &TenantReconciler{Client: r.Client, Scheme: r.Scheme, KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "single", RoutingMode: r.RoutingMode}
+	user := &gentianov1alpha1.Tenant{}
+	user.Name = gentianov1alpha1.SingleUserTenantName
+	objects, err = single.buildTenantEdgeObjects(context.Background(), user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range objects {
+		if o.(*unstructured.Unstructured).GetKind() == "Certificate" {
+			t.Fatal("the user tenant of a single-tenancy cluster was issued a certificate for *.<kernel>, which is the cluster's own")
+		}
+	}
+}
+
+// Nothing with a backend is routed on the authenticated Gateway without a
+// question, and nothing is public on the perimeter that is not on the list
+// below. A route on the authenticated Gateway that carries no authz gets no
+// session policy at all, so a console added without one answers anyone who
+// knows its hostname -- which is how the LiteLLM console stood, and what this
+// refuses for whatever is added next. Adding to the perimeter's list is a
+// decision to publish something to the internet, and has to be made here, in
+// a line somebody reviews.
+func TestEveryKernelRouteIsBehindAQuestionOrDeliberatelyPublic(t *testing.T) {
+	t.Parallel()
+	public := map[string]bool{
+		kernelRouteKeycloakIDP:  true, // the identity provider's realm endpoints and theme assets
+		kernelRouteHTTPRedirect: true, // :80 to :443
+	}
+	for _, zoneReady := range []bool{true, false} {
+		{
+			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true, kernelFrontDoor{})
+			for _, s := range specs {
+				backends, redirectOnly := 0, true
+				for _, rule := range s.rules {
+					backends += len(rule.BackendRefs)
+					isRedirect := false
+					for _, f := range rule.Filters {
+						if f.Type == gatewayv1.HTTPRouteFilterRequestRedirect {
+							isRedirect = true
+						}
+					}
+					if !isRedirect || len(rule.BackendRefs) > 0 {
+						redirectOnly = false
+					}
+				}
+				switch {
+				case redirectOnly && backends == 0:
+					// Sends the browser elsewhere and serves nothing.
+				case s.authz != nil:
+					// Behind the kernel session and an L2 question.
+				case s.securityPolicy != nil:
+					if action, _ := s.securityPolicy["authorization"].(map[string]interface{})["defaultAction"].(string); action != "Deny" {
+						t.Errorf("%s: a policy of its own that is not a refusal", s.name)
+					}
+				case s.gateway == PerimeterGatewayName && public[s.name]:
+					// Public by decision, named above.
+				default:
+					t.Errorf("%s (%s) serves a backend with no session, no question and no refusal (zoneReady=%v)", s.name, s.host, zoneReady)
+				}
+				if s.gateway != PerimeterGatewayName && s.authz == nil && backends > 0 {
+					t.Errorf("%s (%s) is on the authenticated Gateway with a backend and no authz", s.name, s.host)
+				}
+			}
+		}
+	}
 }

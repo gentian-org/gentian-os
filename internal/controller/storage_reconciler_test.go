@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -56,7 +50,6 @@ func TestStorage_NoStorageApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nostorage"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Storage Co",
-			Domain:      "nostorage.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -96,7 +89,6 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "s3create"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "S3 Create Co",
-			Domain:      "s3create.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "s3-app1"}},
 		},
 	}
@@ -164,7 +156,6 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "storageready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Storage Ready Co",
-			Domain:      "storageready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "s3-app2"}},
 		},
 	}
@@ -212,7 +203,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	t.Parallel()
 	s3Prof := newS3Profile("s3-app3")
 	if err := testClient.Create(context.Background(), s3Prof); err != nil {
-		t.Fatalf("create S3 AppProfile: %v", err)
+		t.Fatalf("create S3 ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), s3Prof) })
 
@@ -220,7 +211,6 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "storagedelete"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "storagedelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "s3-app3"},
@@ -242,7 +232,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
+	// The realm goes after the stores; mark cleanup Jobs so reconcile proceeds.
 	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", layout.Namespace(layout.Authentication))
 
 	s3DeleteJob := &batchv1.Job{}

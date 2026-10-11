@@ -24,11 +24,6 @@ spec:
                 values: [kernel]
         admissionController:
           replicas: 1
-          container:
-            extraArgs:
-              # PolicyExceptions honoured from one namespace only (MetalLB's).
-              enablePolicyException: "true"
-              exceptionNamespace: "metallb-system"
         backgroundController:
           replicas: 1
         cleanupController:
@@ -93,7 +88,7 @@ metadata:
 spec:
   project: gentian
   source:
-    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     path: kernel/security/kyverno/policies
     directory:

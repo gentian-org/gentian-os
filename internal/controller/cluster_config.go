@@ -1,29 +1,28 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -35,9 +34,11 @@ import (
 const (
 	clusterConfigName          = "gentian-cluster-config"
 	clusterConfigLLMKey        = "llm.enabled"
+	clusterConfigLLMConsoleKey = "llm.console.enabled"
 	clusterConfigTenancyKey    = "tenancyMode"
 	clusterConfigMailModeKey   = "mail.serviceMode"
 	clusterConfigMailEgressKey = "mail.egressHost"
+	clusterConfigSecretModeKey = "secretMode"
 )
 
 // clusterConfigValue returns what the claim says for key, or the named
@@ -121,6 +122,19 @@ func clusterLLMEnabled(ctx context.Context, c client.Reader) bool {
 	return clusterConfigValue(ctx, c, clusterConfigLLMKey, "LLM_SUPPORT") == "true"
 }
 
+// clusterLLMConsoleRouted reports whether the model gateway's console is
+// served at llm.<kernel domain>: the cluster serves models and its claim
+// switches the console on (llm.console.enabled).
+//
+// Off unless the claim says so, and there is deliberately no environment
+// fallback: the gateway is a system service, which has no public route, and
+// the console is the one departure from that a cluster may choose. A
+// ConfigMap that cannot answer -- not composed yet, or written before the key
+// existed -- therefore means no route, never one.
+func clusterLLMConsoleRouted(ctx context.Context, c client.Reader) bool {
+	return clusterLLMEnabled(ctx, c) && clusterConfigValueOr(ctx, c, clusterConfigLLMConsoleKey, "") == "true"
+}
+
 // clusterMailEgressHost is the name that resolves to the address mail leaves
 // from, used to build each tenant's SPF record.
 //
@@ -130,4 +144,67 @@ func clusterLLMEnabled(ctx context.Context, c client.Reader) bool {
 // record that reads as correct.
 func clusterMailEgressHost(ctx context.Context, c client.Reader, fallback string) string {
 	return clusterConfigValueOr(ctx, c, clusterConfigMailEgressKey, fallback)
+}
+
+// clusterSecretModeTTL is how long one answer about the secret mode is used.
+// A credential is made once and the mode is set at install, so the answer may
+// be a little old; it may not cost an API call for every value of every pass.
+const clusterSecretModeTTL = 30 * time.Second
+
+// ClusterSecretMode gives the Seeder its window onto the claim's secretMode:
+// derived, where a credential nothing has stored yet is computed from the
+// master password, or random, where it is drawn anew and the master password
+// is not used.
+//
+// There is no environment fallback, and that is deliberate: this decides for
+// good how a credential is made, so a Helm value that disagreed with the claim
+// would be a second opinion on exactly the wrong question.
+//
+// A ConfigMap that is not there yet, or that was written before the key
+// existed, reads as derived: the schema's default, and what every cluster did
+// before the mode was read here. Any other failure to read, and any value that
+// is neither of the two, is an error -- the Seeder then makes nothing and the
+// reconcile comes back, which is better than a credential made on a guess.
+func ClusterSecretMode(c client.Reader) secrets.ModeFunc {
+	var (
+		mu     sync.Mutex
+		cached secrets.Mode
+		readAt time.Time
+	)
+	return func(ctx context.Context) (secrets.Mode, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != "" && time.Since(readAt) < clusterSecretModeTTL {
+			return cached, nil
+		}
+		mode, err := readClusterSecretMode(ctx, c)
+		if err != nil {
+			return "", err
+		}
+		cached, readAt = mode, time.Now()
+		return mode, nil
+	}
+}
+
+func readClusterSecretMode(ctx context.Context, c client.Reader) (secrets.Mode, error) {
+	if c == nil {
+		return "", fmt.Errorf("%s cannot be read: no client", clusterConfigName)
+	}
+	cm := &corev1.ConfigMap{}
+	k := types.NamespacedName{Namespace: clusterConfigNamespace, Name: clusterConfigName}
+	if err := c.Get(ctx, k, cm); err != nil {
+		if apierrors.IsNotFound(err) {
+			return secrets.ModeDerived, nil
+		}
+		return "", fmt.Errorf("read %s/%s: %w", k.Namespace, k.Name, err)
+	}
+	switch v := cm.Data[clusterConfigSecretModeKey]; secrets.Mode(v) {
+	case "", secrets.ModeDerived:
+		return secrets.ModeDerived, nil
+	case secrets.ModeRandom:
+		return secrets.ModeRandom, nil
+	default:
+		return "", fmt.Errorf("%s/%s: %s is %q, which is neither %q nor %q",
+			k.Namespace, k.Name, clusterConfigSecretModeKey, v, secrets.ModeDerived, secrets.ModeRandom)
+	}
 }

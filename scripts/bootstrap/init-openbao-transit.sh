@@ -15,7 +15,7 @@
 #
 # Optional env vars:
 #   TRANSIT_INIT_FILE  — where to save init output (default: ~/.gentian/openbao-transit-init.json)
-#   TRANSIT_NAMESPACE  — k8s namespace (default: openbao)
+#   TRANSIT_NAMESPACE  — k8s namespace (default: kernel-seal)
 # =============================================================================
 
 set -euo pipefail
@@ -27,7 +27,7 @@ warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}"
-TRANSIT_NS="${TRANSIT_NAMESPACE:-openbao}"
+TRANSIT_NS="${TRANSIT_NAMESPACE:-kernel-seal}"
 
 # ─── Resolve transit address ─────────────────────────────────────────────────
 # Prefer the Service's ClusterIP when this host can route to it, otherwise fall
@@ -376,23 +376,3 @@ echo -e "${GREEN}╠════════════════════
 echo -e "${GREEN}║  Address : ${TRANSIT_ADDR}${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "─── Existing cluster: seal migration ────────────────────────────────────"
-echo "The primary OpenBao config now includes a transit seal stanza."
-echo "The VAULT_TRANSIT_SEAL_TOKEN env var is injected from the k8s Secret."
-echo ""
-echo "  1. Sync ArgoCD app to pick up new openbao/values.yaml:"
-echo "       argocd app sync openbao"
-echo ""
-echo "  2. Delete pod to restart with the seal stanza active:"
-echo "       kubectl delete pod -n openbao openbao-0"
-echo ""
-echo "  3. Unseal once with the PRIMARY Shamir key + migration flag:"
-echo "     (this is the last manual unseal ever required)"
-echo "       kubectl exec -n openbao openbao-0 -- bao operator unseal -migrate <primary-shamir-key>"
-echo "     NOTE: the transit unseal key is NOT the primary Shamir key."
-echo "           Find the primary key in Bitwarden under gentian/openbao."
-echo ""
-echo "  4. Verify:"
-echo "       kubectl exec -n openbao openbao-0 -- bao status | grep -E 'Seal Type|Sealed'"
-echo "       # Seal Type: transit   Sealed: false"
-echo "─────────────────────────────────────────────────────────────────────────"

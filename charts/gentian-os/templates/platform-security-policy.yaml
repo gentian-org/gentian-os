@@ -18,4 +18,8 @@ metadata:
 spec:
   allowedMacWaivers:
     {{- toYaml .Values.platformSecurityPolicy.allowedMacWaivers | nindent 4 }}
+  {{- with .Values.platformSecurityPolicy.allowedClusterRoles }}
+  allowedClusterRoles:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}

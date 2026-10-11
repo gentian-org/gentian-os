@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package security
@@ -46,6 +40,20 @@ func LoadAllowedMacWaivers(ctx context.Context, c client.Client) ([]gentianov1al
 		return nil, fmt.Errorf("get PlatformSecurityPolicy: %w", err)
 	}
 	return psp.Spec.AllowedMacWaivers, nil
+}
+
+// LoadAllowedClusterRoles reads which of the platform's cluster roles this
+// cluster permits, and for which profile. No policy permits none.
+func LoadAllowedClusterRoles(ctx context.Context, c client.Client) ([]gentianov1alpha1.AllowedClusterRole, error) {
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
+	err := c.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName}, psp)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get PlatformSecurityPolicy: %w", err)
+	}
+	return psp.Spec.AllowedClusterRoles, nil
 }
 
 // SyncPlatformSecurityConfigMap writes the cluster allowlist for compositions.

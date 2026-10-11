@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package authn establishes who is calling the director.
@@ -159,8 +153,35 @@ type keycloakClaims struct {
 	Type      string `json:"typ"`
 }
 
-// Verify checks a raw token and returns the identity it carries.
+// Verify checks a raw access token and returns the identity it carries.
 func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
+	return v.verify(ctx, raw, v.cfg.Audience, tokenAccess)
+}
+
+// VerifyIDToken checks a raw ID token issued to the named client.
+//
+// An ID token says who signed in at one client and nothing about what they may
+// call, so it is accepted only where the caller says which client's it must
+// be, and never where Verify is asked: a route that takes a bearer must not
+// take one of these. The edge is the caller. On a route whose Authorization
+// header belongs to the page behind it, the gateway hands the session's ID
+// token over in a header of its own, and that is the only proof of the
+// session there is to read.
+func (v *Verifier) VerifyIDToken(ctx context.Context, raw, client string) (*Identity, error) {
+	if client == "" {
+		return nil, fmt.Errorf("%w: no client to hold the ID token against", ErrUnauthenticated)
+	}
+	return v.verify(ctx, raw, client, tokenID)
+}
+
+// The two kinds of token a caller may ask for. Keycloak signs every kind with
+// the same keys, so the typ claim is what tells them apart.
+const (
+	tokenAccess = "Bearer"
+	tokenID     = "ID"
+)
+
+func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Identity, error) {
 	tok, err := jwt.ParseSigned(raw, algorithms)
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse: %v", ErrUnauthenticated, err)
@@ -194,7 +215,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 	}
 	if err := std.ValidateWithLeeway(jwt.Expected{
 		Issuer:      v.cfg.IssuerBase + "/realms/" + realm,
-		AnyAudience: jwt.Audience{v.cfg.Audience},
+		AnyAudience: jwt.Audience{audience},
 		Time:        v.cfg.Now(),
 	}, leeway); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnauthenticated, err)
@@ -202,10 +223,19 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 	if std.Subject == "" {
 		return nil, fmt.Errorf("%w: token has no subject", ErrUnauthenticated)
 	}
-	// Keycloak marks access tokens "Bearer". An ID or refresh token is signed
-	// by the same keys and must not pass for one.
-	if kc.Type != "" && !strings.EqualFold(kc.Type, "Bearer") {
-		return nil, fmt.Errorf("%w: token type %q is not an access token", ErrUnauthenticated, kc.Type)
+	// Keycloak marks access tokens "Bearer" and ID tokens "ID". A token of
+	// another kind is signed by the same keys and must not pass for the one
+	// asked for. An access token with no typ is accepted, as it always was;
+	// an ID token must say that it is one.
+	switch kind {
+	case tokenID:
+		if !strings.EqualFold(kc.Type, tokenID) {
+			return nil, fmt.Errorf("%w: token type %q is not an ID token", ErrUnauthenticated, kc.Type)
+		}
+	default:
+		if kc.Type != "" && !strings.EqualFold(kc.Type, tokenAccess) {
+			return nil, fmt.Errorf("%w: token type %q is not an access token", ErrUnauthenticated, kc.Type)
+		}
 	}
 
 	name := kc.Name

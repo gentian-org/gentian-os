@@ -1,26 +1,17 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package api_test
 
 import (
-	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,12 +19,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -42,9 +31,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
 // The contract tests run the whole director — token verification, the OpenFGA
@@ -64,125 +51,134 @@ const audience = "gentian-director"
 
 type harness struct {
 	*httptest.Server
-	issuer   *dt.Issuer
-	remote   string
-	storeKey ed25519.PrivateKey
-	// graph is what decides, when a real OpenFGA is deciding: the tests that
-	// are about the MODEL rather than about a table write their tuples here.
-	graph *authz.OpenFGA
+	issuer *dt.Issuer
+	remote string
+	// asked is every question put to the decision point, in order, as
+	// "<user> <relation> <object>".
+	asked *asked
 }
 
-func start(t *testing.T, entitlements bool) *harness {
-	t.Helper()
-	return startWithTiles(t, entitlements, projectedTiles(t))
+// asked records the questions a Checker is put, so a test can say what a
+// route asks and, as much to the point, what it does not.
+type asked struct {
+	authz.Checker
+	mu   sync.Mutex
+	seen []string
 }
 
-// projectedTiles writes what the operator would have projected on this
-// cluster: the three kernel consoles it routes, and one tile belonging to an
-// installed component, whose relation is held on the tenant rather than on the
-// cluster. The director reads a file in a cluster too, so the tests read one.
-func projectedTiles(t *testing.T) string {
+func (a *asked) Check(ctx context.Context, id, user, relation, object string) (bool, error) {
+	a.mu.Lock()
+	a.seen = append(a.seen, user+" "+relation+" "+object)
+	a.mu.Unlock()
+	return a.Checker.Check(ctx, id, user, relation, object)
+}
+
+func (a *asked) reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.seen = nil
+}
+
+func (a *asked) questions() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.seen...)
+}
+
+func start(t *testing.T) *harness {
 	t.Helper()
-	body, err := tilecatalogue.Marshal(tilecatalogue.Catalogue{Tiles: []tilecatalogue.Tile{
-		{
-			Name: "headlamp", DisplayName: "Cluster", Description: "The cluster as Kubernetes sees it.",
-			Icon: "cluster", URL: "https://headlamp." + dt.KernelDomain + "/",
-			Object: "cluster:" + dt.Cluster,
-			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
-		},
-		{
-			Name: "argocd", DisplayName: "Deployments", Description: "What git says the cluster should run.",
-			Icon: "sync", URL: "https://argocd." + dt.KernelDomain + "/auth/login",
-			Object: "cluster:" + dt.Cluster,
-			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
-		},
-		{
-			Name: "keycloak", DisplayName: "Identity", Description: "Realms, clients and the people in them.",
-			Icon: "identity", URL: "https://id." + dt.KernelDomain + "/auth/admin/kernel/console/",
-			Object: "cluster:" + dt.Cluster,
-			AnyOf:  []string{"can_configure"},
-		},
-		{
-			Name: "demo/notes/web", DisplayName: "Notes", Description: "A tenant's own app.",
-			Icon: "notes", URL: "https://notes.demo." + dt.KernelDomain + "/",
-			Object: "tenant:demo",
-			AnyOf:  []string{"can_administer"},
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
+	return startWith(t, nil)
+}
+
+// startWithCatalogue is the harness with catalogues of the whole cluster, for
+// the installs that materialise a profile on reference (AD-3). They are
+// written on the Cluster claim, which is where the director reads them from
+// when it needs them. The fetcher is given the test server's own client, so
+// it trusts that certificate and no other -- and connects to the test
+// server's loopback address, which the director's own client refuses.
+// declared is the sources in the claim's order; without it they are the
+// map's, by name.
+func startWithCatalogue(
+	t *testing.T, src *httptest.Server, sources map[string]string, declared ...gitops.CatalogueSource,
+) *harness {
+	t.Helper()
+	if declared == nil {
+		names := make([]string, 0, len(sources))
+		for name := range sources {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			declared = append(declared, gitops.CatalogueSource{Name: name, URL: sources[name]})
+		}
 	}
-	path := filepath.Join(t.TempDir(), tilecatalogue.Key)
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{dt.ClaimPath: claimWith(declared...)})
+	}, withFetcher(src))
 }
 
-func startWithTiles(t *testing.T, entitlements bool, tilesPath string) *harness {
-	t.Helper()
-	return startWith(t, entitlements, tilesPath, nil)
+// withFetcher gives the director a fetcher that reaches the test server and
+// accepts any address for a new catalogue. Address checks have tests of their
+// own (catalogue/address_test.go, and catalogues_test.go with the real one).
+func withFetcher(src *httptest.Server) func(*api.Config) {
+	return func(cfg *api.Config) {
+		f := catalogue.NewFetcher()
+		if src != nil {
+			f.Client = src.Client()
+		}
+		f.Vet = func(context.Context, string) error { return nil }
+		// As cmd/director wires it: the repository the director writes is
+		// the one a catalogue kept in it is read from.
+		if repo, ok := cfg.Repo.(catalogue.Repository); ok {
+			f.Repo = repo
+		}
+		cfg.Catalogue = f
+		cfg.StoreURL = "https://store.example.com"
+	}
+}
+
+// claimWith is the fixture Cluster claim naming catalogues of the cluster.
+func claimWith(sources ...gitops.CatalogueSource) string {
+	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
+		"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n"
+	if len(sources) == 0 {
+		return claim
+	}
+	claim += "  catalogue:\n    storeUrl: https://store.example.com\n    sources:\n"
+	for _, src := range sources {
+		claim += "      - name: " + src.Name + "\n        url: " + src.URL + "\n"
+	}
+	return claim
 }
 
 // startWith is the harness with an operator to ask. lc is what answers the
 // app-lifecycle API's reads; nil leaves the resources routes unregistered,
 // which is what a director configured without one does.
-// startWithCatalogue is the harness with catalogue sources, for the installs
-// that materialise a profile on reference (AD-3). The fetcher is given the
-// test server's own client, so it trusts that certificate and no other.
-func startWithCatalogue(t *testing.T, src *httptest.Server, sources map[string]string) *harness {
+func startWith(t *testing.T, lc api.Lifecycle, opts ...func(*api.Config)) *harness {
 	t.Helper()
-	return startWithEntitledCatalogue(t, false, src, sources)
+	return startSeeded(t, lc, nil, opts...)
 }
 
-// startWithEntitledCatalogue is the same with the entitlement gate on, for the
-// tests about which entries a tenant may install at all.
-func startWithEntitledCatalogue(
-	t *testing.T, entitlements bool, src *httptest.Server, sources map[string]string,
-	declared ...gitops.CatalogueSource,
-) *harness {
+// startSeeded is startWith for a repository that holds more than the fixture
+// does when the director first reads it. seed is given the remote before the
+// director clones it.
+func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts ...func(*api.Config)) *harness {
 	t.Helper()
-	return startWith(t, entitlements, "", nil, func(cfg *api.Config) {
-		f := catalogue.NewFetcher(sources)
-		f.Client = src.Client()
-		cfg.Catalogue = f
-		if declared == nil {
-			for name, url := range sources {
-				declared = append(declared, gitops.CatalogueSource{Name: name, URL: url})
-			}
-		}
-		cfg.CatalogueSources = declared
-		cfg.StoreURL = "https://store.example.com"
-	})
-}
-
-func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecycle, opts ...func(*api.Config)) *harness {
-	t.Helper()
-	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
+	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo", "tenant-user")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
 	if err != nil {
 		t.Fatal(err)
 	}
 	remote := dt.Remote(t, "demo", "solo", "other")
+	if seed != nil {
+		seed(remote)
+	}
 	repo := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, gitops.Person{})
-	decisions, tuples := checker(t)
-	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	verifier, err := entitlement.NewVerifier(map[string]ed25519.PublicKey{"store-1": pub}, dt.Cluster)
-	if err != nil {
-		t.Fatal(err)
-	}
+	decisions := &asked{Checker: checker(t)}
 	cfg := api.Config{
-		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, EnforceEntitlements: entitlements, Cluster: dt.Cluster,
-		Store:     &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
+		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, Cluster: dt.Cluster,
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		TilesPath: tilesPath,
 		Lifecycle: lc,
-	}
-	// The binder records which catalogue serves an entry, which is how a
-	// source the Cluster claim opened reaches the entry (AD-14).
-	graph, _ := tuples.(*authz.OpenFGA)
-	if graph != nil {
-		cfg.Binder = graph
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -191,7 +187,11 @@ func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecyc
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, storeKey: priv, graph: graph}
+	// Registered first so that it runs last of the two: the watchers are
+	// stopped once the last request is answered, and before the checkout
+	// they write to is removed.
+	t.Cleanup(srv.Close)
+	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, asked: decisions}
 	t.Cleanup(h.Close)
 	return h
 }
@@ -224,7 +224,7 @@ func (h *harness) tip(t *testing.T) string {
 }
 
 func TestNoTokenNoWrite(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	before := h.tip(t)
 	for name, tok := range map[string]string{
 		"no token":       "",
@@ -248,7 +248,7 @@ func TestNoTokenNoWrite(t *testing.T) {
 
 // The header the old endpoint trusted is not an identity.
 func TestAnActorHeaderIsNotAnIdentity(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	req, _ := http.NewRequest("POST", h.URL+"/v1/tenants/demo/apps/element", nil)
 	req.Header.Set("X-Gentian-Actor", "tom")
 	req.Header.Set("X-Forwarded-User", "tom")
@@ -263,7 +263,7 @@ func TestAnActorHeaderIsNotAnIdentity(t *testing.T) {
 }
 
 func TestATenantAdminWritesTheirTenantAndNoOther(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	before := h.tip(t)
 
@@ -295,7 +295,7 @@ func TestATenantAdminWritesTheirTenantAndNoOther(t *testing.T) {
 }
 
 func TestTheCommitRecordsTheHumanTheDirectorAndTheDecision(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	req, _ := http.NewRequest("POST", h.URL+"/v1/tenants/demo/apps/element", nil)
 	req.Header.Set("Authorization", "Bearer "+h.token(t, "tenant-demo", "tom"))
 	req.Header.Set("X-Request-Id", "gw-0123456789abcdef")
@@ -316,7 +316,7 @@ func TestTheCommitRecordsTheHumanTheDirectorAndTheDecision(t *testing.T) {
 
 // A request id arrives from outside and ends in a commit message.
 func TestARequestIDThatIsNotAnIDIsReplaced(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	req, _ := http.NewRequest("POST", h.URL+"/v1/tenants/demo/apps/element", nil)
 	req.Header.Set("Authorization", "Bearer "+h.token(t, "tenant-demo", "tom"))
 	req.Header.Set("X-Request-Id", "x user:root can_configure cluster:main allowed")
@@ -332,7 +332,7 @@ func TestARequestIDThatIsNotAnIDIsReplaced(t *testing.T) {
 }
 
 func TestAMemberReadsButDoesNotWrite(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	mia := h.token(t, "tenant-demo", "mia")
 	code, body := h.do(t, "GET", "/v1/tenants/demo/apps", mia, "")
 	if code != http.StatusOK || fmt.Sprint(body["apps"]) != "[map[profile:nextcloud]]" {
@@ -349,7 +349,7 @@ func TestAMemberReadsButDoesNotWrite(t *testing.T) {
 // The platform administrator reaches a tenant through operated_by and only
 // through it: a tenant that withdrew the tuple is closed to them.
 func TestThePlatformAdminReachesOnlyTenantsThatAreOperated(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	alice := h.token(t, "gentian", "alice")
 	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", alice, ""); code != http.StatusAccepted {
 		t.Fatalf("operated tenant: %d %v", code, body)
@@ -362,248 +362,127 @@ func TestThePlatformAdminReachesOnlyTenantsThatAreOperated(t *testing.T) {
 	}
 }
 
-func TestInstallRequiresAnEntitlementThatHasNotExpired(t *testing.T) {
-	h := start(t, true)
+// Installing asks one question, of the person: may they install apps in this
+// tenant. Nothing is asked about the app, the catalogue it comes from or the
+// tenant's right to it -- the platform does no licence gating. (An install
+// for everyone asks a second, about granting: install_for_everyone_test.go.)
+func TestInstallAsksOnlyWhetherThePersonMayInstallInTheTenant(t *testing.T) {
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
+	h.asked.reset()
+	code, body := h.do(t, "POST", "/v1/tenants/demo/apps/odoo", tom, "")
+	if code != http.StatusAccepted {
+		t.Fatalf("install by the tenant's administrator: %d %v", code, body)
+	}
+	if got := h.asked.questions(); len(got) != 1 || got[0] != "user:tom can_install_app tenant:demo" {
+		t.Fatalf("an install asked %q, want the one question can_install_app on the tenant", got)
+	}
+
+	// The same request from somebody who may not install is refused, and
+	// naming a coordinate does not change that.
 	before := h.tip(t)
-	for name, body := range map[string]string{
-		"no coordinate":  ``,
-		"not entitled":   `{"coordinate":"main/odoo"}`,
-		"expired":        `{"coordinate":"main/lapsed"}`,
-		"bad coordinate": `{"coordinate":"main:element"}`,
-	} {
-		code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body)
-		if code != http.StatusForbidden && code != http.StatusBadRequest {
-			t.Errorf("%s: %d", name, code)
-		}
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", mia, `{"coordinate":"main/wiki"}`); code != http.StatusForbidden {
+		t.Fatalf("install by a member: %d", code)
 	}
 	if h.tip(t) != before {
-		t.Fatal("an unentitled install moved the repository")
-	}
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"coordinate":"main/element"}`); code != http.StatusAccepted {
-		t.Fatalf("entitled: %d %v", code, body)
-	}
-	// Another tenant's entitlement is not this tenant's.
-	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/element", h.token(t, "tenant-solo", "tina"), `{"coordinate":"main/element"}`); code != http.StatusForbidden {
-		t.Fatalf("solo installed on demo's entitlement: %d", code)
+		t.Fatal("a refused install moved the repository")
 	}
 }
 
-// ---- entitlements -----------------------------------------------------------
-
-func (h *harness) statement(t *testing.T, c entitlement.Claims) string {
-	t.Helper()
-	if c.Audience == "" {
-		c.Audience = "cluster:" + dt.Cluster
-	}
-	if c.Subject == "" {
-		c.Subject = "tenant:demo"
-	}
-	if c.IssuedAt == 0 {
-		c.IssuedAt = time.Now().Add(-time.Minute).Unix()
-	}
-	if c.Granted && c.Expiry == 0 {
-		c.Expiry = time.Now().Add(24 * time.Hour).Unix()
-	}
-	raw, _ := json.Marshal(map[string]string{"grant": dt.Statement(t, h.storeKey, "store-1", c)})
-	return string(raw)
-}
-
-// The store says yes, a person who may install delivers it, and only then does
-// the install go through. Later the store says no, by itself, and it stops.
-func TestAnEntitlementIsGrantedAndRevokedOnTheSamePath(t *testing.T) {
-	h := start(t, true)
-	tom, mia := h.token(t, "tenant-demo", "tom"), h.token(t, "tenant-demo", "mia")
-	install := func() int {
-		code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, `{"coordinate":"main/wiki"}`)
-		return code
-	}
-	if code := install(); code != http.StatusForbidden {
-		t.Fatalf("install before any grant: %d", code)
-	}
-
-	grant := h.statement(t, entitlement.Claims{ID: "grant-0001", Coordinate: "main/wiki", Granted: true})
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", "", grant); code != http.StatusUnauthorized {
-		t.Fatalf("a grant nobody delivered: %d", code)
-	}
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", mia, grant); code != http.StatusForbidden {
-		t.Fatalf("a grant delivered by a member: %d", code)
-	}
-	code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, grant)
-	if code != http.StatusAccepted || body["status"] != "recorded" {
-		t.Fatalf("grant: %d %v", code, body)
-	}
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, grant); code != http.StatusOK || body["status"] != "unchanged" {
-		t.Fatalf("the same grant again: %d %v", code, body)
-	}
-	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%(trailers:key=Gentian-Authz,valueonly)", "main")
-	if !strings.Contains(trailer, "user:tom can_install_app tenant:demo; store:store-1 signed grant-0001 allowed") {
-		t.Fatalf("trailer = %q", trailer)
-	}
-	code, body = h.do(t, "GET", "/v1/tenants/demo/entitlements", mia, "")
-	if code != http.StatusOK || !strings.Contains(fmt.Sprint(body["entitlements"]), "coordinate:main/wiki") {
-		t.Fatalf("read: %d %v", code, body)
-	}
-	if code := install(); code != http.StatusAccepted {
-		t.Fatalf("install under the grant: %d", code)
-	}
-
-	// The revocation needs no one's consent.
-	revoke := h.statement(t, entitlement.Claims{ID: "grant-0002", Coordinate: "main/wiki", Reason: "refund",
-		IssuedAt: time.Now().Unix()})
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", "", revoke); code != http.StatusAccepted {
-		t.Fatalf("revocation: %d %v", code, body)
-	}
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki2", tom, `{"coordinate":"main/wiki"}`); code != http.StatusForbidden {
-		t.Fatalf("install after the revocation: %d", code)
-	}
-	// Nor does delivering the old grant again bring it back.
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, grant); code != http.StatusConflict {
-		t.Fatalf("the old grant replayed: %d", code)
-	}
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki2", tom, `{"coordinate":"main/wiki"}`); code != http.StatusForbidden {
-		t.Fatalf("install after the replay: %d", code)
-	}
-	if got := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/entitlements.yaml"); !strings.Contains(got, "granted: false") || !strings.Contains(got, "reason: refund") {
-		t.Fatalf("entitlements.yaml =\n%s", got)
-	}
-}
-
-func TestOnlyTheStoresOwnStatementsAboutThisTenantAreBelieved(t *testing.T) {
-	h := start(t, true)
+// The store's old routes are gone, not merely switched off.
+func TestThereIsNoEntitlementRoute(t *testing.T) {
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
-	before := h.tip(t)
-	_, stranger, _ := ed25519.GenerateKey(rand.Reader)
-	wrap := func(jws string) string {
-		raw, _ := json.Marshal(map[string]string{"grant": jws})
-		return string(raw)
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, `{"grant":"a.b.c"}`); code != http.StatusNotFound {
+		t.Fatalf("POST entitlements = %d, want 404", code)
 	}
-	ok := entitlement.Claims{Audience: "cluster:" + dt.Cluster, Subject: "tenant:demo", ID: "grant-0009", Coordinate: "main/wiki",
-		Granted: true, IssuedAt: time.Now().Add(-time.Minute).Unix(), Expiry: time.Now().Add(time.Hour).Unix()}
-	with := func(f func(*entitlement.Claims)) entitlement.Claims { c := ok; f(&c); return c }
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/entitlements", tom, ""); code != http.StatusNotFound {
+		t.Fatalf("GET entitlements = %d, want 404", code)
+	}
+}
 
-	cases := map[string]struct {
-		body string
-		want int
-	}{
-		"signed by someone else":      {wrap(dt.Statement(t, stranger, "store-1", ok)), http.StatusUnauthorized},
-		"a key id nobody pinned":      {wrap(dt.Statement(t, h.storeKey, "store-9", ok)), http.StatusUnauthorized},
-		"not a statement":             {wrap("a.b.c"), http.StatusUnauthorized},
-		"for another cluster":         {h.statement(t, with(func(c *entitlement.Claims) { c.Audience = "cluster:elsewhere" })), http.StatusForbidden},
-		"for another tenant":          {h.statement(t, with(func(c *entitlement.Claims) { c.Subject = "tenant:solo" })), http.StatusForbidden},
-		"a grant with no end":         {wrap(dt.Statement(t, h.storeKey, "store-1", with(func(c *entitlement.Claims) { c.Expiry = 0 }))), http.StatusBadRequest},
-		"a revocation with no reason": {wrap(dt.Statement(t, h.storeKey, "store-1", with(func(c *entitlement.Claims) { c.Granted = false }))), http.StatusBadRequest},
-		"dated tomorrow": {h.statement(t, with(func(c *entitlement.Claims) {
-			c.IssuedAt = time.Now().Add(24 * time.Hour).Unix()
-			c.Expiry = time.Now().Add(48 * time.Hour).Unix()
-		})), http.StatusBadRequest},
-		"an entry that is not one": {h.statement(t, with(func(c *entitlement.Claims) { c.Coordinate = "wiki#can_install" })), http.StatusBadRequest},
-	}
-	for name, c := range cases {
-		if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, c.body); code != c.want {
-			t.Errorf("%s: %d %v, want %d", name, code, body, c.want)
+// The digest an install asks for is recorded with it: as a field of the
+// tenant's app entry, not as part of the app's name.
+func TestAnInstallRecordsTheDigestItAskedFor(t *testing.T) {
+	// A source whose one entry can be republished, which is what a new build
+	// of it is.
+	served := elementProfile
+	src := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/profiles/element.yaml") {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		_, _ = w.Write([]byte(served))
+	}))
+	t.Cleanup(src.Close)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	digest := sha(elementProfile)
+
+	// Stated in capitals and recorded in the one spelling the schema admits.
+	code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, strings.ToUpper(digest)))
+	if code != http.StatusAccepted {
+		t.Fatalf("install: %d %v", code, body)
+	}
+	file := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	if !strings.Contains(file, "  - profile: element\n    digest: "+digest+"\n") {
+		t.Fatalf("the digest is not a field of the entry:\n%s", file)
+	}
+	var doc struct {
+		Spec struct {
+			Apps []struct {
+				Profile string `json:"profile"`
+				Digest  string `json:"digest"`
+			} `json:"apps"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(file), &doc); err != nil {
+		t.Fatalf("the manifest does not parse: %v\n%s", err, file)
+	}
+	if len(doc.Spec.Apps) == 0 || doc.Spec.Apps[0].Profile != "element" || doc.Spec.Apps[0].Digest != digest {
+		t.Fatalf("apps = %+v", doc.Spec.Apps)
+	}
+	if subject := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-1", "main"); !strings.Contains(subject, "install element at "+digest[:19]) {
+		t.Fatalf("the commit does not say which build: %q", subject)
+	}
+
+	// It is read back with the install.
+	code, body = h.do(t, "GET", "/v1/tenants/demo/apps", tom, "")
+	if code != http.StatusOK || !strings.Contains(fmt.Sprint(body["apps"]), "digest:"+digest) {
+		t.Fatalf("apps = %d %v", code, body)
+	}
+
+	// The same build again changes nothing; another build moves the pin and
+	// leaves one entry.
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, digest)); code != http.StatusOK || body["status"] != "already_installed" {
+		t.Fatalf("the same build again: %d %v", code, body)
+	}
+	served = strings.Replace(elementProfile, `version: "1.0.0"`, `version: "1.0.1"`, 1)
+	next := sha(served)
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, next)); code != http.StatusAccepted || body["status"] != "updated" {
+		t.Fatalf("another build: %d %v", code, body)
+	}
+	file = dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	if strings.Count(file, "- profile: element") != 1 || !strings.Contains(file, "    digest: "+next+"\n") || strings.Contains(file, digest) {
+		t.Fatalf("the pin did not move in place:\n%s", file)
+	}
+
+	// Something that is not a digest is refused before anything is written.
+	before := h.tip(t)
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, `{"digest":"latest"}`); code != http.StatusBadRequest {
+		t.Fatalf("a digest that is not one: %d", code)
 	}
 	if h.tip(t) != before {
-		t.Fatal("a refused statement moved the repository")
-	}
-}
-
-// A grant that has run out is recorded like any other and entitles to nothing.
-func TestAnExpiredGrantEntitlesToNothing(t *testing.T) {
-	h := start(t, true)
-	tom := h.token(t, "tenant-demo", "tom")
-	old := h.statement(t, entitlement.Claims{ID: "grant-0003", Coordinate: "main/old", Granted: true,
-		IssuedAt: time.Now().Add(-48 * time.Hour).Unix(), Expiry: time.Now().Add(-24 * time.Hour).Unix()})
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, old); code != http.StatusAccepted {
-		t.Fatalf("recording: %d %v", code, body)
-	}
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/old", tom, `{"coordinate":"main/old"}`); code != http.StatusForbidden {
-		t.Fatalf("install under an expired grant: %d", code)
-	}
-}
-
-// The tiles a person sees follow from that person's relations, and from
-// nothing the portal decides for itself.
-//
-// The catalogue itself is the operator's: this test hands the director the
-// file the operator would have projected, which is how the director gets it in
-// a cluster. What is under test here is the filtering, and that each tile is
-// filtered against its own object, so a tenant's app tile is not answered by a
-// relation on the cluster.
-func TestTilesFollowTheCallersRelations(t *testing.T) {
-	h := start(t, false)
-	names := func(sub string) (int, []string) {
-		code, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", sub), "")
-		if code != http.StatusOK {
-			return code, nil
-		}
-		var out []string
-		for _, tile := range body["tiles"].([]any) {
-			out = append(out, tile.(map[string]any)["name"].(string))
-		}
-		return code, out
-	}
-	cases := map[string]struct {
-		subject string
-		code    int
-		tiles   string
-	}{
-		"the platform administrator opens every console and the tenant's app": {
-			subject: "alice", code: http.StatusOK, tiles: "[headlamp argocd keycloak demo/notes/web]",
-		},
-		"an auditor sees what it may read and not the identity console": {
-			subject: "audrey", code: http.StatusOK, tiles: "[headlamp argocd]",
-		},
-		"a service administrator without can_audit does not reach the endpoint": {
-			subject: "serge", code: http.StatusForbidden,
-		},
-		"a tenant member has no cluster relation at all": {
-			subject: "mia", code: http.StatusForbidden,
-		},
-	}
-	for name, c := range cases {
-		code, got := names(c.subject)
-		if code != c.code {
-			t.Errorf("%s: %d, want %d", name, code, c.code)
-			continue
-		}
-		if c.code == http.StatusOK && fmt.Sprint(got) != c.tiles {
-			t.Errorf("%s: %v, want %s", name, got, c.tiles)
-		}
-	}
-	_, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", "alice"), "")
-	if body["kernelDomain"] != dt.KernelDomain || !strings.Contains(fmt.Sprint(body["tiles"]), "https://headlamp.k.example/") {
-		t.Fatalf("body = %v", body)
-	}
-	if code, _ := h.do(t, "GET", "/v1/clusters/other/tiles", h.token(t, "gentian", "alice"), ""); code != http.StatusBadRequest {
-		t.Fatalf("another cluster id: %d", code)
-	}
-}
-
-// A cluster whose operator has not projected yet has no catalogue to read, and
-// that is not a failure: the console shows a desktop with nothing on it, which
-// is the truth, instead of an error it cannot act on.
-func TestTilesWithoutAProjection(t *testing.T) {
-	cases := map[string]string{
-		"nothing configured":       "",
-		"configured but not there": filepath.Join(t.TempDir(), "never-written.yaml"),
-	}
-	for name, path := range cases {
-		h := startWithTiles(t, false, path)
-		code, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", "alice"), "")
-		if code != http.StatusOK {
-			t.Errorf("%s: %d, want 200", name, code)
-			continue
-		}
-		if got := body["tiles"].([]any); len(got) != 0 {
-			t.Errorf("%s: %v, want no tiles", name, got)
-		}
+		t.Fatal("a refused install moved the repository")
 	}
 }
 
 func TestAddonsRoundTrip(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	if code, body := h.do(t, "PUT", "/v1/tenants/demo/apps/nextcloud/addons", tom, `{"addons":["calendar","deck"]}`); code != http.StatusAccepted {
 		t.Fatalf("set: %d %v", code, body)
@@ -624,7 +503,7 @@ func TestAddonsRoundTrip(t *testing.T) {
 }
 
 func TestNamesAndUnknownTenants(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	alice := h.token(t, "gentian", "alice")
 	if code, _ := h.do(t, "POST", "/v1/tenants/Demo/apps/element", alice, ""); code != http.StatusBadRequest {
 		t.Fatalf("bad tenant name: %d", code)
@@ -635,7 +514,7 @@ func TestNamesAndUnknownTenants(t *testing.T) {
 }
 
 func TestConcurrentRequestsAllLand(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	var wg sync.WaitGroup
 	codes := make([]int, 6)
@@ -667,6 +546,7 @@ func TestAnUnreachableDecisionPointDenies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer srv.Close()
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 	req, _ := http.NewRequest("POST", ts.URL+"/v1/tenants/demo/apps/element", nil)
@@ -692,15 +572,9 @@ func (failing) Check(context.Context, string, string, string, string) (bool, err
 
 // ---- decisions ------------------------------------------------------------
 
-type table map[string]bool
-
-func (tb table) Check(_ context.Context, _, user, relation, object string) (bool, error) {
-	return tb[user+" "+relation+" "+object], nil
-}
-
 // facts is what model v1 answers for the fixture, for the questions these
 // tests ask. The OpenFGA run is what shows the table is not wishful.
-var facts = table{
+var facts = dt.Table{
 	"user:tom can_install_app tenant:demo":       true,
 	"user:tom can_view tenant:demo":              true,
 	"user:mia can_view tenant:demo":              true,
@@ -721,11 +595,36 @@ var facts = table{
 	"user:tina can_install_app tenant:solo":      true,
 	"user:tina can_view tenant:solo":             true,
 	"user:tom can_approve_privilege tenant:demo": true,
-	// can_expose is the perimeter approver's, and a tenant's admins hold it
-	// by default (AD-6). pat holds it and nothing else -- the model's own
-	// fixture for the role existing separately from running the tenant.
-	"user:tom can_expose tenant:demo": true,
-	"user:pat can_expose tenant:demo": true,
+	// Tenant user carries the name of the one user tenant of a
+	// single-tenancy cluster. uma administers it, ulf is a member, and the
+	// platform operates it as it does demo.
+	"user:uma can_install_app tenant:user": true,
+	"user:uma can_view tenant:user":        true,
+	"user:ulf can_view tenant:user":        true,
+	// Its admins approve what it publishes, as demo's do: in the fixture
+	// both tenants are ones whose administrators the cluster's
+	// administrator let approve (spec.perimeter.adminsApprove).
+	"user:uma can_expose tenant:user":        true,
+	"user:alice can_install_app tenant:user": true,
+	"user:alice can_view tenant:user":        true,
+	// Declaring where software comes from is asked as can_write_credential,
+	// the relation the custodian asked when it kept the repositories. Tenant
+	// solo administers itself, so alice holds it on demo and not on solo.
+	"user:tom can_write_credential tenant:demo":   true,
+	"user:alice can_write_credential tenant:demo": true,
+	"user:tina can_write_credential tenant:solo":  true,
+	// can_expose is the perimeter approver's (AD-6). pat holds it and nothing
+	// else -- the model's own fixture for the role existing separately from
+	// running the tenant. tom holds it because demo's administrators were
+	// let approve; alice because she administers the cluster that operates
+	// demo and user. In solo, which administers itself and where nobody
+	// switched anything on, paul of the perimeter group holds it and neither
+	// tina, its administrator, nor alice does.
+	"user:tom can_expose tenant:demo":   true,
+	"user:pat can_expose tenant:demo":   true,
+	"user:alice can_expose tenant:demo": true,
+	"user:alice can_expose tenant:user": true,
+	"user:paul can_expose tenant:solo":  true,
 	// sam is the security officer: cluster#can_approve, and can_view on every
 	// tenant because can_audit reaches it. Deliberately NOT a tenant
 	// administrator, which is the case the kind-scoped check exists for.
@@ -735,157 +634,23 @@ var facts = table{
 	// model's own fixture says can_approve: false for her.
 	"user:alice can_audit cluster:demo-cluster":            true,
 	"user:alice can_configure cluster:demo-cluster":        true,
+	"user:alice can_write_credential cluster:demo-cluster": true,
 	"user:audrey can_audit cluster:demo-cluster":           true,
 	"user:serge can_operate_system cluster:demo-cluster":   true,
-	"tenant:demo can_install catalogue_entry:main/element": true,
 }
 
-// checker returns what decides and what holds tuples. With OpenFGA they are
-// the same thing. Without it, the table answers for people and a small tuple
-// store answers for entitlements, evaluating grant_valid the way the model does.
-func checker(t *testing.T) (authz.Checker, entitlement.Store) {
+// checker returns what decides: a real OpenFGA holding model v1 when one is
+// configured, and otherwise the table.
+func checker(t *testing.T) authz.Checker {
 	t.Helper()
-	base := os.Getenv("DIRECTOR_TEST_OPENFGA_URL")
-	if base == "" {
-		mem := &tupleStore{tuples: map[string]authz.Tuple{}}
-		return withEntitlements{table: facts, store: mem}, mem
-	}
-	storeID, modelID := loadOpenFGA(t, base)
-	c, err := authz.NewOpenFGA(authz.Options{
-		BaseURL: base, StoreID: storeID, ModelID: modelID,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c, c
-}
-
-type tupleStore struct {
-	mu     sync.Mutex
-	tuples map[string]authz.Tuple
-}
-
-func tupleKey(t authz.Tuple) string { return t.User + " " + t.Relation + " " + t.Object }
-
-func (m *tupleStore) Read(_ context.Context, f authz.Tuple) ([]authz.Tuple, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if t, ok := m.tuples[tupleKey(f)]; ok {
-		return []authz.Tuple{t}, nil
-	}
-	return nil, nil
-}
-
-func (m *tupleStore) Write(_ context.Context, writes, deletes []authz.Tuple) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, t := range deletes {
-		delete(m.tuples, tupleKey(t))
-	}
-	for _, t := range writes {
-		m.tuples[tupleKey(t)] = t
-	}
-	return nil
-}
-
-type withEntitlements struct {
-	table
-	store *tupleStore
-}
-
-func (w withEntitlements) Check(ctx context.Context, id, user, relation, object string) (bool, error) {
-	if relation != "can_install" {
-		return w.table.Check(ctx, id, user, relation, object)
-	}
-	if ok, _ := w.table.Check(ctx, id, user, relation, object); ok {
-		return true, nil
-	}
-	got, _ := w.store.Read(ctx, authz.Tuple{User: user, Relation: "entitled", Object: object})
-	if len(got) == 0 || got[0].Condition == nil {
-		return false, nil
-	}
-	until, err := time.Parse(time.RFC3339, fmt.Sprint(got[0].Condition.Context["expires_at"]))
-	return err == nil && time.Now().Before(until), nil
-}
-
-// loadOpenFGA creates a store holding model v1 and the shared fixture, plus
-// the two entitlements the install test needs: one in force, one lapsed.
-func loadOpenFGA(t *testing.T, base string) (storeID, modelID string) {
-	t.Helper()
-	post := func(path string, body any, out any) {
-		t.Helper()
-		b, _ := json.Marshal(body)
-		resp, err := http.Post(base+path, "application/json", bytes.NewReader(b))
-		if err != nil {
-			t.Fatalf("openfga %s: %v", path, err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		raw, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode/100 != 2 {
-			t.Fatalf("openfga %s: %d %s", path, resp.StatusCode, raw)
-		}
-		if out != nil {
-			_ = json.Unmarshal(raw, out)
-		}
-	}
-	var store struct {
-		ID string `json:"id"`
-	}
-	// OpenFGA caps a store name at 64 characters, and this repository's test
-	// names run longer than that. Keeping the tail keeps the part that
-	// distinguishes one test from another.
-	name := t.Name()
-	if len(name) > 64 {
-		name = name[len(name)-64:]
-	}
-	post("/stores", map[string]string{"name": name}, &store)
-
-	raw, err := os.ReadFile("../../../authz/model/v1/model.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var model map[string]any
-	if err := json.Unmarshal(raw, &model); err != nil {
-		t.Fatal(err)
-	}
-	var written struct {
-		ID string `json:"authorization_model_id"`
-	}
-	post("/stores/"+store.ID+"/authorization-models", model, &written)
-
-	raw, err = os.ReadFile("../../../authz/model/v1/tests.fga.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Tuples []map[string]any `json:"tuples"`
-	}
-	if err := yaml.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	entitled := func(entry, until string) map[string]any {
-		return map[string]any{"user": "tenant:demo", "relation": "entitled", "object": "catalogue_entry:" + entry,
-			"condition": map[string]any{"name": "grant_valid", "context": map[string]any{"expires_at": until}}}
-	}
-	tuples := append(fixture.Tuples, entitled("main/element", "2999-01-01T00:00:00Z"), entitled("main/lapsed", "2020-01-01T00:00:00Z"))
-	// The fixture's cluster is cluster:main; this director serves dt.Cluster.
-	// Bind the same platform groups to it so cluster verbs can be checked.
-	for _, role := range [][2]string{{"admin", "admin"}, {"auditor", "auditor"}, {"service-admin", "service_admin"}, {"security", "security_officer"}} {
-		tuples = append(tuples, map[string]any{"user": "group:gentian/platform/" + role[0] + "#member", "relation": role[1], "object": "cluster:" + dt.Cluster})
-	}
-	post("/stores/"+store.ID+"/write", map[string]any{
-		"authorization_model_id": written.ID,
-		"writes":                 map[string]any{"tuple_keys": tuples},
-	}, nil)
-	return store.ID, written.ID
+	return dt.Checker(t, facts)
 }
 
 // The desktop renders from what the director says the caller holds, and
 // decides nothing itself: a member sees no admin tile because can_administer
 // is false, not because a flag in the desktop hid it.
 func TestTheDesktopReadsTheCallersRelations(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	code, body := h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "mia"), "")
 	if code != http.StatusOK {
 		t.Fatalf("mia: %d %v", code, body)
@@ -913,7 +678,7 @@ func TestTheDesktopReadsTheCallersRelations(t *testing.T) {
 // That is the ordinary answer for almost everyone who signs in, and a console
 // renders it as "no platform screens" rather than as a failure.
 func TestClusterMeAnswersAnyIdentifiedCaller(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	path := "/v1/clusters/" + dt.Cluster + "/me"
 
 	code, body := h.do(t, "GET", path, h.token(t, "gentian", "alice"), "")
@@ -957,7 +722,7 @@ func TestClusterMeAnswersAnyIdentifiedCaller(t *testing.T) {
 // changed by whoever may configure it, which is what model v1 defines
 // can_configure as: the Cluster claim, plans, ceilings and network.
 func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	alice := h.token(t, "gentian", "alice") // platform administrator
 
 	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/settings", alice, "")
@@ -1043,7 +808,7 @@ func (fixedViewer) ViewOf(_ context.Context, object string) (authz.View, error) 
 // reading the object it describes. It exists instead of OpenFGA's playground,
 // which is a development tool with a write surface.
 func TestTheAuthorizationViewIsReadOnlyAndGuarded(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	// tina belongs to another tenant: she holds can_view on solo and nothing
 	// at all on demo, which is what makes her the right refusal to assert.

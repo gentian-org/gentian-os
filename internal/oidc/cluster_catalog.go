@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package oidc resolves OIDC client packs from cluster-scoped OIDCPackCatalog CRs.
@@ -22,6 +16,7 @@ package oidc
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -29,6 +24,13 @@ import (
 )
 
 // ResolvePack returns the OIDC pack for clientID from cluster OIDCPackCatalog CRs.
+//
+// The rule: every OIDCPackCatalog on the cluster is listed, and the first one
+// that holds a pack under clientID is taken. Nothing else about the catalog is
+// asked -- not its name, not its labels, not whether a profile's bundle still
+// brings it. A catalog that is the only one holding a client id is therefore
+// always the one used for it, and where two hold the same id, which is used
+// is the order the list came in (PackHolders).
 func ResolvePack(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
 	if clientID == "" {
 		return Pack{}, nil, false, nil
@@ -58,6 +60,28 @@ func packFromCluster(ctx context.Context, c client.Reader, clientID string) (Pac
 		return pack, templates, true, nil
 	}
 	return Pack{}, nil, false, nil
+}
+
+// PackHolders answers, for every client id any OIDCPackCatalog on the cluster
+// holds a pack for, the names of the catalogs that hold one, sorted. It is
+// ResolvePack's rule read the other way round: a client id with one holder
+// resolves to that catalog, and one with several resolves to whichever of
+// them the list returns first.
+func PackHolders(ctx context.Context, c client.Reader) (map[string][]string, error) {
+	list := &gentianov1alpha1.OIDCPackCatalogList{}
+	if err := c.List(ctx, list); err != nil {
+		return nil, fmt.Errorf("list OIDCPackCatalog: %w", err)
+	}
+	out := map[string][]string{}
+	for i := range list.Items {
+		for clientID := range list.Items[i].Spec.Packs {
+			out[clientID] = append(out[clientID], list.Items[i].Name)
+		}
+	}
+	for clientID := range out {
+		sort.Strings(out[clientID])
+	}
+	return out, nil
 }
 
 func packFromCR(spec gentianov1alpha1.OIDCPackSpec) Pack {

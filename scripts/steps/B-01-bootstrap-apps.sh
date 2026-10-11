@@ -2,7 +2,7 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kernel-postgres, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init), each in its layout namespace
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
 # mutates: a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's self-signed Issuer and Certificate in the secrets namespace; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp
 
@@ -33,20 +33,63 @@ _v5_delivered() {
     esac
 }
 
-_v5_apps_healthy() { echo "reloader cnpg kernel-postgres kyverno headlamp"; }
+# _v5_reached <stage> -- whether the cluster already has what a later step
+# turned on, as "true" or "false".
+#
+# B-01 renders the bootstrap Applications with the operator, the
+# ApplicationSets and Headlamp's OIDC off, because on a fresh cluster none of
+# them can work yet; D-01, C-02 and D-03 render the same set again with what
+# each has made possible. A step run on its own -- `--only B-01`, or C-02 --
+# rendered with the flags it sets and the rest at false, and the apply put
+# the earlier state back: Headlamp lost its OIDC and asked for a pasted token,
+# and the operator's Application kept its old spec. Each flag a render does not
+# set now defaults to the state already reached, so a re-run never goes back.
+_v5_reached() {
+    local gitops; gitops="$(ns_kernel gitops)"
+    case "$1" in
+        appsets)
+            kubectl get application gentian-appsets -n "${gitops}" >/dev/null 2>&1 && echo true || echo false ;;
+        operator)
+            kubectl get application gentian-os -n "${gitops}" >/dev/null 2>&1 && echo true || echo false ;;
+        headlamp-oidc)
+            # D-03 writes the real kubeconfig in place of the chart's
+            # placeholder once the realm and the headlamp client exist.
+            local kc
+            kc="$(kubectl get secret headlamp-kubeconfig -n "$(ns_kernel observability)" \
+                -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+            if [[ -n "${kc}" && "${kc}" != *"${HEADLAMP_KUBECONFIG_PLACEHOLDER:-PLACEHOLDER_REPLACED_BY_THE_INSTALLER}"* ]]; then
+                echo true
+            else
+                echo false
+            fi ;;
+        *) echo false ;;
+    esac
+}
+
+_v5_apps_healthy() { echo "reloader cnpg kyverno headlamp"; }
 _v5_apps_synced()  { echo "openbao openbao-transit"; }
-_v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced)"; }
+# Created here, waited for later. kernel-postgres's role passwords are
+# ExternalSecrets on the ClusterSecretStore the Cluster claim composes (C-01),
+# reading a vault B-03 initialises -- so on a fresh cluster neither exists yet,
+# Argo CD stops the sync at that wave, and the database itself is never
+# applied. Waiting for it to be Healthy here could only time out. Nothing in
+# this phase needs Postgres (OpenBao keeps its own storage); its first readers
+# are Keycloak and OpenFGA, and C-02 waits for it before them. Earlier
+# installs never saw this because they ran where a previous install's store
+# was still standing.
+_v5_apps_deferred() { echo "kernel-postgres"; }
+_v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_deferred)"; }
 
 # _v5_keep_chart_version — do not downgrade a component chart this cluster has
 # already resolved.
 #
-# D-02 resolves a branch's newest IMMUTABLE chart version and passes it in.
+# D-03 resolves a branch's newest IMMUTABLE chart version and passes it in.
 # Every other caller passes nothing, and nothing used to mean "the moving
 # version" -- so running B-01 on its own quietly reverted the desktop and the
 # administration console to a version string that never changes, which
 # provider-helm never upgrades, which means the first build the cluster ever
 # saw. On this cluster that put the desktop back on an image old enough to
-# loop on sign-in, hours after D-02 had moved it off.
+# loop on sign-in, hours after D-03 had moved it off.
 #
 # So an unset version means "keep what is installed", and only an empty
 # cluster falls through to the moving one.
@@ -96,27 +139,36 @@ _v5_render() {
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH:-develop}" \
+        --set-string "gentianOsBranch=$(gentian_os_ref)" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
         --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
         --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
         --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \
         --set-string "deployments.cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
-        --set-string "appsets.enabled=${V5_APPSETS:-false}" \
-        --set-string "operator.enabled=${V5_OPERATOR:-false}" \
+        --set-string "appsets.enabled=${V5_APPSETS:-$(_v5_reached appsets)}" \
+        --set-string "operator.enabled=${V5_OPERATOR:-$(_v5_reached operator)}" \
         --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
-        --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-false}" \
+        --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-$(_v5_reached headlamp-oidc)}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
-        --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "desktop.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
-        --set-string "adminConsole.chartBranch=${GENTIAN_APPS_BRANCH:-main}" \
+        --set-string "adminConsole.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
+        --set-string "concierge.chartBranch=$(gentian_ui_chart_branch)" \
+        --set-string "concierge.chartVersion=$(_v5_keep_chart_version concierge "${CONCIERGE_CHART_VERSION:-}")" \
+        --set-string "appStore.chartBranch=$(gentian_ui_chart_branch)" \
+        --set-string "appStore.chartVersion=$(_v5_keep_chart_version app-store "${APP_STORE_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \
+        --set-string "tenantDNS01ClusterIssuer=$(gentian_dns01_cluster_issuer_name)" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
+        --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
+        --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-false}" \
+        --set-string "licenceReport.enabled=$(gentian_licence_report_enabled)" \
+        --set-string "licenceReport.url=${GENTIAN_LICENCE_REPORT_URL:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
     local rc=$?
@@ -129,6 +181,24 @@ check() {
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
     kubectl get certificate openbao-tls -n "$(ns_kernel secrets)" >/dev/null 2>&1 || return 1
+    # The claim's ACME environment as rendered. App pods choose their trust
+    # mount from it, and a claim moved off staging otherwise kept "true" here
+    # for good: everything else this checks was still in place.
+    local want_staging=false
+    [[ "${ACME_ENV:-production}" == "staging" ]] && want_staging=true
+    [[ "$(kubectl get configmap gentian-kernel-services -n "$(ns_kernel control)" \
+        -o jsonpath='{.data.ACME_STAGING}' 2>/dev/null)" == "${want_staging}" ]] || return 1
+    # The switch for the kernel's network rules, as the operator is told it
+    # (once there is an operator to tell). Everything else this checks stays
+    # in place when the switch moves, so without this a run that turned the
+    # rules on or off would leave the operator on the other side of it.
+    if kubectl get application gentian-os -n "${ns}" >/dev/null 2>&1; then
+        local want_rules=false told_rules
+        ns_kernel_policies_wanted && want_rules=true
+        told_rules="$(kubectl get application gentian-os -n "${ns}" \
+            -o jsonpath='{.spec.sources[?(@.path=="charts/gentian-os")].helm.valuesObject.kernelNetworkPolicies}' 2>/dev/null)"
+        [[ "${told_rules:-false}" == "${want_rules}" ]] || return 1
+    fi
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
@@ -147,7 +217,7 @@ apply() {
     _v5_render | kubectl apply -f -
     local ns app want
     ns="$(ns_kernel gitops)"
-    for app in $(_v5_apps); do
+    for app in $(_v5_apps_healthy) $(_v5_apps_synced); do
         want=healthy
         case " $(_v5_apps_synced) " in *" ${app} "*) want=synced ;; esac
         info "waiting for ${app} to be Synced$([[ ${want} == healthy ]] && echo ' and Healthy')"

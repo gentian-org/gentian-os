@@ -4,7 +4,8 @@
     build-catalogue-index.py <catalogue-dir> [--catalogue <slug>]
 
 A catalogue source is a directory served over https holding
-``profiles/<name>.yaml`` (the ComponentProfile a director materialises) and
+``profiles/<name>.yaml`` (the bundle a director materialises: the
+ComponentProfile and, after it in the same file, what travels with it) and
 ``listings/<name>.yaml`` (the presentation the App Store ingests). Neither
 answers "what is in here", because an https server does not list a directory.
 That is what the index is for, and without it a cluster can install from a
@@ -16,11 +17,18 @@ belong to the store, which is where a person should be looking; a cluster
 reproducing them would be a worse copy of a screen somebody else keeps
 current, and this file is meant to be the fallback rather than a rival.
 
-The digest is the sha256 of the profile file as published, the same number the
-store ingests. For a source a cluster opened to a tenant it is the number the
+The digest is the sha256 of the bundle file as published -- the whole file,
+the profile and its companions -- the same number the store ingests. For a source a cluster opened to a tenant it is the number the
 install is checked against. For the store's own catalogue it is not -- there
 the digest that governs arrives from the store over the store's TLS, and the
 director drops this one before anybody sees it.
+
+This tool indexes; it does not assemble or vet a bundle. What a bundle may
+hold is decided on the cluster (docs/custom-catalogues.md §2,
+internal/profilebundle/bundle.go), which refuses the install otherwise. Three
+things that can be told from here without knowing those rules are told: a
+file whose first document is not the profile it is named after, a companion
+of a kind no bundle may hold, and a file too large to be carried.
 """
 
 from __future__ import annotations
@@ -34,6 +42,12 @@ import yaml
 
 # The editions a profile may declare. See gentian-os's api/v1alpha1 Edition.
 EDITIONS = ("ce", "pe", "me", "ee")
+
+# What a bundle may hold beside its profile, and how large it may be. The
+# cluster's rules, of which these are the two a file's own bytes show:
+# internal/profilebundle/bundle.go.
+COMPANION_KINDS = ("Composition", "ConfigMap", "Customization", "OIDCPackCatalog")
+MAX_BUNDLE = 180 << 10
 
 
 def digest(path: Path) -> str:
@@ -66,12 +80,31 @@ def build(directory: Path) -> tuple[list[dict], list[str]]:
     for path in sorted(profiles.glob("*.yaml")):
         name = path.stem
         try:
-            profile = yaml.safe_load(path.read_text()) or {}
+            documents = [d for d in yaml.safe_load_all(path.read_text()) if d is not None]
         except yaml.YAMLError as exc:
-            complaints.append(f"{name}: profile does not parse: {exc}")
+            complaints.append(f"{name}: bundle does not parse: {exc}")
             continue
+        # The profile is the first document; what follows travels with it.
+        profile = documents[0] if documents and isinstance(documents[0], dict) else {}
         if profile.get("kind") != "ComponentProfile":
-            complaints.append(f"{name}: not a ComponentProfile")
+            complaints.append(f"{name}: the first document is not a ComponentProfile")
+            continue
+        if (profile.get("metadata") or {}).get("name") != name:
+            complaints.append(f"{name}: the profile is named {(profile.get('metadata') or {}).get('name')!r}")
+            continue
+        strays = sorted({
+            str(d.get("kind") if isinstance(d, dict) else type(d).__name__)
+            for d in documents[1:]
+            if not isinstance(d, dict) or d.get("kind") not in COMPANION_KINDS
+        })
+        if strays:
+            complaints.append(
+                f"{name}: holds {', '.join(strays)}; beside its profile a bundle holds only "
+                f"{', '.join(COMPANION_KINDS)}"
+            )
+            continue
+        if path.stat().st_size > MAX_BUNDLE:
+            complaints.append(f"{name}: {path.stat().st_size} bytes, and a cluster carries at most {MAX_BUNDLE}")
             continue
         spec = profile.get("spec") or {}
         # Only what a tenant can install is listed. A system profile is part

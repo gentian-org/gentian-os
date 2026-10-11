@@ -1,0 +1,59 @@
+{{- /*
+  Who may open a connection to the shared Redis.
+
+  The server took a connection from any pod of any namespace without an
+  egress policy of its own, and a password was the only thing in the way.
+  Now its one port is admitted from:
+
+    tenant namespaces   every namespace labelled gentianos.io/tier=tenant.
+                        The server cannot tell one tenant's app from another's
+                        pod; the tenant's side narrows it, where egress is
+                        denied by default (tenant-isolation) and
+                        kernel-access-<app> opens this port for an app that
+                        declared a Redis cache alone. This rule keeps out
+                        everything that is not a tenant namespace or this
+                        namespace; that one keeps out the apps that asked for
+                        no cache.
+    this namespace      the operator's ACL and destroy Jobs run beside the
+                        server (cache_reconciler.go, backup/teardown.go) and
+                        carry no pod label to select on. A pod here can mount
+                        the admin Secret, so naming pods would keep nobody out.
+
+  Nothing else connects: a cache is not captured, and the operator reaches it
+  through those Jobs only. The pod declares no other port -- the chart runs
+  standalone, with no replica, sentinel or exporter -- and the kubelet's
+  probes are exec probes.
+
+  Rendered on the v5 layout only (a namespace is stated), with the admin
+  Secret beside it. Sync wave -1, with the values the release is installed
+  from: the release cannot start a pod before this object exists.
+*/ -}}
+{{- if and .Values.namespace (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: store-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: cache
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.redis }}
+{{- end }}

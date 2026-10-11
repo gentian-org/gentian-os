@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -34,6 +28,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -62,6 +57,10 @@ const (
 // tested against, does the target still exist — are properties of the live cluster,
 // not of the file.
 type CustomizationReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -69,7 +68,7 @@ type CustomizationReconciler struct {
 	Now func() time.Time
 }
 
-// SetupWithManager registers the Customization controller. AppProfile changes are
+// SetupWithManager registers the Customization controller. ComponentProfile changes are
 // mapped back to the records that target them, so bumping a chart version
 // immediately re-evaluates every customization riding on it.
 func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -101,7 +100,7 @@ func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapProfileToRecords),
 		).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.Customization{}, r))
 }
 
 // Reconcile evaluates one Customization record and writes its derived status.
@@ -121,7 +120,7 @@ func (r *CustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("resolve target profile: %w", err)
 	}
 
-	status := r.evaluate(&record, profile, profileFound, r.ladderSurfaceFor(ctx, profile))
+	status := r.evaluate(&record, profile, profileFound, surfaceOf(profile))
 	if statusUnchanged(record.Status, status) {
 		return ctrl.Result{RequeueAfter: customizationResyncInterval}, nil
 	}
@@ -155,41 +154,13 @@ func (r *CustomizationReconciler) resolveTargetProfile(
 	return &profile, true, nil
 }
 
-// ladderSurfaceFor returns the customization surface that governs this profile.
-//
-// An addon inherits its base's ladder. It is activation state inside the base —
-// same image, same drop-in directories, same plugin API — so grading it separately
-// would fork a mutable fact, which is why addon profiles deliberately carry only
-// spec.customization.addon and never restate grade or supportedRungs.
-//
-// Reading spec.customization directly therefore saw no supportedRungs on an addon
-// and fell back to the [L0, L4] default, so a record targeting one was rejected as
-// "target app does not declare support for rung L3" for an app whose base supports
-// exactly that. CI resolved the inheritance and the operator did not, so the two
-// disagreed about the same record.
-//
-// Editions are not addons and inherit nothing: nextcloud-base-ee shares a family
-// name with nextcloud-base-ce and no artifact, so it carries its own declaration.
-func (r *CustomizationReconciler) ladderSurfaceFor(
-	ctx context.Context,
-	profile *gentianov1alpha1.ComponentProfile,
-) *gentianov1alpha1.CustomizationSurface {
-	if profile == nil || profile.Spec.Customization == nil {
+// surfaceOf is the customization surface a profile declares, nil when it
+// declares none or there is no profile.
+func surfaceOf(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.CustomizationSurface {
+	if profile == nil {
 		return nil
 	}
-	surface := profile.Spec.Customization
-	addon := surface.Addon
-	if addon == nil || addon.Of == "" {
-		return surface
-	}
-	base, found, err := r.resolveTargetProfile(ctx, addon.Of)
-	if err != nil || !found || base.Spec.Customization == nil {
-		// The base is missing or uncharacterised. Fall through to the addon's own
-		// surface rather than inventing one; the default applies as it would for
-		// any uncharacterised app.
-		return surface
-	}
-	return base.Spec.Customization
+	return profile.Spec.Customization
 }
 
 // evaluate computes the full derived status for a record.

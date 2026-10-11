@@ -1,8 +1,8 @@
 # Implementation plan
 
 The order things get built in, and where each one stands.
-[work-packages.md](work-packages.md) says *what* each package is; this says
-*when*, what blocks what, and what is true today.
+This says *when*, what blocks what, and what is true today; what is still
+open is [open-items.md](open-items.md).
 
 Status is one of three things, and nothing is called done on the strength of a
 build alone:
@@ -28,7 +28,7 @@ cluster.
 
 | | Milestone | |
 |---|---|---|
-| **M1** | The platform administrator signs in and sees the cluster, and the installer leaves that cluster ready to be given a tenant | ◐ |
+| **M1** | The platform administrator signs in and sees the cluster, and the installer leaves that cluster ready to be given a tenant | ✅ 2026-10-03 |
 | **M2** | The first functional tenant | ☐ |
 | **M3** | The first user invited by a tenant administrator | ☐ |
 | **M4** | The first app a user can actually work in | ☐ |
@@ -43,7 +43,7 @@ the platform needs and leaves the cluster in a state where M2 can begin. S8 is
 what proves that, and S7A is what has to be true before S8 is worth running.
 
 The steps below (`S1`…`S8`, `S7A.*`) are all M1. M2 onward are not broken into
-steps yet; `work-packages.md` is where their content lives until they are.
+steps yet; [open-items.md](open-items.md) is where what they still need is listed.
 
 ### M1 — the platform administrator signs in and sees the cluster
 
@@ -57,7 +57,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S6 | Kernel UIs behind the kernel session | ✅ |
 | S7 | Retire the portal in `kernel-edge` | ✅ |
 | **S7A** | **What is wrong that a reinstall would only reproduce** | ◐ see below |
-| S8 | Purge and reinstall | ☐ |
+| S8 | Purge and reinstall | ✅ 2026-10-03, on beefy1 |
 
 ### S7A — before the purge
 
@@ -81,7 +81,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ◐ two of five; three are kernel tier |
 | S7A.16 | The app-lifecycle API authenticates nobody | ✅ a shared token |
-| S7A.17 | The director speaks for Keycloak | ◐ credential, routes and screens built; the record's second half is left |
+| S7A.17 | The director speaks for Keycloak | ◐ credential, routes and screens built, and since moved to the registrar; the record's second half is left |
 
 ### What is left, in the order to do it
 
@@ -109,7 +109,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
    cluster, and the checks that pass on it — renders, goldens, lints, tests —
    did not catch the one ordering bug that a fresh install would have hit in
    its first five minutes.
-5. **After M1**, the work packages in the order in §6.
+5. **After M1**, the areas of work in the order in §6.
 
 ---
 
@@ -117,7 +117,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 
 **The platform administrator signs in and sees the cluster, in the plans'
 shape.** `install.sh --layout v5` runs end to end on a purged cluster;
-`admin@<kernel>` signs in once at `console.<kernel>` and sees the platform
+`admin@<kernel>` signs in once at `platform.<kernel>` and sees the platform
 tenant's desktop; the kernel consoles are tiles the director answered from
 that account's relations; each opens signed in, with no second login and no
 token to paste. Nothing about it is a stand-in: the desktop is
@@ -210,7 +210,7 @@ rather than derived from the master password and is not written to OpenBao, so
 because both sides read the same Secret.
 
 **Still open:** the "done when" of this step was *a second tenant* signing in
-at `console.<t>.<kernel>` with no installer step having run for it. That has
+at `desktop.<t>.<kernel>` with no installer step having run for it. That has
 not been tried. It is the same code path, and the kernel zone is the harder
 case, but it is unproven.
 
@@ -226,7 +226,7 @@ call, and to write git. As built it also wrote OpenFGA in six places.
 | tenants, `operated_by`, tenant roles | operator |
 | membership from Keycloak events | operator (`MembershipListener`) |
 | session revocation | **deleted** |
-| entitlement tuples | still the director's, gated on `DIRECTOR_STORE_KEYS` |
+| entitlement tuples | **deleted** with entitlements themselves (AD-3) |
 
 Session revocation existed to make a logout immediate while the realm's access
 token lived twelve hours. The realm now issues five-minute tokens against a
@@ -244,51 +244,31 @@ authorizing proxy in front of OpenFGA, or OpenFGA's OIDC auth mode with
 something that maps a subject to permitted operations. Neither is small.
 Worth a decision rather than a silent assumption.
 
-**Decided, 2026-09-25: the entitlement tuples stay the director's.** The step
-was named "the director stops writing authorization state", and the premise
-under it was wrong. What matters is not *which* source of truth the director
-writes, it is *how*.
+**The entitlement tuples are gone, and with them the director's last write to
+OpenFGA.** They were kept at first, on the argument that what a tenant is
+entitled to install is a fact from outside the cluster and so had to be an
+action of the director's: a statement the App Store signed, verified against
+pinned keys, committed, and mirrored as a conditional tuple. That argument
+held for as long as the platform gated installs on a licence. It no longer
+does (AD-3): installing is asked of the person (`can_install_app`) and of
+nothing else, and whether a licensed app arrives is decided where its
+artefacts are pulled, by the credential the tenant holds for their
+repository. There is no statement to verify, no store key to pin and no tuple
+to write, so the director reads the graph to decide and writes git, and that
+is all it does to either.
 
-There are three sources of truth and the rule is the same for each:
+The rule the earlier decision stated is unchanged and still governs what the
+director writes to Keycloak and to git: a write is admissible when it is
+**authenticated, evaluated and recorded**; anything that can be derived from
+the cluster, the tenant, its users or its apps belongs in git and is the
+operator's to satisfy.
 
-| | what it holds | who writes it |
-|---|---|---|
-| Keycloak | **who** | the director, on the caller's behalf (S7A.17) |
-| OpenFGA | **what** they may do | the director, for what cannot be derived |
-| git | **how** the cluster is configured | the director, as commits |
-
-A director write into any of the three is admissible when it is
-**authenticated, evaluated and recorded**. The operator's job is the other
-half: turning declared state into what runs. So anything that *can* be derived
-from the cluster, the tenant, its users or its apps belongs in git and is the
-operator's to satisfy; anything that cannot is the director's to do as an
-**action**, and an action is legitimate because of those three properties
-rather than because it went through a file.
-
-The entitlement path already meets all three, which is why this closes rather
-than needing work:
-
-- **Authenticated** twice over. The statement is a compact JWS the director
-  verifies against keys pinned in the cluster's own configuration, never
-  against a key it could fetch; and the caller presents their own token.
-- **Evaluated.** A grant checks `can_install_app` on the tenant before it is
-  applied. A revocation deliberately does not: it is the App Store's decision
-  and its signature is the authority, and asking a tenant administrator to
-  authorise their own revocation would be the wrong question.
-- **Recorded.** The fact is committed to git before the tuple is written, with
-  the person, the signing key that decided it and the request id that joins
-  them. The tuple mirrors a commit; it is not the only trace.
-
-An entitlement is exactly the case the rule is for: what a tenant is entitled
-to install is a fact from outside the cluster and cannot be derived from
-anything inside it.
-
-**What remains open is not this.** The director's OpenFGA credential still
+**What remains open is the credential.** The director's OpenFGA key still
 cannot be made read-only, because OpenFGA authenticates with a preshared key
-and a key carries no scope. Under the rule above that is a smaller problem than
-it looked — the director is *meant* to write here — but it still means nothing
-stops a bug writing a tuple no action asked for. An authorizing proxy or
-OpenFGA's OIDC auth mode would; neither is small, and neither is in M1.
+and a key carries no scope. The director now has no code that writes, which
+is the weaker form of the guarantee: nothing stops a bug writing a tuple. An
+authorizing proxy or OpenFGA's OIDC auth mode would; neither is small, and
+neither is in M1.
 
 ### S7A.3 ✅ The platform administrator is an address
 
@@ -316,7 +296,7 @@ credential the desktop no longer holds. It becomes a component like any other,
 visible only to holders of the relation, whose only job is to be a GUI over
 the director's API.
 
-**Shipped and running.** It lives in `gentian-apps/apps/admin-console`, built
+**Shipped and running.** It lives in `gentian-ui/apps/admin-console`, built
 from the restated app template, described by the `admin-console`
 `ComponentProfile` the operator chart ships, published as chart
 `admin-console` with its own images, and installed into every tenant by
@@ -359,7 +339,7 @@ worklist, and a screen leaves it by getting real routes.
 | Notifications | the desktop's own table, read by the operator | publishing is an action | ✅ |
 | Platform security: MAC waivers | git, joined with what the catalogue asks | director → `kernel/claims/platform-security-policy.yaml` | ✅ `can_set_admission` is break-glass |
 | Customization debt | `Customization` CRs | — | ✅ |
-| Credentials | credential manager, as the caller | the same | ✅ |
+| Credentials | custodian, as the caller | the same | ✅ |
 | Authorization view | OpenFGA, read-only | — | ☐ S7A.8 |
 | People and groups | **not here** — Keycloak's own console, embedded | | ✅ |
 
@@ -374,9 +354,9 @@ change *lands* on the Tenant, with the chooser carried in an annotation. What
 is billed is then what the cluster enforced, and it still names who chose it.
 
 **Credentials needed one thing first**, and it landed: a
-`credentialManagerUrlKey` on the profile's platform mapping, the way
+`custodianUrlKey` on the profile's platform mapping, the way
 `directorUrlKey` works. Without it the component does not know where the
-credential manager is and cannot relay to it.
+custodian is and cannot relay to it.
 
 **No write has succeeded on this cluster yet.** The director mounts
 `deployments-git-credentials` optionally and that Secret does not exist, so a
@@ -489,7 +469,7 @@ this branch that alters how signing in behaves. Two things to watch:
   component comes up blank on first open, this is why.
 
 Signing out everywhere at once is unaffected: the realm session ends and the
-back-channel logout marks it revoked, which every host's shim honours whatever
+back-channel logout marks it revoked, which every host's bouncer honours whatever
 cookie it read.
 
 ### S7A.8 ✅ A read-only view of the authorization state
@@ -763,7 +743,7 @@ other than a kernel console has put itself on the desktop.
 
 `ComponentProfile` gained the tile fields and its doc comment was rewritten
 rather than left saying something untrue: the App Store still owns the
-catalogue listing, and the cluster owns the tile, because the portal has to
+catalogue listing, and the cluster owns the tile, because the desktop has to
 show what the cluster routes without asking a service outside the cluster.
 `AppProfile`'s existing tile fields were not reused — they are the v4 portal's
 icon plumbing and carry no relation, which is the one field the per-caller
@@ -795,7 +775,7 @@ specific rule that would shadow it still needs a backend to send the request
 to. Gateway API has no direct-response filter here. The edge authorization
 service is the one place that already sees every request to a host, so the
 exposure's list travels there on the route as an annotation, the operator
-unions it per host — two exposures share a host and deny wins — and the shim
+unions it per host — two exposures share a host and deny wins — and the bouncer
 refuses a match with 403 before it looks at identity. The profile said the
 path is not published, so who is asking does not enter into it.
 
@@ -890,7 +870,7 @@ here.
 ### S7A.15 ◐ A zone's hosts follow the components, not a list
 
 The zone client's redirect URIs are enumerated in the tenant composition —
-`console`, `admin`, and for the kernel zone `argocd`, `headlamp`, `id`. A
+`desktop`, `admin`, and for the kernel zone `argocd`, `headlamp`, `id`. A
 component whose profile declares any other `subDomain` gets a Keycloak refusal
 ("Invalid parameter: redirect_uri") on an error page that says nothing about a
 redirect URI list. The administration console hit exactly this the first time
@@ -911,7 +891,7 @@ would widen that client for a host the zone does not serve.
 **Three of the five hosts still cannot follow anything**, and this is why it
 is ◐ rather than ✅. `argocd`, `headlamp` and `id` are kernel tier: installed
 by `install.sh`, not components, so nothing projects them. They stay named in
-the Composition. `console` and `admin` stay in the base list too, so a tenant
+the Composition. `desktop` and `admin` stay in the base list too, so a tenant
 reconciling before the operator has projected still has a desktop to sign in
 to.
 
@@ -929,6 +909,13 @@ prerequisite here, not a separate piece of work; it is in
 [target-component-structure.md](target-component-structure.md) §5.
 
 ### S7A.17 ◐ The director speaks for Keycloak
+
+**Moved since.** The routes, the per-realm credential and the record this
+section describes are the registrar's now
+([operator-split-plan.md](operator-split-plan.md) §4.4): a process of its
+own, so that the director holds the git credential and nothing that writes a
+realm. The reasoning below stands as it was written; read "the registrar"
+where it says the director holds, serves or records any of it.
 
 **The same rule as S7A.2, one source of truth along.** Keycloak holds *who*,
 OpenFGA holds *what they may do*, git holds *how the cluster is configured*,
@@ -1045,17 +1032,16 @@ refused; and no image other than the director's holds a Keycloak credential.
 **What is built.** The credential, provisioned per realm by the operator's
 Keycloak platform reconciler and handed to the director as a mounted Secret
 with a key per realm — re-read rather than read once, because a tenant's realm
-appears after the director started. Five `realm-management` roles and the list
-is the security statement: `view-users`, `query-users`, `query-groups`,
-`manage-users`, and `manage-realm` for the password policy, which has no
-narrower role. The confinement is in the type: a realm arrives only through
+appears after the director started. Four `realm-management` roles and the list
+is the security statement: `view-users`, `query-users`, `query-groups` and
+`manage-users`. (`manage-realm` was a fifth, for the password policy; the
+policy is a commit by the director, and the role is no longer granted.) The confinement is in the type: a realm arrives only through
 `Client.Realm`, which refuses one there is no credential for, and every admin
 URL is built from that value, so a handler cannot spell a realm into a call. A
 tenant sharing the kernel realm gets the group subtree as a second boundary,
 because there the credential is no longer one.
 
-The routes are `can_manage_users` throughout and `can_set_policy` for the
-password policy, and every write is an action under `/actions/` rather than a
+The routes are `can_manage_users` throughout, and every write is an action under `/actions/` rather than a
 PUT. The console's People screen reads and writes them; Keycloak's own console
 stays at the bottom of it as the detail view.
 
@@ -1147,7 +1133,7 @@ that are not say so.
 | M2.5 | The realm can send mail | operator copies `keycloak-smtp-credentials` into the tenant realm | needs the `smtp-relay` credential supplied |
 | M2.6 | The zone answers: client, session, Gateway listener, hosts, DNS | `keycloak-edge-zone-client` + the operator's `zoneSecurityPolicySpec` + `zone_hosts_projection.go` | **the second zone has never been stood up** |
 | M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | unblocked; never exercised |
-| M2.8 | The director holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureDirectorRealmCredentials` | **new, never run** |
+| M2.8 | The registrar holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureRegistrarRealmCredentials` | **new, never run** |
 | M2.9 | A tenant administrator can sign in and see the tenant | the whole of the above | — |
 | M2.10 | The tenant has a backup policy | `SetTenantBackupPolicy`, backup schedules | exercised on v4 only |
 
@@ -1188,6 +1174,84 @@ names the realm and the reason.
 administrator signs in at its own host, sees its desktop, and is refused
 nothing they hold.
 
+### M2a ◐ Two tenancy modes; the platform's own addresses; the user tenant
+
+**What was wrong.** "Single-tenant" first meant that the platform tenant was
+the one tenant: the cluster's users were the kernel realm's, sharing a realm
+with the accounts that administer everything, and they could run no apps. It
+then meant "a multi cluster that happens to have one user tenant", detected by
+counting, with the bare domain forwarded by the concierge page and the first
+tenant admitted ahead of the handover by an override. Neither is a thing an
+owner can choose and read back.
+
+**The model.**
+
+1. There are exactly two tenancy modes, chosen at install
+   (`spec.tenancyMode`). `multi`: the platform tenant plus any number of user
+   tenants. `single`: the platform tenant plus exactly one user tenant, named
+   `user`. The platform tenant never counts.
+2. The platform's own addresses are the same on every cluster: the platform
+   admin's desktop at `platform.<kernel>`, the admin console at
+   `admin.platform.<kernel>`, Keycloak at `id.<kernel>`.
+3. Under `multi`, `<kernel>`, `www.<kernel>` and `desktop.<kernel>` lead to
+   the concierge's address form, and a tenant is at `<label>.<t>.<kernel>`.
+4. Under `single`, the user tenant lives on the cluster's own addresses --
+   `desktop.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` -- in its own realm,
+   `user`, and `<kernel>` and `www.<kernel>` lead to its desktop.
+5. The install creates the user tenant of a single-tenancy cluster, after the
+   handover and through the gate every tenant passes. Under `multi` it creates
+   none.
+
+**What changes.**
+
+| | what | where |
+|---|---|---|
+| a | One rule for "may this cluster carry this tenant": under `single`, the platform tenant (by its realm) and the tenant named `user`, and nothing else. The webhook, the reconciler and the director all ask it. The reconciler holds a refused tenant with `TenancyConstraint` and removes nothing | `internal/tenancy`, `internal/webhook`, `internal/controller/tenant_reconcile_stages.go`, `internal/director/gitops` |
+| b | `multi` → `single` with a user tenant other than `user` is refused by the director with nothing written (`ErrSingleRefused`) | `internal/director/gitops/settings.go` |
+| c | `EffectiveDomain` is the cluster's domain for the tenant named `user` under `single` and for nobody else; the platform tenant is `platform.<kernel>` under both | `api/v1alpha1/tenant_types.go`, `tenancy.go` |
+| d | One derivation of where a zone's hosts are (`zoneNamesOf`, `exposureHostIn`): the platform tenant's desktop on its zone's own name, everything else one label below a zone's domain. Routes name the listener whose certificate covers the host (`listenerFor`) | `internal/controller/component_reconciler.go` |
+| e | The platform tenant gets what every tenant gets for hosts two labels down: a wildcard certificate `*.platform.<kernel>`, the listener for it, and its records | `tenant_edge_manifests.go`, `gateway_platform_reconciler.go` |
+| f | The front door per mode: `www` and, under `multi`, `desktop.<kernel>` redirect to the bare domain; under `single` the bare domain's `/` and `/sign-in` and `www` redirect to the user tenant's desktop once it is Ready. The concierge stays published for `/branding/` | `kernel_gateway_routes.go` (`kernelFrontDoor`) |
+| g | The concierge's lookup holds custom domains only; `_single.json` is gone | `concierge_lookup.go` |
+| h | The kernel's own host labels are refused to the user tenant of a single-tenancy cluster (`HostReserved`) | `reserved_hosts.go` |
+| i | The kernel zone's client: redirect, post-logout and root URLs on `platform.<kernel>` and `<label>.platform.<kernel>`, beside the kernel consoles | `crossplane/compositions/tenant-default.yaml` |
+| j | The user admin is `user-admin@<kernel>`; the platform admin stays `admin@<kernel>` | `api/v1alpha1/tenant_types.go` |
+| k | The tenant's DKIM record is not published for the cluster's own domain, which the kernel's key signs | `mail_dnsendpoint.go` |
+| l | Install: step 0 asks the mode and, under `single`, scaffolds `tenants/user` with no override; `E-04-user-tenant` runs after `E-03`, asks Argo CD to sync, waits, issues the user admin's link; the closing output names the platform admin and the user admin (or the tenant admin). `GENTIAN_FIRST_TENANT*`, the step-0 question and the wait before the handover are removed | `scripts/lib/bootstrap.sh`, `scripts/lib/common.sh`, `scripts/steps/E-04-user-tenant.sh`, `scripts/tests/test-user-tenant-scaffold.sh` |
+
+**Limits, stated.**
+
+- Before the user tenant of a single-tenancy cluster is Ready, the bare
+  domain shows the concierge's form.
+- The operator reads the tenancy mode when it starts.
+- `admin.platform.<kernel>` needs a DNS-01 issuer, as every tenant's wildcard
+  does.
+- On a single-tenancy cluster the kernel realm's people and the user tenant's
+  share one mail domain. A mailbox is its address: the same address in both
+  realms is two accounts and one mailbox, and nothing refuses it. Under
+  `MAIL_RECIPIENT_POLICY=strict` the domain's accepted recipients are read
+  from the kernel realm only.
+- Argo CD stops retrying `tenant-user` about a quarter of an hour into the
+  install. `E-04` asks for a new sync; an unattended install needs
+  `./install.sh --only E-04` (or a sync of that Application) after the
+  platform admin's first sign-in.
+
+**Open, in gentian-ui.**
+
+- The concierge page sends `@<kernel>` addresses to `desktop.<kernel>`. Under
+  `multi` that now redirects back to the bare domain; it has to become
+  `platform.<kernel>`. The workspace name `platform` likewise.
+- `forwardWhenSingle` and `singleConsole` read a file that is no longer
+  written, and can go.
+
+**Done when** a fresh `single` install ends with the platform admin signed in
+at `platform.<kernel>` and the user admin holding an activation link, the user
+admin signs in at `desktop.<kernel>` and installs an app at `<app>.<kernel>`,
+a second tenant is refused with the mode named, and `<kernel>` leads to the
+desktop; and a fresh `multi` install ends at the handover with no user tenant,
+`<kernel>` and `desktop.<kernel>` showing the form, and a created tenant at
+`desktop.<t>.<kernel>`.
+
 ### M3 — the first user invited by a tenant administrator
 
 The write path is built (S7A.17). What M3 adds is everything around the
@@ -1195,14 +1259,14 @@ invitation actually arriving and working.
 
 | | what has to be true | where it lives | state |
 |---|---|---|---|
-| M3.1 | The administrator can reach the People screen | console `IdentitySection`, director `GET /v1/tenants/{t}/people` | built, needs a browser |
-| M3.2 | The invitation is created and the link sent | director `POST /actions/invite-person` | built, never sent a real mail |
+| M3.1 | The administrator can reach the People screen | console `IdentitySection`, registrar `GET /v1/tenants/{t}/people` | built, needs a browser |
+| M3.2 | The invitation is created and the link sent | registrar `POST /actions/invite-person` | built, never sent a real mail |
 | M3.3 | The mail leaves the cluster and arrives | realm `smtpServer` → the relay | **the first real test of mail** |
-| M3.4 | The link is accepted by Keycloak | the action token names the zone client | built: the zone client lists each host's root and the director reads `rootUrl` back — **never exercised with a real mail** |
+| M3.4 | The link is accepted by Keycloak | the action token names the zone client | built: the zone client lists each host's root and the registrar reads `rootUrl` back — **never exercised with a real mail** |
 | M3.5 | The person sets a password and signs in | Keycloak required actions + the zone session | — |
 | M3.6 | They land in that tenant and no other | zone cookie scoped per host (S7A.7) | built, needs a browser |
 | M3.7 | Their groups reach the authorization graph | the event listener → the operator's projector | built, exercised on v4 |
-| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the director's request id | the director's half is durable; **the listener's request-id read-back is left** |
+| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the registrar's request id | the registrar's half is durable; **the listener's request-id read-back is left** |
 
 **M3.4, decided.** An action-token link may carry a `redirect_uri`, and
 Keycloak refuses one that is not on the client's valid redirect URIs. The zone
@@ -1222,7 +1286,7 @@ open redirect at all, so the loosening this paragraph was written to flag
 never happened.
 
 `crossplane/compositions/tenant-default.yaml` carries the reasoning.
-`internal/director/identity/people.go` reads the client's `rootUrl` back
+`internal/registrar/identity/people.go` reads the client's `rootUrl` back
 rather than deriving the host a second time, and sends no redirect when the
 client states none — which is what a realm composed before this change looks
 like.
@@ -1233,7 +1297,7 @@ Keycloak's own console — so the "what changed" half needs nothing built. The
 director sets `X-Gentian-Request-Id` on every admin call so the two halves can
 be joined.
 
-The director's half is now durable: `internal/director/record` keeps the
+The registrar's half is now durable: `internal/registrar/record` keeps the
 caller, the relation and the object in the director's own database on
 `kernel-postgres`, with a retention horizon it enforces, and it is what
 roadmap §1.12 will also use for refusals — which by definition reach Keycloak
@@ -1255,7 +1319,7 @@ and does the thing the app is for.
 
 | | what has to be true | where it lives | state |
 |---|---|---|---|
-| M4.1 | The catalogue offers the entry and the tenant may install it | `catalogue_source`, entitlements | exercised on v4 |
+| M4.1 | The catalogue offers the entry and the tenant's administrator may install it | `spec.catalogue.sources[]`, `can_install_app` | exercised on v4 |
 | M4.2 | Installing is a commit and the App composes | director `POST /v1/tenants/{t}/apps/{p}`, `app-default` | exercised on v4 |
 | M4.3 | Its database and storage are fulfilled | the app composition's claims | exercised on v4 |
 | M4.4 | Its OIDC client exists and the zone session reaches it | `app-default` keycloak client, the edge | exercised on v4 |
@@ -1297,7 +1361,7 @@ operator and the network policies name six of them.
 | MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ✅ composed |
 | Redis | `gentian-infra-<stage>` | `system-cache` | ✅ composed |
 | MinIO | `gentian-infra-<stage>` | `system-s3` | ✅ composed |
-| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ✅ composed and deployed; Postfix not yet split into the DMZ |
+| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ✅ composed and deployed. Postfix was not split into the DMZ: a proxy that holds nothing stands there instead (note of 2026-10-09 below) |
 | LiteLLM, its database, vLLM instances | `platform-kernel`, installer `D-05` | `system-llm` | ✅ composed and deployed |
 
 **The design is not missing, only unbuilt.**
@@ -1406,10 +1470,21 @@ that means Postfix reaching the signer across a namespace boundary with the
 network policy to match, so it is recorded rather than half-done. Both mail
 workloads are in `system-mail` today, which is v4's shape relocated.
 
+**Note, 2026-10-09: closed, in another form.** Postfix did not move. Postfix
+and Dovecot stay in `system-mail` with no load balancer of their own, and
+`system-mail-dmz` holds a TCP proxy (HAProxy) for ports 25, 587 and 993 that
+keeps no mail, no user, no certificate and no key, passes TLS through, and
+hands the servers the client's address in a PROXY-protocol header. That is
+AD-9's stateless edge: a mail server in the DMZ would keep a queue, stored
+mail, in the namespace that faces the internet. Built, not yet run on a
+cluster; [mail.md](../design/mail.md) describes it. The DKIM signer still
+runs with Postfix.
+
 **Done when** a second tenant's desktop reaches Ready on a v5 cluster and
 every engine a catalogue app can ask for is composed and serving. Quotas,
 backup policies and per-engine network policies are not written yet, and
-neither is Postfix's move into the DMZ.
+neither is Postfix's move into the DMZ. (2026-10-09: see the note above for
+what stands in the mail DMZ instead.)
 
 ### WP-x ☐ A password manager instead of per-app SSO tricks
 
@@ -1417,7 +1492,7 @@ To be considered rather than decided, and recorded before the reasoning is
 lost.
 
 App profiles currently ship sidecars and per-app arrangements to make single
-sign-on work: a SAML shim, a session bridge, an OIDC pack per application, and
+sign-on work: a SAML bouncer, a session bridge, an OIDC pack per application, and
 in some cases nothing at all because the application only understands a
 username and a password. That is a per-application cost paid again for every
 catalogue entry, and the applications that cannot do SSO are simply outside it.
@@ -1446,22 +1521,23 @@ rather than from use.
 
 ## 6. After M1
 
-The work packages in order. Each is specified in `work-packages.md`.
+The areas of work in order. What is still open in each is in
+[open-items.md](open-items.md).
 
-| Order | Package | Why here |
+| Order | Area | Why here |
 |---|---|---|
-| 1 | WP-1 Director | S7A.2 is its first item; the rest of the API follows |
-| 2 | WP-3 Authorization | who projects into OpenFGA, and the naming rule |
-| 3 | WP-7 UI | the admin console and the desktop, on the director's API |
-| 4 | WP-5 Catalogue | `ComponentProfile` for everything, not only the desktop |
-| 5 | WP-2 Operator | what the operator gives up and what it takes on |
-| 6 | WP-4 Networking | tenant zones, the DMZ and exposure |
-| 7 | WP-8 Namespaces | the fresh-install layout |
-| 8 | WP-6, WP-14 Store | the external service and its reference implementation |
-| 9 | WP-9 Security gaps | audit logging, break-glass |
-| 10 | WP-11, WP-12, WP-13 | repository layout, documentation, certification |
+| 1 | The director | S7A.2 is its first item; the rest of the API follows |
+| 2 | Authorization | who projects into OpenFGA, and the naming rule |
+| 3 | The UIs | the admin console and the desktop, on the director's API |
+| 4 | The catalogue | `ComponentProfile` for everything, not only the desktop |
+| 5 | The operator | what the operator gives up and what it takes on |
+| 6 | Networking | tenant zones, the DMZ and exposure |
+| 7 | Namespaces | the fresh-install layout |
+| 8 | A store | the external service and its reference implementation |
+| 9 | Security gaps | audit logging, break-glass |
+| 10 | Repository layout, documentation, certification | |
 
-**WP-5 has a concrete first step.** `ComponentProfile` now carries everything
+**The catalogue has a concrete first step.** `ComponentProfile` now carries everything
 an app needs — tenancy, trust tier, exposures, tiles, a platform value
 mapping, `defaultForTenants` — and the administration console proves a
 component can be built, published and installed through it end to end. But
@@ -1470,6 +1546,10 @@ it, so a profile of type app cannot yet be installed into a tenant by naming
 it there. That is what "ComponentProfile for everything" means in practice,
 and it is what lets an app be standalone rather than reached only through the
 App Store.
+
+**Done since.** `AppProfile` is deleted; `Tenant.spec.apps[].profile` names a
+`ComponentProfile`, and every installed app is a `Component`
+([ad4-migration.md](ad4-migration.md)).
 
 ---
 
@@ -1481,8 +1561,8 @@ per-cluster: the authorization **model** is a file in the repository and
 changes only when the model version does, and the **relation structure** —
 that a cluster has tenants, that a tenant has admins, members and a perimeter
 group, which relation each role implies — is the model, not data. What is
-genuinely per-cluster is small: which groups exist, who is in them, which
-tenants this cluster has, and which entitlements are current. So the graph
+genuinely per-cluster is small: which groups exist, who is in them, and
+which tenants this cluster has. So the graph
 should arrive mostly built, with only names, memberships and facts written at
 runtime. That is less code and a smaller blast radius: a bug in a projector
 can then add or remove a membership, but it cannot invent a relation that was
@@ -1508,8 +1588,14 @@ written out in [target-component-structure.md](target-component-structure.md).
   contracts (`provides: wiki, project-management`). `requires.services` is the
   proposal.
 
-Two defects found while looking, both admissible on `ComponentProfile` today
-and neither on `AppProfile`: a package may declare `deploymentMethod: api`
+**Settled since, all three, as the code has them.** `ComponentProfile` is the
+only catalogue kind and `AppProfile` is deleted. The field is `spec.classes`,
+a list of `service`, `app` and `shared-app`. Requirements are
+`spec.requires.services`. The package rule below is an exactly-one
+(`exists_one`) now.
+
+Two defects found while looking, both admissible on `ComponentProfile` at the
+time and neither on `AppProfile`: a package may declare `deploymentMethod: api`
 and carry a chart, and a package may carry a chart and an API integration at
 once. The one-of rule is an OR where it should be an exactly-one, which the
 same file already writes correctly for egress.

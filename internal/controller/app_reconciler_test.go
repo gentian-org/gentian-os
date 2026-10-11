@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -40,9 +34,9 @@ var appClaimTestGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
-// newAppProfile builds an AppProfile with the crossplane DeploymentMethod and
+// newComponentProfile builds a ComponentProfile with the crossplane DeploymentMethod and
 // optional ValueMapping.
-func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.ComponentProfile {
+func newComponentProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
@@ -64,7 +58,6 @@ func TestApps_NoApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "noapps"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Apps Co",
-			Domain:      "noapps.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -101,7 +94,7 @@ func TestApps_NoApps(t *testing.T) {
 // domain) and labels.
 func TestApps_CreatesAppClaim(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("my-app", nil)
+	profile := newComponentProfile("my-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -111,7 +104,6 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "single-app"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Single App Co",
-			Domain:      "single-app.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "my-app"}},
 		},
 	}
@@ -148,8 +140,8 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 		t.Errorf("expected spec.tenantNamespace tenant-single-app, got %q", tenantNS)
 	}
 	domain, _, _ := unstructured.NestedString(claim.Object, "spec", "domain")
-	if domain != "single-app.example.com" {
-		t.Errorf("expected spec.domain single-app.example.com, got %q", domain)
+	if domain != "single-app.platform.example.test" {
+		t.Errorf("expected spec.domain single-app.platform.example.test, got %q", domain)
 	}
 	policy, _, _ := unstructured.NestedString(claim.Object, "spec", "compositionUpdatePolicy")
 	if policy != "Automatic" {
@@ -163,9 +155,9 @@ func TestApps_MultipleApps(t *testing.T) {
 	t.Parallel()
 	appNames := []string{"alpha", "beta", "gamma"}
 	for _, name := range appNames {
-		profile := newAppProfile(name, nil)
+		profile := newComponentProfile(name, nil)
 		if err := testClient.Create(context.Background(), profile); err != nil {
-			t.Fatalf("create AppProfile %s: %v", name, err)
+			t.Fatalf("create ComponentProfile %s: %v", name, err)
 		}
 		n := name
 		t.Cleanup(func() {
@@ -184,7 +176,6 @@ func TestApps_MultipleApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "multi-app"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Multi App Co",
-			Domain:      "multi-app.example.com",
 			Apps:        tenantApps,
 		},
 	}
@@ -208,7 +199,7 @@ func TestApps_MultipleApps(t *testing.T) {
 // App claims from the tenant namespace.
 func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("del-app", nil)
+	profile := newComponentProfile("del-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -218,7 +209,6 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "del-tenant"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Remove App Tenant",
-			Domain:         "del.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "del-app"}},
 		},
@@ -239,7 +229,10 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteAppDeployment; mark its jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-del-tenant-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-del-tenant", layout.Namespace(layout.Authentication))
 
 	// App claim should be removed.
@@ -257,14 +250,14 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 // leaving other apps' claims intact.
 func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	t.Parallel()
-	profileA := newAppProfile("rm-keep-app", nil)
-	profileB := newAppProfile("rm-remove-app", nil)
+	profileA := newComponentProfile("rm-keep-app", nil)
+	profileB := newComponentProfile("rm-remove-app", nil)
 	if err := testClient.Create(context.Background(), profileA); err != nil {
-		t.Fatalf("create AppProfile rm-keep-app: %v", err)
+		t.Fatalf("create ComponentProfile rm-keep-app: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileA) })
 	if err := testClient.Create(context.Background(), profileB); err != nil {
-		t.Fatalf("create AppProfile rm-remove-app: %v", err)
+		t.Fatalf("create ComponentProfile rm-remove-app: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileB) })
 
@@ -272,7 +265,6 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "rm-app-tenant"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Skip NoApp Tenant",
-			Domain:      "rmapp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "rm-keep-app"},
 				{Profile: "rm-remove-app"},
@@ -336,7 +328,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 // lack the gentianos.io/app label.
 func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("only-app", nil)
+	profile := newComponentProfile("only-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -346,7 +338,6 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "skip-noapp"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Orphan App Workload",
-			Domain:      "skipnoapp.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "only-app"}},
 		},
 	}
@@ -418,7 +409,7 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 // apps removed from spec.apps are deleted during app reconciliation.
 func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("orphan-wl-app", nil)
+	profile := newComponentProfile("orphan-wl-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -428,7 +419,6 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Orphan App Workload 2",
-			Domain:      "orphanwl.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app"}},
 		},
 	}
@@ -524,7 +514,7 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 // without ownerReferences are removed when the owning Job is already gone.
 func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("orphan-wl-app2", nil)
+	profile := newComponentProfile("orphan-wl-app2", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -534,7 +524,6 @@ func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl2"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Test Tenant",
-			Domain:      "orphanwl2.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app2"}},
 		},
 	}

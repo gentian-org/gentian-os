@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -86,10 +80,18 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	// director lives in the control namespace. Following the mapping rather
 	// than a name means the console and the desktop both reach it and a
 	// component that never asked cannot.
-	// Both the director and the credential manager are in the control
-	// namespace, and naming either is what opens the way there.
-	if wantsDirector(profile) || wantsCredentialManager(profile) {
+	// The director, the custodian, the registrar and the usher are all in
+	// the control namespace, and naming any of them is what opens the way
+	// there.
+	// A component that vouches for people reaches the registrar as well,
+	// whether or not its chart takes the address as a value: that is where a
+	// person is linked to it, and where it takes a link away.
+	if wantsDirector(profile) || wantsCustodian(profile) || wantsRegistrar(profile) || wantsUsher(profile) || wantsVouching(profile) {
 		add(layout.Namespace(layout.Control))
+	}
+	// And the realm, which it posts its statements to.
+	if wantsVouching(profile) {
+		add(layout.Namespace(layout.Authentication))
 	}
 	return out
 }
@@ -132,12 +134,35 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
-func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) error {
+//
+// modelGateway says the component's key at the model gateway is delivered
+// (modelAccessFor): only then is the gateway's port opened to it.
+func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, modelGateway bool) error {
+	// The way to a store outside the cluster, for a profile that asked where
+	// the store is and while the cluster offers one. Ahead of the granted
+	// privileges: it follows from the profile's mapping, as the namespaces
+	// do, and is nothing a person approved.
+	outside, err := r.storeEgress(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("read whether the cluster offers an App Store: %w", err)
+	}
+	// The model gateway, for a placed component that declared it and holds
+	// its key: one port of one namespace. It follows from the requirement,
+	// like the store, and is ahead of the granted privileges for the same
+	// reason.
+	if modelGateway {
+		outside = append(outside, modelGatewayEgress())
+	}
+	// The bouncer's listener for the rights check, for a component that
+	// declared it: one port of the edge namespace.
+	if wantsRightsCheck(profile) {
+		outside = append(outside, rightsCheckEgress())
+	}
 	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
-		security.GrantedEgressRules(profile, comp, time.Now()))
+		append(outside, security.GrantedEgressRules(profile, comp, time.Now())...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, key, existing)
+	err = r.Get(ctx, key, existing)
 	if len(desired.Spec.Egress) == 0 {
 		if err == nil {
 			return client.IgnoreNotFound(r.Delete(ctx, existing))

@@ -1,0 +1,1 @@
+nothing is delivered for repository deployments: the cluster configuration (the ConfigMap labelled gentianos.io/config-type=cluster-config) does not carry kernel.controlNamespace and kernel.gitopsNamespace, so there is no namespace to deliver to.

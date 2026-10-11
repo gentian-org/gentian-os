@@ -1,23 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,9 +23,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+// ErrNoVault is a deletion that cannot destroy a tenant's stored credentials
+// because the operator has no connection to the vault and was not told to
+// run without one.
+var ErrNoVault = errors.New("the operator has no connection to the vault (BAO_ADDR is not set) and was not told to run without one (GENTIAN_WITHOUT_VAULT=true, for development and test only); the tenant's stored credentials were not destroyed")
 
 func tenantKernelLabelSelector(tenantName string) client.MatchingLabels {
 	return client.MatchingLabels{
@@ -69,9 +69,10 @@ func isTenantCleanupJobName(tenantName, jobName string) bool {
 	cleanupPrefixes := []string{
 		fmt.Sprintf("keycloak-realm-delete-%s", tenantName),
 		fmt.Sprintf("keycloak-realm-disable-%s", tenantName),
-		fmt.Sprintf("mariadb-delete-%s-", tenantName),
-		fmt.Sprintf("s3-delete-%s-", tenantName),
-		fmt.Sprintf("redis-acl-delete-%s-", tenantName),
+		backup.MariaDBDestroyJobName(tenantName, ""),
+		backup.PostgresDestroyJobName(tenantName, ""),
+		backup.ObjectStorageDestroyJobName(tenantName, ""),
+		backup.CacheDestroyJobName(tenantName, ""),
 	}
 	for _, prefix := range cleanupPrefixes {
 		if strings.HasPrefix(jobName, prefix) {
@@ -119,6 +120,22 @@ func (r *TenantReconciler) deleteTenantLabeledDatabaseCRs(ctx context.Context, t
 	return nil
 }
 
+// purgeTenantVault destroys the tenant's whole vault subtree, or says why it
+// could not. See purgeTenantKernelResources for why nothing here is skipped.
+func (r *TenantReconciler) purgeTenantVault(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	switch {
+	case r.Seeder != nil && r.Seeder.KV() != nil:
+		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
+			return fmt.Errorf("purge the vault paths of tenant %s: %w", tenant.Name, err)
+		}
+	case r.WithoutVault:
+		// Declared: there is no vault, so there is nothing stored in one.
+	default:
+		return fmt.Errorf("purge the vault paths of tenant %s: %w", tenant.Name, ErrNoVault)
+	}
+	return nil
+}
+
 // purgeTenantKernelResources removes orchestrator-owned kernel artifacts that
 // may survive app uninstalls or partial deletes. It runs after awaited cleanup
 // Jobs have finished; still-active fire-and-forget cleanup Jobs are left to
@@ -136,15 +153,23 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	// inherited the previous one's login. "Delete it and make it again" did not
 	// do what it looks like it does.
 	//
-	// Reported rather than fatal: OpenBao being unreachable must not strand the
-	// finalizer and with it the Tenant, and the residue is a path, not a
-	// workload. Retain skips this with everything else, which is the policy's
-	// meaning — the data stays.
-	if r.Seeder != nil && r.Seeder.KV() != nil {
-		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
-			log.FromContext(ctx).Error(err, "could not purge the tenant's OpenBao paths",
-				"tenant", tenant.Name)
-		}
+	// A failure here fails the pass, and the deletion comes back to it. It
+	// used to be logged and passed over, so that an unreachable vault would
+	// not hold the finalizer; what that bought was a tenant reported deleted
+	// with its credentials still stored. The Tenant stays, Terminating, until
+	// the vault answers -- which is the true state. Retain skips this with
+	// everything else, which is the policy's meaning: the data stays.
+	//
+	// An operator that has no vault and was not told so does not get to
+	// skip this. "No vault" used to be inferred from the missing connection,
+	// which is also what a deployment with a mistyped or dropped setting
+	// looks like: the step did nothing and the deletion reported success.
+	// Running without one is a statement the operator's configuration makes
+	// (WithoutVault: development and test); otherwise it is an error here,
+	// and the Tenant stays Terminating until the operator can reach its
+	// vault.
+	if err := r.purgeTenantVault(ctx, tenant); err != nil {
+		return err
 	}
 
 	if err := r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name); err != nil {

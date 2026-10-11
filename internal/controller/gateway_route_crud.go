@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -23,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,15 +41,36 @@ func ensureHTTPRouteResource(ctx context.Context, c client.Client, desired *gate
 	if err != nil {
 		return err
 	}
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec = desired.Spec
-		if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-			existing.Labels = desired.Labels
+	// Annotations too, not only the spec. A route's annotations are read:
+	// the edge's authorization table is built from them, so a route whose
+	// spec was right and whose annotations were an earlier build's kept
+	// that build's answer for good -- a new annotation never reached a
+	// route that already existed. Only the ones this asks for are set;
+	// what something else put on the route stays.
+	annotationsStale := false
+	for k, v := range desired.Annotations {
+		if existing.Annotations[k] != v {
+			annotationsStale = true
+			break
 		}
-		return c.Patch(ctx, existing, patch)
 	}
-	return nil
+	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsStale {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Spec = desired.Spec
+	if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		existing.Labels = desired.Labels
+	}
+	if annotationsStale {
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		for k, v := range desired.Annotations {
+			existing.Annotations[k] = v
+		}
+	}
+	return c.Patch(ctx, existing, patch)
 }
 
 func (r *TenantReconciler) deleteStaleHTTPRoutesForTenant(
@@ -164,23 +178,4 @@ func (r *TenantReconciler) deleteTenantHTTPRoutes(ctx context.Context, tenant *g
 		return err
 	}
 	return r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, nil)
-}
-
-func httpRouteProgrammed(ctx context.Context, c client.Client, route *gatewayv1.HTTPRoute) (bool, string) {
-	current := &gatewayv1.HTTPRoute{}
-	if err := c.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, current); err != nil {
-		return false, "HTTPRouteMissing"
-	}
-	for _, parent := range current.Status.Parents {
-		for _, cond := range parent.Conditions {
-			if cond.Type == string(gatewayv1.RouteConditionAccepted) && cond.Status == metav1.ConditionFalse {
-				reason := cond.Reason
-				if reason == "" {
-					reason = "NotAccepted"
-				}
-				return false, reason
-			}
-		}
-	}
-	return true, "Accepted"
 }

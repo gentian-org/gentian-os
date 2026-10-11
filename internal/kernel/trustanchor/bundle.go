@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package trustanchor builds the gentian-trust-anchor-tls bundle for clusters whose
@@ -34,6 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 const (
@@ -42,11 +38,10 @@ const (
 	// NodeExtraCAKey holds the LE staging CA chain for NODE_EXTRA_CA_CERTS.
 	// Node.js appends this file to the default Mozilla trust store; it must
 	// contain the full staging issuer chain (not the server leaf or a duplicate
-	// Mozilla bundle). See docs/design/security.md §9.1.
+	// Mozilla bundle). See docs/design/security.md §12.1.
 	NodeExtraCAKey = "node-extra-ca.crt"
 
-	DefaultCertManagerNS = "cert-manager"
-	DefaultLeafSecret    = "wildcard-kernel-tls"
+	DefaultLeafSecret = "wildcard-kernel-tls"
 
 	mozillaCABundleURL = "https://curl.se/ca/cacert.pem"
 	maxIssuerChain     = 8
@@ -61,8 +56,8 @@ type Bundle struct {
 	NodeExtraCA []byte
 }
 
-// BuildBundle returns trust bundles for ACME staging clusters. CACrt matches
-// scripts/bootstrap/create-trust-anchor-secret.sh (system CAs + LE staging chain via AIA).
+// BuildBundle returns trust bundles for ACME staging clusters. CACrt is the
+// system CAs plus the LE staging chain, walked via AIA.
 // NodeExtraCA contains only the staging issuer chain for Node.js clients.
 func BuildBundle(ctx context.Context, leafPEM []byte) (*Bundle, error) {
 	if len(leafPEM) == 0 {
@@ -188,7 +183,7 @@ func EnsureTrustAnchorSecret(ctx context.Context, c client.Client, namespace, ce
 		return false, fmt.Errorf("namespace is required")
 	}
 	if certManagerNS == "" {
-		certManagerNS = DefaultCertManagerNS
+		certManagerNS = layout.Namespace(layout.Edge)
 	}
 	if leafSecretName == "" {
 		leafSecretName = DefaultLeafSecret

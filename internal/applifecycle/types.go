@@ -1,60 +1,49 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
 
-import "time"
+import (
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/licencereport"
+)
 
 // Options configures the lifecycle service.
 type Options struct {
-	OpenBaoNamespace   string
-	OperatorNamespace  string
-	OperatorSA         string
-	DeploymentsPath    string
-	DeploymentsRepo    string
-	DeploymentsCluster string
-	WaitTimeout        time.Duration
+	OperatorNamespace string
+	OperatorSA        string
 	// MetricsEnabled turns on the live-consumption series read from
 	// metrics.k8s.io. Off in a cluster without metrics-server, where the
 	// resources API still reports the ceiling and what is committed under it.
 	MetricsEnabled bool
+	// LicenceReport is whether this cluster reports what it runs, and to
+	// where: what the read of the last report answers from.
+	LicenceReport licencereport.Settings
+	// Vault is where apps' credentials are stored: what a purge deletes them
+	// from and the retained-data read lists. Nil when the operator has no
+	// vault configured; a purge then fails rather than claim the credentials
+	// destroyed.
+	Vault CredentialStore
+	// LiveReader reads the API server itself rather than the manager's
+	// cache. The catalogue's residue is listed and removed on what it
+	// answers, because what is deleted there is decided on the answer. Nil
+	// reads through the service's client.
+	LiveReader client.Reader
+	// TenancyMode is whether the cluster carries one user tenant or many, as
+	// the operator runs: what decides whether a tenant's administrator may
+	// remove what an app's bundle left behind. Empty is multi.
+	TenancyMode string
 }
 
-// InstallRequest installs an app profile on a tenant.
-type InstallRequest struct {
-	Tenant  string
-	Profile string
-	Actor   string
-	// Wait blocks until the App claim is Ready. HTTP clients should leave this false
-	// to avoid gateway timeouts during long provisioning.
-	Wait bool
-	// Provision, when true, adds all existing tenant users to the app's Keycloak group
-	// after the installation step, granting them immediate access.
-	Provision bool
-}
-
-// UninstallRequest removes an app profile from a tenant.
-type UninstallRequest struct {
-	Tenant  string
-	Profile string
-	Purge   bool
-	Actor   string
-}
-
-// Result is returned from install/uninstall operations.
+// Result is returned from lifecycle operations.
 type Result struct {
 	Status   string   `json:"status"`
 	Tenant   string   `json:"tenant"`
@@ -63,47 +52,9 @@ type Result struct {
 	Ready    bool     `json:"ready,omitempty"`
 	Message  string   `json:"message,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
-}
-
-// SetAddonsRequest replaces the addon selection of one installed app.
-type SetAddonsRequest struct {
-	Tenant  string
-	Profile string
-	// Addons holds AppProfile names. An empty slice is a real selection meaning
-	// "none" and clears the list.
-	Addons []string
-	// Provision grants access to every addon in this request, as it does for an
-	// app: every existing tenant user is added to each addon's access group.
-	// Installing without it leaves access to be granted by assigning users to
-	// that group.
-	//
-	// Kept for callers that mean "all of them", and because it is what the field
-	// has always meant on the wire. ProvisionFor is the finer answer and wins
-	// where it is given.
-	Provision bool
-	// ProvisionFor names the addons to grant access to, for callers that choose
-	// per addon — which the App Store does, offering Install and Provision as
-	// separate buttons on each row. Names not in Addons are ignored; the
-	// selection is what decides what is installed.
-	//
-	// When this is non-empty it is the whole answer: an addon absent from it is
-	// installed without being granted, even if another addon in the same request
-	// is granted. Collapsing the two into one bool is how installing CRM without
-	// provisioning it left its group empty while its profile declared the Sales
-	// role, so Odoo refused access to crm.lead.
-	ProvisionFor []string
-	Actor        string
-}
-
-// provisions reports whether this request grants access to one addon.
-func (r SetAddonsRequest) provisions(profile string) bool {
-	if len(r.ProvisionFor) == 0 {
-		return r.Provision
-	}
-	for _, name := range r.ProvisionFor {
-		if name == profile {
-			return true
-		}
-	}
-	return false
+	// What a purge did: Destroyed are the kinds of data that are now gone,
+	// in the order they went, and Complete is true. A purge that could not
+	// destroy everything answers with an error, not with this.
+	Complete  *bool    `json:"complete,omitempty"`
+	Destroyed []string `json:"destroyed,omitempty"`
 }

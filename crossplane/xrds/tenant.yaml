@@ -42,8 +42,11 @@ spec:
                 domain:
                   type: string
                   description: >
-                    Optional custom app zone (e.g. "acme.com"). When omitted the
-                    tenant is served under "<name>.<kernelDomain>".
+                    The domain the tenant is served at, set by the operator: a
+                    custom domain a TenantDomain binds, the kernel domain for
+                    the user tenant of a single-tenancy cluster, otherwise
+                    "<name>.<kernelDomain>", which is also what an omitted
+                    value means.
                 adminEmail:
                   type: string
                   description: Contact address for platform notifications.
@@ -132,9 +135,6 @@ spec:
                       type: string
                       description: Mail delivery strategy. Defaults to "selfhosted".
                       default: selfhosted
-                    domain:
-                      type: string
-                      description: Mail domain. Defaults to spec.domain.
                     smtpCredentialsSecret:
                       type: string
                       description: >
@@ -192,7 +192,7 @@ spec:
                     properties:
                       profile:
                         type: string
-                        description: Name of the AppProfile CR to install.
+                        description: Name of the ComponentProfile to install.
                       variant:
                         type: string
                         description: >
@@ -209,7 +209,7 @@ spec:
                         description: |
                           Addon identifiers to activate inside this app, already
                           resolved by the operator from the tenant's selected addon
-                          AppProfiles to whatever the hosting app's own addon system
+                          ComponentProfiles to whatever the hosting app's own addon system
                           calls them (an Odoo module name, a Nextcloud app id).
 
                           Resolving in the operator keeps compositions free of

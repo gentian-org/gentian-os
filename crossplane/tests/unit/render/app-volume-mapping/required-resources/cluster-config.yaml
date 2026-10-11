@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gentian-cluster-config
-  namespace: crossplane-system
+  namespace: kernel-provisioning
   labels:
     gentianos.io/config-type: cluster-config
 data:

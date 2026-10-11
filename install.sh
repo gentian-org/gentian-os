@@ -21,7 +21,6 @@
 # One driver, three directions. Update is not a separate program: converging a
 # running cluster IS the update, so it is the same forward pass.
 #
-#   ./install.sh --prepare-tenant NAME  write one tenant's definition, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
 #   ./install.sh --uninstall        reverse order, destroy() each step
@@ -46,17 +45,16 @@
 # operator does not edit and push these files by hand, so there is nothing
 # to review between writing them and installing from them.
 #
-# A tenant is the same shape one level down, and stops in the same place:
-# --prepare-tenant writes its DEFINITION, you choose its apps, and
-# `kubectl gentian tenants deploy <name>` is what turns a definition into
-# something Argo CD syncs. The installer never applies a Tenant, and never
-# writes the deployed copy — the operator writes into that one too, as apps
-# are installed from the store.
+# Tenants are not the installer's: they are created through the director --
+# the admin console, or `kubectl gentian tenants create`, its command-line
+# client -- which commits them as the person who asked.
 #
 # Read before you run:
 #
 #   ./install.sh --explain          the step table and what each one mutates
-#   ./install.sh --dry-run          run every check(), print the plan, change nothing
+#   ./install.sh --dry-run          run every check(), print the plan, change nothing:
+#                                   not the cluster, not the deployments repository,
+#                                   not a file or a key on this host
 #   ./install.sh --status           where did this install get to?
 #
 # Run part of it:
@@ -101,6 +99,32 @@ export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-kernel-provisioning}"
 # `--verify-only` looked in a namespace v5 never creates and reported a
 # handover that had happened as not started.
 export GENTIAN_SYSTEM_NAMESPACE="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
+
+# The rest of the layout, once, for every step and library that names a
+# namespace through a variable.
+#
+# Each step used to export the few it needed itself -- B-04, B-08, C-01, E-02
+# and E-03 all set OPENBAO_NAMESPACE -- and a step that did not fell through to
+# the library's own default, which is still the old layout's name for the
+# namespace. B-03 did not: on the first fresh v5 install it looked for the
+# vault in namespace "openbao", which no longer exists, and stopped with
+# "Neither the ClusterIP nor a kubectl port-forward responded" while the vault
+# sat Ready in kernel-secrets. Set here, before any step runs, no step can
+# forget. A value already in the environment is kept.
+export OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}"
+export TRANSIT_NAMESPACE="${TRANSIT_NAMESPACE:-$(ns_kernel seal)}"
+export CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
+export CERT_MANAGER_NS="${CERT_MANAGER_NS:-${CERT_MANAGER_NAMESPACE}}"
+export ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
+export SERVICES_NAMESPACE="${SERVICES_NAMESPACE:-$(ns_kernel edge)}"
+export KERNEL_NAMESPACE="${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE}}"
+export GENTIAN_OPERATOR_NAMESPACE="${GENTIAN_OPERATOR_NAMESPACE:-$(ns_kernel control)}"
+export GENTIAN_ARGOCD_NAMESPACE="${GENTIAN_ARGOCD_NAMESPACE:-$(ns_kernel gitops)}"
+export GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-$(ns_kernel gitops)}"
+export EDGE_NAMESPACE="${EDGE_NAMESPACE:-$(ns_kernel edge)}"
+export IDENTITY_NAMESPACE="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
+export AUTHZ_NAMESPACE="${AUTHZ_NAMESPACE:-$(ns_kernel authorization)}"
+export OBSERVABILITY_NAMESPACE="${OBSERVABILITY_NAMESPACE:-$(ns_kernel observability)}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO
@@ -119,10 +143,16 @@ GENTIAN_PURGE=0
 GENTIAN_PURGE_CLUSTER_INFRA=0
 GENTIAN_KIT_PATH=""
 GENTIAN_RECOVER_FROM=""
+# Set by --rotate-break-glass-key and by nothing else: assigned here so that a
+# value in the environment is not a flag nobody typed.
+GENTIAN_ROTATE_BREAK_GLASS=""
 GENTIAN_TENANT_NAME="${GENTIAN_TENANT_NAME:-}"
 
 driver_usage() {
-    sed -n '3,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # The header of this file, whole: from its title to the line that ends it.
+    # A fixed line range cut it off in the middle of a sentence once the
+    # header grew.
+    sed -n '3,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0,1\}//'
     cat <<'EOF'
 
 Recovery:
@@ -131,11 +161,27 @@ Recovery:
                                 to an encrypted kit; default gentian-recovery-kit.age
   --recover PATH                load a kit before installing, so derived
                                 credentials reproduce their original values
+  --rotate-break-glass-key      replace a break-glass signing key that is lost.
+                                The installer refuses to run when the key the
+                                deployments repository records for this cluster
+                                is not in this host's keyring; --recover puts it
+                                back. This is for when there is nothing to put
+                                back: it generates a new key, after a person has
+                                typed the old key's id at a terminal. Nothing
+                                confirms it on their behalf
 
 Looking before running:
   --explain             print what every step does, in order, and stop
   --status              report which steps this cluster has already satisfied
-  --dry-run             run every check() and print the plan; applies nothing
+  --dry-run             run every check() and print the plan. Changes nothing:
+                        no object in the cluster, no file in the deployments
+                        checkout, no commit or push, no signing key, nothing
+                        under ~/.gentian or ~/.local/bin. Where an install
+                        would do one of those, it prints a line beginning
+                        "Would". It reads: the cluster, and the deployments
+                        repository's remote (to say whether the checkout is
+                        behind it). With --uninstall or --purge it previews
+                        the teardown the same way
 
 Running part of it. A step is named by its number or its full id, so
 --only B-08 and --only B-08-seed-secrets are the same thing:
@@ -151,12 +197,32 @@ Running part of it. A step is named by its number or its full id, so
                         is asking the wrong question
 
 Other options:
-  --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
-                        then stop. Deploy it with `kubectl gentian tenants
-                        deploy NAME`. Needs the cluster's files to exist already
-  --validate            validate config and step contracts, no cluster changes
+  --validate, --check   check the step files, report which settings and
+                        credentials this configuration has, then run the
+                        pre-flight (tools, cluster reachable, Kubernetes
+                        version, operator image). Asks no question, collects
+                        no credential and runs no step's check(). Changes
+                        nothing, on the same terms as --dry-run
   --verify-only         run post-install verification and print the summary
-  --no-cluster-infra    skip cert-manager / CNPG / reloader on install
+  --activate-admin      issue a new activation link for the cluster administrator
+                        (admin@<kernel-domain>), mailed or shown once — for a lost
+                        password when nobody can sign in to ask the director
+  --disable-api-extensions
+                        leave the store's extensions -- the Operations
+                        Console's service and the API-extension grant it needs
+                        -- out of the scaffold. Everything of Gentian OS stays:
+                        export, import, purge and the bundle need no extension
+  --no-licence-report   turn the licence report off. By default the cluster
+                        tells the report address once a day what it runs:
+                        tenants, counts of accounts, and the apps installed
+                        through the App Store. No personal data. Off, nothing
+                        is sent and the App Store is not offered. The same as
+                        GENTIAN_NO_LICENCE_REPORT=1 in install.env, which is
+                        where to put it so a later run does not turn it back on
+  --no-cluster-infra    do not issue the kernel wildcard certificate (C-03).
+                        That is all it leaves out: cert-manager, CNPG and
+                        Reloader are installed as always. The same as
+                        INSTALL_CLUSTER_INFRA=0 in the environment
   --cluster-infra       with --purge, also remove them and their CRDs: CNPG,
                         Reloader, external-dns, cert-manager. They may serve
                         workloads that are not Gentian's, and this discards the
@@ -231,6 +297,9 @@ parse_driver_args() {
             --recover)
                 shift; [[ $# -gt 0 ]] || { error "$0: --recover requires a kit path"; exit 1; }
                 GENTIAN_RECOVER_FROM="$1" ;;
+            --rotate-break-glass-key) GENTIAN_ROTATE_BREAK_GLASS="rotate" ;;
+            --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
+            --no-licence-report) export GENTIAN_NO_LICENCE_REPORT="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1"; GENTIAN_PURGE_CLUSTER_INFRA=1 ;;
             --config-file)
@@ -244,6 +313,7 @@ parse_driver_args() {
                 exit 1 ;;
             --no-config-files)   INSTALL_AUTO_LOAD_CONFIG="0" ;;
             --verify-only)       INSTALL_VERIFY_ONLY="1" ;;
+            --activate-admin)    GENTIAN_DIRECTION="activate-admin" ;;
             --validate|--check)  INSTALL_VALIDATE_ONLY="1" ;;
             -h|--help)           driver_usage; exit 0 ;;
             *)
@@ -263,6 +333,37 @@ parse_driver_args() {
         error "--cluster-infra removes shared operators and their CRDs, which only --purge does."
         error "  Did you mean: ./install.sh --purge --cluster-infra"
         exit 1
+    fi
+
+    # The same for --rotate-break-glass-key: it belongs to an install, which is
+    # the only run that asks whether the recorded key is here.
+    if [[ -n "${GENTIAN_ROTATE_BREAK_GLASS}" ]] && \
+       [[ "${GENTIAN_DIRECTION}" != "forward" || "${INSTALL_VERIFY_ONLY:-0}" == "1" || "${GENTIAN_EXPLAIN:-0}" == "1" ]]; then
+        error "--rotate-break-glass-key replaces a lost signing key during an install or an update."
+        error "  It does nothing with the command it was given beside; run it on its own:"
+        error "    ./install.sh --rotate-break-glass-key"
+        exit 1
+    fi
+
+    # --dry-run and --validate promise to change nothing, and these commands
+    # do not know the promise: each goes its own way through main() and never
+    # reaches the place a dry run is honoured. --verify-only restarts Argo
+    # CD's controller when it finds it stuck, --activate-admin issues a link
+    # and resets a password, --export-recovery-kit writes a file and may store
+    # a backup key. Refused together rather than run as if the flag were not
+    # there -- which is what happened, and is the worst of the three choices.
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" || "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]; then
+        local _not_previewed=""
+        [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]] && _not_previewed="--verify-only"
+        case "${GENTIAN_DIRECTION}" in
+            activate-admin) _not_previewed="--activate-admin" ;;
+            export-kit)     _not_previewed="--export-recovery-kit" ;;
+        esac
+        if [[ -n "${_not_previewed}" ]]; then
+            error "${_not_previewed} has no preview: --dry-run and --validate apply to an install, an update, an uninstall or a purge."
+            error "  Run ${_not_previewed} on its own, or drop it to preview the install."
+            exit 1
+        fi
     fi
 
     export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP GENTIAN_PHASE
@@ -294,9 +395,38 @@ prepare_run() {
         gentian_sync_deployments_checkout || exit 1
     fi
     load_deployments_cluster_settings
+
+    # The key this cluster's definition is signed with has to be on this
+    # machine, if the repository records one. Asked here: the checkout is
+    # current and the cluster is known, and nothing has been written yet --
+    # no file in the checkout, no key, no object in a cluster. After
+    # --recover, which is what puts a missing key back.
+    if [[ "${GENTIAN_DIRECTION}" == "forward" ]]; then
+        gentian_require_recorded_break_glass_key "${GENTIAN_ROTATE_BREAK_GLASS}" || exit 1
+    fi
+
     try_load_creds_from_openbao
 
-    [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
+    # --validate: the report of the configuration, then the same pre-flight an
+    # install runs, and nothing else. It asks no question and collects no
+    # credential, so it is the one command that can be run before anything has
+    # been answered: a cluster with no definition yet is told that an install
+    # writes one, not refused for lacking it.
+    if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]; then
+        validate_config || exit 1
+        GENTIAN_NONINTERACTIVE=1 prompt_app_repos
+        local _undefined
+        _undefined="$(cluster_deployment_missing | tr '\n' ' ')"
+        if [[ -n "${_undefined}" ]]; then
+            info "This cluster has no complete deployment definition yet (missing: ${_undefined% })."
+            info "  An install writes it first, asking for each setting — step 0."
+        else
+            require_cluster_deployment
+        fi
+        _ensure_bao
+        CROSSPLANE_MODE=1 check_prereqs
+        return 0
+    fi
 
     prompt_app_repos
 
@@ -323,7 +453,8 @@ prepare_run() {
     fi
 
     # Now a genuine precondition rather than an instruction: it validates what
-    # is there and commits an edit the operator made by hand.
+    # is there and commits an edit the operator made by hand -- or, under
+    # --dry-run, says which edits an install would commit and leaves them.
     require_cluster_deployment
 
     resolve_kernel_domain_from_claim   # already-bootstrapped cluster reads its Claim
@@ -386,7 +517,9 @@ ensure_cluster_deployment() {
         info "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml exists; its settings are read from it."
     else
         prompt_network_mode
+        explain_network_mode
         prompt_issuer_mode
+        explain_issuer_mode
         prompt_mail_mode
         prompt_cluster_settings
     fi
@@ -394,45 +527,70 @@ ensure_cluster_deployment() {
 }
 
 # =============================================================================
-# prepare_tenant_run — write one tenant's directory and stop.
+# prepare_tenant_run — retired: tenants are created through the director.
 #
-# Reads less than step 0: a tenant needs the cluster's identity and its
-# domain, and nothing else. No credentials, no cluster contact.
+# This wrote a tenant's definition into the deployments checkout and left
+# `kubectl gentian tenants deploy` to commit it: two ways round every check the
+# director makes, each committing with whatever git credential this host held.
+# A tenant is now created where every other change is -- the admin console's
+# Tenants tab, or `kubectl gentian tenants create`, a client of the director --
+# and the director commits it as the person who asked.
 # =============================================================================
 prepare_tenant_run() {
-    load_operator_config
-    load_deployments_cluster_settings
-    resolve_kernel_domain_from_claim
-    prompt_kernel_domain
-    prompt_tenant_identity
-    scaffold_tenant_deployment
+    error "--prepare-tenant is retired: tenants are created through the director."
+    error "  Admin console → Tenants, or:"
+    error "    kubectl gentian login"
+    error "    kubectl gentian tenants create ${GENTIAN_TENANT_NAME:-<name>}"
+    error "    kubectl gentian tenants activate-admin ${GENTIAN_TENANT_NAME:-<name>} [--recovery-email <address>]"
+    return 1
 }
 
 # _ensure_bao — install the OpenBao CLI to ~/.local/bin when absent.
+#
+# The archive is checked against the release's own checksum list before
+# anything is unpacked from it: this is a binary the installer goes on to hand
+# the cluster's root token to.
 _ensure_bao() {
     if command -v bao >/dev/null 2>&1; then
         return 0
     fi
-    local _os _arch _archive _install_dir
-    _os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    case "$(uname -m)" in
-        x86_64|amd64) _arch=amd64 ;;
-        aarch64|arm64) _arch=arm64 ;;
-        *) error "Unsupported architecture for the OpenBao CLI: $(uname -m)"; return 1 ;;
-    esac
+    local _asset _sums _base _tmp _install_dir _want _have
+    # Downloading a binary into ~/.local/bin is a change to this host.
+    if gentian_read_only; then
+        gentian_would "install the OpenBao CLI ${OPENBAO_CLI_VERSION} to ${HOME}/.local/bin, which this host does not have"
+        return 0
+    fi
+    if ! _asset="$(openbao_cli_asset "${OPENBAO_CLI_VERSION}" "$(uname -s)" "$(uname -m)")" \
+        || ! _sums="$(openbao_cli_checksums_asset "$(uname -s)")"; then
+        error "The installer fetches the OpenBao CLI for Linux and macOS on x86_64 and arm64,"
+        error "  and this host is $(uname -s) on $(uname -m). Install bao ${OPENBAO_CLI_VERSION} and run again."
+        return 1
+    fi
+    _base="https://github.com/openbao/openbao/releases/download/${OPENBAO_CLI_VERSION}"
     _install_dir="${HOME}/.local/bin"
-    mkdir -p "${_install_dir}"
-    _archive="$(mktemp -d)/bao.tar.gz"
+    _tmp="$(mktemp -d)"
     info "Installing the OpenBao CLI ${OPENBAO_CLI_VERSION} to ${_install_dir}..."
-    curl -fsSL --connect-timeout 30 --max-time 300 \
-        "https://github.com/openbao/openbao/releases/download/${OPENBAO_CLI_VERSION}/bao_${OPENBAO_CLI_VERSION#v}_${_os}_${_arch}.tar.gz" \
-        -o "${_archive}"
-    tar -xzf "${_archive}" -C "${_install_dir}" bao
+    if ! curl -fsSL --connect-timeout 30 --max-time 300 "${_base}/${_asset}" -o "${_tmp}/${_asset}" \
+        || ! curl -fsSL --connect-timeout 30 --max-time 60 "${_base}/${_sums}" -o "${_tmp}/${_sums}"; then
+        error "Could not download ${_base}/${_asset} and its checksums (${_sums})."
+        rm -rf "${_tmp}"
+        return 1
+    fi
+    _want="$(awk -v f="${_asset}" '$2 == f {print $1}' "${_tmp}/${_sums}")"
+    _have="$(sha256_of "${_tmp}/${_asset}" || true)"
+    if [[ -z "${_want}" || "${_want}" != "${_have}" ]]; then
+        error "The OpenBao CLI archive does not match the release's checksum; nothing was installed."
+        error "  ${_asset}: expected ${_want:-<not listed in ${_sums}>}, got ${_have:-<no checksum tool>}"
+        rm -rf "${_tmp}"
+        return 1
+    fi
+    mkdir -p "${_install_dir}"
+    tar -xzf "${_tmp}/${_asset}" -C "${_install_dir}" bao
     chmod +x "${_install_dir}/bao"
-    rm -rf "$(dirname "${_archive}")"
+    rm -rf "${_tmp}"
     export PATH="${_install_dir}:${PATH}"
     command -v bao >/dev/null 2>&1 || { error "OpenBao CLI install failed."; return 1; }
-    success "OpenBao CLI installed."
+    success "OpenBao CLI installed (checksum verified)."
 }
 
 # =============================================================================
@@ -469,6 +627,18 @@ main() {
     case "${GENTIAN_DIRECTION}" in
         prepare-tenant)
             prepare_tenant_run
+            ;;
+        activate-admin)
+            # Break glass for the cluster administrator: a new single-use
+            # activation link from the installer's own Keycloak credential,
+            # for when nobody can sign in to ask the director for one.
+            load_operator_config
+            load_deployments_cluster_settings
+            resolve_kernel_domain_from_claim
+            # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+            source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
+            GENTIAN_ACTIVATE_FORCE=1 issue_platform_admin_activation
+            exit $?
             ;;
         export-kit)
             # Reads the cluster and OpenBao; changes neither.
@@ -508,7 +678,11 @@ main() {
                 # Confirm before anything is touched, not between the reverse
                 # pass and the volume deletion — a teardown stopped half way is
                 # the state this is least able to reason about.
-                if [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
+                if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+                    # Nothing is purged, so there is nothing to confirm -- and
+                    # the confirmation takes the purge lock, which is a file.
+                    info "Dry run: the purge is not confirmed, because it is not carried out."
+                elif [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
                     [[ "${GENTIAN_PURGE_CONFIRM}" == "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || {
                         error "GENTIAN_PURGE_CONFIRM does not match GENTIAN_DEPLOYMENTS_CLUSTER_ID."
                         exit 1

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -22,12 +24,12 @@ import (
 
 // AppGrantSpec defines tenant-approved integration permissions for one installed app.
 type AppGrantSpec struct {
-	// App is the installed AppProfile name (matches Tenant.spec.apps[].profile).
+	// App is the installed ComponentProfile name (matches Tenant.spec.apps[].profile).
 	// +kubebuilder:validation:Required
 	App string `json:"app"`
 
 	// Consume lists contract capabilities this app may use from providers in the tenant.
-	// Each entry must be a subset of AppProfile.spec.optionalIntegrations.
+	// Each entry must be a subset of ComponentProfile.spec.integrations.
 	// +optional
 	Consume []ConsumeGrantSpec `json:"consume,omitempty"`
 
@@ -49,11 +51,11 @@ type ConsumeGrantSpec struct {
 
 // AllowConsumerSpec permits another installed app to call a provided contract.
 type AllowConsumerSpec struct {
-	// App is the consumer AppProfile name.
+	// App is the consumer ComponentProfile name.
 	// +kubebuilder:validation:Required
 	App string `json:"app"`
 
-	// Contract matches AppProfile.spec.provides[].name.
+	// Contract matches ComponentProfile.spec.provides[].name.
 	// +kubebuilder:validation:Required
 	Contract string `json:"contract"`
 
@@ -93,7 +95,7 @@ type AppGrantStatus struct {
 	TupleCount int `json:"tupleCount,omitempty"`
 }
 
-// AppGrant is a tenant-scoped authorization grant — a subset of AppProfile declarations.
+// AppGrant is a tenant-scoped authorization grant — a subset of what the ComponentProfile declares.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

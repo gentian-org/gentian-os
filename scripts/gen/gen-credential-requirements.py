@@ -44,6 +44,9 @@ def provider_requirements(platforms):
                 "vaultPath": cred["vaultPath"],
                 "fields": cred["fields"],
                 "consumedBy": [{"kind": "XCluster", "name": "cluster"}],
+                # The vendor, for grouping: the table key unless the table says
+                # otherwise (route53 is AWS, cf-tunnel is Cloudflare).
+                "provider": profile.get("vendor", name),
             }
             if cred.get("description"):
                 req["description"] = cred["description"]
@@ -59,7 +62,7 @@ def provider_requirements(platforms):
 The catalogue ships twice from one source. credentials.yaml travels with the
 installer, because the installer needs to know what to prompt for before the
 cluster exists; the generated CRs travel in the platform Configuration package,
-because the on-cluster credential manager reads them from the API rather than
+because the on-cluster custodian reads them from the API rather than
 from a file it has no access to.
 
 Two carriers is a drift hazard, so the second is generated and `make verify-gen`
@@ -93,7 +96,7 @@ HEADER = """# GENERATED FILE — DO NOT EDIT.
 # Rendered by scripts/gen/gen-credential-requirements.py from credentials.yaml.
 # To change a requirement, edit credentials.yaml and run `make gen-all`.
 #
-# These are the catalogue's on-cluster carrier: the credential manager reads
+# These are the catalogue's on-cluster carrier: the custodian reads
 # CredentialRequirement objects from the API, while the installer reads
 # credentials.yaml from disk before any cluster exists. Same content, two
 # carriers, one source.
@@ -103,8 +106,14 @@ HEADER = """# GENERATED FILE — DO NOT EDIT.
 OPTIONAL_SPEC_KEYS = ("description", "optional", "validate", "consumedBy")
 
 
-# Namespace holding the satisfaction probes. Nothing else lives there.
-PROBE_NAMESPACE = "gentian-system"
+# Namespace holding the satisfaction probes: the control namespace, where the
+# custodian that reads them runs. Read from the layout, so the generated file
+# follows kernel/namespaces.yaml.
+PROBE_NAMESPACE = next(
+    ns["name"]
+    for ns in yaml.safe_load((ROOT / "kernel" / "namespaces.yaml").read_text())["kernel"]
+    if ns["function"] == "control"
+)
 
 
 def build_probe(req):
@@ -117,7 +126,7 @@ def build_probe(req):
 
     This is what makes "no controller" possible. Satisfaction is a Kubernetes
     condition that ESO maintains, so function-extra-resources can gate a
-    Composition on it and the credential manager can read it, without anything
+    Composition on it and the custodian can read it, without anything
     bespoke holding an OpenBao token to poll with.
     """
     return {
@@ -248,11 +257,15 @@ def build_documents(catalogue):
                 "metadata": {
                     "name": name,
                     "labels": {
-                        # Lets the credential manager and any gating Composition
+                        # Lets the custodian and any gating Composition
                         # select by phase and scope without parsing the spec.
                         "gentianos.io/credential-phase": req["phase"],
                         "gentianos.io/credential-scope": req["scope"],
                         **({"gentianos.io/tenant": req["tenant"]} if req.get("tenant") else {}),
+                        # Who issues the credential, so the custodian
+                        # can group one vendor's tokens together. A label, not
+                        # spec: it describes the requirement, it asks nothing.
+                        **({"gentianos.io/credential-provider": req["provider"]} if req.get("provider") else {}),
                     },
                 },
                 "spec": spec,

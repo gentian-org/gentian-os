@@ -39,16 +39,17 @@ platforms:
   # address is claimed by MetalLB rather than allocated.
   self-hosted:
     displayName: Self-hosted (MetalLB)
-    # false: the address is requested via annotation below, not spec.loadBalancerIP.
-    supportsLoadBalancerIP: false
+    supportsLoadBalancerIP: false  # MetalLB reads the annotation below, not the Service's own field
     lbAnnotations:
-      # MetalLB won't share one IP between this and Postfix's SMTP Service (both
-      # need externalTrafficPolicy: Local for real client IPs, and MetalLB requires
-      # Cluster policy — or identical pod selectors — for two Services to share an
-      # address). So each gets its own: Postfix keeps NODE_IP, and this takes
-      # addressRef as a second, distinct LAN address when the claim sets one,
-      # falling back to NODE_IP for a single-address setup with no split needed.
-      metallb.io/loadBalancerIPs: '{{ .Values.addressRef | default .Values.nodeIp }}'
+      # The edge and the mail service both keep the client's address
+      # (externalTrafficPolicy: Local), and MetalLB lets two Services share
+      # one address only under the Cluster policy or with identical selectors.
+      # They therefore cannot share: mail keeps the node's address, and the
+      # edge takes the claim's addressRef as a second address on the same
+      # network. Where the claim names none, the edge falls back to the
+      # node's address, which is right for a cluster with one address and no
+      # mail listener beside it.
+      metallb.io/loadBalancerIPs: '{{ default .Values.nodeIp .Values.addressRef }}'
 
   # A cluster with no load balancer implementation at all: k3s ServiceLB, a
   # single node behind a tunnel, or an edge fronted by something outside the
@@ -172,7 +173,7 @@ dnsProviders:
       # validators to curl and openssl, so a provider whose API needs request
       # signing — Route 53's SigV4, Cloud DNS's OAuth2, Azure's AAD — cannot
       # have one and is phase: runtime instead. That is not a lesser status:
-      # it means the credential manager collects it after install, and C-01
+      # it means the custodian collects it after install, and C-01
       # issues the wildcard on the next pass.
       phase: bootstrap
       description: >
@@ -209,6 +210,9 @@ dnsProviders:
 
   route53:
     displayName: AWS Route 53
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: aws
     requiredParams:
       - region
       - hostedZoneID
@@ -246,6 +250,9 @@ dnsProviders:
 
   clouddns:
     displayName: Google Cloud DNS
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: google
     requiredParams:
       - project
     credential:
@@ -273,6 +280,9 @@ dnsProviders:
 
   azuredns:
     displayName: Azure DNS
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: azure
     requiredParams:
       - subscriptionID
       - tenantID
@@ -434,6 +444,9 @@ edgeIngress:
   # would be their own entry, not another value of one "tunnel" setting.
   cf-tunnel:
     displayName: Cloudflare Tunnel
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: cloudflare
     credential:
       secretName: cloudflare-tunnel-api-token
       vaultPath: gentian-os/kernel/edge/cf-tunnel
