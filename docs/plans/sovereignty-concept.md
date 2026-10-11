@@ -535,7 +535,8 @@ two controllers in the operator, and the director's and the usher's
 backup-policy and backup-schedule routes are all still here and working. A
 cluster built from this tree takes scheduled backups with no add-on
 installed. [scheduled-backups-out.md](scheduled-backups-out.md) lists every
-part and the order in which it is to leave.
+part and the order in which it is to leave. Whether and when that move
+starts is open ([open-items.md](open-items.md) §4, item 32).
 
 Built since the first draft: download, import (upload, inspect, declare from the manifest,
 restore), `keepBundles`, the default-profile materialisation.

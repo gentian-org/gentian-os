@@ -7,8 +7,8 @@ repository implements scheduled backups today, what stays, what an add-on
 needs from the OS to do the scheduling itself, and an order of work with what
 breaks at each step.
 
-Two of its decisions are made (2026-10-10; §3 and §7). The move itself is
-not started: nothing in it has been changed in the code.
+Two of its decisions are made (2026-10-10; §3 and §7). Nothing in the move
+has been changed in the code, and whether and when it starts is open (§7).
 
 ## 1. What implements scheduled backups today
 
@@ -174,10 +174,12 @@ Decided 2026-10-10:
   without schedule or retention, which a manual export reads.
 - v0.5 does not support upgrading a cluster that already has schedules: new
   installs only.
-- The move is not started.
 
 Still open:
 
+- Whether and when the move starts. The owner's statement is that in v0.5
+  scheduled backups "should be out", and that v0.5 is what is being written;
+  no start of the work was decided.
 - Whether "delete finished exports beyond a count" stays available to the OS
   in some form — a tenant that exports by hand accumulates bundles in the
   cluster's storage with nothing to remove them but `delete-backup`.

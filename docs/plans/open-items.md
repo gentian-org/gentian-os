@@ -364,10 +364,11 @@ Each is true of the code today.
     platform defines a fixed, named set in this repository, a profile asks by
     name, and the operator binds on the set, the allowlist and the grant
     (defect 24). The set is empty. Open with the first role: which roles are
-    in it. **Also decided 2026-10-10**, as built: the profile names the
-    ServiceAccount the role is bound to, because the operator knows no other
-    way to learn which account a chart runs its pods under; it is held to
-    the component's own namespace and may not be `default`.
+    in it. **Open, awaiting the owner**: which ServiceAccount the role is
+    bound to. As built, the profile names it, because the operator knows no
+    other way to learn which account a chart runs its pods under; it is held
+    to the component's own namespace and may not be `default`. That was
+    built so and not decided by the owner.
 24. **Whether the Tenant keeps `spec.security.password`.** **Decided
     2026-10-10**: it keeps it. The field is the declared path: the director
     commits it and the tenant Composition applies it (defect 25).
@@ -424,20 +425,26 @@ Each is true of the code today.
     `gentianos.io/pull-secrets`, is set by nothing). Either it stays so, and
     the selector is documented as kernel and system namespaces only, or the
     credential is copied by the operator, as `registry-credentials` is.
-30. **Which Cloudflare token writes a tunnel's routes.** **Decided
-    2026-10-10**: nothing to change. The cluster's owner uses one Cloudflare
-    token that carries both the DNS and the tunnel permission, entered at
-    both questions, so the operator writing the tunnel's routes with the DNS
-    token works as installed (`GETTING-STARTED.md`).
+30. **Which Cloudflare token writes a tunnel's routes.** **Open, awaiting
+    the owner.** The installer asks for a separate tunnel API token and
+    stores it, but nothing hands it to the operator, which writes the
+    tunnel's routes with the DNS token. The cluster's owner uses one
+    Cloudflare token that carries both the DNS and the tunnel permission,
+    entered at both questions, so it works as installed
+    (`GETTING-STARTED.md`). Either the separate token is handed to the
+    operator and used, or the question for it is removed.
 31. **What a manual export reads once scheduled backups have left the
     platform.** **Decided 2026-10-10**: the platform keeps a small
     "destination and key" setting, with no schedule and no retention, and a
     manual export reads it
     ([scheduled-backups-out.md](scheduled-backups-out.md) §3, option 2).
 32. **Whether v0.5 upgrades a cluster that already has backup schedules.**
-    **Decided 2026-10-10**: no. New installs only; no conversion of
-    `BackupPolicy` or `TenantExportSchedule` objects is written. The move
-    itself is not started.
+    **Decided 2026-10-10**: no. New installs only, no upgrade support; no
+    conversion of `BackupPolicy` or `TenantExportSchedule` objects is
+    written. **Open, awaiting the owner**: whether and when the move itself
+    starts. The owner's statement is that in v0.5 scheduled backups "should
+    be out", and that v0.5 is what is being written; no start of the work
+    was decided. Nothing in the code has been changed for it.
 
 ## 5. Known and deliberately not now
 
@@ -554,9 +561,10 @@ Specified by [sovereignty-concept.md](sovereignty-concept.md).
 - **`TenantExportSchedule` and `BackupPolicy` are still kinds of this
   repository** (`api/v1alpha1`); the concept has scheduling outside it, and
   [scheduled-backups-out.md](scheduled-backups-out.md) is the plan for the
-  move. Not started. Decided for it (§4, decisions 31 and 32): the platform
-  keeps a "destination and key" setting that a manual export reads, and
-  v0.5 does not upgrade a cluster that already has schedules.
+  move. Nothing in the code has been changed for it. Decided for it (§4,
+  decisions 31 and 32): the platform keeps a "destination and key" setting
+  that a manual export reads, and v0.5 does not upgrade a cluster that
+  already has schedules. Whether and when the move starts is open (§4, 32).
 
 ### Not this repository's
 
