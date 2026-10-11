@@ -341,9 +341,13 @@ spec:
           volumeMounts:
             - name: deployments
               mountPath: {{ $checkout }}
+            {{- /* Writable: HOME and the keyring the signing key is imported
+                 into (DIRECTOR_GNUPGHOME) are under it. Mounted read-only,
+                 the director could not make the keyring, held no key, and
+                 answered 503 to every write. The root filesystem stays
+                 read-only; this is the pod's own emptyDir. */}}
             - name: tmp
               mountPath: /tmp
-              readOnly: true
             - name: operator-token
               mountPath: /var/run/secrets/gentian/operator
               readOnly: true
