@@ -159,6 +159,14 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - argoproj.io
+    resources:
+    - applicationsets
+    verbs:
+    - get
+    - list
+    - patch
+  - apiGroups:
     - authentication.k8s.io
     resources:
     - tokenreviews

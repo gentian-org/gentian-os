@@ -117,3 +117,57 @@ func TestAPatientRequestOutlastsTheOrdinaryTimeout(t *testing.T) {
 		t.Fatalf("err = %v, want the deadline", err)
 	}
 }
+
+// Telling the operator of a push is one request that names nothing but who
+// pushed: the operator decides what reads the repository.
+func TestTellingTheOperatorOfAPushNamesNothingButTheActor(t *testing.T) {
+	type seen struct{ method, path, actor, auth, body string }
+	got := make(chan seen, 4)
+	status := http.StatusOK
+	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got <- seen{r.Method, r.URL.Path, r.Header.Get("X-Gentian-Actor"), r.Header.Get("Authorization"), string(body)}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"detail":"no"}`))
+	}))
+	defer op.Close()
+	c := New(op.URL, func() string { return "sa-token" })
+
+	if err := c.RefreshDeployments(context.Background(), "ada@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	want := seen{http.MethodPost, RefreshDeploymentsPath, "ada@example.com", "Bearer sa-token", "{}"}
+	if s := <-got; s != want {
+		t.Fatalf("the operator was sent %+v, want %+v", s, want)
+	}
+
+	// Done shortly is as good as done; anything else is said.
+	status = http.StatusAccepted
+	if err := c.RefreshDeployments(context.Background(), "ada"); err != nil {
+		t.Fatalf("a deferred refresh: %v", err)
+	}
+	<-got
+	status = http.StatusServiceUnavailable
+	var upstream *UpstreamError
+	if err := c.RefreshDeployments(context.Background(), "ada"); !errors.As(err, &upstream) || upstream.Status != http.StatusServiceUnavailable {
+		t.Fatalf("a refusing operator: %v", err)
+	}
+	<-got
+
+	// After a push: once, beside the caller, and a failure goes to whoever
+	// was named for it and nowhere else.
+	failed, done := make(chan error, 1), make(chan error, 1)
+	c.AfterPush(func(err error) { failed <- err }, func(err error) { done <- err })("ada")
+	if err := <-done; err == nil {
+		t.Fatal("a refusal was reported as told")
+	}
+	if err := <-failed; !errors.As(err, &upstream) {
+		t.Fatalf("failed was given %v", err)
+	}
+	<-got
+	select {
+	case s := <-got:
+		t.Fatalf("one push asked the operator twice: %+v", s)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

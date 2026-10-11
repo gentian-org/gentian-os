@@ -459,6 +459,13 @@ How to read it:
   field would be silently dropped.
 - Passes one-off commands to the operator (section 4.2), after the same token
   and permission check.
+- *Added 2026-10-11.* After each push, tells the operator that the deployment
+  repository has a new commit (`refresh-deployments`, section 4.2), so that
+  Argo CD reads it at once and not at its next poll some minutes later. It
+  does this beside the request and waits five seconds at most. If the operator
+  refuses, fails or cannot be reached, the director writes that to its log
+  and nothing else changes: the caller has the commit, and Argo CD finds it
+  at its next poll.
 
 Its routes, by group. Every write is a commit unless marked as a command.
 
@@ -622,6 +629,7 @@ two kinds of route
 | `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, access group. |
 | `provision-app` | Puts the tenant's current members into an app's group. |
 | `remove-catalogue-residue` | Deletes one named object that the catalogue left behind, and only if it is on the list below when the command arrives. Given a tenant and a profile, it deletes less: only an object a newer build of that profile left behind, only if the tenant has the profile, and only on a cluster whose one user tenant this is. |
+| `refresh-deployments` | *Added 2026-10-11.* Asks Argo CD to read the deployment repository now. The command names nothing. The operator itself finds, in Argo CD's namespace, every ApplicationSet with a git generator over that repository and every Application with a source in it, and sets Argo CD's refresh annotation on each (`argocd.argoproj.io/application-set-refresh`, and `argocd.argoproj.io/refresh: normal`). It starts no sync and changes nothing else: each Application syncs under its own policy, and Argo CD checks signatures as before. At most one refresh every five seconds; a command inside that time is answered as deferred and one more refresh follows when the time has passed. For this the operator may get, list and patch ApplicationSets, and has no other right on them ([http_refresh.go](../../internal/applifecycle/http_refresh.go)). |
 
 *Reads*, for the usher and the director:
 

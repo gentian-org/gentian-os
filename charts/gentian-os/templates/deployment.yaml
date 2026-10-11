@@ -358,6 +358,12 @@ spec:
             {{- end }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
+            # The repository's URL and nothing else of it: no checkout and no
+            # credential. When the director says it has pushed, the operator
+            # asks Argo CD to read this repository now, and the URL is how it
+            # tells which Applications and ApplicationSets read it.
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $lifecycleDeployments.repo | default "" | quote }}
             - name: USAGE_SAMPLER_ENABLED
               value: {{ $usageSampler.enabled | default false | quote }}
             - name: USAGE_SAMPLE_INTERVAL

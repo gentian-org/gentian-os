@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -57,6 +58,11 @@ type Service struct {
 	// residueMu lets one removal of catalogue residue run at a time: each
 	// works the list out and then deletes on it.
 	residueMu sync.Mutex
+	// refreshMu guards when Argo CD was last asked to read the deployments
+	// repository, and whether one more refresh is owed (http_refresh.go).
+	refreshMu   sync.Mutex
+	refreshLast time.Time
+	refreshOwed bool
 
 	// vault is where apps' credentials are stored. Nil when the operator was
 	// given no vault to talk to; a purge then fails at its credentials step

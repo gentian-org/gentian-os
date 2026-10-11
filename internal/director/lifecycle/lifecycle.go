@@ -301,6 +301,57 @@ func (c *Client) Definitions(ctx context.Context) (schemacheck.Report, error) {
 	return report, nil
 }
 
+// RefreshDeploymentsPath is the operator's command that Argo CD read the
+// deployments repository now.
+const RefreshDeploymentsPath = "/v1/actions/refresh-deployments"
+
+// refreshTimeout bounds telling the operator of a push. Short: nobody waits
+// for the answer, and an operator that is not there is not worth waiting for.
+const refreshTimeout = 5 * time.Second
+
+// RefreshDeployments tells the operator that the deployments repository has
+// a new commit, so that it asks Argo CD to read the repository now instead
+// of at its next poll. actor is whose commit it was.
+//
+// The request names nothing: which of Argo CD's objects read the repository
+// is the operator's to work out. An answer that it will be done shortly --
+// the operator was asked a moment ago -- is as good as one that it was done.
+func (c *Client) RefreshDeployments(ctx context.Context, actor string) error {
+	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
+	defer cancel()
+	status, body, err := c.Do(ctx, RefreshDeploymentsPath, actor, struct{}{})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK && status != http.StatusAccepted {
+		return &UpstreamError{Status: status, Message: ErrorMessage(body)}
+	}
+	return nil
+}
+
+// AfterPush returns what the director does once a commit of its own is in
+// the deployments repository: tell the operator, and go on.
+//
+// Go on, because the commit is what the person asked for and it is made.
+// Telling the operator only saves the minutes until Argo CD's next poll, so
+// it is done beside the request and never in its way: the function returns
+// at once, and an operator that refuses, fails or is not there is reported
+// to failed and changes nothing else. done, when given, is told how each
+// attempt ended; tests wait on it.
+func (c *Client) AfterPush(failed func(err error), done func(err error)) func(actor string) {
+	return func(actor string) {
+		go func() {
+			err := c.RefreshDeployments(context.Background(), actor)
+			if err != nil && failed != nil {
+				failed(err)
+			}
+			if done != nil {
+				done(err)
+			}
+		}()
+	}
+}
+
 // ErrorMessage reads the operator's {"detail": "..."} body, or returns the
 // body itself when it is not that shape.
 func ErrorMessage(body []byte) string {

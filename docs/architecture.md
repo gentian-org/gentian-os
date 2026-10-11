@@ -113,6 +113,16 @@ flowchart TD
 | **Operator** | Seed secrets; write `XTenant`; create a `Component` per installed app; write each Component's Helm release or `App` claim; routes, network policies, status | Create what a Composition creates |
 | **Crossplane** | Reconcile `XTenant` and `App` claims into managed resources (Jobs, Objects, ESO, `provider-helm` Releases) | Sync git |
 
+**How soon Argo CD sees a commit.** Argo CD reads the deployments repository
+every few minutes. So that a change does not wait for that, the director
+tells the operator after each push, and the operator asks Argo CD to read
+the repository now: it marks the ApplicationSet that finds the tenants'
+directories and every Application that reads the repository, with Argo CD's
+own refresh annotations. This is a refresh and not a sync. Each Application
+still syncs under its own policy, and Argo CD still checks the commit's
+signature. If the operator cannot be told, the commit is in git all the same
+and Argo CD finds it at its next read.
+
 **Where the imperative/declarative line falls.** The matrix above says who does what. The rule
 behind it is one question:
 

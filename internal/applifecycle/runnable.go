@@ -43,6 +43,7 @@ func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, err
 		Vault:             vaultFromEnv(),
 		LiveReader:        mgr.GetAPIReader(),
 		TenancyMode:       tenancyMode,
+		DeploymentsRepo:   os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
 	})
 	if err != nil {
 		return nil, err
