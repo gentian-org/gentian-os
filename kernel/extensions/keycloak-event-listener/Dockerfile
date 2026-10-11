@@ -1,7 +1,9 @@
 # Builds the provider jar and ships it in an image whose only job is to be
 # copied from: Keycloak's pod runs it as an init container that places the jar
 # in /opt/keycloak/providers. Keycloak's own image stays upstream's, unmodified.
-FROM maven:3.9-eclipse-temurin-17 AS build
+# On the build platform: a jar is the same bytes for every architecture, and
+# under emulation Maven took four times as long to produce it.
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /src
 COPY pom.xml .
 RUN mvn -q -B dependency:go-offline

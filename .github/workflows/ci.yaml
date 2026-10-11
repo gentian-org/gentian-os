@@ -1,5 +1,11 @@
 name: CI
 
+# A branch is checked as a pull request, and what is merged is checked and
+# published as a push. Not both: a branch that ran on its push and again on its
+# pull request did the same work twice.
+#
+# A branch nobody opened a pull request for is not checked. Open one, as a
+# draft if it is not ready, or start the workflow by hand.
 on:
   push:
     branches:
@@ -8,13 +14,8 @@ on:
       # test-cb is the pointer branch the test.gentian-os.org test cluster tracks.
       # It is only ever force-pushed to the tip of whatever feature branch is
       # under test — nothing is merged out of it — so it needs the same
-      # published image any tracked branch needs. See the docker job below.
+      # published image any tracked branch needs. See the publish job below.
       - test-cb
-      # Feature branches, so a push is checked before a pull request exists.
-      # Nothing here publishes from one: see the docker job's push condition.
-      - "feat/**"
-      - "fix/**"
-      - "chore/**"
     tags: ["v*"]
   pull_request:
     branches:
@@ -22,10 +23,77 @@ on:
       - develop
   workflow_dispatch:
 
+# A newer commit on a branch replaces the run of the older one: only the tip
+# is what anybody waits for, test-cb's included. main, develop and release tags
+# are never cancelled — each of their commits publishes an image something may
+# pin, and what such a run started it finishes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main'
+    && github.ref != 'refs/heads/develop'
+    && !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
+  # What this run has to do, decided in one place and read by the jobs below.
+  #
+  #   publish    main, develop, test-cb and release tags push an image. Every
+  #              other ref, and every pull request, builds one and pushes
+  #              nothing.
+  #   verified   test-cb only. It is a pointer branch: it is moved to a commit
+  #              of develop or of a feature branch, and that commit has usually
+  #              been through this workflow already. Running the same checks on
+  #              the same commit again told nobody anything and doubled the time
+  #              a commit took to reach the cluster. So a push to test-cb whose
+  #              commit already has a successful push run skips the checks and
+  #              only builds and publishes test-cb-<sha>.
+  #
+  #              Push runs only: a pull request's run checks the merge with its
+  #              base, which is a different tree from the commit it names. And a
+  #              commit with no such run — pushed to test-cb first, or while its
+  #              own run is still going — is checked in full, as is every run
+  #              whose answer could not be fetched.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      verified: ${{ steps.decide.outputs.verified }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          publish=false
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            case "${GITHUB_REF}" in
+              refs/heads/main|refs/heads/develop|refs/heads/test-cb|refs/tags/v*) publish=true ;;
+            esac
+          fi
+
+          verified=false
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/test-cb" ]; then
+            prior="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yaml/runs?head_sha=${GITHUB_SHA}&event=push&status=success&per_page=100" \
+              --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})] | length")" || prior=0
+            if [ "${prior:-0}" -gt 0 ]; then
+              verified=true
+              echo "${GITHUB_SHA} already passed ${prior} push run(s) of this workflow; the checks are skipped." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+          {
+            echo "publish=${publish}"
+            echo "verified=${verified}"
+          } >> "$GITHUB_OUTPUT"
+
   go:
     name: Go — vet, build, test
     runs-on: ubuntu-latest
+    needs: [plan]
+    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@v6
 
@@ -33,10 +101,61 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
+          # Cached below instead. setup-go's cache is keyed on go.sum alone and
+          # is never written again once that key exists, and four jobs share
+          # the key — so it held whatever the first job to finish had built,
+          # which was the one that builds least, and `go vet` compiled the
+          # module from nothing on every run.
+          cache: false
+
+      # A key per commit and a prefix to restore from, so each run starts from
+      # the last run's build cache and leaves its own behind.
+      - name: Go caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-unit-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-
 
       - name: go vet
         run: go vet ./... ./api/...
+
+      - name: go test
+        run: go test $(go list ./... ./api/... | grep -v 'internal/controller') -race -count=1
+
+      - name: go build
+        run: go build ./... ./api/...
+
+  # internal/controller, on its own runner beside the job above and not after
+  # it: envtest's watch goroutines are incompatible with the race detector, so
+  # it was always a separate `go test`, and the two share nothing but the
+  # checkout.
+  envtest:
+    name: Go — controller tests (envtest)
+    runs-on: ubuntu-latest
+    needs: [plan]
+    if: needs.plan.outputs.verified != 'true'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Go caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-envtest-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-envtest-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-
 
       # Pinned, like controller-gen below. An unpinned @latest picks up a
       # toolchain bump on an unrelated day and fails a run nobody changed —
@@ -64,18 +183,13 @@ jobs:
           echo "KUBEBUILDER_ASSETS=${ASSETS}" >> "$GITHUB_ENV"
 
       - name: go test
-        run: |
-          # internal/controller uses envtest whose watch goroutines are incompatible
-          # with the race detector; run it separately without -race.
-          go test $(go list ./... ./api/... | grep -v 'internal/controller') -race -count=1
-          go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
-
-      - name: go build
-        run: go build ./... ./api/...
+        run: go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
 
   generate:
     name: Verify generated files
     runs-on: ubuntu-latest
+    needs: [plan]
+    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@v6
 
@@ -94,6 +208,8 @@ jobs:
   lint:
     name: Lint — Go, YAML, shell
     runs-on: ubuntu-latest
+    needs: [plan]
+    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@v6
 
@@ -120,17 +236,14 @@ jobs:
         with:
           config_file: .yamllint.yml
 
-      - name: shellcheck
+      # Installed here and run by `make lint-shell` in the lints step below,
+      # over the same files, as is the step-contract check. Both used to have a
+      # step of their own as well and so ran twice.
+      - name: Install shellcheck
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
           shellcheck --version
-          mapfile -d '' -t files < <(git ls-files -z -- '*.sh')
-          files+=("scripts/kubectl-gentian")
-          shellcheck -x "${files[@]}"
-
-      - name: step contracts
-        run: make validate-steps
 
       # Every lint the repository defines, as one step.
       #
@@ -228,17 +341,85 @@ jobs:
           # driver's own logic.
           /bin/bash ./install.sh --explain
 
+  # The image is built beside the checks and not after them, so a run takes as
+  # long as its slowest job and not as long as two of them end to end. What
+  # waits for the checks is the NAME: see the publish job below.
   docker:
-    name: Docker build and push
+    name: Docker build
     runs-on: ubuntu-latest
-    needs: [go]
+    needs: [plan]
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v6
 
       # GHCR login occasionally times out from GitHub-hosted runners; retry before failing.
+      - name: Log in to GHCR
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 2
+          max_attempts: 5
+          retry_wait_seconds: 20
+          command: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/gentian-org/gentian-os
+
+      # Required for platforms:. Without buildx the default builder ignores the
+      # list and produces an amd64-only image, silently — which is the same
+      # failure mode as the single-arch digest pin this change exists to fix.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          # The runtime stage's layers. Its package install runs emulated for
+          # arm64 and was the longest step of the build, repeated on every run
+          # for a line of the Dockerfile that almost never changes.
+          cache-from: type=gha,scope=gentian-os
+          cache-to: type=gha,scope=gentian-os,mode=min
+          # Where an image is published it is pushed by digest, with no tag:
+          # nothing follows a digest it has not been told, so until the publish
+          # job names it the image is in the registry and reachable by nobody.
+          # Everywhere else the build is the check and nothing is pushed.
+          outputs: >-
+            ${{ needs.plan.outputs.publish == 'true'
+            && 'type=image,name=ghcr.io/gentian-org/gentian-os,push-by-digest=true,name-canonical=true,push=true'
+            || 'type=cacheonly' }}
+
+  # Gives the image built above its tags, which is what publishes it: a cluster
+  # follows tags. It waits for the Go jobs and for lint — the authorization
+  # policy tests are in lint — so no tag exists for a commit that failed any of
+  # them. On a commit test-cb was moved to after it had already passed, those
+  # jobs are skipped and the earlier run is the answer (see plan).
+  publish:
+    name: Docker publish
+    runs-on: ubuntu-latest
+    needs: [plan, go, envtest, lint, docker]
+    if: >-
+      ${{ !cancelled()
+      && needs.plan.outputs.publish == 'true'
+      && needs.docker.result == 'success'
+      && (needs.plan.outputs.verified == 'true'
+      || (needs.go.result == 'success'
+      && needs.envtest.result == 'success'
+      && needs.lint.result == 'success')) }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
       - name: Log in to GHCR
         uses: nick-fields/retry@v3
         with:
@@ -265,37 +446,30 @@ jobs:
             # in kernel/bootstrap/chart/templates/gentian-os.yaml: the moving
             # `develop` tag can never resolve to a new value, so tracking it
             # meant image.tag never changed and new builds never deployed.
+            #
+            # test-cb publishes because a cluster tracks it: without a
+            # test-cb-<sha> tag in GHCR, the allow-tags regexp matches no
+            # candidate and the cluster keeps running whatever it ran before,
+            # silently. It is a flat name on purpose — docker/metadata-action
+            # slugifies {{branch}}, so a branch with a "/" publishes
+            # feat-xyz-<sha> while the regexp interpolates the raw "feat/xyz"
+            # and never matches.
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
-      # Required for platforms:. Without buildx the default builder ignores the
-      # list and produces an amd64-only image, silently — which is the same
-      # failure mode as the single-arch digest pin this change exists to fix.
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          # main, develop, test-cb and release tags publish. A feature branch
-          # builds the image — which is the check — and pushes nothing.
-          #
-          # test-cb publishes because a cluster tracks it: without a
-          # test-cb-<sha> tag in GHCR, argocd-image-updater's allow-tags
-          # regexp in kernel/bootstrap/chart/templates/gentian-os.yaml matches
-          # no candidate and the cluster keeps running whatever it ran before,
-          # silently. It is a flat name on purpose — docker/metadata-action
-          # slugifies {{branch}}, so a branch with a "/" publishes feat-xyz-<sha>
-          # while the regexp interpolates the raw "feat/xyz" and never matches.
-          push: >-
-            ${{ github.event_name != 'pull_request'
-            && (github.ref == 'refs/heads/main'
-            || github.ref == 'refs/heads/develop'
-            || github.ref == 'refs/heads/test-cb'
-            || startsWith(github.ref, 'refs/tags/v')) }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Tag the image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          test -n "${DIGEST}" || { echo "::error::the build job reported no digest"; exit 1; }
+          args=()
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] && args+=(--tag "${tag}")
+          done <<< "${TAGS}"
+          docker buildx imagetools create "${args[@]}" "ghcr.io/gentian-org/gentian-os@${DIGEST}"
 
   keycloak-listener:
     name: Keycloak event listener image
@@ -349,6 +523,8 @@ jobs:
   crossplane-unit:
     name: Crossplane — unit tests (render + functions + schema)
     runs-on: ubuntu-latest
+    needs: [plan]
+    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@v6
 

@@ -161,7 +161,7 @@ fi
 # Everything above answers "does the cluster follow what CI publishes". This
 # answers the other half, which nothing asked: did CI publish it.
 #
-# `Docker build and push` is gated on the Go job, so a flaky test means no image
+# `Docker publish` waits for the Go jobs and for lint, so a flaky test means no image
 # for that commit and the cluster keeps running the one before. Every check above
 # still passes — correctly, because the cluster IS tracking CI; there is simply
 # nothing new to track. The branch looks merged and the Application reads
