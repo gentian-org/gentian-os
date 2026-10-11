@@ -364,7 +364,14 @@ spec:
     email:
       protocolMapper: oidc-usermodel-property-mapper
       config:
-        user.attribute: email
+        # The USERNAME, not the email field. Keycloak's password reset mails the
+        # email field and can be pointed at nothing else, so that field holds the
+        # user's recovery address — a personal inbox they can still read when
+        # locked out. The workspace address is the username
+        # (christian@corp.example is the login and the mailbox), which is what
+        # this app should receive as the user's identity. Reading the field here
+        # handed the app a personal address instead.
+        user.attribute: username
         claim.name: email
         jsonType.label: String
         id.token.claim: "true"
