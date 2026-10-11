@@ -11,6 +11,8 @@ SPDX-License-Identifier: MPL-2.0
 package applifecycle
 
 import (
+	"time"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/gentian-org/gentian-os/internal/licencereport"
@@ -41,6 +43,15 @@ type Options struct {
 	// the operator runs: what decides whether a tenant's administrator may
 	// remove what an app's bundle left behind. Empty is multi.
 	TenancyMode string
+	// DeploymentsRepo is the URL of the repository the cluster is declared
+	// in. The operator holds no checkout of it and no credential for it; it
+	// is how the operator tells which of Argo CD's objects read that
+	// repository, when the director says it has pushed. Empty refreshes
+	// nothing.
+	DeploymentsRepo string
+	// RefreshEvery is the least time between two such refreshes; zero is
+	// refreshEvery. Tests set it.
+	RefreshEvery time.Duration
 }
 
 // Result is returned from lifecycle operations.

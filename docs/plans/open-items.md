@@ -308,6 +308,9 @@ cluster.
   namespaces (decision 45).
 - A provider's credential requirement composed in `kernel-control` from
   the claim (decision 19).
+- The director telling the operator of each push, and the operator
+  asking Argo CD to read the deployments repository at once
+  (`refresh-deployments`, operator-split-plan.md §4.2).
 - The user tenant of a single-tenancy cluster on an install nobody
   attends: step `E-04` runs after the platform administrator has signed
   in once, so such an install ends before it and the step is run
@@ -1684,6 +1687,9 @@ the master realm. The operator has no git credential.
      and customization records
      (`charts/gentian-os/templates/clusterrole.yaml`). No right on RBAC
      kinds and none on `ClusterSecretStore`.
+   - Since 2026-10-11: get, list and patch on Argo CD's `ApplicationSet`s,
+     to ask for a refresh after the director pushed. Patch is enough to
+     change what a set generates.
    - The vault policy `operator-write`: create, read, update, patch and
      delete on all of `gentian-os/*`
      (`crossplane/compositions/cluster-default.yaml`). That includes

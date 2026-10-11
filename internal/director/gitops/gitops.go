@@ -61,6 +61,20 @@ type GitOps struct {
 	// definitions refuses a commit the cluster would drop part of, set by
 	// GuardDefinitions. Nil checks nothing.
 	definitions *definitionsGuard
+	// afterPush is told of every commit that reached the remote, set by
+	// AfterPush. Nil tells nobody.
+	afterPush func(actor string)
+}
+
+// AfterPush has fn called once for every commit this helper pushes, after the
+// push has succeeded, with who the commit records as its actor. Never for a
+// push that was refused, and never for a write that changed nothing.
+//
+// fn is called under the lock a write holds and before the write answers, so
+// it must return at once. It cannot fail a write: the commit is in the
+// repository by then, and nothing it is told changes that.
+func (g *GitOps) AfterPush(fn func(actor string)) {
+	g.afterPush = fn
 }
 
 // Result is the outcome of a write.
@@ -728,6 +742,9 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 			return fmt.Errorf("%w: %s", ErrNoPushCredential, strings.TrimSpace(string(out)))
 		}
 		return fmt.Errorf("git push: %w: %s", perr, out)
+	}
+	if g.afterPush != nil {
+		g.afterPush(meta.actor())
 	}
 	return nil
 }

@@ -207,6 +207,15 @@ func run(log *slog.Logger) error {
 		}
 		client := lifecycle.New(u, lifecycle.TokenFile(tokenFile))
 		lc = client
+		// A commit waits for Argo CD's next poll of the repository, which
+		// is minutes. This process cannot ask Argo CD to look sooner -- it
+		// holds no right in the cluster -- so after each push it tells the
+		// operator, which can. Beside the request and never in its way: the
+		// commit is made either way, and the poll is still there.
+		repo.AfterPush(client.AfterPush(func(err error) {
+			log.Warn("the operator was not told of a push; Argo CD reads the repository at its next poll",
+				"error", err)
+		}, nil))
 		definitions = schemacheck.Cached(func() (schemacheck.Report, error) {
 			return client.Definitions(context.Background())
 		}, schemacheck.DefaultSourceTTL, nil)
