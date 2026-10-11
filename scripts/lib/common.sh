@@ -2402,13 +2402,15 @@ gentian_os_ref() {
     printf '%s\n' "${ref}"
 }
 
-# The gentian-ui ref a cluster follows when install.env names none: the branch
-# gentian-ui publishes its charts from (it has no main). GENTIAN_UI_BRANCH is
-# the branch written to the gentian-ui Repository claim, PORTAL_IMAGE_TAG the
-# branch whose charts are installed; both default to this one name.
-GENTIAN_UI_DEFAULT_REF="develop"
-gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_REF}}"; }
-gentian_ui_chart_branch()  { printf '%s\n' "${PORTAL_IMAGE_TAG:-${GENTIAN_UI_DEFAULT_REF}}"; }
+# The gentian-ui refs a cluster follows when install.env names none, each
+# with its one default here. GENTIAN_UI_BRANCH is the branch written to the
+# gentian-ui Repository claim: main. PORTAL_IMAGE_TAG is the branch whose
+# charts are installed: develop, the branch gentian-ui publishes charts from
+# (main publishes none; a release publishes under its tag).
+GENTIAN_UI_DEFAULT_BRANCH="main"
+GENTIAN_UI_DEFAULT_CHART_BRANCH="develop"
+gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_BRANCH}}"; }
+gentian_ui_chart_branch()  { printf '%s\n' "${PORTAL_IMAGE_TAG:-${GENTIAN_UI_DEFAULT_CHART_BRANCH}}"; }
 
 resolve_gentian_os_branch() {
     local branch

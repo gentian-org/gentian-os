@@ -13,8 +13,8 @@
 #   - certificates.issuerMode is read back from the claim file, so a re-run
 #     of a self-signed cluster is not asked for a DNS credential;
 #   - GENTIAN_OS_BRANCH unset is the branch of the checkout, wherever it is
-#     read, and nothing when there is no branch; GENTIAN_UI_BRANCH and
-#     PORTAL_IMAGE_TAG unset are both develop;
+#     read, and nothing when there is no branch; GENTIAN_UI_BRANCH unset is
+#     main and PORTAL_IMAGE_TAG unset is develop;
 #   - GENTIAN_DEPLOYMENTS_REPO has no default: an unattended run without it
 #     stops, and writes nothing first.
 #
@@ -153,8 +153,8 @@ out="$(run GENTIAN_DEPLOYMENTS_PATH="${DEP}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 K
 has "step 0 does not write a Repository claim naming a ref nobody chose" "${out}" "the gentian-os Repository claim cannot name the ref" "rc=0"
 if [[ ! -e "${DEP}/clusters" ]]; then ok "and has written nothing"; else bad "and has written nothing" "$(find "${DEP}/clusters")"; fi
 
-is "GENTIAN_UI_BRANCH unset: develop" "$(run -- gentian_ui_branch)" "develop"
-is "PORTAL_IMAGE_TAG unset: develop, the same" "$(run -- gentian_ui_chart_branch)" "develop"
+is "GENTIAN_UI_BRANCH unset: main" "$(run -- gentian_ui_branch)" "main"
+is "PORTAL_IMAGE_TAG unset: develop, where the charts are published" "$(run -- gentian_ui_chart_branch)" "develop"
 is "each set: that" "$(run GENTIAN_UI_BRANCH=a PORTAL_IMAGE_TAG=b -- 'echo "$(gentian_ui_branch) $(gentian_ui_chart_branch)"')" "a b"
 # One default each means no second one beside it.
 second="$(grep -nE '\$\{(GENTIAN_OS_BRANCH|GENTIAN_UI_BRANCH|PORTAL_IMAGE_TAG):-[^}]' install.sh scripts/lib/*.sh scripts/steps/*.sh \

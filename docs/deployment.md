@@ -422,8 +422,9 @@ runs both back to back, which is why they are listed together.
 5. Set `GENTIAN_OS_BRANCH=vX.Y.Z` in that cluster's `install.env` (§4 — the
    tag must be named explicitly; checking it out is not enough).
 6. Pin the user interfaces in the same file if this cluster should not
-   follow gentian-ui's `develop`: `GENTIAN_UI_BRANCH` and `PORTAL_IMAGE_TAG`
-   are independent of `GENTIAN_OS_BRANCH` and each default to `develop`.
+   follow gentian-ui's defaults: `GENTIAN_UI_BRANCH` (default `main`) and
+   `PORTAL_IMAGE_TAG` (default `develop`, the branch the charts are published
+   from) are independent of `GENTIAN_OS_BRANCH`.
 7. Re-run `./install.sh`. It is idempotent; the bootstrap Applications are
    re-rendered against the new ref and Argo CD follows the tag from there.
 8. Confirm the cluster actually moved:
