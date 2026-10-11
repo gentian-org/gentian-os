@@ -2120,20 +2120,9 @@ scaffold_cluster_deployment() {
         return 1
     fi
 
-    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
-        warn "profiles/${stage}.yaml does not exist in the deployments repository."
-        warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
-        warn "  render the chart without it: the install would stop at D-01, with no"
-        warn "  operator. Add the file (it may hold a comment and nothing else), commit"
-        warn "  and push it before continuing."
-    fi
-    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/_base.yaml" ]]; then
-        warn "profiles/_base.yaml does not exist in the deployments repository."
-        warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
-        warn "  render the chart without it: the install would stop at D-01, with no"
-        warn "  operator. Add the file (it may hold a comment and nothing else), commit"
-        warn "  and push it before continuing."
-    fi
+    # The two values files Argo CD layers under the platform's own chart. It
+    # renders nothing while one is missing, so a new repository gets both.
+    _scaffold_stage_values "${stage}"
 
     mkdir -p "${kernel_dir}/claims"
 
@@ -2535,6 +2524,66 @@ _cluster_scaffold_paths() {
     # them.
     if [[ -n "$(gentian_user_tenant)" ]]; then
         printf '%s\n' "clusters/$1/tenants/${USER_TENANT_NAME}"
+    fi
+    # And the two values files of the stage, on the same condition.
+    local _f
+    for _f in "profiles/_base.yaml" "profiles/${GENTIAN_DEPLOYMENTS_STAGE:-dev}.yaml"; do
+        if [[ -f "${GENTIAN_DEPLOYMENTS_PATH}/${_f}" ]]; then
+            printf '%s\n' "${_f}"
+        fi
+    done
+}
+
+# _scaffold_stage_values <stage> — profiles/_base.yaml and profiles/<stage>.yaml,
+# written when absent and never otherwise.
+#
+# Argo CD reads both as values files of the platform's own chart
+# (kernel/bootstrap/chart/templates/gentian-os.yaml), _base first and the
+# stage over it, and cannot render the chart while one is missing: the
+# install then stops at D-01 with no operator. Neither has to set anything,
+# so each is written as a commented template with an empty map, the way the
+# cluster's own definition is: there to be edited, valid as it stands.
+_scaffold_stage_values() {
+    local stage="$1" dir="${GENTIAN_DEPLOYMENTS_PATH}/profiles"
+    mkdir -p "${dir}"
+    if [[ ! -f "${dir}/_base.yaml" ]]; then
+        cat > "${dir}/_base.yaml" <<'EOF'
+# profiles/_base.yaml -- values of the platform's own chart that every stage
+# of this repository shares. Read before profiles/<stage>.yaml, which is read
+# before clusters/<cluster>/kernel/values.yaml; the later file wins.
+#
+# Empty is valid: the chart's defaults then apply. Put here what is the same
+# on every cluster this repository describes and belongs to this deployment
+# rather than to the chart -- for example the pod-security waivers the apps
+# its tenants install need:
+#
+# platformSecurityPolicy:
+#   allowedMacWaivers:
+#     - profile: nextcloud-base-ce
+#       policy: gentian-restrict-capabilities
+#       scope: collabora
+#
+# Commit a change and run ./install.sh: step 0 signs it and the cluster
+# reconciles.
+{}
+EOF
+        info "Wrote profiles/_base.yaml (empty: the chart's defaults apply)."
+    fi
+    if [[ ! -f "${dir}/${stage}.yaml" ]]; then
+        cat > "${dir}/${stage}.yaml" <<EOF
+# profiles/${stage}.yaml -- values of the platform's own chart for every
+# cluster of this repository at stage "${stage}". Read after
+# profiles/_base.yaml and before clusters/<cluster>/kernel/values.yaml; the
+# later file wins.
+#
+# Empty is valid: the chart's defaults then apply. Put here what differs
+# between stages and not between clusters of one stage.
+#
+# Commit a change and run ./install.sh: step 0 signs it and the cluster
+# reconciles.
+{}
+EOF
+        info "Wrote profiles/${stage}.yaml (empty: the chart's defaults apply)."
     fi
 }
 

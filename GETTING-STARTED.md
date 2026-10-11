@@ -253,17 +253,12 @@ git clone <your-gentian-deployments-url> ~/.gentian/gentian-deployments
 
 To keep it somewhere else, set `GENTIAN_DEPLOYMENTS_PATH` in step 2.
 
-The repository needs `profiles/_base.yaml` and `profiles/<stage>.yaml` for the
-stage you are about to use, committed and pushed. Each may be empty (`{}`
-under a comment). Argo CD reads both as values files of the platform's own
-chart and renders nothing when one is missing: step 0 warns and carries on,
-and the install then stops at `D-01` with no operator. In a new repository:
-
-```bash
-cd ~/.gentian/gentian-deployments && mkdir -p profiles
-for f in _base dev; do [ -f profiles/$f.yaml ] || echo '{}' > profiles/$f.yaml; done   # dev: your stage
-git add profiles && git commit -m "Stage values" && git push
-```
+An empty repository is enough: the install writes what it needs into it
+(step 4), including `profiles/_base.yaml` and `profiles/<stage>.yaml`, the two
+values files Argo CD layers under the platform's own chart. It writes each
+only when it is missing, as a commented template that sets nothing, and
+commits it with the cluster's definition. Files that are already there are
+left as they are.
 
 Make every commit of your own now. Once a cluster is installed from the
 repository, Argo CD syncs it only while its newest commit is signed by one of
@@ -284,7 +279,7 @@ Edit it. These are the values that matter for a first install:
 |---|---|
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
 | `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 4, which pushes the tree it names |
-| `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` — the one whose `profiles/<stage>.yaml` you committed in step 1 |
+| `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` — it names `profiles/<stage>.yaml`, which the install writes if the repository has none |
 | `GENTIAN_OS_BRANCH` | Leave it unset to follow the branch this checkout is on (`git branch --show-current`). Set it to follow a release tag (`v1.2.3`): a checked-out tag has no branch to read, and the install stops and asks |
 | `GENTIAN_DEPLOYMENTS_AUTH` | `basic`, the default: a user name and a token, which a private repository needs. `none` for a public one |
 
@@ -408,7 +403,8 @@ checkout:
 
 Beside `kernel` it writes `tenants/platform` (the platform tenant),
 `catalogue/` (the default profile) and, on a single-tenancy cluster,
-`tenants/user`.
+`tenants/user`. At the top of the repository it writes `profiles/_base.yaml`
+and `profiles/<stage>.yaml` when they are missing.
 
 Then it **commits and pushes** them, signed with the break-glass key. Two keys
 are generated for this cluster in `~/.gentian/gnupg` the first time: the
@@ -852,8 +848,7 @@ differs is listed here, in the order you meet it.
    GENTIAN_DEPLOYMENTS_STAGE=prod
    ```
 
-   Clone it to `~/.gentian/gentian-deployments` (step 1), make sure
-   `profiles/_base.yaml` and `profiles/prod.yaml` are in it, and have a token
+   Clone it to `~/.gentian/gentian-deployments` (step 1) and have a token
    that can **write** to it: the installer pushes with it, and so does the
    director for every tenant and app afterwards.
 
@@ -1273,8 +1268,10 @@ key, or unsigned, sits at the head of the branch and stops every sync.
   `tenants/platform`, `catalogue`): undo the commit, make the change in your
   checkout instead, and run `./install.sh`. Step 0 commits it signed with the
   break-glass key.
-- *A file anywhere else in the repository* — a stage profile, a catalogue
-  directory (step 8): step 0 does not commit those. Commit and push it
+- *`profiles/_base.yaml` or the profile of this cluster's stage*: the same.
+  Step 0 commits both, signed.
+- *A file anywhere else in the repository* — another stage's profile, a
+  catalogue directory (step 8): step 0 does not commit those. Commit and push it
   yourself and run `./install.sh` (or `./install.sh --only A-01`: step 0 runs
   before the first step of every install run): it finds a head it does not
   trust and puts an empty commit signed with the break-glass key on top,
