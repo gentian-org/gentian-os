@@ -16,7 +16,13 @@ try_load_creds_from_openbao() {
     # The deployments token counts — it is prompted for on every run that does
     # not have it, so a fast path that ignores it skips the lookup that would
     # have prevented the prompt.
-    MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
+    #
+    # A local, not MAIL_SERVICE_MODE itself: this runs before step 0, and on a
+    # cluster with no claim yet the mode resolved here is only the schema's
+    # default. Written to the global, it read as an answer already given and
+    # prompt_mail_mode never asked.
+    local _mail_mode
+    _mail_mode="$(gentian_mail_service_mode)"
     # A repository that authenticates is ready once its token is here. One
     # that does not is ready as it stands: waiting for a token nobody will
     # ever supply would keep the fast path from being taken at all. The mode
@@ -54,12 +60,12 @@ try_load_creds_from_openbao() {
         _core_ready=1
     fi
     if [[ "${_core_ready}${_repos_ready}${_providers_ready}" == "111" ]]; then
-        if [[ "${MAIL_SERVICE_MODE}" == "external" \
+        if [[ "${_mail_mode}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
             return
         fi
-        if [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
+        if [[ "${_mail_mode}" == "system" ]]; then
             return
         fi
     fi
