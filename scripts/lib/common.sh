@@ -1072,7 +1072,8 @@ load_deployments_cluster_settings() {
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
              LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
-             DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS; do
+             DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
+             MAIL_EGRESS_HOST; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1355,6 +1356,48 @@ prompt_mail_mode() {
         error "mail.serviceMode=system requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
         error "  Choose external, or re-run with NETWORK_MODE=static-ip."
         exit 1
+    fi
+
+    # The name the cluster's own mail leaves from.
+    #
+    # Asked here because the alternative was a line the operator had to add to
+    # the claim by hand after step 0, with nothing saying so at the time: a
+    # cluster then sent from the provider's shared address, whose reverse DNS
+    # nobody owns, with an SPF record naming the inbound load balancer, and the
+    # first signal was mail landing in spam.
+    #
+    # Only the name is asked. The address is not: the operator reads it from
+    # the node that carries it, publishes the A record and pins Postfix there
+    # (mail_dnsendpoint.go, mail_egress_node.go), and the pre-flight refuses a
+    # cluster where no node does (check_mail_egress).
+    if [[ "${MAIL_SERVICE_MODE}" == "system" && -z "${MAIL_EGRESS_HOST:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+            echo ""
+            info "  The name outbound mail leaves from, e.g. mail-egress.${KERNEL_DOMAIN:-example.com}."
+            info "  It needs a floating IP of your own attached to one node, with its"
+            info "  reverse DNS set to this name — docs/design/mail.md §9c says how."
+            info "  Blank sends from the provider's shared address: most receivers"
+            info "  then treat the cluster's mail as spam."
+            while true; do
+                read -rp "  mail.egressHost [blank: the shared address]: " MAIL_EGRESS_HOST
+                [[ -z "${MAIL_EGRESS_HOST}" ]] && break
+                if _is_ip_address "${MAIL_EGRESS_HOST}"; then
+                    warn "That is an address. The name is asked for; the address is read from the node that carries it."
+                    continue
+                fi
+                if [[ ! "${MAIL_EGRESS_HOST}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ || "${MAIL_EGRESS_HOST}" != *.* ]]; then
+                    warn "A host name with a domain in it, e.g. mail-egress.${KERNEL_DOMAIN:-example.com}."
+                    continue
+                fi
+                break
+            done
+        fi
+        if [[ -n "${MAIL_EGRESS_HOST:-}" ]]; then
+            export MAIL_EGRESS_HOST
+            _decided "mail.egressHost ${MAIL_EGRESS_HOST}: its A record is published for you; the floating IP and its reverse DNS are yours to set before the install goes on."
+        else
+            _decided "mail.egressHost: unset — outbound mail leaves from the provider's shared address. Set it on the claim to change that."
+        fi
     fi
 
     # Only external mode has a relay to name.
@@ -2071,9 +2114,96 @@ check_prereqs() {
         exit 1
     fi
 
+    # Before anything is applied: a cluster that names an egress host and
+    # has no node to send from installs up to the tenant and waits there.
+    if [[ "${GENTIAN_DIRECTION:-forward}" == "forward" ]]; then
+        check_mail_egress || exit 1
+    fi
+
     resolve_storage_class || exit 1
 
     success "All pre-flight checks passed."
+}
+
+# =============================================================================
+# check_mail_egress — can this cluster send mail from the name it claims?
+#
+# Only for a cluster that runs its own mail and names mail.egressHost. Two
+# things have to be true, and both are made true at the provider, outside
+# anything this repository applies (docs/design/mail.md §9c):
+#
+#   - exactly one node reports an ExternalIP: the floating IP attached to that
+#     node's port, which is the address its pods then leave from. The operator
+#     reads the same field to publish the A record of the egress host and to
+#     label the node Postfix is pinned to. None, and Postfix has no node it
+#     may run on: its Pod stays Pending, the tenant's mail never becomes
+#     ready, and the install waits for the tenant until it times out. More
+#     than one, and nothing can say which address mail leaves from.
+#   - that address resolves back to the egress host. Receivers check it; mail
+#     from an address whose reverse DNS says something else passes SPF and DKIM
+#     and is binned all the same.
+#
+# The forward half is not checked: the operator publishes that record itself,
+# and on a first install it does not exist yet.
+# =============================================================================
+_mail_egress_reverse_name() {
+    local addr="$1" name=""
+    if command -v dig >/dev/null 2>&1; then
+        name="$(dig +short -x "${addr}" 2>/dev/null | head -1)"
+    else
+        name="$(python3 -c 'import socket, sys
+try:
+    print(socket.gethostbyaddr(sys.argv[1])[0])
+except Exception:
+    pass' "${addr}" 2>/dev/null || true)"
+    fi
+    printf '%s' "${name%.}"
+}
+
+check_mail_egress() {
+    [[ "$(gentian_mail_service_mode)" == "system" ]] || return 0
+    local host="${MAIL_EGRESS_HOST:-}"
+    if [[ -z "${host}" ]]; then
+        warn "mail.egressHost is not set: outbound mail leaves from the provider's shared address,"
+        warn "  whose reverse DNS is not yours. Most receivers will treat it as spam."
+        warn "  docs/design/mail.md §9c says what a sending address of your own takes."
+        return 0
+    fi
+
+    local addrs count
+    addrs="$(kubectl get nodes \
+        -o jsonpath='{range .items[*]}{range .status.addresses[?(@.type=="ExternalIP")]}{.address}{"\n"}{end}{end}' \
+        2>/dev/null | sed '/^$/d' | sort -u || true)"
+    count="$(printf '%s' "${addrs}" | grep -c . || true)"
+    if [[ "${count}" == "0" ]]; then
+        error "mail.egressHost is ${host}, and no node reports an external address."
+        error "  Outbound mail leaves from a floating IP attached to one node. Attach it"
+        error "  (docs/design/mail.md §9c) and run this again once kubectl get nodes -o wide"
+        error "  shows it as that node's EXTERNAL-IP."
+        error "  Without it Postfix has no node it may run on, and the install would wait"
+        error "  for the tenant's mail until it timed out."
+        return 1
+    fi
+    if [[ "${count}" != "1" ]]; then
+        error "mail.egressHost is ${host}, and ${count} different external addresses are reported by the nodes:"
+        error "  $(printf '%s' "${addrs}" | tr '\n' ' ')"
+        error "  Mail has to leave from one. Nothing can say which of these it is, so"
+        error "  no record is published and Postfix is pinned to no node."
+        return 1
+    fi
+
+    local reverse
+    reverse="$(_mail_egress_reverse_name "${addrs}")"
+    # Compared without regard to case, as DNS does. tr, because the bash a
+    # Mac ships has no ${var,,}.
+    if [[ "$(printf '%s' "${reverse}" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')" ]]; then
+        error "mail.egressHost is ${host}, and ${addrs} resolves back to ${reverse:-nothing}."
+        error "  Set the reverse DNS (PTR) of ${addrs} to ${host} at the provider that"
+        error "  hands the address out (docs/design/mail.md §9c), and run this again."
+        error "  Receivers check it, and bin mail from an address that says otherwise."
+        return 1
+    fi
+    success "mail leaves from ${addrs}, which resolves back to ${host}."
 }
 
 # =============================================================================

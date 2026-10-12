@@ -31,9 +31,12 @@
 # The condition this comment previously set for moving to sync has been met and
 # checked, not assumed. The TXT registry owns exactly the fifteen records the
 # platform creates -- the tenant app hosts, the kernel hosts, and the mail MX,
-# SPF, DMARC and DKIM. The two records in the zone it does NOT own are the apex
-# A record and mail-egress, which is manual because the floating IP it names is
-# not something the cluster allocates. sync leaves both alone: ownership is
+# SPF, DMARC and DKIM. The two records in the zone it did NOT own then were the
+# apex A record and mail-egress, which was made by hand because the floating IP
+# it names is not something the cluster allocates. The operator publishes
+# mail-egress since (mail_dnsendpoint.go, from the ExternalIP of the node that
+# carries the address), so it must not be made by hand any more: a record
+# external-dns did not register is one it will not touch. sync leaves both alone: ownership is
 # recorded in the TXT registry below, and external-dns only ever touches names
 # it registered itself.
 #

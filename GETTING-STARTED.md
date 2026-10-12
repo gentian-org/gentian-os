@@ -176,7 +176,10 @@ until it is done.
   - `static-ip` needs a fixed address that DNS points at and something that
     answers a `LoadBalancer` Service with it: MetalLB on your own machines
     (on MicroK8s the add-on `metallb`, given that address), or the cloud's
-    load balancer. The platform's own mail needs this mode.
+    load balancer. The platform's own mail needs this mode, and a few
+    things at your provider before you install: an address to send from, its
+    reverse DNS, outbound port 25. [mail.md §9c](docs/design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)
+    has the list. Skip it if the cluster relays its mail.
 - **A token with write access to `gentian-deployments`.** The installer pushes
   this cluster's definition with it, and the director on the cluster pushes
   every later change — tenants, app installs — with it too. The installer asks
@@ -363,7 +366,8 @@ one. Every question shows its default; Enter takes it.
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound. Step 0 does not ask for that address and nothing in the claim names it: the mail edge is a `LoadBalancer` Service of its own (`mail-edge-<stage>`) and cannot share the HTTPS edge's address, so the pool your load balancer hands out from (MetalLB's `IPAddressPool`, which you create) needs at least two addresses. The HTTPS edge takes `nodeIp`, or `addressRef` if you add that to the claim; mail gets whichever other address the load balancer assigns, and the operator publishes `mail.<domain>`, `imap.<domain>` and the MX, SPF, DKIM and DMARC records from it. The reverse (PTR) record of that address is yours to set at the provider. The load balancer must hand on the sender's address, by forwarding packets or with the PROXY protocol — see [mail.md §9a](docs/design/mail.md#9a-what-a-kubernetes-cluster-needs-to-host-mail) and [§9b](docs/design/mail.md#9b-the-mail-edge). The mail edge is built, not yet run on a cluster. Not asked on a tunnel cluster, which is always `external`. After step 0, set `mail.egressHost` in the claim to the name outbound mail leaves from; without it the SPF record names the inbound address |
+| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). Not asked on a tunnel cluster, which is always `external`. A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
+| `mail.egressHost` | unset | `system` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
 | `mail.host` | unset | `external` mode: the relay's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
@@ -383,7 +387,7 @@ default:
 | Kernel domain | a domain in your Cloudflare zone | the organisation's domain |
 | `networkMode` | `tunnel` | `static-ip`, then `nodeIp` |
 | `certificates.issuerMode`, `dnsProvider` | `acme-dns01`, `cloudflare` | `acme-dns01`, and the provider that hosts the zone |
-| `mail.serviceMode` | not asked: `external`. Then `mail.host`, the relay | `system` |
+| `mail.serviceMode` | not asked: `external`. Then `mail.host`, the relay | `system`, then `mail.egressHost` |
 | `tenancyMode` | `multi` | `single` |
 | Credentials asked after step 0 | the deployments token, the master password, the DNS token, the tunnel token | the deployments token, the master password, the DNS provider's credential |
 | Supplied in step 5 | the relay's user name and password | nothing for mail |

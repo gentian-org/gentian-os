@@ -554,12 +554,14 @@ assumption and it is one command:
 kubectl -n system-mail exec postfix-<stage>-0 -c mail -- curl -s ifconfig.me
 ```
 
-Two things this arrangement does not yet do for you. Nothing publishes the
-`<egress-host>` A record — the floating IP is allocated at the provider, so that
-record is manual. And nothing pins Postfix to the node carrying the address:
-`egressHost` is read only to compose the SPF record, so a reschedule moves
-sending back to the shared SNAT silently, and the next bounce is the signal.
-Pin it deliberately until the operator does.
+The rest is done for you once a node carries the address. The operator reads
+the node's `ExternalIP`, which the provider reports when a floating IP is
+attached to that node's port, publishes `<egress-host>` A `<floating-ip>` from
+it, and labels the node `gentianos.io/mail-egress`; the Postfix chart pins the
+Pod to that label whenever `egressHost` is set. Move the address to another
+node and the label and the record follow. The reverse record is not the
+cluster's to write and stays yours. §9c is the list of what an operator does,
+in order.
 
 **3. A HELO name that is a FQDN and agrees with the PTR.** Postfix defaults to
 its own hostname, which in Kubernetes is a Service name that resolves nowhere.
@@ -707,6 +709,84 @@ the rest of its domain is accepted; the header ports refusing a connection
 without a header; the pods' listeners unchanged; both limits; and the load-balancer setting. Not
 proven: anything that needs a cluster — the load balancer, the policies as a
 CNI enforces them, a pod reaching the public name.
+
+---
+
+## 9c. Installing a cluster with its own mail: what is yours to do
+
+Skip this section if the cluster relays its mail (`mail.serviceMode: external`).
+It applies to `mail.serviceMode: system`, which needs `networkMode: static-ip`.
+
+**What the install does without you.** It deploys Postfix, Dovecot and the mail
+edge; takes a second load-balancer address for inbound mail and keeps it across
+rebuilds; copies the kernel wildcard certificate to the mail servers; and
+publishes the DNS records of §10 — `mail.` and `imap.<domain>`, MX, SPF, DKIM
+and DMARC — and the A record of the egress host.
+
+**What inbound mail needs from the network**, and you only have to confirm:
+
+- a second load-balancer address. The mail edge is a `LoadBalancer` Service of
+  its own and cannot share the HTTPS edge's. A cloud's load balancer hands one
+  out; with MetalLB, the `IPAddressPool` you create needs at least two
+  addresses;
+- ports 25, 587 and 993 open to that address from the internet;
+- a load balancer that hands on the sender's address, by forwarding packets or
+  with the PROXY protocol (§9a, §9b).
+
+**What it cannot do** is anything at the provider that hands out addresses. Four
+things, all for *outbound* mail, and all before you run the install:
+
+1. **Check that outbound port 25 is open** for your project. Many providers
+   block it until asked; without it nothing is delivered whatever else is right.
+2. **Reserve a floating IP for sending.** A second one: not the cluster's
+   `nodeIp`, and not the address the mail load balancer was given.
+3. **Attach it to one node.** A node with a floating IP on its port sends from
+   that address instead of the provider's shared one. On OpenStack:
+
+   ```bash
+   kubectl get node <node> -o jsonpath='{.spec.providerID}'   # openstack://<region>/<server-id>
+   openstack port list --device-id <server-id> -f value -c ID
+   openstack floating ip set --port <port-id> <floating-ip>
+   ```
+
+   `kubectl get nodes -o wide` then shows the address as that node's
+   `EXTERNAL-IP`, usually within a minute or two.
+4. **Set its reverse DNS** to the name mail will leave from, for example
+   `mail-egress.<domain>`. On Infomaniak Public Cloud:
+
+   ```bash
+   openstack ptr record set <region>:<floating-ip-id> mail-egress.<domain>.
+   ```
+
+Then run the install. Step 0 asks for `mail.egressHost`: give the name from 4.
+Do not create an A record for it; the operator publishes it from the node's
+address, and a record made by hand is one external-dns will not take over.
+
+**The install checks 3 and 4 before it applies anything**, and stops if no
+node reports an external address, if the nodes report more than one, or if the
+address does not resolve back to the name. A cluster that named an egress host
+and had no node to send from would otherwise install as far as the first
+tenant and wait there: Postfix may only run on the node that carries the
+address.
+
+**Without a sending address of your own**, leave the question blank. The
+cluster then sends from the provider's shared address, whose reverse DNS is
+not yours, and most receivers treat its mail as spam; mail between people on
+the cluster is unaffected. Or relay outbound through a smarthost (§9a, *When
+to relay instead*).
+
+**Afterwards.**
+
+- To confirm what receivers will see, ask from the Pod itself:
+
+  ```bash
+  kubectl -n system-mail exec postfix-<stage>-0 -c mail -- curl -s ifconfig.me
+  ```
+
+- The reverse DNS of the *inbound* address is optional. Senders do not check
+  it; set it to `mail.<domain>` if you want it tidy.
+- When the node that carries the address is replaced, attach the address to
+  another node (step 3). The label, the A record and Postfix follow.
 
 ---
 

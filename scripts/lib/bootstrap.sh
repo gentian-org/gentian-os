@@ -1452,9 +1452,10 @@ _claim_cluster_fields() {
     elif [[ "${mm}" == "system" ]]; then
         printf '    # egressHost:               the name outbound mail leaves from, e.g.\n'
         printf '    #                           mail-egress.%s — required for SPF to pass.\n' "${KERNEL_DOMAIN:-example.com}"
-        printf '    #                           Needs a PTR back to it and an A record to the\n'
-        printf '    #                           sending address; without it the SPF record\n'
-        printf '    #                           names the inbound load balancer and fails.\n'
+        printf '    #                           Needs a floating IP on one node whose\n'
+        printf '    #                           reverse DNS is this name (docs/design/mail.md\n'
+        printf '    #                           9c); without it the SPF record names the\n'
+        printf '    #                           inbound load balancer and fails.\n'
     else
         printf '    # egressHost:               only for a cluster that sends from its own\n'
         printf '    #                           address rather than through the relay above\n'

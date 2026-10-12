@@ -199,7 +199,8 @@ first. The installer warns (`… is set in install.env — it overrides
 claims/cluster.yaml`) rather than reversing the precedence, because an operator
 who wrote it there meant something, but the claim is where it belongs. The
 template lists them at its end: `TENANCY_MODE`, `SECRET_MODE`, `NETWORK_MODE`,
-`NODE_IP`, `STORAGE_CLASS`, `PLATFORM`, `MAIL_SERVICE_MODE`, `DNS_PROVIDER`,
+`NODE_IP`, `STORAGE_CLASS`, `PLATFORM`, `MAIL_SERVICE_MODE`, `MAIL_EGRESS_HOST`,
+`DNS_PROVIDER`,
 `ACME_ENV`, `CERT_ISSUER_MODE`, `LETSENCRYPT_EMAIL`, `LLM_SUPPORT`,
 `GPU_ACCELERATION`. An
 unattended first run exports them for that run
