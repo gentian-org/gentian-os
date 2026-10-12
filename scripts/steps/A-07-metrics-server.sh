@@ -22,8 +22,17 @@ apply() {
     fi
     helm repo add metrics-server "$(gentian_pin metrics-server repo)" --force-update >/dev/null
     helm repo update metrics-server >/dev/null
+    # Verification of the kubelets' certificates is given up only where the
+    # claim says so (metricsServer.kubeletInsecureTLS); the schema says what
+    # that costs and on which clusters nothing else works.
+    local args=()
+    if [[ "${METRICS_SERVER_KUBELET_INSECURE_TLS:-$(xrd_default metricsServer.kubeletInsecureTLS)}" == "true" ]]; then
+        warn "metricsServer.kubeletInsecureTLS is true: metrics-server will not verify the kubelets' certificates."
+        args=(--set 'args={--kubelet-insecure-tls}')
+    fi
     _helm_retry upgrade --install metrics-server metrics-server/metrics-server \
         --namespace kube-system --version "$(gentian_pin metrics-server chart)" \
+        ${args[@]+"${args[@]}"} \
         --wait --timeout 5m
 }
 

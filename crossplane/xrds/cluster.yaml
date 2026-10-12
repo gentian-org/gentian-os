@@ -301,6 +301,33 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
+                metricsServer:
+                  type: object
+                  description: >
+                    The metrics-server the installer puts in kube-system
+                    (step A-07) when the cluster does not already serve
+                    metrics.k8s.io. Read by the installer from this file; no
+                    Composition consumes it.
+                  properties:
+                    kubeletInsecureTLS:
+                      type: boolean
+                      description: >
+                        true starts metrics-server with --kubelet-insecure-tls:
+                        it then accepts whatever certificate answers on a
+                        node's kubelet port, and whoever can intercept traffic
+                        on the node network can pose as a kubelet, report false
+                        metrics and read the token metrics-server presents.
+
+                        Leave it false wherever verification works. It does not
+                        work where the kubelets' serving certificates name no
+                        IP address and the node names do not resolve from a
+                        pod (seen on Infomaniak's managed Kubernetes):
+                        metrics-server reaches a kubelet by its InternalIP,
+                        finds no such name in the certificate, never becomes
+                        Ready, and A-07 runs into its timeout. Its log then
+                        says "x509: cannot validate certificate for <ip>
+                        because it doesn't contain any IP SANs".
+                      default: false
                 # ── Cluster modes ────────────────────────────────────────
                 # Consumed directly by Compositions, which is why these live on
                 # the claim rather than in the Helm values chain. Everything

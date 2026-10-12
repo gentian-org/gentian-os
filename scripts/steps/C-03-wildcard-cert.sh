@@ -3,13 +3,17 @@
 # phase: platform
 # requires: C-02-appsets
 # provides: the cluster issuers and the wildcard certificate for *.<kernelDomain>, copied into the namespaces that terminate TLS for a kernel host
-# mutates: ClusterIssuers, the Certificate in cert-manager, and wildcard-tls Secrets in the edge and gitops namespaces; on this host, the kept copy of the wildcard under ~/.gentian/certs
+# mutates: ClusterIssuers, the Certificate in cert-manager, and wildcard-tls Secrets in the edge and gitops namespaces and, where the cluster runs its own mail, the mail namespace; on this host, the kept copy of the wildcard under ~/.gentian/certs
 
 # The Gateway's listener reads wildcard-tls from its own namespace: without it
 # the listener is invalid and the Gateway is never programmed, whatever else
 # is right.
 
-_v5_wildcard_targets() { echo "$(ns_kernel edge) $(ns_kernel gitops)"; }
+# Postfix and Dovecot present it too, for smtp.<kernelDomain> and
+# imap.<kernelDomain>, and read it from their own namespace. That namespace
+# exists only where mail.serviceMode is system; the copy skips a namespace the
+# cluster does not have, and apply() refuses to go on without one it should.
+_v5_wildcard_targets() { echo "$(ns_kernel edge) $(ns_kernel gitops) $(ns_system mail)"; }
 
 check() {
     # The claim says which provider hosts the zone, not the environment: a
@@ -34,6 +38,15 @@ apply() {
     SERVICES_NAMESPACE="$(ns_kernel edge)"
     GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)"
     OPENBAO_NAMESPACE="$(ns_kernel secrets)"
+    # Composed from the Cluster claim, and delivered by C-02 before this runs.
+    # Missing here, the copy would be skipped and check() satisfied, with
+    # Postfix and Dovecot held on a Secret nothing is going to write.
+    if [[ "$(gentian_mail_service_mode)" == "system" ]] &&
+        ! kubectl get namespace "$(ns_system mail)" >/dev/null 2>&1; then
+        error "mail.serviceMode is system and the namespace $(ns_system mail) does not exist."
+        error "  The Cluster claim composes it; C-02 waits for it. Re-run once it is there."
+        return 1
+    fi
     install_kernel_wildcard
 }
 

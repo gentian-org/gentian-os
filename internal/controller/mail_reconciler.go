@@ -1166,10 +1166,12 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 		return nil
 	}
 
-	// 2. The introspection client in the kernel realm. Returns false while its Job
-	//    is still running; the next operator start or tenant event picks it up.
-	if ready, err := r.ensureKernelDovecotOIDCClientJob(ctx); err != nil {
-		return fmt.Errorf("ensure kernel Dovecot OIDC client: %w", err)
+	// 2. The introspection client in the kernel realm, which cluster-default
+	//    composes. Not Ready yet is not an error; the next operator start or
+	//    tenant event picks it up. The Job that used to create it is swept.
+	r.deleteRetiredJobs(ctx, kernelDovecotOIDCClientJobName())
+	if ready, err := r.kernelDovecotClientReady(ctx); err != nil {
+		return fmt.Errorf("check kernel Dovecot OIDC client: %w", err)
 	} else if !ready {
 		return nil
 	}

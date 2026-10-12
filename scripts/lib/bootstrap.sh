@@ -1341,6 +1341,19 @@ _claim_cluster_fields() {
     fi
 
     printf '\n'
+    printf '  # metrics-server, where the installer puts one in. true stops it\n'
+    printf '  # verifying the kubelets certificates; needed only where they name no\n'
+    printf '  # IP address and node names do not resolve from a pod (Infomaniak),\n'
+    printf '  # where it otherwise never becomes Ready and step A-07 times out.\n'
+    if [[ "${METRICS_SERVER_KUBELET_INSECURE_TLS:-}" == "true" ]]; then
+        printf '  metricsServer:\n'
+        printf '    kubeletInsecureTLS: true\n'
+    else
+        printf '  # metricsServer:\n'
+        printf '  #   kubeletInsecureTLS: false  kubelet certificates are verified\n'
+    fi
+
+    printf '\n'
     printf '  # Who issues TLS certificates, and who hosts the zone. Two questions:\n'
     printf '  # how control is proved, and by whom.\n'
     printf '  #   acme-dns01   Lets Encrypt over DNS-01; the only path to a wildcard\n'

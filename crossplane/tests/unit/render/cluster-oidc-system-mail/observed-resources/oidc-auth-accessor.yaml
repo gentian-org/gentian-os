@@ -1,0 +1,22 @@
+# The OIDC auth backend with its mount accessor read back.
+#
+# Vault policy templating addresses alias metadata by accessor and offers no
+# way to name a mount by path, so this value cannot be declared — only
+# observed. It is empty on the first reconcile, which is why the tenant-admin
+# Policy is gated on it rather than rendered with a placeholder. Supplying it
+# here is what makes that Policy appear at all.
+---
+apiVersion: auth.vault.upbound.io/v1alpha1
+kind: Backend
+metadata:
+  name: dev-cluster-auth-oidc
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-oidc
+status:
+  atProvider:
+    accessor: auth_oidc_1a2b3c4d
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

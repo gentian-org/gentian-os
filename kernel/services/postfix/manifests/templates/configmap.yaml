@@ -425,6 +425,14 @@ data:
     extraInitContainers: |
       - name: seed-dkim-keys
         image: busybox:1.36
+        # The same two settings as the mail container above, for the same
+        # reason: the baseline policies check every init container too, and
+        # without them the Pod is refused at admission. Copying key files
+        # needs neither.
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
         command:
           - sh
           - -c

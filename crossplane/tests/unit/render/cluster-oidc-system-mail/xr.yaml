@@ -1,0 +1,42 @@
+# The same cluster as cluster-oidc-policies, running its own mail.
+#
+# What this asserts is the kernel realm's gentian-dovecot client: with
+# spec.oidc supplied and mail.serviceMode `system`, cluster-default composes it,
+# labelled gentianos.io/purpose: dovecot-oidc for the operator to wait on, with
+# its secret read from dovecot-admin in the mail namespace. The sibling fixture,
+# with mail relayed, must compose none: a client nothing authenticates as would
+# sit in the realm suggesting an IMAP server the cluster does not run.
+#
+# cluster-system-mail cannot assert it. It omits spec.oidc, so the whole
+# Keycloak half of the Composition is not rendered there.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  oidc:
+    discoveryUrl: https://id.platform.example.test/auth/realms/kernel
+    externalUrl: https://bao.platform.example.test
+  argocd:
+    namespace: kernel-gitops
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  mail:
+    serviceMode: system
+  compositeDeletePolicy: Background
+  resourceRefs: []
