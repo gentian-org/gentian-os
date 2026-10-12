@@ -750,6 +750,63 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* Dovecot's OIDC client in the kernel realm, on a cluster that
+                 runs Dovecot.
+
+                 The cluster administrator, and every tenant that adopts the
+                 kernel realm, has a mailbox whose XOAUTH2 tokens this realm
+                 issues, and Dovecot validates them by asking the realm's
+                 introspection endpoint as gentian-dovecot. tenant-default
+                 composes the same client in a tenant's own realm and none of
+                 it in a realm the tenant only adopts; this is that realm's.
+
+                 Composed rather than provisioned by a Job, as the client
+                 above is. The Job that did it took the client secret from a
+                 Secret in its own namespace, and the Secret is Dovecot's, in
+                 the mail namespace: with identity and mail in different
+                 namespaces its Pod could not be created. The provider reads
+                 the Secret where it is.
+
+                 The secret is not Keycloak's to choose: Dovecot authenticates
+                 to introspection with the value in dovecot-admin, and an
+                 omitted clientSecretSecretRef would have Keycloak generate
+                 another. Everything except LateInitialize, so that what
+                 Keycloak fills in on the live client does not become this
+                 object's declared intent. */}}
+            {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                crossplane.io/external-name: gentian-dovecot
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-dovecot-oidc-client
+              name: {{ $name }}-dovecot-oidc-client
+              labels:
+                # The operator finds the client by this, to wait for it before
+                # it points Dovecot at the realm.
+                gentianos.io/purpose: dovecot-oidc
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: gentian-dovecot
+                realmId: {{ $realm | quote }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                clientSecretSecretRef:
+                  name: dovecot-admin
+                  namespace: system-mail
+                  key: oidc_client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* The cluster admin group is NOT created here.
 
                  D-06-portal-login creates it and puts administrator@<domain>
