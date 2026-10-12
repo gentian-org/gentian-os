@@ -1072,7 +1072,7 @@ load_deployments_cluster_settings() {
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
              LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
-             DNS01_RECURSIVE_NAMESERVERS; do
+             DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1109,6 +1109,9 @@ load_deployments_cluster_settings() {
         # Where cert-manager checks DNS-01 propagation. Read at A-02, which is
         # before the Cluster XR exists, for the same reason as ACME_ENV.
         claim_setting DNS01_RECURSIVE_NAMESERVERS certificates.dns01RecursiveNameservers "${claim_file}"
+        # Whether metrics-server verifies the kubelets' certificates. Read at
+        # A-07, before the Cluster XR exists.
+        claim_setting METRICS_SERVER_KUBELET_INSECURE_TLS metricsServer.kubeletInsecureTLS "${claim_file}"
         # The external relay, when mail.serviceMode is external. Same object,
         # same claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
         claim_setting MAIL_EGRESS_HOST       mail.egressHost "${claim_file}"
