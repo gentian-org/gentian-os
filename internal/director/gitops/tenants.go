@@ -434,9 +434,10 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 // They differ in the manifest they write and in nothing else.
 //
 // What is checked here is checked for both, before anything is written: the
-// name, the cluster's tenancy mode, that no tenant of the name exists, and
-// that none of the names the new tenant would use -- its realm, its database
-// prefix, its bucket prefix -- is another tenant's (backup.NamesTaken).
+// name, the cluster's tenancy mode, that no tenant of the name exists, that
+// none of the names the new tenant would use -- its realm, its database
+// prefix, its bucket prefix -- is another tenant's (backup.NamesTaken), and
+// that the name is not the alias of a published surface (ErrNameIsAlias).
 //
 // manifest is called once those hold, and its answer is committed with the
 // kustomization and with beside, further files of the tenant's directory.
@@ -484,6 +485,17 @@ func (g *GitOps) createTenant(
 	}
 	if err := backup.NamesTaken(candidate, others); err != nil {
 		return Result{}, err
+	}
+	// A tenant's own address is <name>.<cluster's domain>, which is also
+	// where an alias puts a published surface. Whichever came first keeps
+	// the name.
+	held, err := aliasesHeld(tenants)
+	if err != nil {
+		return Result{}, err
+	}
+	if h, taken := held[name]; taken {
+		return Result{}, fmt.Errorf("%w: %s is the alias of %s of tenant %s. Remove the alias, or choose another name",
+			ErrNameIsAlias, name, strings.Replace(h.key, " ", "/", 1), h.tenant)
 	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {

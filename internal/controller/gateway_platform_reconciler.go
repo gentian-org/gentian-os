@@ -36,6 +36,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
@@ -350,6 +351,11 @@ func buildPerimeterGateway(kernelDomain, tenancyMode, mainAddressTenant, kernelR
 func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) []gatewayv1.Listener {
 	var out []gatewayv1.Listener
 	seen := map[string]struct{}{}
+	inputs := mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode,
+		MainAddressTenant: mainAddressTenant, Now: time.Now(),
+	}
 	for i := range tenants {
 		tenant := &tenants[i]
 		if tenant.DeletionTimestamp != nil {
@@ -379,15 +385,40 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kern
 			), true))
 		}
 	}
+	// A surface the cluster's administrator gave an alias answers at
+	// <alias>.<cluster's domain> as well, which the cluster's own
+	// certificate names. After every surface's own host, so that an alias
+	// never takes a listener a host of its own would have had.
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+		for j := range tenant.Spec.Exposures {
+			e := &tenant.Spec.Exposures[j]
+			if publishedHost(e, profiles, zone, kernelDomain) == "" {
+				continue
+			}
+			alias := addresses.AliasHost(inputs, tenant.Name, e.Install, e.ExposureName)
+			if alias == "" {
+				continue
+			}
+			if _, dup := seen[alias]; dup {
+				continue
+			}
+			seen[alias] = struct{}{}
+			out = append(out, withAllowedRoutes(tlsListener(
+				perimeterListenerName(alias), gatewayv1.Hostname(alias),
+				kernelWildcardTLSSecretName, servicesNamespace,
+			), true))
+		}
+	}
 	// A tenant's website on the cluster's main address answers on the bare
 	// domain, with the cluster's own certificate. The platform's page is
 	// normally published there already and this adds nothing; where it is
 	// not, the website still needs the listener.
-	if holder := mainAddressHolder(mainAddressInputs{
-		Tenants: tenants, Profiles: profiles,
-		KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode,
-		MainAddressTenant: mainAddressTenant, Now: time.Now(),
-	}); holder != nil {
+	if holder := mainAddressHolder(inputs); holder != nil {
 		if _, dup := seen[kernelDomain]; !dup {
 			out = append(out, withAllowedRoutes(tlsListener(
 				perimeterListenerName(kernelDomain), gatewayv1.Hostname(kernelDomain),

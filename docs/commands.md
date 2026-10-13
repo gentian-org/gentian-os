@@ -558,6 +558,22 @@ that may hold the main address: the user tenant of a single-tenancy cluster
 kubectl gentian exposures approve <app instance> <entry> --tenant user --acknowledge-main-address-rule
 ```
 
+**An alias.** A published entry answers under its tenant's domain. Whoever
+may configure the cluster can give it a second name directly under the
+cluster's own domain, and take it away again:
+
+```bash
+kubectl gentian exposures alias <app instance> <entry> --tenant <tenant> --host <name>.<kernel-domain>
+kubectl gentian exposures alias <app instance> <entry> --tenant <tenant> --remove
+```
+
+The entry has to be published first, by the tenant's approver; the alias
+publishes nothing by itself and survives the approver's reviews. The
+director refuses a name the platform keeps, a name a tenant is called, a
+name another entry holds, and any alias on a single-tenancy cluster;
+`exposures list` shows the alias in its own column. What is refused and why:
+[design/routing.md §7](design/routing.md).
+
 `list` shows each entry with who published it, when it is reviewed and when
 it ends: `published` is in force, `review due` is in force and past its
 review date, `expired` answers no longer and stays as the record. `withdraw`

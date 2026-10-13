@@ -68,6 +68,9 @@
 #                                     [--acknowledge-main-address-rule] [--yes]
 #   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
 #   kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>
+#   kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)
+#                                                               a second address for a published entry, directly under
+#                                                               the cluster's own domain; the cluster's administrator's
 #
 #   kubectl gentian resources plans --tenant <tenant>
 #   kubectl gentian resources show --tenant <tenant>
@@ -1533,10 +1536,11 @@ cmd_exposures_list() {
         | def kind: (.kind // "") as $k | (if $k == "" then "public" else $k end) as $k
             | $kinds[$k] // (if $k == "public" then "Public address" else $k end);
         def row(state): [.install, .exposureName, kind, state, (if .apex then "yes" else "-" end),
+            (if (.alias // "") == "" then "-" else .alias end),
             (.owner // "-"), (.publishedAt | day), (.reviewAt | day), (.expiresAt | day),
             (if (.reason // "") == "" then "-" else .reason end)];
         ((.reviewDue // []) | map(.install + " " + .exposureName)) as $due
-        | (["APP INSTANCE","ENTRY","KIND","STATE","MAIN ADDRESS","APPROVED BY","APPROVED","REVIEW","EXPIRES","REASON"] | @tsv),
+        | (["APP INSTANCE","ENTRY","KIND","STATE","MAIN ADDRESS","ALIAS","APPROVED BY","APPROVED","REVIEW","EXPIRES","REASON"] | @tsv),
           ((.live // [])[] | (.install + " " + .exposureName) as $k
               | row(if ($due | index($k)) != null then "review due" else "published" end) | @tsv),
           ((.expired // [])[] | row("expired") | @tsv)' |
@@ -1577,6 +1581,61 @@ cmd_exposures_withdraw() {
     fi
     echo "Withdrawn ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). Once the cluster has taken that in,"
     echo "a public address stops answering, and an entry behind sign-in has its Authorization header removed again."
+}
+
+# exposures alias: give one published entry a second address directly under
+# the cluster's own domain (statistics.<cluster> for an entry that answers at
+# statistics.<tenant>.<cluster>), or take it away.
+# One request to the director (PUT or DELETE /v1/clusters/<c>/tenants/<t>/
+# exposures/<app instance>/<entry>/alias), which decides who may: whoever may
+# configure the cluster, since a name under its domain is the cluster's to
+# give. It adds nothing to what is public -- the tenant's approver publishes
+# the entry first -- so it is not asked twice.
+cmd_exposures_alias() {
+    local inst="" entry="" t="" host="" remove="" answer usage_text
+    usage_text="usage: kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            --host) host="${2:?}"; shift 2 ;;
+            --remove) remove=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${inst}" ]]; then inst="$1"
+                elif [[ -z "${entry}" ]]; then entry="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${inst}" && -n "${entry}" ]] || die "${usage_text}"
+    [[ -n "${t}" ]] || die "--tenant is required"
+    [[ -n "${host}" || -n "${remove}" ]] || die "${usage_text}"
+    [[ -z "${host}" || -z "${remove}" ]] || die "--host and --remove are two different things; give one"
+    _label "a tenant" "${t}"
+    _label "an app instance" "${inst}"
+    _label "an entry" "${entry}"
+    need curl jq
+    _connect
+    if [[ -n "${remove}" ]]; then
+        answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${t}/exposures/${inst}/${entry}/alias")" || exit 1
+        if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+            echo "${inst}/${entry} of ${t} has no alias; nothing was committed."
+            return 0
+        fi
+        echo "${inst}/${entry} of ${t} has no alias any more: committed ($(_committed "${answer}")). It stays at its own address."
+        return 0
+    fi
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${t}/exposures/${inst}/${entry}/alias" \
+        "$(jq -n --arg h "${host}" '{host: $h}')")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "${inst}/${entry} of ${t} already answers at ${host}; nothing was committed."
+        return 0
+    fi
+    echo "${inst}/${entry} of ${t} also answers at ${host}: committed ($(_committed "${answer}"))."
+    echo "Once the cluster has taken that in, the same paths are served there, held to the same limits."
+    echo "The name has to resolve to this cluster: the platform publishes a record for it where it publishes"
+    echo "the cluster's others, and where it does not, the record is yours to make."
 }
 
 # exposures requests: every entry an app installed in the tenant declares for
@@ -1784,7 +1843,8 @@ cmd_exposures() {
         requests) cmd_exposures_requests "$@" ;;
         approve) cmd_exposures_approve "$@" ;;
         withdraw) cmd_exposures_withdraw "$@" ;;
-        *) die "usage: kubectl gentian exposures requests|approve|list|withdraw ..." ;;
+        alias) cmd_exposures_alias "$@" ;;
+        *) die "usage: kubectl gentian exposures requests|approve|list|withdraw|alias ..." ;;
     esac
 }
 
