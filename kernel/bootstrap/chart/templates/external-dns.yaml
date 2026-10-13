@@ -111,16 +111,29 @@ spec:
   # reports Synced.
   - repoURL: https://kubernetes-sigs.github.io/external-dns/
     chart: external-dns
-    # 1.21.1 (external-dns v0.21.0) at the earliest for MX.
+    # 1.22.0 (external-dns v0.22.0) at the earliest, for two reasons.
     #
-    # Cloudflare's API takes an MX record's priority as its own field, and the
-    # provider did not split it out before v0.18: it sent "10 mail.gtn.host" as
-    # the content and the API answered "priority is a required field". That one
-    # rejection failed the whole zone batch and exited the process, so a single
-    # unpublishable MX cost every other record too — the DKIM, SPF and DMARC
-    # records here included — and external-dns sat in CrashLoopBackOff while the
-    # zone silently kept whatever it had.
-    targetRevision: "1.21.1"
+    # MX, from v0.18: Cloudflare's API takes an MX record's priority as its
+    # own field, and the provider did not split it out before; it sent
+    # "10 mail.gtn.host" as the content and the API answered "priority is a
+    # required field". That one rejection failed the whole zone batch and
+    # exited the process, so a single unpublishable MX cost every other
+    # record too — the DKIM, SPF and DMARC records here included — and
+    # external-dns sat in CrashLoopBackOff while the zone silently kept
+    # whatever it had.
+    #
+    # TXT ownership, from v0.22.0. The registry below marks each record it
+    # owns with a TXT record named by type (_extdns-a.<name>, _extdns-txt.
+    # <name>). v0.21.0 wrote the one for a TXT record — the SPF at a mail
+    # domain — and could not read it back: TXT was missing from the types
+    # its name mapper parses, so the SPF was seen as a record of an unknown
+    # owner, and a name holding one is a name nothing else may be created
+    # at. On a first install the name was empty and every record was made
+    # at once; on an install after a purge the SPF had survived in the zone,
+    # and platform.<domain> and the bare domain, the mail domains that are
+    # also hosts, never got their A record while the log said every record
+    # was up to date (the refusal is logged at debug level only).
+    targetRevision: "1.22.0"
     helm:
       valueFiles:
       - $values/kernel/values/external-dns.yaml
