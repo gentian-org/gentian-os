@@ -73,6 +73,10 @@ type perimeterEnablement struct {
 	spec *gentianov1alpha1.ExposureSpec
 	on   *gentianov1alpha1.ExposureEnablement
 	host string
+	// alias is a second host the surface answers at, directly under the
+	// cluster's own domain, where the cluster's administrator gave it one
+	// that is honoured (addresses.AliasHost). Empty otherwise.
+	alias string
 	// website marks a tenant's surface on the cluster's main address: its
 	// proxy refuses the platform's paths there (main_address.go).
 	website bool
@@ -190,6 +194,9 @@ func (r *ComponentReconciler) ensurePerimeter(
 		return 0, fmt.Errorf("main address: %w", err)
 	}
 	live := livePerimeterExposures(comp, profile, zone, time.Now(), main)
+	if err := r.aliasesFor(ctx, comp, tenant, live); err != nil {
+		return 0, fmt.Errorf("alias: %w", err)
+	}
 	dmz := layout.TenantDMZ(tenant.Name)
 
 	if err := r.prunePerimeter(ctx, comp, dmz, live); err != nil {
@@ -207,6 +214,44 @@ func (r *ComponentReconciler) ensurePerimeter(
 		}
 	}
 	return len(live), nil
+}
+
+// aliasesFor fills in the alias of each live surface that has one. Whether an
+// alias is honoured depends on every tenant -- a name a tenant is called is
+// that tenant's address, and one alias is one surface's -- so the tenants are
+// read, and only where a surface of this component carries one.
+func (r *ComponentReconciler) aliasesFor(
+	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, live []perimeterEnablement,
+) error {
+	wanted := false
+	for i := range live {
+		wanted = wanted || (live[i].on.Alias != "" && !live[i].website)
+	}
+	if !wanted {
+		return nil
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return err
+	}
+	in := mainAddressInputs{
+		Tenants: tenants.Items, KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(),
+		TenancyMode: r.TenancyMode, MainAddressTenant: r.MainAddressTenant, Now: time.Now(),
+	}
+	for i := range live {
+		live[i].alias = aliasHostFor(in, tenant, comp, &live[i])
+	}
+	return nil
+}
+
+// aliasHostFor is where one live surface's alias answers, or "". A website
+// on the cluster's main address has none: it is under the cluster's domain
+// already.
+func aliasHostFor(in mainAddressInputs, tenant *gentianov1alpha1.Tenant, comp *gentianov1alpha1.Component, p *perimeterEnablement) string {
+	if p.on.Alias == "" || p.website {
+		return ""
+	}
+	return addresses.AliasHost(in, tenant.Name, comp.Name, p.on.ExposureName)
 }
 
 // ensureDMZNamespace makes the tenant's perimeter namespace, labelled by tier
@@ -548,6 +593,16 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(p.host)},
 			Rules:     rules,
 		},
+	}
+	if p.alias != "" {
+		// The same route on the alias's own listener: one proxy, the same
+		// paths and the same limits, at a second name. The proxy answers
+		// for any host and passes the one it was asked for on.
+		aliasSection := gatewayv1.SectionName(perimeterListenerName(p.alias))
+		route.Spec.ParentRefs = append(route.Spec.ParentRefs, gatewayv1.ParentReference{
+			Name: gwName, Namespace: &edge, SectionName: &aliasSection,
+		})
+		route.Spec.Hostnames = append(route.Spec.Hostnames, gatewayv1.Hostname(p.alias))
 	}
 	return upsert(ctx, r.Client, route, func(existing *gatewayv1.HTTPRoute) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, route.Spec) {

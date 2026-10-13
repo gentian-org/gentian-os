@@ -452,6 +452,50 @@ gentian exposures withdraw shop api --tenant acme
 refused "a withdrawal the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 403: publishing and withdrawing is the perimeter approver's"
 
+# A second address for a published entry, directly under the cluster's domain.
+ALIAS_ROUTE="/v1/clusters/c1/tenants/acme/exposures/shop/api/alias"
+
+fresh
+gentian exposures alias shop api --tenant acme
+refused "alias with neither --host nor --remove is a usage error"
+gentian exposures alias shop api --tenant acme --host shop.k.example --remove
+refused "alias with both is refused"
+gentian exposures alias shop --tenant acme --host shop.k.example
+refused "alias without an entry is a usage error"
+gentian exposures alias shop api --host shop.k.example
+refused "alias without --tenant is refused"
+gentian exposures alias shop 'api?x=1' --tenant acme --host shop.k.example
+refused "an entry that is not a name is refused"
+is "... and none of them changes anything" "$(writes)" ""
+
+fresh; reply PUT "${ALIAS_ROUTE}" 202 '{"status":"updated","commit":"1111222233334444"}'
+gentian exposures alias shop api --tenant acme --host shop.k.example
+is "alias succeeds" "${RC}" "0"
+is "... as one PUT to the cluster, naming the host" "$(writes | tr -d ' \n')" "PUT${ALIAS_ROUTE}{\"host\":\"shop.k.example\"}"
+has "... says where it answers as well, and names the commit" "${OUT}" "also answers at shop.k.example: committed (11112222)"
+
+fresh; reply PUT "${ALIAS_ROUTE}" 200 '{"status":"unchanged"}'
+gentian exposures alias shop api --tenant acme --host shop.k.example
+has "an alias it already has commits nothing" "${OUT}" "already answers at shop.k.example; nothing was committed"
+
+fresh; reply PUT "${ALIAS_ROUTE}" 409 '{"error":"the address is already in use: shop.k.example is tenant shop'"'"'s own address"}'
+gentian exposures alias shop api --tenant acme --host shop.k.example
+refused "an alias the director refuses ends the command non-zero"
+has "... with the director's own words" "${OUT}" "the director answered 409: the address is already in use: shop.k.example is tenant shop's own address"
+
+fresh; reply DELETE "${ALIAS_ROUTE}" 202 '{"status":"updated","commit":"5555666677778888"}'
+gentian exposures alias shop api --tenant acme --remove
+is "removing the alias is one DELETE with no body" "$(writes)" "DELETE ${ALIAS_ROUTE} "
+has "... and the entry stays at its own address" "${OUT}" "has no alias any more: committed (55556666). It stays at its own address."
+
+fresh; reply DELETE "${ALIAS_ROUTE}" 200 '{"status":"unchanged"}'
+gentian exposures alias shop api --tenant acme --remove
+has "removing an alias it does not have commits nothing" "${OUT}" "has no alias; nothing was committed"
+
+fresh; reply GET /v1/tenants/acme/exposures 200 '{"tenant":"acme","live":[{"install":"shop","exposureName":"api","owner":"u-1","reviewAt":"2027-10-09T10:00:00Z","alias":"shop"}],"expired":[],"reviewDue":[]}'
+gentian exposures list --tenant acme
+has "the list names an entry's alias" "$(grep '^shop' <<<"${OUT}" | tr -s ' ')" "shop api Public address published - shop u-1"
+
 # What a tenant's apps ask to have on the internet, and approving it.
 RULE='Any script that runs in a page on the main address can set cookies for the whole domain. The rule: publish here only a site whose scripts your organisation itself controls -- no third-party scripts and no pages uploaded by users.'
 REQUESTS='{"tenant":"acme","live":[],"expired":[],"reviewDue":[],"entries":[

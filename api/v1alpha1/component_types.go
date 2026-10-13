@@ -187,6 +187,13 @@ type ExposureEnablement struct {
 	// main address (the bare domain), copied from the Tenant's entry.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
+
+	// Alias is the label of a second address for this surface directly
+	// under the cluster's own domain, copied from the Tenant's entry.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Alias string `json:"alias,omitempty"`
 }
 
 // PrivilegeGrant answers one entry of the profile's privilege request.

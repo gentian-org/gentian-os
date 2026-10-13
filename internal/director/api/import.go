@@ -207,7 +207,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	case errors.Is(err, gitops.ErrTenantExists):
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or import under another name")
 		return
-	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken):
+	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	case err != nil:

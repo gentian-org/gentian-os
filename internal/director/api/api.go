@@ -71,6 +71,7 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
 	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
@@ -462,6 +463,13 @@ func (s *Server) routes() {
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// A second address for one published surface, directly under the
+		// cluster's own domain. can_configure, and not the tenant's
+		// approver: a name under the cluster's domain is the cluster's to
+		// give. The approver publishes the surface first; this adds nothing
+		// to what is public, only where it answers.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias", "can_configure", s.clusterObject, s.setExposureAlias)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias", "can_configure", s.clusterObject, s.clearExposureAlias)
 		// Where software may enter the cluster: its catalogues. Reading is
 		// can_audit, like the settings; every change is can_configure -- a
 		// catalogue for every tenant, a catalogue for one tenant, and
@@ -1494,7 +1502,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
 		return
 	}
-	if errors.Is(err, gitops.ErrSingleTenancy) {
+	if errors.Is(err, gitops.ErrSingleTenancy) || errors.Is(err, gitops.ErrNameIsAlias) {
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	}
@@ -1567,6 +1575,38 @@ func (s *Server) writeTenantDomain(w http.ResponseWriter, r *http.Request, c cal
 	if errors.Is(err, gitops.ErrInvalidDomain) || errors.Is(err, gitops.ErrPlatformTenantDomain) ||
 		errors.Is(err, gitops.ErrSingleTenancy) {
 		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// setExposureAlias gives a published surface a second address directly under
+// the cluster's domain: one commit of the alias on the surface's own entry.
+func (s *Server) setExposureAlias(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Host string `json:"host"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Host) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"host": "<name>.<the cluster's domain>"}; DELETE removes the alias`)
+		return
+	}
+	s.writeExposureAlias(w, r, c, body.Host)
+}
+
+// clearExposureAlias takes the second address away. The surface stays at its
+// own.
+func (s *Server) clearExposureAlias(w http.ResponseWriter, r *http.Request, c call) {
+	s.writeExposureAlias(w, r, c, "")
+}
+
+func (s *Server) writeExposureAlias(w http.ResponseWriter, r *http.Request, c call, host string) {
+	res, err := s.cfg.Repo.SetExposureAlias(r.Context(), r.PathValue("t"), r.PathValue("inst"), r.PathValue("name"), host, c.meta)
+	switch {
+	case errors.Is(err, gitops.ErrAliasInvalid):
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	case errors.Is(err, gitops.ErrAliasHeld), errors.Is(err, gitops.ErrNotPublished):
+		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	}
 	s.written(w, r, res, err)

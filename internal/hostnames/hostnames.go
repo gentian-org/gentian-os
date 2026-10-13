@@ -132,6 +132,18 @@ func match(tier []Reserved, label string) *Reserved {
 	return nil
 }
 
+// Kept is the reserved name a label directly under the cluster's domain would
+// take, in either tier, or nil. It is asked for an alias, which puts a
+// tenant's surface at that level whatever the tenant's own domain is, and
+// which no component owns: nothing is admitted to a kept name there, not
+// even the component the platform ships for it.
+func Kept(label string) *Reserved {
+	if reserved := match(kernelLabels, label); reserved != nil {
+		return reserved
+	}
+	return match(platformLabels, label)
+}
+
 // PlatformShipped reports a profile the platform's own chart ships, as
 // opposed to one that reached the cluster from a catalogue.
 //

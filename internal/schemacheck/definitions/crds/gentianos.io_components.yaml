@@ -212,6 +212,13 @@ spec:
                     authMode is not repeated here: the profile's entry is the one source, and an
                     enablement cannot weaken it.
                   properties:
+                    alias:
+                      description: |-
+                        Alias is the label of a second address for this surface directly
+                        under the cluster's own domain, copied from the Tenant's entry.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
                     apex:
                       description: |-
                         Apex is the approver saying that this surface is for the cluster's

@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 )
 
 // ensureKernelGatewayTunnelIngress programs explicit kernel and tenant apex hostnames
@@ -74,6 +75,23 @@ func ensureKernelGatewayTunnelIngress(
 	}
 	for _, d := range effectiveDomains {
 		hosts[d] = struct{}{}
+	}
+	// A published surface's alias is a name directly under the cluster's
+	// domain that no kernel route and no tenant's zone covers: the wildcard
+	// rule is gone (below), so it needs a rule and a record of its own.
+	aliasInputs := addresses.Inputs{
+		Tenants: tenantList.Items, KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode,
+	}
+	for i := range tenantList.Items {
+		tenant := &tenantList.Items[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		for _, e := range tenant.Spec.Exposures {
+			if alias := addresses.AliasHost(aliasInputs, tenant.Name, e.Install, e.ExposureName); alias != "" {
+				hosts[alias] = struct{}{}
+			}
+		}
 	}
 
 	logger := ctrl.LoggerFrom(ctx)

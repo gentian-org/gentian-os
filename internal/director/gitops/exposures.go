@@ -92,6 +92,13 @@ type Exposure struct {
 	// entry. Empty on an entry approved before the rule was asked.
 	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
 	ApexAcknowledgedAt string `json:"apexAcknowledgedAt,omitempty"`
+	// Alias is the label of a second address for this surface directly under
+	// the cluster's own domain, with who set it and when. The cluster
+	// administrator's, not the approver's (SetExposureAlias): a review keeps
+	// it, and withdrawing the surface takes it away.
+	Alias      string `json:"alias,omitempty"`
+	AliasSetBy string `json:"aliasSetBy,omitempty"`
+	AliasSetAt string `json:"aliasSetAt,omitempty"`
 }
 
 // The kinds of approval, by the names the Tenant's schema has for them
@@ -237,6 +244,9 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	replaced := false
 	now := time.Now().UTC().Format(time.RFC3339)
 	e.LastReviewedBy, e.LastReviewedAt = e.Owner, now
+	// An alias is never the approver's to state: it comes from the entry
+	// being reviewed, below, or not at all.
+	e.Alias, e.AliasSetBy, e.AliasSetAt = "", "", ""
 	// The acknowledgement is dated here, like the review, and is never carried
 	// over from the old entry: what is recorded is always somebody who was
 	// told, for this publication or this review. Only an apex entry has one.
@@ -249,8 +259,14 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	for _, h := range have {
 		if h.Key() == e.Key() {
 			// The reviewer is whoever is calling; the owner and the date it
-			// was first published are the entry's own.
+			// was first published are the entry's own. So is its alias: the
+			// cluster administrator gave it, and an approver's review is not
+			// what takes it away. Only a surface that stays a public address
+			// off the main address keeps one.
 			e.Owner, e.PublishedAt = h.Owner, h.PublishedAt
+			if e.Kind != KindSignInAppAuthorization && !e.Apex {
+				e.Alias, e.AliasSetBy, e.AliasSetAt = h.Alias, h.AliasSetBy, h.AliasSetAt
+			}
 			next = append(next, e)
 			replaced = true
 			verb = "Review"
@@ -377,6 +393,17 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		}
 		if e.LastReviewedAt != "" {
 			b.WriteString("      lastReviewedAt: " + e.LastReviewedAt + "\n")
+		}
+		if e.Alias != "" {
+			b.WriteString("      # A second address directly under the cluster's domain, given by the\n")
+			b.WriteString("      # cluster's administrator: <alias>.<cluster's domain>.\n")
+			b.WriteString("      alias: " + e.Alias + "\n")
+			if e.AliasSetBy != "" {
+				b.WriteString("      aliasSetBy: " + e.AliasSetBy + "\n")
+			}
+			if e.AliasSetAt != "" {
+				b.WriteString("      aliasSetAt: " + e.AliasSetAt + "\n")
+			}
 		}
 	}
 	return b.String()
