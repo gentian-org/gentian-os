@@ -79,6 +79,9 @@ type perimeterEnablement struct {
 	// stepsBack marks the platform's own surface on the bare domain while a
 	// tenant's website holds it: routed for the platform's paths only.
 	stepsBack bool
+	// keepsSignIn says the surface that steps back still answers /sign-in:
+	// on a multi-tenancy cluster, where that path is the sign-in form.
+	keepsSignIn bool
 }
 
 // perimeterMainAddress is what the main address means for one component's
@@ -87,6 +90,11 @@ type perimeterMainAddress struct {
 	// entry is this component's entry that holds the main address, and host
 	// the address; both empty when none does.
 	entry, host string
+	// signInKept says the platform's page on the bare domain keeps /sign-in
+	// while a website holds the address: on a multi-tenancy cluster that
+	// path is the sign-in form itself. Under single the kernel's front door
+	// sends it to the user tenant's desktop instead.
+	signInKept bool
 	// held says a tenant's website holds the main address, whoever's it is.
 	held bool
 }
@@ -141,7 +149,8 @@ func livePerimeterExposures(
 		}
 		out = append(out, perimeterEnablement{
 			spec: spec, on: on, host: host, website: website,
-			stepsBack: zone.kernel && spec.Apex && main.held,
+			stepsBack:   zone.kernel && spec.Apex && main.held,
+			keepsSignIn: main.signInKept,
 		})
 	}
 	return out
@@ -555,7 +564,9 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 // One exception. The platform's own surface on the bare domain steps back
 // while a tenant's website holds that address: it is then routed for the
 // platform's paths only (mainAddressPlatformPrefixes), as far as it declared
-// them, so that the website's whole-host route has no equal to tie with.
+// them, so that the website's whole-host route has no equal to tie with. On
+// a multi-tenancy cluster it keeps /sign-in as well: that is where the form
+// lives, and with a website on the front page it is the form's only address.
 func perimeterRoutePrefixes(p *perimeterEnablement) []string {
 	declared := perimeterPrefixes(p.spec)
 	if !p.stepsBack {
@@ -569,7 +580,11 @@ func perimeterRoutePrefixes(p *perimeterEnablement) []string {
 			out = append(out, prefix)
 		}
 	}
-	for _, kept := range mainAddressPlatformPrefixes() {
+	keeps := mainAddressPlatformPrefixes()
+	if p.keepsSignIn {
+		keeps = append(keeps, mainAddressSignInPrefix)
+	}
+	for _, kept := range keeps {
 		for _, d := range declared {
 			switch {
 			case pathWithin(kept, d):
@@ -622,9 +637,17 @@ func (r *ComponentReconciler) mainAddressFor(
 	in := mainAddressInputs{
 		Tenants: tenants.Items, Profiles: profiles,
 		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
-		Now: time.Now(),
+		MainAddressTenant: r.MainAddressTenant,
+		Now:               time.Now(),
 	}
-	main := perimeterMainAddress{held: mainAddressHolder(in) != nil}
+	main := perimeterMainAddress{
+		held: mainAddressHolder(in) != nil,
+		// Under single the kernel's front door sends /sign-in to the user
+		// tenant's desktop. Under multi there is no one desktop to send it
+		// to: /sign-in is the form that asks who is asking, and that form is
+		// the platform's own page.
+		signInKept: gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) != gentianov1alpha1.TenancyModeSingle,
+	}
 	if tenantAdoptsKernelRealm(tenant, r.kernelRealm()) {
 		// The platform's own page: it is on the bare domain either way, and
 		// has no decision to report.

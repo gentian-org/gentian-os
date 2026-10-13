@@ -81,6 +81,7 @@ var clusterSettings = []ClusterSetting{
 	{Path: "mail.ssl", Doc: "Whether the relay is reached over implicit TLS.", OneOf: []string{"true", "false"}},
 	{Path: "mail.egressHost", Doc: "The name that resolves to the address mail leaves from, for SPF."},
 	{Path: "tenancyMode", Doc: "Whether this cluster serves one tenant or many.", OneOf: []string{"single", "multi"}},
+	{Path: "mainAddress.tenant", Doc: "The tenant that may put a website on the cluster's main address, the bare domain, under either tenancy mode. Empty: the user tenant on a single-tenancy cluster, and nobody on a multi-tenancy one, whose main address is then the sign-in form."},
 	{Path: "platformRoles.admin", Doc: "The Keycloak group that administers this cluster."},
 	{Path: "platformRoles.auditor", Doc: "The Keycloak group that may read across tenants."},
 	{Path: "platformRoles.securityOfficer", Doc: "The Keycloak group that approves what escapes the default posture."},

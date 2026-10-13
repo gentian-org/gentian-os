@@ -296,7 +296,8 @@ func (s *Server) readExposureView(ctx context.Context, tenant string) (*exposure
 	v.inputs = addresses.Inputs{
 		Profiles:     v.profiles,
 		KernelDomain: kernelDomain, KernelRealm: kernelRealmName, TenancyMode: settings["tenancyMode"],
-		Now: time.Now(),
+		MainAddressTenant: settings[mainAddressTenantSetting],
+		Now:               time.Now(),
 	}
 	return v, nil
 }

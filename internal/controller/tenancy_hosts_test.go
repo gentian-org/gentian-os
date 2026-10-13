@@ -282,7 +282,7 @@ func TestTheBareDomainIsOnThePerimeterWithTheClustersCertificate(t *testing.T) {
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{"concierge": concierge}
 
 	apex := func(mode string) *gatewayv1.Listener {
-		gw := buildPerimeterGateway("k.example", mode, "kernel", []gentianov1alpha1.Tenant{*platform}, profiles)
+		gw := buildPerimeterGateway("k.example", mode, "", "kernel", []gentianov1alpha1.Tenant{*platform}, profiles)
 		for i := range gw.Spec.Listeners {
 			if h := gw.Spec.Listeners[i].Hostname; h != nil && string(*h) == "k.example" {
 				return &gw.Spec.Listeners[i]

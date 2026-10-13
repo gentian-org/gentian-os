@@ -498,10 +498,12 @@ at the main address. `tenants domain user --remove` is not refused, for a
 tenant that was bound before.
 
 A website at the cluster's main address (`https://<kernel-domain>/` and
-`www.`) exists only here. A profile declares the entry (`apex: true`), and
-`kubectl gentian exposures approve <app> <entry> --tenant user
---acknowledge-main-address-rule` publishes it; the director refuses that
-approval for any tenant but the user tenant of a single-tenancy cluster.
+`www.`) is the user tenant's here without the claim saying so. A profile
+declares the entry (`apex: true`), and `kubectl gentian exposures approve
+<app> <entry> --tenant user --acknowledge-main-address-rule` publishes it;
+the director refuses that approval for any other tenant. On a multi-tenancy
+cluster the same is had by naming a tenant in `mainAddress.tenant` on the
+claim ([routing.md §5](design/routing.md#5-redirects-and-url-control)).
 
 Who approves in the user tenant: the platform admin, a member of the group
 `gentian:tenant:user:perimeter`, which the tenant is created with, empty, and

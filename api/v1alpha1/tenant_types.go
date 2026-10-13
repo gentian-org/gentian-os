@@ -259,8 +259,10 @@ type TenantExposure struct {
 
 	// Apex is the approver saying that this surface is for the cluster's
 	// main address: the bare domain. The profile's entry must say apex too;
-	// neither alone publishes anything. It is honoured for the one user
-	// tenant of a single-tenancy cluster and for one surface at a time.
+	// neither alone publishes anything. It is honoured for the one tenant
+	// that may hold the main address -- the one the Cluster claim names, or
+	// the user tenant of a single-tenancy cluster -- and for one surface at
+	// a time.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
 

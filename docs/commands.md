@@ -518,8 +518,10 @@ approved only with `--acknowledge-main-address-rule`. The command first
 prints the director's rule for a website there in full, and the name of
 whoever acknowledged it is recorded with the entry. `--yes` does not
 acknowledge it, and the flag is refused for an entry that is not for the
-main address. The director approves such an entry only for the user tenant
-of a single-tenancy cluster (`--tenant user`); the website then answers at
+main address. The director approves such an entry only for the one tenant
+that may hold the main address: the user tenant of a single-tenancy cluster
+(`--tenant user`), or the tenant the Cluster claim names for it
+(`mainAddress.tenant`, under either mode); the website then answers at
 `https://<kernel-domain>/` and `www.`.
 
 ```bash

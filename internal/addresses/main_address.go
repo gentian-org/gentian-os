@@ -19,17 +19,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // A website on the cluster's main address (routing.md §5).
 //
-// The main address is the cluster's bare domain. On a single-tenancy cluster
-// the one user tenant may put a public website there. It is the most visible
+// The main address is the cluster's bare domain. One tenant may put a public
+// website there: the one the cluster names (spec.mainAddress.tenant on the
+// Cluster claim), under either tenancy mode, and where it names none, the
+// user tenant of a single-tenancy cluster. A multi-tenancy cluster that names
+// none keeps its main address for the sign-in form. It is the most visible
 // page of the cluster and nobody is signed in on it, so every condition is
 // explicit and all of them must hold:
 //
-//   - the cluster's tenancy mode is single, and the tenant is the user tenant
-//     on the cluster's own domain;
+//   - the tenant is the one the cluster names, or, where it names none, the
+//     user tenant of a single-tenancy cluster on the cluster's own domain;
 //   - the profile's entry is a perimeter one that says apex;
 //   - the tenant's perimeter approver published it and said apex too;
 //   - it has not expired, and it stays off the paths the platform keeps;
@@ -111,18 +115,34 @@ type Inputs struct {
 	KernelDomain string
 	KernelRealm  string
 	TenancyMode  string
-	Now          time.Time
+	// MainAddressTenant is the tenant the cluster names for its main address
+	// (spec.mainAddress.tenant on the Cluster claim), under either tenancy
+	// mode. Empty is the default of the mode: the user tenant on a
+	// single-tenancy cluster, and nobody on a multi-tenancy one, whose main
+	// address is then the sign-in form.
+	MainAddressTenant string
+	Now               time.Time
 }
 
-// UserTenant is the one user tenant of a single-tenancy cluster, or nil.
-func (in Inputs) UserTenant() *gentianov1alpha1.Tenant {
-	if gentianov1alpha1.NormalizeTenancyMode(in.TenancyMode) != gentianov1alpha1.TenancyModeSingle {
+// MainTenantName is the name of the tenant that may hold the main address,
+// or "" where the cluster has none: the one it names, else the user tenant
+// of a single-tenancy cluster.
+func (in Inputs) MainTenantName() string {
+	return tenancy.MainAddressTenant(in.TenancyMode, in.MainAddressTenant)
+}
+
+// MainTenant is the tenant that may hold the main address, or nil: the one
+// MainTenantName names, where it exists, is not being deleted and has a realm
+// of its own. Never the tenant that adopts the kernel realm: the accounts of
+// that realm administer the cluster, and its own page is the sign-in form.
+func (in Inputs) MainTenant() *gentianov1alpha1.Tenant {
+	name := in.MainTenantName()
+	if name == "" {
 		return nil
 	}
 	for i := range in.Tenants {
 		t := &in.Tenants[i]
-		if t.DeletionTimestamp == nil && t.Name == gentianov1alpha1.SingleUserTenantName &&
-			!AdoptsKernelRealm(t, in.KernelRealm) {
+		if t.DeletionTimestamp == nil && t.Name == name && !AdoptsKernelRealm(t, in.KernelRealm) {
 			return t
 		}
 	}
@@ -160,13 +180,21 @@ func (in Inputs) Refusal(tenant *gentianov1alpha1.Tenant, e *gentianov1alpha1.Te
 		return "NotRequested", fmt.Sprintf(
 			"%s/%s is declared for the cluster's main address and is published only when the approver says so (apex: true on the request). Nothing is published",
 			e.Install, e.ExposureName)
-	case gentianov1alpha1.NormalizeTenancyMode(in.TenancyMode) != gentianov1alpha1.TenancyModeSingle:
-		return "MultiTenancy", "this cluster's tenancy mode is multi: its main address is the sign-in form and no tenant's website. Nothing is published"
-	case in.UserTenant() == nil || in.UserTenant().Name != tenant.Name:
+	case in.MainTenantName() == "":
+		return "MultiTenancy", "this cluster's tenancy mode is multi and it names no tenant for its main address (mainAddress.tenant on the Cluster claim): the main address is the sign-in form and no tenant's website. Nothing is published"
+	case in.MainAddressTenant != "" && (in.MainTenant() == nil || in.MainTenant().Name != tenant.Name):
+		return "NotTheMainAddressTenant", fmt.Sprintf(
+			"the cluster names the tenant %q for its main address (mainAddress.tenant on the Cluster claim), and only that tenant may put a website there. Nothing is published",
+			in.MainAddressTenant)
+	case in.MainTenant() == nil || in.MainTenant().Name != tenant.Name:
 		return "NotTheUserTenant", fmt.Sprintf(
 			"only the user tenant %q may put a website on the cluster's main address. Nothing is published",
 			gentianov1alpha1.SingleUserTenantName)
-	case !onClusterDomain(tenant.EffectiveDomain(in.KernelDomain, in.TenancyMode), in.KernelDomain):
+	// The user tenant holds the main address because it is that tenant's own
+	// address, and it is not once a domain of its own is bound to it. A
+	// tenant the cluster names holds it because the cluster says so, on
+	// whatever domain its other addresses are.
+	case in.MainAddressTenant == "" && !onClusterDomain(tenant.EffectiveDomain(in.KernelDomain, in.TenancyMode), in.KernelDomain):
 		return "OwnDomain", "this tenant is on a domain of its own, so the cluster's main address is not its address. Nothing is published"
 	case e.ExpiresAt != nil && !in.Now.Before(e.ExpiresAt.Time):
 		return "Expired", fmt.Sprintf("the approval of %s/%s for the main address has expired. Nothing is published", e.Install, e.ExposureName)
@@ -191,7 +219,7 @@ func (in Inputs) Refusal(tenant *gentianov1alpha1.Tenant, e *gentianov1alpha1.Te
 // first holds it and keeps it: a later request cannot take a running website
 // off the address.
 func Holder(in Inputs) *Claim {
-	tenant := in.UserTenant()
+	tenant := in.MainTenant()
 	if tenant == nil {
 		return nil
 	}

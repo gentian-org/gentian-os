@@ -1211,6 +1211,10 @@ spec:
                     # tenant is reachable at is derived from this, so the two disagreeing
                     # is not cosmetic.
                     tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
+                    # The tenant that may put a website on the main address,
+                    # or "" for the mode's default. The operator reads it with
+                    # the mode, since the two decide one thing together.
+                    mainAddress.tenant: {{ dig "mainAddress" "tenant" "" $spec | quote }}
                     # How a credential nothing has stored yet is made: derived
                     # from the master password, or random. The installer reads
                     # the claim for the kernel's credentials; this is where the

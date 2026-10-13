@@ -32,13 +32,14 @@ import (
 // from the same source instead of from a Helm value that has to be kept in
 // agreement by hand.
 const (
-	clusterConfigName          = "gentian-cluster-config"
-	clusterConfigLLMKey        = "llm.enabled"
-	clusterConfigLLMConsoleKey = "llm.console.enabled"
-	clusterConfigTenancyKey    = "tenancyMode"
-	clusterConfigMailModeKey   = "mail.serviceMode"
-	clusterConfigMailEgressKey = "mail.egressHost"
-	clusterConfigSecretModeKey = "secretMode"
+	clusterConfigName           = "gentian-cluster-config"
+	clusterConfigLLMKey         = "llm.enabled"
+	clusterConfigLLMConsoleKey  = "llm.console.enabled"
+	clusterConfigTenancyKey     = "tenancyMode"
+	clusterConfigMailModeKey    = "mail.serviceMode"
+	clusterConfigMailEgressKey  = "mail.egressHost"
+	clusterConfigSecretModeKey  = "secretMode"
+	clusterConfigMainAddressKey = "mainAddress.tenant"
 )
 
 // clusterConfigValue returns what the claim says for key, or the named
@@ -90,6 +91,16 @@ func clusterConfigValueOr(ctx context.Context, c client.Reader, key, fallback st
 // claim and nothing else.
 func ClusterTenancyMode(ctx context.Context, c client.Reader, fallback string) string {
 	return clusterConfigValueOr(ctx, c, clusterConfigTenancyKey, fallback)
+}
+
+// ClusterMainAddressTenant is the tenant the claim names for the cluster's
+// main address, or "" where it names none (spec.mainAddress.tenant). Empty is
+// the default of the tenancy mode: the user tenant under single, and the
+// sign-in form with no tenant's website under multi. Read at start with the
+// tenancy mode, for the same reason: which website answers on the bare domain
+// is not something the running operator and the claim may disagree about.
+func ClusterMainAddressTenant(ctx context.Context, c client.Reader) string {
+	return clusterConfigValueOr(ctx, c, clusterConfigMainAddressKey, "")
 }
 
 // clusterMailServiceMode reports this cluster's mail stack — kernel or external.

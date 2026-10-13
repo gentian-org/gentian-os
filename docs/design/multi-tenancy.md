@@ -73,9 +73,11 @@ the sign-in side and the table of addresses):
    `TenantDomain` binds it to. The install creates none; the platform admin
    does, in the admin console or with `kubectl gentian tenants create`. The bare domain,
    `www` and `desktop.<KERNEL_DOMAIN>` lead to the concierge's address form.
-   No tenant can put a website on the main address here: it belongs to all
-   of them. A tenant publishes its website under its own hosts, or on a
-   domain of its own (a custom domain).
+   No tenant can put a website on the main address here unless the cluster
+   names one for it (`mainAddress.tenant` on the Cluster claim): it belongs
+   to all of them, and the cluster's administrator decides. A tenant
+   publishes its website under its own hosts, or on a domain of its own (a
+   custom domain).
 4. **`single`: exactly one user tenant, named `user`, on the cluster's own
    addresses.** Its desktop is `desktop.<KERNEL_DOMAIN>`, its admin console
    `admin.<KERNEL_DOMAIN>`, its apps `<app>.<KERNEL_DOMAIN>`, and the bare
@@ -105,14 +107,16 @@ the sign-in side and the table of addresses):
    administrator can turn it off for the user tenant as for any other; a
    user tenant whose manifest already exists is not rewritten.
 
-**A website on the main address** is the user tenant's alone, and only under
-`single`. It is published when all of this holds
-(`internal/addresses/main_address.go`): the profile's entry is a perimeter
-one that says `apex`; the tenant's approver published it and said `apex` too;
-the approval has not expired; the entry stays off the paths the platform
-keeps there (`/branding/`, `/sign-in`, `/.well-known/acme-challenge/`,
-`/.well-known/pki-validation/`); the tenant is Ready and still on the
-cluster's own domain; and no surface published earlier holds the address.
+**A website on the main address** is one tenant's: the tenant the Cluster
+claim names for it (`mainAddress.tenant`, under either mode), or, where it
+names none, the user tenant under `single`. It is published when all of this
+holds (`internal/addresses/main_address.go`): the profile's entry is a
+perimeter one that says `apex`; the tenant's approver published it and said
+`apex` too; the approval has not expired; the entry stays off the paths the
+platform keeps there (`/branding/`, `/sign-in`, `/.well-known/acme-challenge/`,
+`/.well-known/pki-validation/`); the tenant is Ready, and, for the user
+tenant, still on the cluster's own domain; and no surface published earlier
+holds the address.
 Otherwise nothing is published and the component says why
 ([routing.md §5](routing.md#5-redirects-and-url-control)).
 

@@ -647,7 +647,11 @@ asked for (`tenancyMode` on the Cluster claim).
 | `desktop.<kernel-domain>` | leads to that page | the user tenant's desktop |
 | The **platform admin** | `admin@<kernel-domain>` at `https://platform.<kernel-domain>/`; admin console at `admin.platform.<kernel-domain>` | the same |
 
-**On a single-tenancy cluster your website can live at the main address.**
+**Your website can live at the main address.** On a single-tenancy cluster
+that is the user tenant's right; on a multi-tenancy cluster the main address
+is the sign-in form unless the claim names a tenant for it
+(`mainAddress.tenant`, set by you: a script there reaches every tenant's
+sign-in, so name a tenant only where you control the site's scripts).
 Install an app that offers a public website for it, then approve that surface
 for the main address (`kubectl gentian exposures approve`, by whoever
 approves public addresses in the tenant — the user admin, the members of the
@@ -997,8 +1001,9 @@ differs is listed here, in the order you meet it.
    kubectl gentian exposures approve <app> <entry> --tenant <tenant> [--expires <date>] [--reason "<why>"]
    ```
 
-   An entry for the cluster's main address is approved only on a
-   single-tenancy cluster, for the tenant `user`, and only with
+   An entry for the cluster's main address is approved only for the one
+   tenant that may hold it (the tenant `user` on a single-tenancy cluster,
+   or the tenant `mainAddress.tenant` on the claim names), and only with
    `--acknowledge-main-address-rule` added: the command prints the
    director's rule for a website there, and the flag says the rule is true
    of this site. `--yes` does not stand in for it.

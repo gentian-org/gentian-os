@@ -199,6 +199,12 @@ func main() {
 		setupLog.Info("tenancy mode taken from the Cluster claim",
 			"claim", tenancyMode, "helmValue", os.Getenv("TENANCY_MODE"))
 	}
+	// Which tenant may put a website on the cluster's main address, from the
+	// claim with the tenancy mode. Empty is the mode's own default.
+	mainAddressTenant := controller.ClusterMainAddressTenant(context.Background(), bootClient())
+	if mainAddressTenant != "" {
+		setupLog.Info("the cluster names a tenant for its main address", "tenant", mainAddressTenant)
+	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
 	// Exec lets a profile's maintenance-mode and restore hooks run inside the
@@ -337,32 +343,34 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:         mgr.GetClient(),
-		KernelDomain:   os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:    tenancyMode,
-		RoutingMode:    routingMode,
-		Ingress:        buildEdgeIngress(),
-		Cluster:        envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		KernelRealm:    kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		BouncerService: envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
+		Client:            mgr.GetClient(),
+		KernelDomain:      os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:       tenancyMode,
+		MainAddressTenant: mainAddressTenant,
+		RoutingMode:       routingMode,
+		Ingress:           buildEdgeIngress(),
+		Cluster:           envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		BouncerService:    envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
 	}
 
 	if err := (&controller.ComponentReconciler{
-		Definitions:    held,
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		KernelDomain:   os.Getenv("KERNEL_DOMAIN"),
-		KernelRealm:    kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		TenancyMode:    tenancyMode,
-		Cluster:        envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		BouncerService: envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
-		DirectorURL:    os.Getenv("DIRECTOR_URL"),
-		UsherURL:       os.Getenv("USHER_URL"),
-		Seeder:         buildSeeder(),
-		Recorder:       mgr.GetEventRecorderFor("component"), //nolint:staticcheck
+		Definitions:       held,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		KernelDomain:      os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		TenancyMode:       tenancyMode,
+		MainAddressTenant: mainAddressTenant,
+		Cluster:           envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		BouncerService:    envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
+		DirectorURL:       os.Getenv("DIRECTOR_URL"),
+		UsherURL:          os.Getenv("USHER_URL"),
+		Seeder:            buildSeeder(),
+		Recorder:          mgr.GetEventRecorderFor("component"), //nolint:staticcheck
 		// What a component that asked where the App Store is gets told.
 		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
 		WatchClusterClaim: true,

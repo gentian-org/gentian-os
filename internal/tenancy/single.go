@@ -93,3 +93,22 @@ func SoleUserTenant(tenancyMode, name string) bool {
 	return gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeSingle &&
 		name == gentianov1alpha1.SingleUserTenantName
 }
+
+// MainAddressTenant is the name of the tenant that may put a website on the
+// cluster's main address, or "" where none may: the tenant the cluster names
+// (spec.mainAddress.tenant on the Cluster claim), under either tenancy mode;
+// else the user tenant of a single-tenancy cluster, whose address the main
+// address is. A multi-tenancy cluster that names none keeps its main address
+// for the sign-in form.
+//
+// Asked by the operator and the director alike, of the two settings alone,
+// for the reason SoleUserTenant gives.
+func MainAddressTenant(tenancyMode, named string) string {
+	if named != "" {
+		return named
+	}
+	if gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeSingle {
+		return gentianov1alpha1.SingleUserTenantName
+	}
+	return ""
+}

@@ -232,7 +232,8 @@ func (r *GatewayPlatformReconciler) mainAddressWebsiteServing(ctx context.Contex
 	holder := mainAddressHolder(mainAddressInputs{
 		Tenants: tenants, Profiles: profiles,
 		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
-		Now: time.Now(),
+		MainAddressTenant: r.MainAddressTenant,
+		Now:               time.Now(),
 	})
 	if holder == nil {
 		return false, nil
@@ -292,6 +293,11 @@ func zonedTenantDomains(tenants []gentianov1alpha1.Tenant, kernelDomain, tenancy
 //	                          which every desktop loads from the bare domain
 //	        www.<kernel>      -> the user tenant's desktop
 //	        desktop.<kernel>  the user tenant's desktop itself (its component)
+//
+// A multi-tenancy cluster whose claim names a tenant for the main address
+// (main_address.go) changes nothing here: the website and the sign-in form
+// share the bare domain's perimeter listener, the form steps back to the
+// platform's paths and /sign-in, and www already leads to the bare domain.
 //
 // And on a single-tenancy cluster whose user tenant has a website on the
 // main address (main_address.go), once that website's proxy is up:
