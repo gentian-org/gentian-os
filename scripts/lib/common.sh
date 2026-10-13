@@ -2387,16 +2387,22 @@ gentian_mail_service_mode() {
 # must not start sending reports from a cluster whose owner turned them off.
 # A cluster that has no operator Application yet has said nothing, and
 # reports.
+#
+# The switch was called licenceReport before it had this name. A cluster
+# whose owner turned it off then is still off: a rename must not be what
+# starts sending from it.
 # =============================================================================
 gentian_usage_statistics_enabled() {
     case "${GENTIAN_NO_USAGE_STATISTICS:-}" in
         1) echo false; return 0 ;;
         0) echo true; return 0 ;;
     esac
-    local have
+    local have before
     have="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
         -o jsonpath='{.spec.sources[0].helm.valuesObject.usageStatistics.enabled}' 2>/dev/null || true)"
-    if [[ "${have}" == "false" ]]; then
+    before="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.licenceReport.enabled}' 2>/dev/null || true)"
+    if [[ "${have}" == "false" || ( -z "${have}" && "${before}" == "false" ) ]]; then
         echo false
     else
         echo true
