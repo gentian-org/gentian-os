@@ -1823,9 +1823,14 @@ issue_admin_activation() {
         return 1
     fi
     base="${base}/auth"
-    token="$(curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
-        --data-urlencode "username=${kc_user}" --data-urlencode "password=${kc_pass}" \
-        "${base}/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty')"
+    # A function, because the token is asked for twice: here, and again after
+    # the question below. See there.
+    _activation_admin_token() {
+        curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
+            --data-urlencode "username=${kc_user}" --data-urlencode "password=${kc_pass}" \
+            "${base}/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty'
+    }
+    token="$(_activation_admin_token)"
     [[ -n "${token}" ]] || { warn "  Keycloak refused the installer's admin credential."; return 1; }
     local auth="Authorization: Bearer ${token}"
     uid="$(curl -sS --max-time 15 -H "${auth}" \
@@ -1864,6 +1869,15 @@ issue_admin_activation() {
     if [[ "${can_mail}" == "true" && -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
         printf '  Recovery email for %s (Enter to show the link here instead): ' "${username}"
         read -r email || email=""
+        # A new token after the question. The master realm's access tokens
+        # live for 60 seconds (see _keycloak_refresh_token_shell), and this
+        # one was drawn before a person was asked to type an address: anyone
+        # who took a minute over it had every call below refused with 401.
+        # The mail was then reported as unsendable and the link as not
+        # issued, on a cluster where both worked.
+        token="$(_activation_admin_token)"
+        [[ -n "${token}" ]] || { warn "  Keycloak refused the installer's admin credential."; return 1; }
+        auth="Authorization: Bearer ${token}"
     fi
     # Where the person lands afterwards: the zone client's own root, read off
     # the client the way the director's invitations read it. A redirect the
@@ -1892,16 +1906,27 @@ issue_admin_activation() {
         mailed_actions="$(jq -c '["VERIFY_EMAIL"] + .' <<<"${actions}")"
         cur="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
         upd="$(printf '%s' "${cur}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
-        if curl -sf --max-time 15 -X PUT -H "${auth}" -H "Content-Type: application/json" \
-                "${base}/admin/realms/${realm}/users/${uid}" -d "${upd}" >/dev/null &&
-           curl -sf --max-time 30 -X PUT -H "${auth}" -H "Content-Type: application/json" \
+        # What Keycloak answered, kept: the two calls fail for different
+        # reasons -- a refused credential, an address the realm rejects, a
+        # mail server that does not take the message -- and "could not be
+        # sent" with a guess after it named none of them.
+        local saved sent
+        saved="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -X PUT -H "${auth}" -H "Content-Type: application/json" \
+                "${base}/admin/realms/${realm}/users/${uid}" -d "${upd}" 2>/dev/null || true)"
+        if [[ "${saved}" != 2* ]]; then
+            warn "  ${email} could not be recorded as ${username}'s address: Keycloak answered HTTP ${saved:-nothing}."
+            warn "  Showing the link here instead."
+        else
+            sent="$(curl -sS --max-time 30 -w '\n%{http_code}' -X PUT -H "${auth}" -H "Content-Type: application/json" \
                 "${base}/admin/realms/${realm}/users/${uid}/execute-actions-email?client_id=${client}${redirect:+&redirect_uri=$(jq -rn --arg r "${redirect}" '$r|@uri')}" \
-                -d "${mailed_actions}" >/dev/null; then
-            success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
-            return 0
+                -d "${mailed_actions}" 2>/dev/null || true)"
+            if [[ "${sent##*$'\n'}" == 2* ]]; then
+                success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
+                return 0
+            fi
+            warn "  The activation mail could not be sent: Keycloak answered HTTP ${sent##*$'\n'} $(printf '%s' "${sent%$'\n'*}" | jq -r '.errorMessage // .error // empty' 2>/dev/null)"
+            warn "  ${email} is kept as the recovery address; showing the link here instead."
         fi
-        warn "  The activation mail could not be sent (is the realm's mail configured yet?)."
-        warn "  ${email} is kept as the recovery address; showing the link here instead."
     fi
     local answer link expires
     answer="$(curl -sS --max-time 15 -w '\n%{http_code}' -X POST -H "${auth}" -H "Content-Type: application/json" \
