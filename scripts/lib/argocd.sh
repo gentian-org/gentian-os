@@ -82,10 +82,31 @@ argocd_repo_needs_credential() {
 # Neither is a credential Argo CD can use yet. The value is tested for being
 # there and is never printed.
 argocd_claim_repo_credential_present() {
-    local name
-    name="$(_repo_credential "$1" vault)" || return 1
-    [[ -n "$(kubectl get secret "repo-${name}" -n "$(gentian_argocd_namespace)" \
+    local secret
+    secret="$(argocd_claim_repo_secret_name "$1")" || return 1
+    [[ -n "$(kubectl get secret "${secret}" -n "$(gentian_argocd_namespace)" \
         -o jsonpath='{.data.password}{.data.bearerToken}' 2>/dev/null)" ]]
+}
+
+# argocd_claim_repo_secret_name <requirement> -- the name of that Secret.
+#
+# Not repo-<claim name>. repository-default names it after the composite,
+# repo-<claim name>-<suffix>, because it lands in Argo CD's one namespace and
+# two claims of the same name in different namespaces must not write the same
+# Secret. The suffix is generated, so it is read off the claim. Asking for
+# repo-<claim name> found nothing on any cluster: the handoff never confirmed,
+# the bootstrap bridge stayed for good, and C-05 was reported outstanding
+# after every install.
+#
+# Fails, printing nothing, while the claim does not exist or has composed
+# nothing yet.
+argocd_claim_repo_secret_name() {
+    local name composite
+    name="$(_repo_credential "$1" vault)" || return 1
+    composite="$(kubectl get repository.gentianos.io "${name}" -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)"
+    [[ -n "${composite}" ]] || return 1
+    echo "repo-${composite}"
 }
 
 # argocd_repo_credential_ok <requirement> -- whether Argo CD has what this run

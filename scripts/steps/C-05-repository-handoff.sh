@@ -20,7 +20,7 @@
 # repository, so a handoff that cannot be confirmed leaves the bridge standing
 # rather than removing the only thing that works.
 #
-# What is confirmed is the Secret Argo CD reads (repo-<name>), carrying a
+# What is confirmed is the Secret Argo CD reads (repo-<composite name>), carrying a
 # login -- not the claim's credentialSatisfied, which turns true when the
 # vault path has a value and so before External Secrets has written that
 # Secret. Once it is there it is the credential Argo CD uses, and the bridge
@@ -73,7 +73,7 @@ _c05_hand_over() {
     deadline=$((SECONDS + limit))
     until argocd_claim_repo_credential_present "${req}"; do
         if (( SECONDS > deadline )); then
-            warn "Argo CD has no vault-backed credential for ${name} after ${limit}s (Secret repo-${name} in ${ns}) — keeping the bootstrap bridge."
+            warn "Argo CD has no vault-backed credential for ${name} after ${limit}s (Secret $(argocd_claim_repo_secret_name "${req}" || echo "repo-${name}-<suffix>, not composed yet,") in ${ns}) — keeping the bootstrap bridge."
             warn "  Repository/${name} says: $(kubectl get repository.gentianos.io "${name}" -n "${claim_ns}" \
                 -o jsonpath='{.status.credentialMessage}' 2>/dev/null || true)"
             warn "  Re-run this step once the credential is in the vault:"
