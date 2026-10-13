@@ -724,6 +724,44 @@ refused "a refusal of the director ends the command"
 has "... in the director's words" "${OUT}" "the director answered 422: invalid model settings: spec.llm.providers[0].apiBase"
 
 echo ""
+echo "kubectl gentian settings"
+echo ""
+
+fresh; reply GET /v1/clusters/c1/settings 200 '{"cluster":"c1","settings":{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"system"}}'
+gentian settings show
+is "show prints the settings and nothing else" "$(jq -c '.' <<<"${OUT}")" '{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"system"}'
+is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/settings "
+
+fresh
+gentian settings set
+refused "set without a setting is a usage error"
+gentian settings set tenancyMode
+refused "... and so is one without a value"
+is "... and neither asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply PATCH /v1/clusters/c1/settings 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian settings set tenancyMode=multi mainAddress.tenant=customers
+is "set sends every setting named, in one request" "$(writes)" 'PATCH /v1/clusters/c1/settings {"settings":{"tenancyMode":"multi","mainAddress.tenant":"customers"}}'
+has "... and names the commit" "${OUT}" "committed (01234567)"
+
+fresh; reply PATCH /v1/clusters/c1/settings 200 '{"status":"unchanged"}'
+gentian settings set tenancyMode=multi
+has "a claim that already says so commits nothing" "${OUT}" "nothing was committed"
+
+fresh; reply PATCH /v1/clusters/c1/settings 400 '{"error":"unknown setting: spec.colour is not a setting"}'
+gentian settings set colour=blue
+refused "a refusal of the director ends the command"
+has "... in the director's words" "${OUT}" "the director answered 400: unknown setting"
+
+echo ""
+echo "kubectl gentian tenants retire, an orphan"
+echo ""
+
+fresh; reply DELETE /v1/clusters/c1/tenants/ghost 202 '{"status":"orphan-removed","detail":"ghost was not in git, but the cluster still ran it: it is being deleted now."}'
+gentian tenants retire ghost --yes
+has "a tenant git lacks but the cluster runs is removed, and the command says so" "${OUT}" "the cluster still ran it"
+
+echo ""
 if [[ "${fail}" -gt 0 ]]; then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
     exit 1

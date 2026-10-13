@@ -209,7 +209,12 @@ tenant's name typed out (`--yes` skips that in a script).
 
 Retire removes the tenant's directory from git; Argo CD prunes the Tenant and
 the operator tears it down under the manifest's `deletionPolicy`, `Retain`
-unless edited, so the realm, databases and files stay. Purge first commits
+unless edited, so the realm, databases and files stay. A retire of a tenant
+git does not describe asks the cluster whether it still runs it: an Argo CD
+sync that finished after the directory was removed can re-create the Tenant
+with no Application owning it, and such an orphan is deleted by the operator
+on that retire (and nothing else is — a Tenant made without Argo CD, or one
+whose Application exists, is refused with the reason). Purge first commits
 `deletionPolicy: Delete` (and the `gentianos.io/purge-requested` annotation),
 waits until the live Tenant carries it, then removes the directory; the tenant
 is listed as purging until then. A purge deletes the tenant's mailboxes
@@ -672,6 +677,25 @@ every provider on the claim once it has applied the commit.
 Whether it has been supplied is shown on the console's Models tab, not here.
 A model the cluster serves itself is always `NOT SERVED`: the platform starts
 no instance for it.
+
+## 6c. Cluster settings
+
+The Cluster claim's scalar settings — `tenancyMode`, `mainAddress.tenant`,
+`mail.serviceMode`, the metrics and certificate switches — are changed the
+same way: the director commits the claim, and the cluster takes the change
+once Argo CD has synced. The same as editing the claim in the deployments
+checkout and running `./install.sh`, without the checkout.
+
+```bash
+kubectl gentian settings show                                   # the claim's settings, as JSON
+kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
+```
+
+The director holds the list of what may be set and refuses anything else, and
+refuses `tenancyMode=single` on a cluster carrying more than the one user
+tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the
+tenants' addresses ([§3](#3-create-a-tenant)); nothing else here restarts
+anything.
 
 ## 7. Administrator Accounts
 

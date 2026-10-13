@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package applifecycle
 
 import (
+	"errors"
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,6 +40,29 @@ type TenantState struct {
 
 func (h *HTTPServer) registerTenantRoutes(mux router) {
 	mux.HandleFunc("GET /v1/tenants/{tenant}", h.handleTenantState)
+	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/remove-orphan", h.handleRemoveOrphanTenant)
+}
+
+// handleRemoveOrphanTenant deletes a Tenant git no longer describes and no
+// Argo CD Application owns (orphan_tenant.go). The director asks it when a
+// retire finds nothing in git: 202 and what was removed; 404 for a Tenant
+// the cluster does not hold; 409 with a reason for one this is not for --
+// "not-orphan" (not Argo CD's, or the platform's) or "still-declared"
+// (its Application exists, so git is the way).
+func (h *HTTPServer) handleRemoveOrphanTenant(w http.ResponseWriter, r *http.Request) {
+	res, err := h.Service.RemoveOrphanTenant(r.Context(), r.PathValue("tenant"), actorOf(r))
+	switch {
+	case apierrors.IsNotFound(err):
+		writeErr(w, http.StatusNotFound, err)
+	case errors.Is(err, ErrNotOrphan):
+		writeJSON(w, http.StatusConflict, map[string]string{"detail": err.Error(), "reason": "not-orphan"})
+	case errors.Is(err, ErrTenantDeclared):
+		writeJSON(w, http.StatusConflict, map[string]string{"detail": err.Error(), "reason": "still-declared"})
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err)
+	default:
+		writeJSON(w, http.StatusAccepted, res)
+	}
 }
 
 func (h *HTTPServer) handleTenantState(w http.ResponseWriter, r *http.Request) {

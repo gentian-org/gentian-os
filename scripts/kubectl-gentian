@@ -54,6 +54,10 @@
 #   kubectl gentian models set -f <file.json>    make the claim declare exactly these settings
 #                                                (no provider's token: that is a credential)
 #
+#   kubectl gentian settings show                the Cluster claim's settings, as JSON
+#   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
+#                                                mainAddress.tenant=<tenant>, mail.serviceMode=system ...
+#
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
@@ -627,7 +631,14 @@ cmd_tenants_retire() {
         echo "is removed once the cluster has taken that in. 'tenants list' shows it as purging until then."
         return 0
     fi
-    _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}" >/dev/null
+    answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "orphan-removed" ]]; then
+        # Git had no such tenant, but the cluster still ran it (a sync that
+        # finished after the directory was removed); the director had the
+        # operator delete it.
+        printf '%s' "${answer}" | jq -r '.detail'
+        return 0
+    fi
     echo "Tenant ${name} retired: git no longer describes it. Its data follows its deletionPolicy."
 }
 
@@ -1266,6 +1277,43 @@ cmd_models() {
     esac
 }
 
+# settings: the Cluster claim's scalar settings, read from git and changed
+# there. The director holds the list of what may be set (its allowlist) and
+# refuses the rest; a change is one commit, and the cluster takes it when
+# Argo CD has synced. The same as editing the claim and running install.sh,
+# without the checkout.
+cmd_settings() {
+    local sub="${1:-}" answer status
+    shift || true
+    case "${sub}" in
+        show)
+            _discover
+            _call GET "/v1/clusters/${_CLUSTER}/settings" | jq '.settings'
+            ;;
+        set)
+            local body='{}' kv key value
+            [[ $# -gt 0 ]] || die "usage: kubectl gentian settings set <path>=<value> [<path>=<value> ...]"
+            need jq
+            for kv in "$@"; do
+                [[ "${kv}" == *=* ]] || die "not a setting: ${kv} (expected <path>=<value>, e.g. tenancyMode=multi)"
+                key="${kv%%=*}"; value="${kv#*=}"
+                [[ -n "${key}" ]] || die "not a setting: ${kv}"
+                body="$(jq -c --arg k "${key}" --arg v "${value}" '. + {($k): $v}' <<<"${body}")"
+            done
+            _discover
+            answer="$(_call PATCH "/v1/clusters/${_CLUSTER}/settings" "{\"settings\":${body}}")" || exit 1
+            status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
+            if [[ "${status}" == "unchanged" ]]; then
+                echo "The claim already says so; nothing was committed."
+            else
+                echo "Settings committed ($(_committed "${answer}")). The cluster takes them once Argo CD has synced."
+                echo "  kubectl gentian settings show"
+            fi
+            ;;
+        *) die "usage: kubectl gentian settings show|set <path>=<value> ..." ;;
+    esac
+}
+
 # tenants delegate-catalogues: whether a tenant's own administrators may add
 # catalogues for their tenant. The cluster administrator's to say.
 cmd_tenants_delegate_catalogues() {
@@ -1865,6 +1913,7 @@ main() {
         catalogue|catalogues) cmd_catalogues "$@" ;;
         repository|repositories) cmd_repositories "$@" ;;
         model|models) cmd_models "$@" ;;
+        setting|settings) cmd_settings "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         version|--version|-v) cmd_version ;;

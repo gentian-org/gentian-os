@@ -1577,12 +1577,49 @@ func (s *Server) writeTenantDomain(w http.ResponseWriter, r *http.Request, c cal
 // Whether its data goes with it is the manifest's deletionPolicy, honoured by
 // the operator, not something decided here.
 func (s *Server) retireTenant(w http.ResponseWriter, r *http.Request, c call) {
-	res, err := s.cfg.Repo.RetireTenant(r.Context(), r.PathValue("t"), c.meta)
+	tenant := r.PathValue("t")
+	res, err := s.cfg.Repo.RetireTenant(r.Context(), tenant, c.meta)
 	if errors.Is(err, gitops.ErrTenantProtected) {
 		s.fail(w, r, http.StatusForbidden, err.Error())
 		return
 	}
+	if errors.Is(err, gitops.ErrTenantNotFound) && s.cfg.Lifecycle != nil {
+		s.retireOrphan(w, r, c, tenant, err)
+		return
+	}
 	s.written(w, r, res, err)
+}
+
+// retireOrphan is a retire of a tenant git does not describe. The cluster
+// may still run it: an Argo CD sync that finished after the tenant's
+// directory was removed re-creates the Tenant with nothing owning it, and
+// "tenant not found" was then the answer to the one command that should
+// have removed it. The operator deletes exactly such an object
+// (applifecycle.RemoveOrphanTenant) and nothing else; a Tenant the cluster
+// does not hold either is the not-found it always was.
+func (s *Server) retireOrphan(w http.ResponseWriter, r *http.Request, c call, tenant string, notFound error) {
+	status, body, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/tenants/"+tenant+"/actions/remove-orphan", c.meta.ActorName(), nil)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, fmt.Sprintf("%s in git; asking the cluster whether it still runs it: %v", notFound, err))
+		return
+	}
+	switch status {
+	case http.StatusAccepted:
+		var removed struct {
+			Application     string `json:"application"`
+			AlreadyDeleting bool   `json:"alreadyDeleting"`
+		}
+		_ = json.Unmarshal(body, &removed)
+		detail := fmt.Sprintf("%s was not in git, but the cluster still ran it: its Application %s had been pruned while a sync was finishing, which re-created the Tenant with no owner. It is being deleted now, under its deletionPolicy.", tenant, removed.Application)
+		if removed.AlreadyDeleting {
+			detail = fmt.Sprintf("%s was not in git; the cluster is already deleting it.", tenant)
+		}
+		s.json(w, http.StatusAccepted, map[string]any{"status": "orphan-removed", "detail": detail})
+	case http.StatusNotFound:
+		s.fail(w, r, http.StatusNotFound, notFound.Error())
+	default:
+		s.fail(w, r, status, fmt.Sprintf("%s in git, and the cluster refused to remove it: %s", notFound, lifecycle.ErrorMessage(body)))
+	}
 }
 
 type clusterSettingsRequest struct {
