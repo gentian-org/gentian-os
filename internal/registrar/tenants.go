@@ -57,6 +57,12 @@ type Tenant struct {
 	// @ in a login composed from a local part, and in its administrator's
 	// login. Empty when it cannot be told yet.
 	LoginDomain string
+	// AdminLogin is the login of its administrator account, the one
+	// activate-admin hands over. Not always admin@<LoginDomain>: the user
+	// tenant of a single-tenancy cluster lives on the cluster's own domain,
+	// where admin@ is the platform administrator, and its administrator is
+	// user-admin@. Empty when it cannot be told yet.
+	AdminLogin string
 	// AdminRequiresMFA says whether activating its administrator account
 	// includes enrolling a second factor.
 	AdminRequiresMFA bool
@@ -122,10 +128,12 @@ func (c *ClusterTenants) facts(t *gentianov1alpha1.Tenant) Tenant {
 	if t.Spec.Isolation != nil && t.Spec.Isolation.KeycloakRealm != "" {
 		realm = t.Spec.Isolation.KeycloakRealm
 	}
+	domain := c.loginDomain(t, realm)
 	return Tenant{
 		Name:             t.Name,
 		Realm:            realm,
-		LoginDomain:      c.loginDomain(t, realm),
+		LoginDomain:      domain,
+		AdminLogin:       adminLogin(t, realm, domain),
 		AdminRequiresMFA: t.AdminRequiresMFA(),
 		MailboxDomain:    strings.ToLower(strings.TrimSpace(t.Status.MailboxDomain)),
 	}
@@ -165,6 +173,33 @@ func (c *ClusterTenants) loginDomain(t *gentianov1alpha1.Tenant, realm string) s
 		return ""
 	}
 	return domain
+}
+
+// adminLogin is the login of the tenant's administrator account.
+//
+// The operator creates that account and reports its login on the tenant's
+// status (the address is the username: Tenant.TenantAdminUsername), so for a
+// tenant with a realm of its own it is read from there and not composed
+// again. Composed here as admin@<domain> it was wrong for the one tenant
+// whose administrator is not called admin -- the user tenant of a
+// single-tenancy cluster, user-admin@<kernel> -- and activate-admin looked
+// for an account that does not exist and answered "still being provisioned"
+// for as long as it was asked.
+//
+// A tenant that adopts another realm keeps admin@<domain>: that is the
+// platform tenant, and the account is the kernel realm's, which the operator
+// reports under the tenant's own name instead. And where the reported
+// address is not under the login domain -- a custom domain the status has
+// not caught up with -- the domain the people sign in under wins.
+func adminLogin(t *gentianov1alpha1.Tenant, realm, domain string) string {
+	if domain == "" {
+		return ""
+	}
+	reported := strings.ToLower(strings.TrimSpace(t.Status.AdminEmail))
+	if realm == t.Name && strings.HasSuffix(reported, "@"+domain) {
+		return reported
+	}
+	return gentianov1alpha1.TenantAdminLocalPart + "@" + domain
 }
 
 // clusterClaimList is the Cluster claim, read unstructured: nothing registers

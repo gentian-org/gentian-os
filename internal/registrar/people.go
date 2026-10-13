@@ -689,15 +689,17 @@ func (s *Server) activateAdmin(w http.ResponseWriter, r *http.Request, c call) {
 			"this registrar holds no credential for the realm "+tenant.Realm+" yet: the tenant is still being provisioned")
 		return
 	}
-	if tenant.LoginDomain == "" {
+	if tenant.AdminLogin == "" {
 		s.fail(w, r, http.StatusServiceUnavailable, "this tenant's login domain cannot be read")
 		return
 	}
 	ctx := identityContext(r)
-	admin, err := s.cfg.Identity.FindUser(ctx, realm, "admin@"+tenant.LoginDomain)
+	admin, err := s.cfg.Identity.FindUser(ctx, realm, tenant.AdminLogin)
 	if err != nil {
 		if errors.Is(err, identity.ErrNotFound) {
-			s.fail(w, r, http.StatusConflict, "the administrator account does not exist yet: the tenant is still being provisioned")
+			// Named, because "does not exist yet" for an account under the
+			// wrong name is waited for by the caller for as long as it asks.
+			s.fail(w, r, http.StatusConflict, "the administrator account "+tenant.AdminLogin+" does not exist yet: the tenant is still being provisioned")
 			return
 		}
 		s.identityError(w, r, err)
