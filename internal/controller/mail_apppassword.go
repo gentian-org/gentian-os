@@ -532,6 +532,47 @@ func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, ten
 	})
 }
 
+// ensureRealmMailCredential mints the login a tenant realm sends its mail
+// with BEFORE the realm is declared, so that the realm's first write already
+// carries the password.
+//
+// The credential used to be minted only by the mail stage, which runs after
+// the identity stage and, inside it, after the realm's users have been read --
+// so always after the realm existed. Both writers of the realm's mail server
+// read it by reference and neither waits for it: the provider behind the
+// Composition writes the realm with authentication on, the login and no
+// password, and reports it synced; the SMTP Job's pod starts with the
+// variable empty. Keycloak then answers every invitation with "no password
+// specified". The provider does not put that right on its own either: it
+// cannot read a password back, so once it holds the Secret's value it sees no
+// difference from a realm that never received it.
+//
+// Same derivation, same Secret, same passwd-file line as the mail stage, which
+// keeps calling syncMailSubmissionCredential and finds nothing to change.
+// Only where that stage would mint it: a cluster that runs its own mail, and a
+// tenant registered in it. The tenant that adopts the kernel realm declares
+// no realm, and the installer gives that realm its own login.
+func (r *TenantReconciler) ensureRealmMailCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.adoptsKernelRealm(tenant) || !r.dovecotDeployed(ctx) {
+		return nil
+	}
+	if present, err := r.mailFunctionPresent(ctx); err != nil || !present {
+		return err
+	}
+	if r.tenantMailMode(ctx, tenant) != gentianov1alpha1.MailModeSelfhosted {
+		return nil
+	}
+	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
+	if domain == "" {
+		return nil
+	}
+	seed, err := r.tenantMailSeed(ctx, tenant.Name)
+	if err != nil {
+		return err
+	}
+	return r.syncMailSubmissionCredential(ctx, tenant, domain, seed)
+}
+
 // secretKeySafe maps a username onto the charset a Secret key permits.
 func secretKeySafe(s string) string {
 	out := []rune(s)

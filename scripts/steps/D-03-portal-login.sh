@@ -3,7 +3,7 @@
 # phase: applications
 # requires: D-02-dns-wait
 # provides: the kernel realm with its clients and the administrator user, Argo CD and Headlamp signing in against it, the platform tenant Ready and its desktop serving platform.<kernel>
-# mutates: Keycloak realm, clients, groups and users; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps (Argo CD's local admin off); the argocd-initial-admin-secret (deleted); the bootstrap Applications (Headlamp's OIDC on); the gentian-portal Application
+# mutates: Keycloak realm, clients, groups and users; the realm's mail server and the keycloak-smtp-credentials Secret; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps (Argo CD's local admin off); the argocd-initial-admin-secret (deleted); the bootstrap Applications (Headlamp's OIDC on); the gentian-portal Application
 
 # _v5_render is B-01's; a step file is a library of verbs and sourcing another
 # one is how they are shared.
@@ -112,6 +112,16 @@ check() {
     *"${HEADLAMP_KUBECONFIG_PLACEHOLDER:-PLACEHOLDER_REPLACED_BY_THE_INSTALLER}"*)
         return "${CHECK_MISSING}" ;;
     esac
+    # The kernel realm's mail, where the cluster runs its own. This step
+    # derives the realm's mail login and leaves it in keycloak-smtp-credentials,
+    # which the operator registers the login from and waits for before it
+    # writes a tenant realm's mail server. A cluster installed while this step
+    # did not know the mode by its name has neither, and a re-run puts both
+    # there. With a relay the Secret is an ExternalSecret's and arrives with
+    # the credential, after the install: nothing to look for here.
+    if [[ "$(gentian_mail_service_mode)" == "system" ]]; then
+        kubectl get secret keycloak-smtp-credentials -n "${IDENTITY_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
+    fi
     return 0
 }
 

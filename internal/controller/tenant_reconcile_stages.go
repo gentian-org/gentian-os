@@ -296,6 +296,14 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 	state.nsName = tenantNamespaceName(tenant)
 	log.FromContext(ctx).Info("reconciling tenant", "tenant", tenant.Name, "namespace", state.nsName, "crossplaneOnly", r.CrossplaneOnly)
 
+	// Before the XR: it composes the realm and the Job that write this
+	// credential into Keycloak, and both read it by reference without
+	// waiting for it.
+	if !r.CrossplaneOnly {
+		if err := r.ensureRealmMailCredential(ctx, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("mint the realm's mail credential: %w", err)
+		}
+	}
 	if err := r.ensureTenantProvisioningManifests(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

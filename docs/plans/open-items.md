@@ -61,49 +61,56 @@ Drawn from the entries below; each line names its entry.
    `./install.sh --only A-01,B-01` (§2, §4 decision 8).
 2. **Keycloak 26.8.0 with provider-keycloak v2.19.0.** The provider that
    creates realms and clients is pinned at a version from before this
-   Keycloak line. Realm and client creation is the first thing to look at
-   (§11.1).
-3. **Crossplane with only 25 resource types activated** has not run on a
+   Keycloak line. A tenant's Realm was created and read back in local
+   containers on 2026-10-13 and every declared field arrived, the mail
+   server with its password included; clients were not tried, and are the
+   first thing to look at (§11.1).
+3. **A realm's mail.** After an invitation, Keycloak's log is where a mail
+   server without its password shows (`no password specified?`); the Realm
+   resource says `Synced` either way. On a cluster with its own mail, look
+   for `keycloak-smtp-credentials` in `kernel-authentication` and for a
+   `keycloak-tenant-smtp-<tenant>` Job per tenant (defect 31).
+4. **Crossplane with only 25 resource types activated** has not run on a
    cluster (§2, defect 13).
-4. **A pod-security waiver takes effect only once it is granted on the
+5. **A pod-security waiver takes effect only once it is granted on the
    install**, and that grant is approved under the cluster's `can_approve`,
    not by the tenant's administrator. Nextcloud's bundle asks for three
    waivers for Collabora. Until they are approved the tenant reports
    `WaiverNotGranted` (§4 decision 23, §11.2).
-5. **Integrations between two apps start closed.** The operator writes no
+6. **Integrations between two apps start closed.** The operator writes no
    `AppGrant`. Each integration waits for the tenant's administrator
    (§4 decision 22).
-6. **A cluster installed from a branch reads the development catalogue.**
+7. **A cluster installed from a branch reads the development catalogue.**
    That catalogue is not republished at present (defect 18), and its XWiki
    profile cannot be installed (defect 19).
-7. **A public path on an app's own host may take the signed-in app off
+8. **A public path on an app's own host may take the signed-in app off
    that host.** No app in the catalogue declares one; the page on the bare
    domain is the only public entry a fresh install has (§7.2).
-8. **The platform tenant's admin console is at
+9. **The platform tenant's admin console is at
    `admin.platform.<kernel domain>`** and needs the wildcard certificate
    `*.platform.<kernel domain>`, which only a DNS-01 issuer can give
    (§4 decision 41).
-9. **Whether Argo CD checks commit signatures** depends on the repository
+10. **Whether Argo CD checks commit signatures** depends on the repository
    and the key ids being known when the bootstrap chart is rendered. Look at
    `AppProject` `gentian` for `sourceIntegrity` after the install (§8.9,
    §11.3).
-10. **Three apps are signed in by the sign-in sidecar**: Activepieces,
+11. **Three apps are signed in by the sign-in sidecar**: Activepieces,
     Docmost and OpenProject. In OpenProject the password form is off and the
     seeded administrator is locked (§4 decision 44).
-11. **A tunnel install works with one Cloudflare token that carries both
+12. **A tunnel install works with one Cloudflare token that carries both
     permissions**, entered at both questions. The separate tunnel token is
     stored and used by nothing (§4 decision 30).
-12. **The smoke check of the cluster's own mail cannot pass** (defect 22).
-13. **The installer refuses Kubernetes older than 1.33**
+13. **The smoke check of the cluster's own mail cannot pass** (defect 22).
+14. **The installer refuses Kubernetes older than 1.33**
     (`scripts/lib/common.sh`, `GENTIAN_MIN_KUBERNETES_MINOR`; §4 decision
     52).
-14. **If the cluster's Crossplane definitions are older than the software,
+15. **If the cluster's Crossplane definitions are older than the software,
     the operator holds its work and names the remedy**:
     `./install.sh --only B-06` (§4 decision 40).
-15. **A person whose recovery address differs from their workspace address,
+16. **A person whose recovery address differs from their workspace address,
     signing in to Docmost, Activepieces or OpenProject**: the app may be told
     the recovery address, or the sign-in may be refused (defect 29).
-16. **The account name Nextcloud and XWiki give a person invited on the
+17. **The account name Nextcloud and XWiki give a person invited on the
     platform**: the claim they read it from may be empty (defect 30).
 
 ## 1. The architectural decisions, against the code
@@ -340,7 +347,8 @@ Defects 6, 7, 14, 15, 21, 22 and 25 were opened in the code again on
 day. What the two checks of 2026-10-11 found is in sections 7, 8 and 9
 and is not repeated in this table. Defects 29 and 30 were added on 2026-10-11
 from the repair of the catalogue's sign-in test and were read in the code
-at `be3cbea3` of `develop`.
+at `be3cbea3` of `develop`. Defect 31 was added on 2026-10-13 from a mail
+fault on an installed cluster and reproduced in local containers.
 
 | | Defect | Where it is described |
 | --- | --- | --- |
@@ -374,6 +382,7 @@ at `be3cbea3` of `develop`.
 | 28 | **Closed in the code on 2026-10-10, not yet shown on a cluster: an `ExternalSecret` in the platform tenant's namespace could read any kernel path.** The kernel's store admitted `tenant-platform` by name for the desktop's database password. That password is now at `gentian-os/tenants/platform/apps/shell/database`, read through `openbao-tenant-platform`, and the kernel's store admits no tenant's namespace. The role was already the desktop's own, owning only its database. On a cluster installed before, the path appears with the installer's next run; until then both `ExternalSecret`s report an error and keep the Secret they made. Decision 27 | [security.md §5](../design/security.md) |
 | 29 | **The sign-in sidecar names a person to its app by Keycloak's email field, which holds the recovery address.** The sidecar's SAML client is composed with `forceNameIdFormat: true` and `nameIdFormat: email` (`crossplane/compositions/app-default.yaml`), and the comment there says the address is the one thing the sidecar reads. The registrar creates a person with the workspace address as the username and, when the invitation gave a different address, that other address in the email field (`internal/registrar/identity/people.go`, `Invite`): the field is the private address a password reset is mailed to. For such a person the app beside a sidecar (Docmost, Activepieces, OpenProject) is told the recovery address as who they are, or the sidecar refuses the sign-in because the address differs from the person the front door admitted. A person whose two addresses are the same is not affected, and the sidecar's own test has only such people. The realm's shared `email` scope and the OIDC packs of Nextcloud, XWiki and Element were pointed at the username for this reason; the SAML path was not. *Confirmed in code* for the two settings; what an app then shows, or whether the sign-in is refused, *needs a cluster* | [iam.md §1.11](../design/iam.md), [security.md §2.12](../design/security.md) |
 | 30 | **Nothing found sets the `uid` attribute that two packs read as the account name.** The OIDC packs of Nextcloud (both editions) and XWiki in the catalogue repository (`develop`, `03fcda7`) carry a mapper that writes the claim `gentian_username` (`opendesk_username` in one edition) from the user attribute `uid`. The registrar's invitation writes the username, the email field, the names, the groups and, where the addresses differ, the invitation address (`internal/registrar/identity/people.go`, `Invite`); it writes no `uid`. The tenant's Composition declares the attribute in the realm's user profile and writes no value; the only mappers in this repository that carry `uid` belong to the kernel identity provider in tenant realms, which is switched off. If nothing fills it, a person invited on the platform reaches these apps with an empty account-name claim: the app then falls back to another claim, or refuses the sign-in. *Confirmed in code* that the registrar does not set it; that nothing else does is *reasoned, not confirmed* (no writer was found); the effect in Nextcloud and XWiki *needs a cluster* | the catalogue repository's `profiles/nextcloud/base/*/oidc-catalog.yaml`, `profiles/xwiki/xwiki-ce/oidc-catalog.yaml` |
+| 31 | **A realm on a cluster with its own mail had a mail server without its password. Closed in the code on 2026-10-13 and shown in local containers, not yet on a cluster.** Keycloak answered an invitation with `failed to connect, no password specified?`. Two causes, both reproduced against Keycloak 26.8.0 with provider-keycloak v2.19.0. (a) The mail mode was renamed from `kernel` to `system` and two comparisons kept the old word: the installer gave the kernel realm no mail server and wrote no `keycloak-smtp-credentials`, so the operator built no mail-server Job for any tenant, and the Job's script would have handed a tenant realm the kernel realm's login. (b) That left the tenant's Composition as the only writer, and it names the password by reference to a Secret the operator wrote only after the realm existed: the provider wrote authentication on, the login and no password, and reported `Synced`. It puts that right at its next poll only if it has not restarted since; after a restart it never does, because it cannot read a password back. Now: both comparisons say `system`, the Job runs again over existing realms (version 5), the login is minted before the realm is declared, and step `D-03` reports work to do on a `system` cluster without the Secret. **An installed cluster needs** the operator's new image and `./install.sh --only D-03`. **Open beside it, not built:** with a relay, the Composition declares no mail server, the provider copies the live one into the resource without a password reference, and its next update of the realm writes the block without the password, seen two seconds after the Job in the local containers — the mail is gone until the Job's version changes; a tenant whose `spec.mail.mode` is not `selfhosted` on a `system` cluster is declared a login nobody mints; and a realm the realm Job creates before the provider does is copied `loginWithEmailAllowed: true`, which the provider then refuses beside `duplicateEmailsAllowed` on every update. Not established on the cluster: what the kernel realm's mail server held when it failed the same way. | [mail.md §5d](../design/mail.md), `scripts/lib/portal-login-bootstrap.sh`, `internal/controller/keycloak_tenant_smtp.go`, `internal/controller/mail_apppassword.go`, `make test-realm-smtp-lab` |
 
 
 ## 4. Decisions waiting for the owner

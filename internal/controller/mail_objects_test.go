@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -598,5 +599,104 @@ func TestTheTenantSaysWhereItsMailboxesAre(t *testing.T) {
 	_ = r.EnsureMailForTest(context.Background(), tenant)
 	if got := tenant.Status.MailboxDomain; got != "" {
 		t.Errorf("a tenant with no mailboxes on the cluster says %q", got)
+	}
+}
+
+// A tenant realm's mail login exists before the realm does.
+//
+// The realm and the Job that write it into Keycloak read it by reference and
+// neither waits: declared before the Secret existed, the realm was written
+// with authentication on and no password, reported synced, and every
+// invitation failed with "no password specified". So it is minted with no
+// Keycloak to ask -- this client has none -- and no realm to read users from.
+func TestMail_RealmCredentialIsMintedBeforeTheRealm(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	newTenant := func(name string, mode gentianov1alpha1.MailMode) *gentianov1alpha1.Tenant {
+		tn := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+		if mode != "" {
+			tn.Spec.Mail = &gentianov1alpha1.TenantMail{Mode: mode}
+		}
+		return tn
+	}
+	credential := func(c client.Client, tenant string) (*corev1.Secret, error) {
+		sec := &corev1.Secret{}
+		err := c.Get(ctx, types.NamespacedName{Name: "mail-submission-" + tenant, Namespace: layout.Namespace(layout.Authentication)}, sec)
+		return sec, err
+	}
+	mailNS := func() *corev1.Namespace {
+		return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: layout.System("mail")}}
+	}
+
+	t.Run("the cluster's own mail: minted, and the same on the next pass", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(mailNS()).Build()
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "system", KernelDomain: "example.org", TenancyMode: "multi"}
+		tenant := newTenant("team", "")
+		if err := r.EnsureRealmMailCredentialForTest(ctx, tenant); err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		first, err := credential(c, "team")
+		if err != nil {
+			t.Fatalf("no credential before the realm: %v", err)
+		}
+		if got := string(first.Data["smtp_user"]); got != "noreply@team.example.org" {
+			t.Errorf("smtp_user = %q, want the login the Composition declares", got)
+		}
+		if len(first.Data["smtp_password"]) == 0 {
+			t.Error("smtp_password is empty")
+		}
+		// Dovecot learns the same login, or presenting it proves nothing.
+		hashes := &corev1.Secret{}
+		if err := c.Get(ctx, types.NamespacedName{Name: "dovecot-app-passwords", Namespace: layout.System("mail")}, hashes); err != nil {
+			t.Fatalf("no passwd-file for the login: %v", err)
+		}
+		var registered bool
+		for _, v := range hashes.Data {
+			registered = registered || strings.HasPrefix(string(v), "noreply@team.example.org:")
+		}
+		if !registered {
+			t.Error("the login is in no passwd-file Dovecot reads")
+		}
+		if err := r.EnsureRealmMailCredentialForTest(ctx, tenant); err != nil {
+			t.Fatalf("second pass: %v", err)
+		}
+		second, _ := credential(c, "team")
+		if string(second.Data["smtp_password"]) != string(first.Data["smtp_password"]) {
+			t.Error("the password changed between two passes: Keycloak would hold the first and Dovecot the second")
+		}
+	})
+
+	// Nothing is minted where the mail stage would mint nothing.
+	for _, tc := range []struct {
+		name   string
+		r      controller.TenantReconciler
+		tenant *gentianov1alpha1.Tenant
+		mailNS bool
+	}{
+		{"a relay", controller.TenantReconciler{MailServiceMode: "external", KernelDomain: "example.org"}, newTenant("team", ""), true},
+		{"no mail function composed", controller.TenantReconciler{MailServiceMode: "system", KernelDomain: "example.org"}, newTenant("team", ""), false},
+		{"a tenant that is not registered in the cluster's mail", controller.TenantReconciler{MailServiceMode: "system", KernelDomain: "example.org"}, newTenant("team", gentianov1alpha1.MailModeTransportOnly), true},
+		{"the tenant that adopts the kernel realm", controller.TenantReconciler{MailServiceMode: "system", KernelDomain: "example.org", KernelRealm: "kernel"},
+			func() *gentianov1alpha1.Tenant {
+				tn := newTenant("platform", "")
+				tn.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
+				return tn
+			}(), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t))
+			if tc.mailNS {
+				b = b.WithObjects(mailNS())
+			}
+			c := b.Build()
+			r := tc.r
+			r.Client = c
+			if err := r.EnsureRealmMailCredentialForTest(ctx, tc.tenant); err != nil {
+				t.Fatalf("mint: %v", err)
+			}
+			if _, err := credential(c, tc.tenant.Name); !apierrors.IsNotFound(err) {
+				t.Errorf("a credential was minted (err=%v)", err)
+			}
+		})
 	}
 }

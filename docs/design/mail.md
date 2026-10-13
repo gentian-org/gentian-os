@@ -368,6 +368,56 @@ pod of the mail server's image with the volume mounted, as user 1000:
 maildir:/var/mail/.archive/<domain>/<archive>` adds the archived mail to the
 live mailbox of that address and removes nothing.
 
+## 5d. A realm's mail server
+
+Keycloak sends invitations and password resets through the mail server its
+realm names (`smtpServer`), logged in:
+
+| Realm | Mail mode | Login | Written by |
+|---|---|---|---|
+| kernel | `system` | `gentian-system@<kernelDomain>`, password derived by the installer | step `D-03` (`scripts/lib/portal-login-bootstrap.sh`), which also leaves it in `keycloak-smtp-credentials` |
+| kernel | `external` | the relay's | step `D-03`, from `keycloak-smtp-credentials`, which an ExternalSecret builds from the relay credential |
+| tenant | `system` | `noreply@<tenant domain>`, from `mail-submission-<tenant>` | the tenant's Composition, which declares every field, and the Job `keycloak-tenant-smtp-<tenant>`, which writes the same fields with the password |
+| tenant | `external` | the relay's, from `keycloak-smtp-credentials` | the Job `keycloak-tenant-smtp-<tenant>` alone |
+
+The operator builds the Job only when `keycloak-smtp-credentials` says
+`smtp_configure: true`, and registers the kernel realm's login with Dovecot
+from the same Secret. On a `system` cluster the Secret is step `D-03`'s, and
+the step reports work to do while it is missing.
+
+`mail-submission-<tenant>` is written **before** the tenant's realm is
+declared (`ensureRealmMailCredential`), for a tenant registered in the
+cluster's own mail (§5). Both writers read it by reference and neither waits
+for it.
+
+Three things about Keycloak and its provider that every writer is written
+around. None of them is reported: the write is answered 204 and the Realm
+resource is `Synced` and `Ready`. The fault shows when mail is sent, as
+`failed to connect, no password specified?`.
+
+- A realm written with authentication on, a login and **no password** is
+  stored that way. The provider behind the Composition writes exactly that
+  when the Secret its `passwordSecretRef` names does not exist.
+- Keycloak returns a stored password as `**********` and keeps the stored one
+  when the mask is written back, **only while host and login are unchanged**.
+  The mask beside a changed host or login drops the password.
+- The provider cannot read a password back, so it does not see that a realm
+  lacks the one it holds. A realm written without its password is put right
+  by the provider only if the same provider process is still running at its
+  next poll (ten minutes); after a restart it never is. The Job is what puts
+  it right, and it runs again when its script's version changes.
+
+With a relay the Composition declares no mail server, and that does not leave
+the field alone: the provider copies the live block into the resource, without
+a reference to the password, and its next update of the realm writes the block
+without it. The password is then gone until the Job runs again. This is
+open.
+
+`make test-realm-smtp-lab` holds this against the Keycloak the chart pins and
+a mail server that demands a login: the kernel realm written by the
+installer's request and a tenant realm by the Job's script, in both modes,
+each followed by Keycloak sending.
+
 ## 6. Per-App Mail Wiring
 
 For each app in the tenant that declares `requires.services.mail.smtp` and/or
