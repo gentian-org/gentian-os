@@ -63,21 +63,21 @@ check "D-03 (all \"true\"): gentian-appsets Application"      "$(has "${on}" 'na
 check "D-03 (all \"true\"): operator Application"             "$(has "${on}" 'name: gentian-os$' && echo 1 || echo 0)"
 check "D-03 (all \"true\"): Headlamp reads headlamp-oidc"     "$(has "${on}" 'headlamp-oidc' && echo 1 || echo 0)"
 
-# The licence report. The address is the bootstrap chart's default and nobody
+# The usage statistics report. The address is the bootstrap chart's default and nobody
 # else's; the installer's "off" arrives as the string "false" like every other
 # switch, and must reach the operator's chart as a boolean false.
 report_on="$(render true true true)"
-check "licence report: on by default, at the default address" \
-    "$(grep -A2 '^        licenceReport:$' <<<"${report_on}" | grep -q '^          enabled: true$' && has "${report_on}" 'url: "https://licence\.aluvian\.io/api/v1/licence-reports"$' && echo 1 || echo 0)"
-report_off="$(render true true true --set-string licenceReport.enabled=false)"
-check "licence report: --no-licence-report renders enabled: false" \
-    "$(grep -A2 '^        licenceReport:$' <<<"${report_off}" | grep -q '^          enabled: false$' && echo 1 || echo 0)"
-report_else="$(render true true true --set-string licenceReport.url=https://reports.example/r)"
-check "licence report: another address replaces the default" \
+check "usage statistics report: on by default, at the default address" \
+    "$(grep -A2 '^        usageStatistics:$' <<<"${report_on}" | grep -q '^          enabled: true$' && has "${report_on}" 'url: "https://statistics\.aluvian\.io/api/v1/usage-statistics"$' && echo 1 || echo 0)"
+report_off="$(render true true true --set-string usageStatistics.enabled=false)"
+check "usage statistics report: --no-usage-statistics renders enabled: false" \
+    "$(grep -A2 '^        usageStatistics:$' <<<"${report_off}" | grep -q '^          enabled: false$' && echo 1 || echo 0)"
+report_else="$(render true true true --set-string usageStatistics.url=https://reports.example/r)"
+check "usage statistics report: another address replaces the default" \
     "$(has "${report_else}" 'url: "https://reports\.example/r"$' && ! has "${report_else}" 'corp\.gentian-os\.org' && echo 1 || echo 0)"
-report_unset="$(render true true true --set-string licenceReport.url=)"
-check "licence report: an empty address from the installer is the default" \
-    "$(has "${report_unset}" 'url: "https://licence\.aluvian\.io/api/v1/licence-reports"$' && echo 1 || echo 0)"
+report_unset="$(render true true true --set-string usageStatistics.url=)"
+check "usage statistics report: an empty address from the installer is the default" \
+    "$(has "${report_unset}" 'url: "https://statistics\.aluvian\.io/api/v1/usage-statistics"$' && echo 1 || echo 0)"
 
 # The model gateway's console (llm.<kernelDomain>) is a claim decision, off
 # unless the claim says true. The installer reads the claim's answer, passes

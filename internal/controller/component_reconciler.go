@@ -83,10 +83,10 @@ type ComponentReconciler struct {
 	// Recorder writes the events a person should see on a Component without
 	// reading its conditions. Nil writes none.
 	Recorder record.EventRecorder
-	// LicenceReporting is whether this cluster reports what it runs: half of
+	// UsageStatisticsEnabled is whether this cluster reports what it runs: half of
 	// whether it offers an App Store, which decides what a component that
 	// asked where the store is gets told and may reach.
-	LicenceReporting bool
+	UsageStatisticsEnabled bool
 	// WatchClusterClaim re-runs the components told where the store is when
 	// the Cluster claim changes. Off where the claim's kind is not installed.
 	WatchClusterClaim bool

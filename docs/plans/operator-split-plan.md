@@ -70,7 +70,7 @@ concierge). That is a known weakness, described in section 6.
 | --- | --- | --- |
 | **Desktop** | The page a signed-in person lands on, with a tile for each thing they may open. One per tenant. Its backend calls the usher and the director. | `tenant-<name>` |
 | **Admin console** | The pages where a tenant admin manages a tenant and a platform admin manages the cluster. One per tenant. Its backend calls the director, the usher, the custodian and the registrar. | `tenant-<name>` |
-| **App Store app** | The pages where a tenant admin finds and installs apps. Its backend calls the store outside the cluster, and the director, the usher and the custodian. | `tenant-<name>`, on every tenant but the platform tenant, while the cluster reports its licences and names a store |
+| **App Store app** | The pages where a tenant admin finds and installs apps. Its backend calls the store outside the cluster, and the director, the usher and the custodian. | `tenant-<name>`, on every tenant but the platform tenant, while the cluster reports its licenses and names a store |
 | **Gateway** | The front door: it terminates TLS, keeps the sign-in session in a cookie, and asks the bouncer before it forwards a request. It is Envoy Gateway. | `kernel-edge` |
 | **Argo CD** | Reads the deployment repository and applies its files to the cluster. It refuses a commit that is not signed by a trusted key. | `kernel-gitops` |
 | **Keycloak** | The identity provider: it holds the people, their passwords and their groups, and issues the tokens that prove who somebody is. People are kept in *realms*: the kernel realm for platform admins, one realm per tenant for everybody else. | `kernel-authentication` |
@@ -639,7 +639,7 @@ two kinds of route
   its backups and one backup; its backup policy and schedules; its
   integrations; its notices;
 - for the cluster: every tenant's resources; the backup policy and schedules;
-  the platform security rules in force; the customization report; the licence
+  the platform security rules in force; the customization report; the license
   report; the result of the definitions check; what the catalogue left
   behind.
 
@@ -704,13 +704,13 @@ every request. A positive answer is remembered for thirty seconds.
   in in the kernel realm. Otherwise it holds the component and says why
   (`SignInSidecarRefused`).
 
-**What it does: the licence report**
+**What it does: the usage statistics report**
 
 When reporting is switched on, the operator sends a signed report of what the
 cluster runs to a configured address: counts and addresses of things, never
 of people. Nothing depends on the answer. Every report is kept, exactly as
 sent, for a platform admin to read
-([licencereport](../../internal/licencereport/)).
+([usagestatistics](../../internal/usagestatistics/)).
 
 **What it must never do**
 
@@ -732,14 +732,14 @@ sent, for a platform admin to read
 - A vault role that reads, writes and deletes everything under the platform's
   path.
 - The OpenFGA key, which it uses to write.
-- The key that signs the licence report.
+- The key that signs the usage statistics report.
 
 **Who calls it, and whom it calls**
 
 - Called by: Argo CD, by applying objects; the director and the usher, on the
   listener; Keycloak, with membership events; the Kubernetes API server, for
   admission.
-- Calls: the Kubernetes API, Keycloak, the vault, OpenFGA, and the licence
+- Calls: the Kubernetes API, Keycloak, the vault, OpenFGA, and the license
   report's address when reporting is on.
 
 **If it is unavailable**
@@ -887,7 +887,7 @@ and asks OpenFGA before it answers.
 | A tenant's backups and one backup, its backup policy and schedules | `can_view` on the tenant |
 | A tenant's integrations and notices | `can_view` on the tenant |
 | Every tenant's resources; the cluster's backup policy and schedules | `can_audit` on the cluster |
-| The platform security rules in force; the customization report; the licence report | `can_audit` on the cluster |
+| The platform security rules in force; the customization report; the usage statistics report | `can_audit` on the cluster |
 | What the catalogue left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
 The tiles come from a file the operator writes. All other answers are the
@@ -1338,7 +1338,7 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
 - The consoles hold no credential of their own. They pass on the signed-in
   person's token.
 - The App Store app is placed on every tenant but the platform tenant while
-  licence reporting is on and the Cluster claim names a store, and removed
+  usage statistics are on and the Cluster claim names a store, and removed
   when either stops holding. Its address asks `can_install_app` on the
   tenant, as its tile does.
 - The command line tool signs in as the person (`kubectl gentian login`) and

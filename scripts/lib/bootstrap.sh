@@ -724,14 +724,14 @@ seed_secrets_remaining() {
     # kv_put_once and writes only the paths the Cluster XR does not cover.
     seed_secrets
     seed_repository_credentials
-    seed_licence_report_key
+    seed_usage_statistics_key
 }
 
 # =============================================================================
-# seed_licence_report_key — the key this cluster signs its licence reports with
+# seed_usage_statistics_key — the key this cluster signs its usage statistics reports with
 # =============================================================================
 # 32 random bytes, as hex, under their own path. The operator derives an
-# Ed25519 key pair from them (internal/licencereport): the private half signs
+# Ed25519 key pair from them (internal/usagestatistics): the private half signs
 # each report and the public half travels in it, so the address the reports go
 # to can tell one cluster's reports from anybody else's without having been
 # given anything first.
@@ -749,15 +749,15 @@ seed_secrets_remaining() {
 # The path sits under gentian-os/kernel/ for the reason the repository
 # credentials do: it is the one prefix ESO may read.
 # =============================================================================
-seed_licence_report_key() {
-    local path="gentian-os/kernel/licence-report" have
-    if [[ "$(gentian_licence_report_enabled)" != "true" ]]; then
-        info "Licence report is off: no signing key is seeded."
+seed_usage_statistics_key() {
+    local path="gentian-os/kernel/usage-statistics" have
+    if [[ "$(gentian_usage_statistics_enabled)" != "true" ]]; then
+        info "Usage statistics report is off: no signing key is seeded."
         return 0
     fi
     have="$(bao kv get -mount=secret -field=signing_seed "${path}" 2>/dev/null || true)"
     if [[ -n "${have}" ]]; then
-        info "Licence report signing key already present; left as it is."
+        info "Usage statistics report signing key already present; left as it is."
         return 0
     fi
     # Absent, or unreadable. `kv put` with check-and-set 0 writes only when
@@ -765,11 +765,11 @@ seed_licence_report_key() {
     # read is not replaced.
     if ! bao kv put -mount=secret -cas=0 "${path}" \
         "signing_seed=$(openssl rand -hex 32)" >/dev/null 2>&1; then
-        warn "The licence report signing key could not be written to OpenBao."
+        warn "The usage statistics report signing key could not be written to OpenBao."
         warn "  No report is sent without it; the operator records that it has no key."
         return 0
     fi
-    success "Licence report signing key stored."
+    success "Usage statistics report signing key stored."
 }
 
 # =============================================================================
@@ -1762,17 +1762,17 @@ _claim_catalogue_section() {
     printf '  #\n'
     printf '  # A source named here is offered to every tenant: the cluster lists its\n'
     printf '  # entries to them as installable from here, without the App Store.\n'
-    printf '  # This is not a licence: whether an app arrives is decided by whether\n'
+    printf '  # This is not a license: whether an app arrives is decided by whether\n'
     printf '  # the tenant holds a credential for the repository it is pulled from.\n'
     printf '  catalogue:\n'
     printf '    # The base address of the App Store API: where the App Store app on\n'
     printf '    # this cluster reads what is on offer and what a tenant has acquired.\n'
-    if [[ "$(gentian_licence_report_enabled)" == "true" ]]; then
+    if [[ "$(gentian_usage_statistics_enabled)" == "true" ]]; then
         printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
     else
         printf '    #\n'
-        printf '    # Not named here: the App Store needs licence reporting, which is\n'
-        printf '    # turned off on this cluster (--no-licence-report).\n'
+        printf '    # Not named here: the App Store needs usage statistics, which is\n'
+        printf '    # turned off on this cluster (--no-usage-statistics).\n'
         printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
     fi
     printf '    sources:\n'
@@ -1811,9 +1811,9 @@ ensure_claim_catalogue_section() {
         _claim_warn_retired_catalogue_addresses "${claim}"
         # A store somebody named stays named: the claim is theirs. The desktop
         # is told the store is unavailable all the same, by the usher.
-        if [[ "$(gentian_licence_report_enabled)" != "true" ]] \
+        if [[ "$(gentian_usage_statistics_enabled)" != "true" ]] \
             && yq_get '.spec.catalogue.storeUrl' "${claim}" >/dev/null 2>&1; then
-            warn "claims/cluster.yaml names an App Store, and licence reporting is off:"
+            warn "claims/cluster.yaml names an App Store, and usage statistics are off:"
             warn "  the App Store is not offered on this cluster. Remove spec.catalogue.storeUrl"
             warn "  to say so in the claim as well."
         fi

@@ -8,17 +8,17 @@
 
 openapi: 3.1.0
 info:
-  title: Gentian OS licence report receiver
+  title: Gentian OS usage statistics report receiver
   version: "1"
   summary: The one request a reporting cluster makes, and what its receiver may answer.
   license:
     name: Mozilla Public License 2.0
     identifier: MPL-2.0
   description: |
-    A Gentian OS cluster with licence reporting on sends one report a few
+    A Gentian OS cluster with usage statistics on sends one report a few
     minutes after its operator starts and one every 24 hours after that.
     This file is the format of that request, for whoever receives it. It
-    describes what the cluster already does (`internal/licencereport`,
+    describes what the cluster already does (`internal/usagestatistics`,
     `docs/design/operations.md` §6.2); it changes nothing about it. Where
     this file and the code disagree, the code is what clusters send and
     this file is the defect.
@@ -33,8 +33,8 @@ info:
     ## What the cluster does
 
     * It sends to one `https` address fixed at install time
-      (`licenceReport.url` in the operator chart). The installer's default
-      is `https://licence.aluvian.io/api/v1/licence-reports`; that
+      (`usageStatistics.url` in the operator chart). The installer's default
+      is `https://statistics.aluvian.io/api/v1/usage-statistics`; that
       default is provisional. An address that is not
       `https` counts as none and nothing is sent.
     * It follows no redirect. A `3xx` is a report that did not arrive.
@@ -88,19 +88,19 @@ info:
 
     ## What a store does with it
 
-    A store that depends on licence reporting (`store-api.openapi.yaml`,
+    A store that depends on usage statistics (`store-api.openapi.yaml`,
     `GET /v1/tenant`) matches the tenant URL a person states at sign-in
     against `tenants[].url` of the reports it has received.
 servers:
-  - url: "{licenceReportUrl}"
+  - url: "{usageStatisticsUrl}"
     description: The address fixed at install time. The report is posted to exactly this address; no path is appended.
     variables:
-      licenceReportUrl:
-        default: https://reports.example/v1/licence-reports
+      usageStatisticsUrl:
+        default: https://reports.example/v1/usage-statistics
 paths:
   /:
     post:
-      operationId: receiveLicenceReport
+      operationId: receiveUsageStatistics
       summary: Receive one cluster's report
       security: []
       parameters:

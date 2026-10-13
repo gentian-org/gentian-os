@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-package licencereport
+package usagestatistics
 
 import (
 	"context"
@@ -32,7 +32,7 @@ import (
 
 const (
 	// RecordConfigMap is the ConfigMap the record is kept in.
-	RecordConfigMap = "gentian-licence-report"
+	RecordConfigMap = "gentian-usage-statistics"
 
 	keySequence  = "sequence"
 	keyBody      = "body"

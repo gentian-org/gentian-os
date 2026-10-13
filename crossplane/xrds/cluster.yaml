@@ -128,7 +128,7 @@ spec:
 
                     A source named here is offered to every tenant: the
                     cluster lists its entries to them as installable from
-                    here. That is what the cluster offers, not a licence.
+                    here. That is what the cluster offers, not a license.
                     Whether an installed app arrives is decided where its
                     artefacts are pulled, by the credential the tenant holds
                     for their repository.

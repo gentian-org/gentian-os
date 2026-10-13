@@ -127,7 +127,7 @@ and AD-14 were corrected on 2026-10-11.
 | --- | --- | --- |
 | AD-1 | Nine security principles normative; every request passes one named enforcement point | **Holds as amended on 2026-10-09; the amendment is not confirmed as written (§10.4).** The publishing proxy is a named enforcement point that checks no caller: it filters and limits. On an entry of `authMode: app` it passes the caller's credential to the app, which checks it; the platform does not know that caller, and a removed person's app credential lives until the app revokes it (roadmap 1.34). **Departs:** a route with no policy is served with no check at all (§7.3), and the sign-in sidecar's `/sso/acs` passes no enforcement point (§7.4). The entry names five enforcement points; the registrar and the usher decide requests and are not among them (§8.13) |
 | AD-2 | The director is the only writer of the deployment repository | **Holds for who writes git; three things stand beside it.** Commits are signed, the operator holds no git credential, and the director is the only program on the cluster that writes the repository. For a private repository the installer gives Argo CD the repository's credential directly until the vault's copy takes over (`A-06`, `C-05-repository-handoff`). Beside it: Argo CD's rule that only signed commits sync is rendered only when the repository and the key ids are known at install (§8.9); Argo CD and the director share one credential that can push (defect 16); and the director has the operator do things that leave no commit, some of which destroy data (decision 35) |
-| AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licences and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
+| AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licenses and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
 | AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** The design documents name the kind as the code does since 2026-10-09 |
 | AD-5 | Privileges are requests with one approval path | **Does not hold for network paths.** Egress a profile declares reaches the network policy without an approval. So do a path to the whole control namespace for a profile that names the director's, custodian's, registrar's or usher's address, and any namespace a profile's annotation names (decision 34). Holds for integrations, pod-security waivers and cluster roles since 2026-10-10 (decisions 22 and 23) |
 | AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Holds as amended on 2026-10-09, not yet shown on a cluster; parts of the amendment are not the owner's (decision 2, §10.5).** Publishing works as the entry now reads: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the limit AD-1 states), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. Who approves is as the entry says since it was changed on 2026-10-09: the group `gentian:tenant:<t>:perimeter` is created with the tenant, the cluster's administrator holds `can_expose` in every tenant its cluster operates, and a tenant's admins hold it only where the cluster's administrator switched it on (§2). **Departs:** the entry says nothing is published by default, and the install publishes the page on the bare domain itself, with no approver (§7.10) |
@@ -976,14 +976,14 @@ the code or its commit, the entry says so.
       touch each other's rollout. It changes how profiles are named and
       found everywhere; it is not a small change.
 
-38. **The licence report: its signing key, and how people are counted.**
+38. **The usage statistics report: its signing key, and how people are counted.**
     **Built, not decided.** Both were proposed while the owner was away
     and built without an answer (`d4ef4369`, 2026-10-06).
     - *In the code, confirmed:* the report is signed with a key the
-      install puts into the vault (`internal/licencereport/reporter.go`).
+      install puts into the vault (`internal/usagestatistics/reporter.go`).
       The operator sends it, and counts people with Keycloak's master
       administrator credential: accounts per realm and members per app
-      group (`internal/controller/licence_report_counts.go`). The owner
+      group (`internal/controller/usage_statistics_counts.go`). The owner
       had been told the counts could come from the rights store and would
       need no access to Keycloak.
       [operator-split-plan.md](operator-split-plan.md) describes the
@@ -991,7 +991,7 @@ the code or its commit, the entry says so.
       report carries head-counts, with no names.
     - *Also open:* the owner said that all apps count, not only installs
       from a store. Built: every entry of `spec.apps` that carries a
-      digest (`internal/licencereport/report.go`). An app without a digest
+      digest (`internal/usagestatistics/report.go`). An app without a digest
       is not reported. Whether "all" meant that is not known. The chart's
       comment still says "the apps installed through the App Store"
       (`kernel/bootstrap/chart/values.yaml`).
@@ -1131,7 +1131,7 @@ the code or its commit, the entry says so.
       user of its app and is handed the app's full database login; nobody
       administers a new OpenProject until somebody holds the platform's
       App Admin role; the handler reaches what the vendor sells as a
-      feature of its paid edition, which is a licence question.
+      feature of its paid edition, which is a license question.
     - *Option A:* confirm what is built, and bring sign-in-procedure.md's
       decisions 3 and 7 in line with it.
     - *Option B:* the plan's recommendation. OpenProject goes back to a
@@ -1715,7 +1715,7 @@ the master realm. The operator has no git credential.
      `internal/controller/identity_reconciler.go`). Defect 15. The same
      password is put into backup, restore and provisioning Jobs
      (`internal/backup/jobs.go`), and is used to count people for the
-     licence report (decision 38).
+     usage statistics report (decision 38).
    - The only code that writes the rights store. On 2026-10-05 the plan
      gave that to the director (§10.1).
    To bring it in line with the plan's own rule: the store's write and

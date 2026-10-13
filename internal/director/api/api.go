@@ -1377,7 +1377,7 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		// An addon is pinned only inside a pinned app. An addon takes effect
 		// in the release of its base, so a stated build of an addon inside a
-		// base at no stated build pins half of what runs; and the licence
+		// base at no stated build pins half of what runs; and the license
 		// report lists an addon under its app, which it does not list
 		// without a digest. Refused before anything is fetched.
 		if !basePinned {

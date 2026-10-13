@@ -733,7 +733,7 @@ on the Cluster claim (`spec.catalogue.storeUrl`,
 and installs through the director as the person signed in.
 
 A tenant has the App Store while three things hold, which a default
-installation arranges: the cluster reports its licences, the claim names a
+installation arranges: the cluster reports its licenses, the claim names a
 store, and that store is not an address a cluster's own App Store app could
 have (`store.<a domain a cluster is installed under>`). The platform tenant
 never has it. The install says which it is, on a line beginning
@@ -749,8 +749,8 @@ order:
    kubectl get configmap gentian-tiles -n kernel-control -o jsonpath='{.data.tiles\.yaml}' | grep -A2 '^appStore:'
    ```
 
-   `reason: licence-report-disabled` — the install ran with
-   `--no-licence-report` or `GENTIAN_NO_LICENCE_REPORT=1`; set it to `0` in
+   `reason: usage-statistics-disabled` — the install ran with
+   `--no-usage-statistics` or `GENTIAN_NO_USAGE_STATISTICS=1`; set it to `0` in
    `install.env` and run `./install.sh`. `reason: no-store-configured` — the
    claim names no store, or not an `https://` address; add
    `spec.catalogue.storeUrl` to `claims/cluster.yaml` in your deployments
@@ -1105,12 +1105,12 @@ GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
 GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
 ```
 
-### Turning the licence report off
+### Turning the usage statistics report off
 
 By default the cluster tells a report address once a day what it runs: its
 tenants, how many accounts each has, and the apps installed through the App
-Store — no personal data. `./install.sh --no-licence-report` (or
-`GENTIAN_NO_LICENCE_REPORT=1` in `install.env`) turns that off; nothing is then
+Store — no personal data. `./install.sh --no-usage-statistics` (or
+`GENTIAN_NO_USAGE_STATISTICS=1` in `install.env`) turns that off; nothing is then
 sent, and the App Store is not offered: no tenant has the App Store tile. What is sent, and where to read the
 last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 

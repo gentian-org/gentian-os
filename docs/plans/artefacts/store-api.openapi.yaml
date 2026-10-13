@@ -286,8 +286,8 @@ paths:
         A client asks this once after each sign-in, before the signed-in
         call the person wanted.
 
-        `known` says whether the store holds licence reports that list this
-        tenant URL (see `licence-report.openapi.yaml`). `notices` are shown
+        `known` says whether the store holds usage statistics reports that list this
+        tenant URL (see `usage-statistics.openapi.yaml`). `notices` are shown
         to the person as they are; none of them blocks anything on the
         cluster.
       parameters:
@@ -675,7 +675,7 @@ paths:
       summary: Evaluations and reports about an app
       description: |
         Documents somebody wrote about the app: a security assessment, a
-        quality or accessibility evaluation, a licence review. Newest first,
+        quality or accessibility evaluation, a license review. Newest first,
         unpaged. The store states who issued each one; it does not vouch for
         it, and nothing on the cluster reads them.
       parameters:
@@ -1156,7 +1156,7 @@ components:
            `state`, `code_challenge`, `code_challenge_method=S256`, and
            `tenant_url`: the URL of the tenant the app is installed in,
            `https://<host>`, lower case, no path and no trailing slash —
-           the same spelling the cluster's licence report uses for the
+           the same spelling the cluster's usage statistics report uses for the
            tenant.
         3. The person signs in at the store, with their account there.
         4. The issuer redirects the browser to `redirect_uri` with `code`
@@ -1405,7 +1405,7 @@ components:
                 status: 403
                 reason: no-reports-for-tenant
                 detail: >-
-                  No licence report names https://acme.example. The store serves tenants of clusters that report;
+                  No usage statistics report names https://acme.example. The store serves tenants of clusters that report;
                   ask the cluster's administrator whether reporting is on.
             scope:
               $ref: "#/components/examples/ProblemInsufficientScope"
@@ -1615,7 +1615,7 @@ components:
           description: The tenant URL the token is bound to, echoed.
         known:
           type: boolean
-          description: Whether the store holds at least one licence report that lists this tenant URL.
+          description: Whether the store holds at least one usage statistics report that lists this tenant URL.
         lastReportAt:
           type: [string, "null"]
           format: date-time
@@ -1642,7 +1642,7 @@ components:
         Why the store does not serve a tenant. Open: a client shows `detail`
         for a value it does not know.
 
-        * `no-reports-for-tenant` — no licence report lists this tenant URL.
+        * `no-reports-for-tenant` — no usage statistics report lists this tenant URL.
           Either the cluster does not report, or the URL stated at sign-in
           is not the tenant's.
         * `tenant-not-claimed` — reports exist, and the account signed in
@@ -1678,12 +1678,12 @@ components:
             What kind of notice. Open: a client shows a notice of a type it
             does not know like `message`.
 
-            * `free-licence-limit` — the cluster this tenant is on has no
+            * `free-license-limit` — the cluster this tenant is on has no
               subscription. The text states the terms in the store's own
               words.
-            * `reports-stale` — the latest licence report is old.
+            * `reports-stale` — the latest usage statistics report is old.
             * `message` — anything else the store has to say.
-          examples: [free-licence-limit]
+          examples: [free-license-limit]
         severity:
           type: string
           description: How prominently to show it. Closed.
@@ -1707,7 +1707,7 @@ components:
           description: |
             What the link leads to. Open; a client shows `label`, or the
             address, for a value it does not know. Values: `homepage`,
-            `documentation`, `source`, `support`, `licence`, `privacy`,
+            `documentation`, `source`, `support`, `license`, `privacy`,
             `terms`, `subscription`.
         label:
           type: [string, "null"]
@@ -1858,7 +1858,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AppSummary"
         - type: object
-          required: [description, screenshots, versions, addons, addonOf, links, licence]
+          required: [description, screenshots, versions, addons, addonOf, links, license]
           properties:
             description:
               type: string
@@ -1893,11 +1893,11 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Link"
-            licence:
+            license:
               oneOf:
-                - $ref: "#/components/schemas/Licence"
+                - $ref: "#/components/schemas/License"
                 - type: "null"
-              description: The licence the app is distributed under.
+              description: The license the app is distributed under.
     Screenshot:
       type: object
       required: [url, contentType]
@@ -1979,13 +1979,13 @@ components:
         summary:
           type: string
           maxLength: 300
-    Licence:
+    License:
       type: object
       required: [name]
       properties:
         spdx:
           type: [string, "null"]
-          description: The SPDX identifier, when the licence has one.
+          description: The SPDX identifier, when the license has one.
         name:
           type: string
           maxLength: 120
@@ -2062,7 +2062,7 @@ components:
           description: |
             What the document is. Open; a client shows a value it does not
             know as `other`. Values: `security`, `quality`, `accessibility`,
-            `privacy`, `licence`, `other`.
+            `privacy`, `license`, `other`.
           examples: [security]
         title:
           type: string
@@ -2410,7 +2410,7 @@ components:
         served: true
         refusal: null
         notices:
-          - type: free-licence-limit
+          - type: free-license-limit
             severity: info
             title: This cluster has no subscription
             text: Terms text supplied by the store.
@@ -2427,11 +2427,11 @@ components:
         refusal:
           reason: no-reports-for-tenant
           detail: >-
-            No licence report names https://acme.example. The store serves tenants of clusters that report;
+            No usage statistics report names https://acme.example. The store serves tenants of clusters that report;
             ask the cluster's administrator whether reporting is on.
           link:
             rel: documentation
-            label: Licence reporting
+            label: Usage statistics
             url: https://store.example/help/reporting
         notices: []
     TenantNotClaimed:
@@ -2515,10 +2515,10 @@ components:
         links:
           - {rel: homepage, label: null, url: "https://publisher.example"}
           - {rel: documentation, label: Administration manual, url: "https://publisher.example/docs"}
-        licence:
+        license:
           spdx: null
-          name: Example Publisher Enterprise Licence
-          url: https://publisher.example/licence
+          name: Example Publisher Enterprise License
+          url: https://publisher.example/license
     Confirmation:
       value:
         coordinate: gentian/nextcloud-base-ee

@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-package licencereport
+package usagestatistics
 
 import (
 	"context"
@@ -191,7 +191,7 @@ func reporter(t *testing.T, e *endpoint, c client.Client) *Reporter {
 		Now:      func() time.Time { return at },
 	}
 	if e != nil {
-		r.Settings = Settings{Enabled: true, URL: e.URL + "/api/v1/licence-reports"}
+		r.Settings = Settings{Enabled: true, URL: e.URL + "/api/v1/usage-statistics"}
 		r.HTTP = e.Client()
 	}
 	return r
@@ -670,16 +670,16 @@ func TestARedirectIsNotFollowed(t *testing.T) {
 }
 
 func TestSettingsComeFromTheEnvironmentAndDefaultToOff(t *testing.T) {
-	t.Setenv("LICENCE_REPORT_ENABLED", "")
-	t.Setenv("LICENCE_REPORT_URL", "")
+	t.Setenv("USAGE_STATISTICS_ENABLED", "")
+	t.Setenv("USAGE_STATISTICS_URL", "")
 	if SettingsFromEnv().Active() {
 		t.Fatal("an unset environment reports")
 	}
-	t.Setenv("LICENCE_REPORT_URL", "https://reports.example/v1")
+	t.Setenv("USAGE_STATISTICS_URL", "https://reports.example/v1")
 	if SettingsFromEnv().Active() {
 		t.Fatal("an address alone turns reporting on")
 	}
-	t.Setenv("LICENCE_REPORT_ENABLED", "true")
+	t.Setenv("USAGE_STATISTICS_ENABLED", "true")
 	if s := SettingsFromEnv(); !s.Active() || s.URL != "https://reports.example/v1" {
 		t.Fatalf("settings = %+v", s)
 	}

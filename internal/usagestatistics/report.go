@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package licencereport tells the receiving endpoint, in the open, what this
+// Package usagestatistics tells the receiving endpoint, in the open, what this
 // cluster runs.
 //
 // The software is free under a usage limit that is enforced legally and not
@@ -27,7 +27,7 @@ SPDX-License-Identifier: MPL-2.0
 // Every report is signed with a key this cluster alone holds and is recorded,
 // exactly as sent, where an operations screen can read it. A cluster with
 // reporting turned off, or with no address to report to, sends nothing, ever.
-package licencereport
+package usagestatistics
 
 import (
 	"context"
@@ -73,8 +73,8 @@ type Settings struct {
 // SettingsFromEnv reads the two values the chart renders. Unset means off.
 func SettingsFromEnv() Settings {
 	return Settings{
-		Enabled: os.Getenv("LICENCE_REPORT_ENABLED") == "true",
-		URL:     strings.TrimSpace(os.Getenv("LICENCE_REPORT_URL")),
+		Enabled: os.Getenv("USAGE_STATISTICS_ENABLED") == "true",
+		URL:     strings.TrimSpace(os.Getenv("USAGE_STATISTICS_URL")),
 	}
 }
 

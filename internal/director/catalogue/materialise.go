@@ -26,7 +26,7 @@ SPDX-License-Identifier: MPL-2.0
 // it is refused and nothing is written. So a compromised source can fail an
 // install and cannot change what gets installed.
 //
-// The digest is not a licence and is not signed. Whether a tenant may have an
+// The digest is not a license and is not signed. Whether a tenant may have an
 // app is not decided here at all: it is decided where the app's artefacts are
 // pulled, by the credential the tenant holds for their repository.
 package catalogue

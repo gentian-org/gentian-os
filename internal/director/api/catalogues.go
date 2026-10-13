@@ -40,7 +40,7 @@ import (
 // is a relationship with a supplier is not something a cluster can describe
 // usefully, so it is counted and named to the store instead.
 //
-// None of this is a licence check. A source named on the Cluster claim is
+// None of this is a license check. A source named on the Cluster claim is
 // offered to every tenant; whether an install is allowed is the person's
 // can_install_app and nothing else.
 //

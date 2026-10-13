@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-package licencereport
+package usagestatistics
 
 import (
 	"bytes"
@@ -76,14 +76,14 @@ func (r *Reporter) NeedLeaderElection() bool { return true }
 
 // Start implements manager.Runnable. It returns only when ctx ends.
 func (r *Reporter) Start(ctx context.Context) error {
-	logger := log.FromContext(ctx).WithName("licence-report")
+	logger := log.FromContext(ctx).WithName("usage-statistics")
 	if !r.Settings.Active() {
 		// Said once, and then nothing: no timer, no request, no record.
-		logger.Info("licence reporting is off; nothing is sent", "enabled", r.Settings.Enabled, "hasURL", r.Settings.URL != "")
+		logger.Info("usage statistics are off; nothing is sent", "enabled", r.Settings.Enabled, "hasURL", r.Settings.URL != "")
 		<-ctx.Done()
 		return nil
 	}
-	logger.Info("licence reporting is on", "url", r.Settings.URL, "firstIn", r.initialDelay(), "every", r.interval())
+	logger.Info("usage statistics are on", "url", r.Settings.URL, "firstIn", r.initialDelay(), "every", r.interval())
 
 	wait, retry := r.initialDelay(), time.Duration(0)
 	for {
@@ -163,7 +163,7 @@ func (r *Reporter) clientWithout() *http.Client {
 // a report that left the cluster and whose outcome could then not be written
 // down has still used its number.
 func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Duration) bool {
-	logger := log.FromContext(ctx).WithName("licence-report")
+	logger := log.FromContext(ctx).WithName("usage-statistics")
 	if !r.Settings.Active() {
 		return false
 	}
@@ -179,7 +179,7 @@ func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Durati
 	if err != nil {
 		// Without the record there is no sequence to continue and nowhere to
 		// write what was sent, so nothing is.
-		logger.Error(err, "the licence report's record cannot be read; nothing was sent")
+		logger.Error(err, "the usage statistics report's record cannot be read; nothing was sent")
 		return false
 	}
 
@@ -191,7 +191,7 @@ func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Durati
 		}
 		// Never unsigned. The condition is recorded where the report would
 		// have been, and the key is looked for again on the next attempt.
-		logger.Info("no licence report was sent: this cluster has no usable signing key", "reason", reason)
+		logger.Info("no usage statistics report was sent: this cluster has no usable signing key", "reason", reason)
 		rec.Attempt = failed(reason, err)
 		r.save(ctx, rec)
 		return false
@@ -201,7 +201,7 @@ func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Durati
 		logger.Info("a count is sent as null: it could not be had", "what", what, "error", err.Error())
 	})
 	if err != nil {
-		logger.Error(err, "no licence report was sent: the cluster's tenants could not be read")
+		logger.Error(err, "no usage statistics report was sent: the cluster's tenants could not be read")
 		rec.Attempt = failed(ReasonNoInventory, err)
 		r.save(ctx, rec)
 		return false
@@ -219,7 +219,7 @@ func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Durati
 	rec.Report = &Sent{Sequence: sequence, Body: string(body), Signature: signature, KeyID: key.ID()}
 	rec.Attempt = &Attempt{At: at.Format(time.RFC3339), Outcome: OutcomeSending}
 	if err := writeRecord(ctx, r.Client, r.Reader, r.Namespace, rec); err != nil {
-		logger.Error(err, "the licence report could not be recorded, so it was not sent")
+		logger.Error(err, "the usage statistics report could not be recorded, so it was not sent")
 		return false
 	}
 
@@ -230,16 +230,16 @@ func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Durati
 	case accepted:
 		attempt.Outcome = OutcomeAccepted
 		attempt.NextAt = at.Add(onSuccess).Format(time.RFC3339)
-		logger.Info("licence report sent", "sequence", sequence, "status", status)
+		logger.Info("usage statistics report sent", "sequence", sequence, "status", status)
 	case err != nil:
 		attempt.Outcome, attempt.Reason, attempt.Error = OutcomeFailed, ReasonUnreachable, err.Error()
 		attempt.NextAt = at.Add(onFailure).Format(time.RFC3339)
-		logger.Info("the licence report did not arrive; it is tried again", "sequence", sequence, "error", err.Error())
+		logger.Info("the usage statistics report did not arrive; it is tried again", "sequence", sequence, "error", err.Error())
 	default:
 		attempt.Outcome, attempt.Reason = OutcomeFailed, ReasonRefused
 		attempt.Error = fmt.Sprintf("the receiving endpoint answered %d", status)
 		attempt.NextAt = at.Add(onFailure).Format(time.RFC3339)
-		logger.Info("the licence report was not accepted; it is tried again", "sequence", sequence, "status", status)
+		logger.Info("the usage statistics report was not accepted; it is tried again", "sequence", sequence, "status", status)
 	}
 	rec.Attempt = attempt
 	r.save(ctx, rec)
@@ -250,7 +250,7 @@ func (r *Reporter) RunOnce(ctx context.Context, onSuccess, onFailure time.Durati
 // has already happened.
 func (r *Reporter) save(ctx context.Context, rec *Record) {
 	if err := writeRecord(ctx, r.Client, r.Reader, r.Namespace, rec); err != nil {
-		log.FromContext(ctx).WithName("licence-report").Error(err, "the licence report's outcome could not be recorded")
+		log.FromContext(ctx).WithName("usage-statistics").Error(err, "the usage statistics report's outcome could not be recorded")
 	}
 }
 

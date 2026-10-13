@@ -232,7 +232,7 @@ of its own.
 
 A person who may install apps in a tenant has an **App Store** tile whenever
 the Cluster claim names a store (`catalogue.storeUrl`) that is not the App
-Store app's own address on a cluster, and the cluster's licence report is on
+Store app's own address on a cluster, and the cluster's usage statistics report is on
 ([design/operations.md §6.2](design/operations.md)). The
 tile opens the App Store app, which runs on the cluster. It shows the data of
 the store outside the cluster — apps, descriptions, reviews, versions, prices

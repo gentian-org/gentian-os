@@ -58,7 +58,7 @@ PEP is the single route to the workload, and it strips any inbound copy of
 the header it sets. Where that cannot be shown, principle 1 applies and the
 app needs a token. The clause is the whole difference between the two rules
 — without it, principle 1 reads as a ban on the proxied-app pattern and
-principle 3 as a licence for a bypassable one.
+principle 3 as a license for a bypassable one.
 
 ## 4. The authorization vocabulary grows with the API, not with use cases
 

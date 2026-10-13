@@ -471,15 +471,15 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # Operations Console and the API-extension grant its service needs. 1 leaves
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
-# A vanilla installation reports what it runs to the licence report address,
+# A vanilla installation reports what it runs to the usage statistics report address,
 # once a day (docs/design/operations.md). 1 turns that off: nothing is sent,
 # and the App Store is not offered. The address itself is the bootstrap
 # chart's default (kernel/bootstrap/chart/values.yaml) unless
-# GENTIAN_LICENCE_REPORT_URL names another.
+# GENTIAN_USAGE_STATISTICS_URL names another.
 # Unset says nothing either way, and a cluster that already has the report
-# turned off then keeps it off (gentian_licence_report_enabled); 0 turns it on.
-GENTIAN_NO_LICENCE_REPORT="${GENTIAN_NO_LICENCE_REPORT:-}"
-GENTIAN_LICENCE_REPORT_URL="${GENTIAN_LICENCE_REPORT_URL:-}"
+# turned off then keeps it off (gentian_usage_statistics_enabled); 0 turns it on.
+GENTIAN_NO_USAGE_STATISTICS="${GENTIAN_NO_USAGE_STATISTICS:-}"
+GENTIAN_USAGE_STATISTICS_URL="${GENTIAN_USAGE_STATISTICS_URL:-}"
 # The profiles a vanilla installation materialises for every tenant: https
 # addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
 # comma separated, each optionally pinned with @sha256:<digest>. Unset means
@@ -546,7 +546,7 @@ load_env_file() {
     # was not on it went the other way round -- GENTIAN_OS_BRANCH, the stage,
     # the issuer mode -- so an export for one run was silently undone by the
     # file. Exported and non-empty, not merely set: the installer's own
-    # defaults (GENTIAN_DISABLE_API_EXTENSIONS, GENTIAN_NO_LICENCE_REPORT, ...)
+    # defaults (GENTIAN_DISABLE_API_EXTENSIONS, GENTIAN_NO_USAGE_STATISTICS, ...)
     # are assigned before this runs and are not exported, and a default that
     # counted as "already set" was a setting the file could never change.
     while IFS= read -r var; do
@@ -2378,25 +2378,31 @@ gentian_mail_service_mode() {
 }
 
 # =============================================================================
-# gentian_licence_report_enabled — "true" or "false": does this cluster report
+# gentian_usage_statistics_enabled — "true" or "false": does this cluster report
 # what it runs?
 #
-# --no-licence-report (GENTIAN_NO_LICENCE_REPORT=1) says no and
-# GENTIAN_NO_LICENCE_REPORT=0 says yes. A run that says neither keeps what the
+# --no-usage-statistics (GENTIAN_NO_USAGE_STATISTICS=1) says no and
+# GENTIAN_NO_USAGE_STATISTICS=0 says yes. A run that says neither keeps what the
 # cluster has: the flag is typed once, and a later run of one step without it
 # must not start sending reports from a cluster whose owner turned them off.
 # A cluster that has no operator Application yet has said nothing, and
 # reports.
+#
+# The switch was called licenceReport before it had this name. A cluster
+# whose owner turned it off then is still off: a rename must not be what
+# starts sending from it.
 # =============================================================================
-gentian_licence_report_enabled() {
-    case "${GENTIAN_NO_LICENCE_REPORT:-}" in
+gentian_usage_statistics_enabled() {
+    case "${GENTIAN_NO_USAGE_STATISTICS:-}" in
         1) echo false; return 0 ;;
         0) echo true; return 0 ;;
     esac
-    local have
+    local have before
     have="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.usageStatistics.enabled}' 2>/dev/null || true)"
+    before="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
         -o jsonpath='{.spec.sources[0].helm.valuesObject.licenceReport.enabled}' 2>/dev/null || true)"
-    if [[ "${have}" == "false" ]]; then
+    if [[ "${have}" == "false" || ( -z "${have}" && "${before}" == "false" ) ]]; then
         echo false
     else
         echo true

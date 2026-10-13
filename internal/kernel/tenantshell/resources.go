@@ -28,10 +28,10 @@ import (
 )
 
 const (
-	TenantLabel                  = meta.TenantLabel
-	ManagedByLabel               = meta.ManagedByLabel
-	ManagedByValue               = meta.ManagedByValue
-	RoutingModeGateway           = meta.RoutingModeGateway
+	TenantLabel        = meta.TenantLabel
+	ManagedByLabel     = meta.ManagedByLabel
+	ManagedByValue     = meta.ManagedByValue
+	RoutingModeGateway = meta.RoutingModeGateway
 )
 
 // Config is shared with netpolicy for MAC policy generation.

@@ -167,8 +167,8 @@ _v5_render() {
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
         --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-false}" \
-        --set-string "licenceReport.enabled=$(gentian_licence_report_enabled)" \
-        --set-string "licenceReport.url=${GENTIAN_LICENCE_REPORT_URL:-}" \
+        --set-string "usageStatistics.enabled=$(gentian_usage_statistics_enabled)" \
+        --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
     local rc=$?

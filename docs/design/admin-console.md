@@ -48,7 +48,7 @@ service's answer from OpenFGA.
 | **Credentials** | Repository credentials, backup identity | custodian, director |
 | **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
 | **Audit** | Changes to declared state, from git (§4.7) | director |
-| **Cluster settings**, **Platform security**, **Customization**, **Licence report** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last licence report | director |
+| **Cluster settings**, **Platform security**, **Customization**, **Usage Statistics** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last usage statistics report | director |
 | **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, the two serving switches, and the switch for the gateway's own console. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
 | **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
 

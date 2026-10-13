@@ -20,7 +20,7 @@ depths, and they must agree:
 | [store-contract.md](../../design/store-contract.md) | Why it is shaped this way: who trusts whom, and what the cluster does with each answer |
 
 The report a cluster sends about itself, which a store depends on (§4), is a
-separate format: [licence-report.openapi.yaml](licence-report.openapi.yaml),
+separate format: [usage-statistics.openapi.yaml](usage-statistics.openapi.yaml),
 spelled out in [operations.md §6.2](../../design/operations.md).
 
 ## Changes to the definition
@@ -61,7 +61,7 @@ Whoever keeps a copy of these files: this is what moved, newest first.
 9. **Reading a repository credential needs `store.acquire`.**
    `GET /v1/acquisitions/{id}` answered to a token with `store.read` alone
    carries the confirmation without `repository.credential` (§3, §6).
-10. In `licence-report.openapi.yaml`, prose only: a receiver remembers the
+10. In `usage-statistics.openapi.yaml`, prose only: a receiver remembers the
     key first seen per **`cluster.url`**, not per `cluster.id`, and the
     account holder resets it. The format of a report is unchanged.
 11. §9: the questions these decisions answer are removed — who may act
@@ -270,7 +270,7 @@ cluster. *app* below is the App Store app's **backend**, on the cluster.
 
 **`tenant_url`** is the address of the tenant the app is installed in:
 `https://<host>`, lower case, no path, no trailing slash. It is the same
-spelling the cluster uses for the tenant in its licence report
+spelling the cluster uses for the tenant in its usage statistics report
 (`tenants[].url`), which is what lets a store match the two (§4).
 
 **Three conditions the sign-in is held to.**
@@ -356,7 +356,7 @@ cacheable for the `max-age` it states.
 
 ## 4. Tenant standing
 
-A store that depends on licence reporting serves a tenant only when the
+A store that depends on usage statistics serves a tenant only when the
 reports it has received list that tenant's URL. The app asks once after
 each sign-in and shows what it is told. Standing governs the signed-in
 calls only: the catalogue stays readable to a tenant the store refuses, and
@@ -374,13 +374,13 @@ A tenant the store serves, on a cluster with no subscription:
 ```jsonc
 {
   "tenantUrl": "https://acme.example",       // from the token, echoed
-  "known": true,                             // at least one licence report lists this URL
+  "known": true,                             // at least one usage statistics report lists this URL
   "lastReportAt": "2026-10-06T05:06:07Z",    // sentAt of the latest such report
   "served": true,
   "refusal": null,
   "notices": [
     {
-      "type": "free-licence-limit",
+      "type": "free-license-limit",
       "severity": "info",
       "title": "This cluster has no subscription",
       "text": "Terms text supplied by the store.",
@@ -400,8 +400,8 @@ A tenant the store does not serve:
   "served": false,                           // every /v1/acquisitions operation now answers 403 tenant-refused
   "refusal": {
     "reason": "no-reports-for-tenant",
-    "detail": "No licence report names https://acme.example. The store serves tenants of clusters that report; ask the cluster's administrator whether reporting is on.",
-    "link": {"rel": "documentation", "label": "Licence reporting", "url": "https://store.example/help/reporting"}
+    "detail": "No usage statistics report names https://acme.example. The store serves tenants of clusters that report; ask the cluster's administrator whether reporting is on.",
+    "link": {"rel": "documentation", "label": "Usage statistics", "url": "https://store.example/help/reporting"}
   },
   "notices": []
 }
@@ -410,7 +410,7 @@ A tenant the store does not serve:
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `tenantUrl` | string | yes | The tenant URL the token is bound to |
-| `known` | boolean | yes | Whether the store holds a licence report listing this URL |
+| `known` | boolean | yes | Whether the store holds a usage statistics report listing this URL |
 | `lastReportAt` | date-time \| null | no | `sentAt` of the latest such report |
 | `served` | boolean | yes | Whether the store serves this tenant |
 | `refusal` | object \| null | yes | Present exactly when `served` is false |
@@ -421,7 +421,7 @@ A tenant the store does not serve:
 
 | `refusal.reason` | Meaning |
 |---|---|
-| `no-reports-for-tenant` | No licence report lists this URL: the cluster does not report, or the URL stated at sign-in is not the tenant's |
+| `no-reports-for-tenant` | No usage statistics report lists this URL: the cluster does not report, or the URL stated at sign-in is not the tenant's |
 | `tenant-not-claimed` | Reports exist, and the account signed in is not associated with this tenant: it is not the account of the tenant's administrator, or another the store lets act for the tenant (§3) |
 | `reports-stale` | Reports exist and the latest is older than the store accepts |
 | `tenant-blocked` | The store has decided not to serve this tenant |
@@ -453,7 +453,7 @@ reason `tenant-not-claimed`:
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `type` | string | yes | Open. `free-licence-limit`: the tenant's cluster has no subscription, and the text states the terms in the store's own words. `reports-stale`: the latest report is old. `message`: anything else. An unknown type is shown like `message` |
+| `type` | string | yes | Open. `free-license-limit`: the tenant's cluster has no subscription, and the text states the terms in the store's own words. `reports-stale`: the latest report is old. `message`: anything else. An unknown type is shown like `message` |
 | `severity` | `info` \| `warning` | yes | Closed. How prominently to show it |
 | `title` | string ≤ 120 \| null | no | A short heading |
 | `text` | string ≤ 2000 | yes | The notice, plain text, in the language of the request |
@@ -463,7 +463,7 @@ reason `tenant-not-claimed`:
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `rel` | string | no | Open: `homepage`, `documentation`, `source`, `support`, `licence`, `privacy`, `terms`, `subscription` |
+| `rel` | string | no | Open: `homepage`, `documentation`, `source`, `support`, `license`, `privacy`, `terms`, `subscription` |
 | `label` | string ≤ 80 \| null | no | What to call it |
 | `url` | URL | yes | Opened in a separate window |
 
@@ -596,7 +596,7 @@ Everything in the summary, and:
               "summary": "Edit documents in the browser."}],
   "addonOf": null,                           // the coordinate this entry extends, when it is an add-on
   "links": [{"rel": "documentation", "label": "Administration manual", "url": "https://publisher.example/docs"}],
-  "licence": {"spdx": null, "name": "Example Publisher Enterprise Licence", "url": "https://publisher.example/licence"}
+  "license": {"spdx": null, "name": "Example Publisher Enterprise License", "url": "https://publisher.example/license"}
 }
 ```
 
@@ -608,7 +608,7 @@ Everything in the summary, and:
 | `addons` | `{coordinate, name, summary}[]` | yes | The add-ons that exist for this entry; each is a store entry of its own |
 | `addonOf` | coordinate \| null | yes | When this entry is itself an add-on, what it extends |
 | `links` | Link[] | yes | |
-| `licence` | `{spdx, name, url}` \| null | yes | The licence the app is distributed under. `spdx` and `url` may be `null` |
+| `license` | `{spdx, name, url}` \| null | yes | The license the app is distributed under. `spdx` and `url` may be `null` |
 
 **Screenshot**
 
@@ -687,7 +687,7 @@ Documents somebody wrote about the app. Newest first, unpaged.
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `id` | string | yes | |
-| `kind` | string | yes | Open: `security`, `quality`, `accessibility`, `privacy`, `licence`, `other`. An unknown value is shown as `other` |
+| `kind` | string | yes | Open: `security`, `quality`, `accessibility`, `privacy`, `license`, `other`. An unknown value is shown as `other` |
 | `title` | string ≤ 200 | yes | |
 | `issuer` | string ≤ 120 \| null | no | Who wrote it |
 | `date` | date | yes | The day the document is dated |
@@ -932,7 +932,7 @@ that cluster:
 | Image credentials reach a pod only through a chart that takes `imagePullSecrets` or `global.imagePullSecrets` | A private app's chart must take one of them, or its images must be public |
 
 A store's repository therefore controls the first pull into a cluster. What
-runs on a cluster after that is stated by the cluster's licence report, not
+runs on a cluster after that is stated by the cluster's usage statistics report, not
 enforced by the credential.
 
 The confirmation is a statement of facts. It is not signed, the cluster
@@ -996,7 +996,7 @@ Every answer with a status of 400 or above is `application/problem+json`
   "code": "tenant-refused",                              // what the app branches on
   "title": "The store does not serve this tenant",       // fixed per code, in the language of the request
   "status": 403,
-  "detail": "No licence report names https://acme.example. …",   // this occurrence, for a person
+  "detail": "No usage statistics report names https://acme.example. …",   // this occurrence, for a person
   "instance": "7f3a91c2",                                // optional: the store's reference, to quote
   "reason": "no-reports-for-tenant"                      // with tenant-refused only; the values of §4
 }

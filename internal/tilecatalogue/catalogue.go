@@ -102,7 +102,7 @@ type Catalogue struct {
 // Store. It is the same verdict that places the App Store app on tenants, so
 // what the usher answers and whether the app is there cannot differ.
 type AppStore struct {
-	// Offered is whether licence reporting is on and the Cluster claim names
+	// Offered is whether usage statistics are on and the Cluster claim names
 	// a store that is not one of this cluster's own hosts.
 	Offered bool `json:"offered"`
 	// Reason says why not, as one of the AppStoreReason words.
@@ -111,9 +111,9 @@ type AppStore struct {
 
 // Why a cluster offers no App Store.
 const (
-	// AppStoreReasonNoLicenceReport: the cluster does not report what it
+	// AppStoreReasonNoUsageStatistics: the cluster does not report what it
 	// runs, and an app installed through a store is what the report lists.
-	AppStoreReasonNoLicenceReport = "licence-report-disabled"
+	AppStoreReasonNoUsageStatistics = "usage-statistics-disabled"
 	// AppStoreReasonNoStore: the Cluster claim names no store
 	// (spec.catalogue.storeUrl), or names one that is not an https address.
 	AppStoreReasonNoStore = "no-store-configured"
@@ -126,7 +126,7 @@ const (
 // header explains the projected file to whoever opens the ConfigMap, which is
 // the one place a person meets it without reading this package first.
 const header = `# The tiles this cluster offers, projected by the operator, and whether it
-# offers an App Store (appStore: licence reporting is on and the Cluster claim
+# offers an App Store (appStore: usage statistics are on and the Cluster claim
 # names a store).
 #
 # Every entry is something the operator routes: a kernel console it composes an

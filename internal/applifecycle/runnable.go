@@ -18,7 +18,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
-	"github.com/gentian-org/gentian-os/internal/licencereport"
+	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
 // Runnable serves the app lifecycle HTTP API inside the operator manager.
@@ -39,7 +39,7 @@ func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, err
 		OperatorNamespace: namespace,
 		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
-		LicenceReport:     licencereport.SettingsFromEnv(),
+		UsageStatistics:   usagestatistics.SettingsFromEnv(),
 		Vault:             vaultFromEnv(),
 		LiveReader:        mgr.GetAPIReader(),
 		TenancyMode:       tenancyMode,
