@@ -505,14 +505,16 @@ The install pauses here and waits for you. Three things finish it:
    `install.env` is kept as the recovery address. Open it, set the password, then sign in at
    `https://platform.<kernel-domain>/`. Nobody else, the installer included,
    ever knows the password.
-3. **Supply the runtime credentials.** Once signed in, open the **Credentials**
-   tab and fill in what the cluster is still missing — the SMTP relay's user
-   name and password on a cluster with `mail.serviceMode: external`, any extra
-   app repository and its pull secret. A cluster with its own mail
-   (`system`) has no relay to supply.
+3. **Open the Credentials tab.** Once signed in, open the **Credentials**
+   tab. Opening it is what the installer waits for: it shows that someone
+   other than the installer reaches the credential store. Then fill in what
+   the cluster is still missing, if anything — the SMTP relay's user name and
+   password on a cluster with `mail.serviceMode: external`, any extra app
+   repository and its pull secret. A cluster with its own mail (`system`) has
+   no relay to supply, and often nothing at all.
 
-Signing in is what the installer is waiting for: it proves someone other than
-the installer can write credentials. The moment it sees that, it revokes its own
+Signing in and opening that tab is what the installer is waiting for: it proves
+someone other than the installer can write credentials. The moment it sees that, it revokes its own
 credential, deletes the temporary secret files, and prints **`Install Complete`**.
 
 **With a relay, do the SMTP relay first.** It is not only about sending mail. Any app whose

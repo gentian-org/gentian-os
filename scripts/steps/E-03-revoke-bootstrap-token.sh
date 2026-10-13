@@ -458,9 +458,15 @@ _wait_for_sign_in() {
     #
     # The install cannot supply these — they are somebody's relay account — so
     # naming them here, on the screen that has stopped, is the most it can do.
-    warn "  3. SUPPLY THE RUNTIME CREDENTIALS"
-    warn "     Once signed in, open the Credentials tab and fill in what the"
-    warn "     cluster is still missing."
+    # Opening the tab is the step, and filling something in is not. The
+    # sign-in this waits for is recorded when the Credentials tab exchanges the
+    # administrator's token at the credential store; a cluster with nothing to
+    # supply was told to "fill in what is missing", found nothing missing, and
+    # could not tell that it had already done what was asked.
+    warn "  3. OPEN THE CREDENTIALS TAB"
+    warn "     Once signed in, open the Credentials tab. Opening it is what this"
+    warn "     waits for: it shows that someone other than the installer reaches"
+    warn "     the credential store."
     # The relay only where there is one. Under system mail the cluster runs
     # its own and derives that password itself, so there is nothing to supply
     # -- and "do the relay first" there sent people looking for a credential
@@ -470,18 +476,20 @@ _wait_for_sign_in() {
         -o jsonpath='{.items[0].spec.mail.serviceMode}' 2>/dev/null || true)"
     case "${mail_mode}" in
         external)
-            warn "     Do the SMTP relay FIRST. This cluster's mail.serviceMode is"
-            warn "     'external', so nothing sends until the relay is set — and any"
+            warn "     Then fill in the SMTP relay there, before anything else. This"
+            warn "     cluster's mail.serviceMode is 'external', so nothing sends"
+            warn "     until the relay is set — and any"
             warn "     tenant app that asks for SMTP will not install at all: its"
             warn "     credentials never reach OpenBao, so its secret never syncs."
             ;;
         system)
-            info "     Mail is the cluster's own (mail.serviceMode system): there is"
-            info "     no relay to supply."
+            info "     Nothing has to be filled in there for the install to finish:"
+            info "     mail is the cluster's own (mail.serviceMode system), so there"
+            info "     is no relay to supply."
             ;;
         *)
             warn "     The claim's mail.serviceMode could not be read. If this cluster"
-            warn "     relays mail externally, do the SMTP relay first: until it is set"
+            warn "     relays mail externally, fill in the SMTP relay there: until it is set"
             warn "     no realm can send and tenant apps that ask for SMTP will not install."
             ;;
     esac
