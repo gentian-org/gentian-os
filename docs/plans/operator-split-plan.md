@@ -819,6 +819,9 @@ keep working.
 - Sends a password reset; requires or removes a second factor.
 - Issues the link that hands a new tenant's admin account to its
   holder.
+- *Added 2026-10-13.* Keeps a request to invite a new tenant's admin, with
+  the address to mail, in its database until the tenant is ready, and then
+  sends the invitation itself.
 - Counts the accounts on the cluster (a number, no names).
 - Records every act and who was allowed to ask for it, in a database of its
   own.

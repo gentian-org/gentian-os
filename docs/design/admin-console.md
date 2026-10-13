@@ -112,6 +112,19 @@ verbs; they are reachable from any console such a person can open.
   activation link: `kubectl gentian tenants activate-admin <tenant>`, or the
   *Tenants* screen.
 
+  *Tenants* → *Create* asks for the administrator's recovery address. With an
+  address, the console hands it to the registrar as soon as the tenant is
+  committed, through its backend and with the person's token, and says that
+  the invitation will be mailed to that address when the tenant is ready and
+  that the page can be closed. The console keeps nothing: the registrar keeps
+  the request and sends the invitation ([iam.md §1.4](iam.md)). While the
+  page stays open it shows the request's state. In the list, a tenant with a
+  pending request shows *Invitation pending* in place of *Activate
+  administrator*; when the invitation expired or could not be mailed, the
+  button is back. Without an address nothing changes: the console waits for
+  the tenant and shows the link once. If the registrar cannot keep the
+  request, the console says so and waits with the page open, as it did before.
+
 No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
 **Inviting a member.** *Members* → *Invite*: address, name, optional recovery

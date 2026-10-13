@@ -128,6 +128,18 @@ type Config struct {
 	// with none, no component is recognised by its key, and the people who
 	// may take a link away still can (vouching.go).
 	VouchingKeys *VouchingKeys
+	// Invitations is where a request to invite a tenant's administrator is
+	// kept until the tenant is ready (invitations.go). Optional: without it
+	// such a request is refused, and the administrator is activated by
+	// somebody who waits for the tenant, as before.
+	Invitations Invitations
+	// InvitationExpiry is how long a request waits for its tenant before it
+	// is given up, and InvitationInterval how often the waiting ones are
+	// tried. Zero means the defaults.
+	InvitationExpiry   time.Duration
+	InvitationInterval time.Duration
+	// Now is the clock, for the tests. Nil means the real one.
+	Now func() time.Time
 }
 
 // Server is the registrar's API.
@@ -136,6 +148,8 @@ type Server struct {
 	mux *http.ServeMux
 	// Addr is what Start listens on.
 	Addr string
+	// retry wakes the loop that sends the waiting invitations.
+	retry chan struct{}
 }
 
 // New returns a Server with every route registered.
@@ -149,7 +163,16 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	if cfg.InvitationExpiry <= 0 {
+		cfg.InvitationExpiry = DefaultInvitationExpiry
+	}
+	if cfg.InvitationInterval <= 0 {
+		cfg.InvitationInterval = defaultInvitationInterval
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), retry: make(chan struct{}, 1)}
 	s.routes()
 	return s, nil
 }
@@ -172,6 +195,9 @@ func (s *Server) Start(ctx context.Context) error {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
+	}
+	if s.cfg.Invitations != nil {
+		go s.sendInvitations(ctx)
 	}
 	go func() {
 		<-ctx.Done()
@@ -340,11 +366,18 @@ func (s *Server) holdApprovers(r *http.Request, c call) *http.Request {
 		return r
 	}
 	ctx := r.Context()
-	allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), "user:"+c.subject, "can_expose", authz.Tenant(tenant))
+	return r.WithContext(s.approversHeld(ctx, reqID(ctx), c.subject, tenant))
+}
+
+// approversHeld is holdApprovers' question and its answer, for a write made
+// for subject in tenant: ctx as it is where subject may approve the tenant's
+// public addresses, and marked where not, or where the store did not say.
+func (s *Server) approversHeld(ctx context.Context, requestID, subject, tenant string) context.Context {
+	allowed, err := s.cfg.Authz.Check(ctx, requestID, "user:"+subject, "can_expose", authz.Tenant(tenant))
 	if err == nil && allowed {
-		return r
+		return ctx
 	}
-	return r.WithContext(identity.WithApproversHeld(ctx, perimeterGroup(tenant)))
+	return identity.WithApproversHeld(ctx, perimeterGroup(tenant))
 }
 
 // perimeterGroup is the group whose members approve a tenant's public
@@ -410,6 +443,14 @@ func (s *Server) routes() {
 	// Handing a tenant's administrator account to its holder: whoever may
 	// bring tenants on (can_configure on the cluster) issues the link.
 	s.action("POST /v1/clusters/{c}/tenants/{t}/actions/activate-admin", "can_configure", s.clusterObject, s.activateAdmin)
+
+	// The same, for a tenant that may not exist yet: the request is kept and
+	// the invitation mailed when the tenant is ready (invitations.go). The
+	// relation is the one above, on the cluster, which does not depend on
+	// the tenant being there. So is reading what became of a request.
+	s.action("POST /v1/clusters/{c}/tenants/{t}/actions/request-admin-invitation", "can_configure", s.clusterObject, s.requestAdminInvitation)
+	s.guarded("GET /v1/clusters/{c}/tenants/{t}/admin-invitation", "can_configure", s.clusterObject, s.adminInvitation)
+	s.guarded("GET /v1/clusters/{c}/admin-invitations", "can_configure", s.clusterObject, s.pendingAdminInvitations)
 
 	// How many people hold an account on this cluster. A count and no
 	// names, so it is can_audit like every other read of the cluster.

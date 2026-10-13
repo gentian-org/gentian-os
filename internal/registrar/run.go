@@ -101,6 +101,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	// all would take the people screens down over an audit trail. The warning
 	// says which it is.
 	var authorityRecord *record.Store
+	var invitations Invitations
 	closer := func() {}
 	if dsn := os.Getenv("REGISTRAR_DATABASE_URL"); dsn != "" {
 		authorityRecord, err = record.Open(ctx, dsn, recordRetention(log))
@@ -109,8 +110,12 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		}
 		closer = authorityRecord.Close
 		go pruneRecord(ctx, authorityRecord, log)
+		// The same database keeps a request to invite a tenant's
+		// administrator until the tenant is ready.
+		invitations = authorityRecord
 	} else {
-		log.Warn("REGISTRAR_DATABASE_URL is not set; identity actions are logged but not recorded")
+		log.Warn("REGISTRAR_DATABASE_URL is not set; identity actions are logged but not recorded, " +
+			"and an administrator's invitation cannot be kept for a tenant that is not ready")
 	}
 
 	// The components that vouch for people, each with the hash of its own
@@ -134,8 +139,10 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		InviteRedirectURI: os.Getenv("REGISTRAR_INVITE_REDIRECT_URI"),
 		// Where a tenant's desktop API answers, %s for the tenant: the
 		// settings templates an invitation may apply live there.
-		DesktopAPI:   os.Getenv("REGISTRAR_DESKTOP_API_URL"),
-		VouchingKeys: vouchingKeys,
+		DesktopAPI:       os.Getenv("REGISTRAR_DESKTOP_API_URL"),
+		VouchingKeys:     vouchingKeys,
+		Invitations:      invitations,
+		InvitationExpiry: invitationExpiry(log),
 	})
 	if err != nil {
 		closer()
@@ -159,6 +166,23 @@ func recordRetention(log *slog.Logger) time.Duration {
 		log.Warn("REGISTRAR_RECORD_RETENTION is not a duration; using the default",
 			"value", raw, "default", record.DefaultRetention.String())
 		return record.DefaultRetention
+	}
+	return d
+}
+
+// invitationExpiry is how long a request to invite a tenant's administrator
+// waits for its tenant, from REGISTRAR_INVITATION_EXPIRY (a Go duration). The
+// request holds a person's address for that long at most.
+func invitationExpiry(log *slog.Logger) time.Duration {
+	raw := os.Getenv("REGISTRAR_INVITATION_EXPIRY")
+	if raw == "" {
+		return DefaultInvitationExpiry
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warn("REGISTRAR_INVITATION_EXPIRY is not a duration; using the default",
+			"value", raw, "default", DefaultInvitationExpiry.String())
+		return DefaultInvitationExpiry
 	}
 	return d
 }

@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -617,7 +618,8 @@ type Activation struct {
 	ExpiresAt int64 `json:"expiresAt,omitempty"`
 	// Actions are what the link asks the person to do.
 	Actions []string `json:"actions"`
-	// MailError says why a link meant for Email is shown instead of mailed.
+	// MailError says why a link meant for Email was not mailed: what the
+	// realm answered, without an address or a link in it.
 	MailError string `json:"mailError,omitempty"`
 }
 
@@ -634,6 +636,51 @@ func (c *Client) FindUser(ctx context.Context, r Realm, username string) (Person
 		}
 	}
 	return Person{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
+}
+
+// What a reason passed on to a caller must not carry: an address, which is a
+// person's, and a link, which is a way in.
+var (
+	addressLike = regexp.MustCompile(`[^\s<>()\[\],;:"']+@[^\s<>()\[\],;:"']+`)
+	linkLike    = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S+`)
+)
+
+// mailFailureLimit bounds the reason: it is shown in a console and kept in a
+// record, and a server's answer can be a page.
+const mailFailureLimit = 240
+
+// mailFailure is why Keycloak did not send a mail, in its own words: the
+// status and the message of the failed call, on one line, bounded, with
+// anything that looks like an address or a link taken out.
+func mailFailure(err error) string {
+	reason := err.Error()
+	// "keycloak PUT /users/<id>/...: HTTP 500: <message>": the method and
+	// the path say nothing a reader of the reason can use.
+	if i := strings.Index(reason, "HTTP "); i >= 0 && strings.HasPrefix(reason, "keycloak ") {
+		reason = reason[i:]
+	}
+	reason = linkLike.ReplaceAllString(reason, "<link>")
+	reason = addressLike.ReplaceAllString(reason, "<address>")
+	reason = strings.Join(strings.Fields(reason), " ")
+	if runes := []rune(reason); len(runes) > mailFailureLimit {
+		reason = string(runes[:mailFailureLimit]) + "…"
+	}
+	return reason
+}
+
+type mailOnlyKey struct{}
+
+// WithMailOnly marks ctx as an activation nobody is waiting for: the link is
+// mailed or it is not issued. ActivateAccount otherwise answers a link it
+// could not mail, for whoever asked to show once; with nobody there to show
+// it to, a link that exists is a link somebody has to keep, so none is made.
+func WithMailOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, mailOnlyKey{}, true)
+}
+
+func mailOnly(ctx context.Context) bool {
+	only, _ := ctx.Value(mailOnlyKey{}).(bool)
+	return only
 }
 
 // ActivateAccount hands an account to its holder through a single-use,
@@ -734,7 +781,21 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 		if err == nil {
 			return Activation{Mailed: true, Email: mailTo, Actions: actions}, nil
 		}
-		mailError = "the realm could not send mail (is the SMTP relay configured?); the link is shown instead"
+		// What Keycloak answered, and not a guess at it: a realm with no
+		// relay and a relay that refuses the login are repaired in different
+		// places.
+		mailError = mailFailure(err)
+		c.log.WarnContext(ctx, "keycloak could not send the activation mail",
+			"request_id", RequestIDFrom(ctx), "realm", r.name, "reason", mailError)
+	}
+
+	// Nobody is there to be shown a link: none is made. The address stays on
+	// the account, as above.
+	if mailOnly(ctx) {
+		if mailError == "" {
+			mailError = "the account has no address to mail"
+		}
+		return Activation{Email: mailTo, Actions: actions, MailError: mailError}, nil
 	}
 
 	body := map[string]any{"actions": actions}
@@ -923,6 +984,10 @@ func plainID(s string) bool {
 	}
 	return true
 }
+
+// LooksLikeAddress is the shape check an address passes before it is put on
+// an account, for a caller that keeps one to use later.
+func LooksLikeAddress(s string) bool { return looksLikeAddress(s) }
 
 // looksLikeAddress is a shape check and not a validation: whether the address
 // exists is settled by the invitation arriving, which is the only test that

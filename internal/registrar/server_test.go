@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +117,13 @@ type harness struct {
 	*httptest.Server
 	issuer *dt.Issuer
 	asked  *asked
+	// registrar is the server itself, for what it does unasked.
+	registrar *registrar.Server
+	// invitations is where it keeps the invitations that wait, clock the
+	// time it reads, and logged everything it logs.
+	invitations *fakeInvitations
+	clock       *fakeClock
+	logged      *lockedBuffer
 }
 
 // startWithIdentity is the registrar speaking for realms through ident.
@@ -134,7 +140,7 @@ func startWith(t *testing.T, ident registrar.Identity, decides authz.Checker) *h
 
 // startWithTenants is the registrar over the tenants and the record of
 // removed mailboxes given.
-func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Checker, tenants fakeTenants, mailboxes registrar.Mailboxes) *harness {
+func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Checker, tenants registrar.Tenants, mailboxes registrar.Mailboxes) *harness {
 	t.Helper()
 	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
@@ -145,17 +151,21 @@ func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Chec
 		decides = dt.Checker(t, facts)
 	}
 	decisions := &asked{Checker: decides}
+	invitations, clock, logged := newFakeInvitations(), newFakeClock(), &lockedBuffer{}
 	srv, err := registrar.New(registrar.Config{
 		Authn: v, Authz: decisions, Cluster: dt.Cluster,
-		Tenants:   tenants,
-		Identity:  ident,
-		Mailboxes: mailboxes,
-		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Tenants:     tenants,
+		Identity:    ident,
+		Mailboxes:   mailboxes,
+		Invitations: invitations,
+		Now:         clock.Now,
+		Log:         slog.New(slog.NewTextHandler(logged, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{Server: httptest.NewServer(srv), issuer: is, asked: decisions}
+	h := &harness{Server: httptest.NewServer(srv), issuer: is, asked: decisions,
+		registrar: srv, invitations: invitations, clock: clock, logged: logged}
 	t.Cleanup(h.Close)
 	return h
 }
@@ -215,6 +225,9 @@ func routes() []route {
 		{"GET", "/v1/tenants/demo/removed-mailboxes", "", "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/delete-archived-mailbox", `{"mailbox":"demo-arch1"}`, "can_manage_users", tenant},
 		{"POST", c + "/tenants/demo/actions/activate-admin", "", "can_configure", cluster},
+		{"POST", c + "/tenants/demo/actions/request-admin-invitation", `{"recoveryEmail":"owner@example.org"}`, "can_configure", cluster},
+		{"GET", c + "/tenants/demo/admin-invitation", "", "can_configure", cluster},
+		{"GET", c + "/admin-invitations", "", "can_configure", cluster},
 		{"GET", c + "/people/count", "", "can_audit", cluster},
 	}
 }

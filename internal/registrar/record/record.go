@@ -57,7 +57,10 @@ type Action struct {
 	// Decision is the relation and object that permitted the call, in the
 	// form the commit trailer uses: "can_manage_users tenant:demo".
 	Decision string
-	At       time.Time
+	// Detail is what else there is to say about how it went: why a mail did
+	// not go, in the realm's words. Never an address and never a link.
+	Detail string
+	At     time.Time
 }
 
 // Store writes and reads the record.
@@ -89,13 +92,24 @@ CREATE TABLE IF NOT EXISTS identity_actions (
 CREATE INDEX IF NOT EXISTS identity_actions_request_id ON identity_actions (request_id);
 CREATE INDEX IF NOT EXISTS identity_actions_tenant_time ON identity_actions (tenant, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS identity_actions_occurred_at ON identity_actions (occurred_at);
+ALTER TABLE identity_actions ADD COLUMN IF NOT EXISTS detail TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS pending_admin_invitations (
+    tenant       TEXT        PRIMARY KEY,
+    email        TEXT        NOT NULL,
+    principal    TEXT        NOT NULL,
+    decision     TEXT        NOT NULL,
+    request_id   TEXT        NOT NULL,
+    requested_at TIMESTAMPTZ NOT NULL,
+    expires_at   TIMESTAMPTZ NOT NULL
+);
 `
 
 // Open connects and makes sure the table is there.
 //
-// The schema is created here rather than by a migration tool because it is one
-// table that only this package writes: a migration framework would be more
-// moving parts than the thing it migrates.
+// The schema is created here rather than by a migration tool because it is two
+// tables that only this package writes: a migration framework would be more
+// moving parts than the thing it migrates. Every statement is IF NOT EXISTS,
+// so a database from before a table was added gains it at the next start.
 func Open(ctx context.Context, dsn string, retention time.Duration) (*Store, error) {
 	if dsn == "" {
 		return nil, errors.New("record: no database url")
@@ -121,6 +135,11 @@ func (s *Store) Close() {
 	}
 }
 
+const insertAction = `
+	INSERT INTO identity_actions
+	    (request_id, action, realm, tenant, target, principal, decision, detail, occurred_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
 // Write records one action.
 //
 // The caller has already done the thing. A failure here is logged by the
@@ -135,11 +154,8 @@ func (s *Store) Write(ctx context.Context, a Action) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO identity_actions
-		    (request_id, action, realm, tenant, target, principal, decision, occurred_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		a.RequestID, a.Action, a.Realm, a.Tenant, a.Target, a.Principal, a.Decision, at)
+	_, err := s.pool.Exec(ctx, insertAction,
+		a.RequestID, a.Action, a.Realm, a.Tenant, a.Target, a.Principal, a.Decision, a.Detail, at)
 	if err != nil {
 		return fmt.Errorf("record: write: %w", err)
 	}
@@ -156,7 +172,7 @@ func (s *Store) ByTenant(ctx context.Context, tenant string, limit int) ([]Actio
 		limit = 100
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT request_id, action, realm, tenant, target, principal, decision, occurred_at
+		SELECT request_id, action, realm, tenant, target, principal, decision, detail, occurred_at
 		  FROM identity_actions
 		 WHERE tenant = $1
 		 ORDER BY occurred_at DESC
@@ -169,7 +185,7 @@ func (s *Store) ByTenant(ctx context.Context, tenant string, limit int) ([]Actio
 	for rows.Next() {
 		var a Action
 		if err := rows.Scan(&a.RequestID, &a.Action, &a.Realm, &a.Tenant,
-			&a.Target, &a.Principal, &a.Decision, &a.At); err != nil {
+			&a.Target, &a.Principal, &a.Decision, &a.Detail, &a.At); err != nil {
 			return nil, fmt.Errorf("record: scan: %w", err)
 		}
 		out = append(out, a)
