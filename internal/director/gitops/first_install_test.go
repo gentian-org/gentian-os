@@ -21,7 +21,7 @@ import (
 // that into the list, not write a second `apps:` key beside it: a manifest
 // with the key twice does not build, and then nothing in the tenant syncs.
 func TestFirstInstallIntoANewTenantsManifest(t *testing.T) {
-	text := tenantManifest("demo", "Demo", false)
+	text := tenantManifest("demo", "Demo", false, false)
 	if !strings.Contains(text, "apps: []") {
 		t.Fatalf("the template no longer writes an empty list; this test needs the form it does write:\n%s", text)
 	}
@@ -53,7 +53,7 @@ func TestFirstInstallIntoANewTenantsManifest(t *testing.T) {
 // the install writes, in the form a new tenant's manifest has, and it reads
 // back as the boolean the Tenant's schema declares.
 func TestFirstInstallForEveryoneIntoANewTenantsManifest(t *testing.T) {
-	text := tenantManifest("demo", "Demo", false)
+	text := tenantManifest("demo", "Demo", false, false)
 	if !strings.Contains(text, "apps: []") {
 		t.Fatalf("the template no longer writes an empty list; this test needs the form it does write:\n%s", text)
 	}

@@ -42,7 +42,7 @@ metadata:
   name: gentian-platform
 spec:
   activate:
-    # -- provider-keycloak (18 of 126) ------------------------------------
+    # -- provider-keycloak (20 of 126) ------------------------------------
     - realms.realm.keycloak.crossplane.io
     - realmevents.realm.keycloak.crossplane.io
     - requiredactions.realm.keycloak.crossplane.io
@@ -61,6 +61,10 @@ spec:
     - identityprovidermappers.identityprovider.keycloak.crossplane.io
     - flows.authenticationflow.keycloak.crossplane.io
     - executions.authenticationflow.keycloak.crossplane.io
+    # A tenant people sign up to composes a registration flow of its own: a
+    # form subflow, and a binding of the realm to the flow once it exists.
+    - subflows.authenticationflow.keycloak.crossplane.io
+    - bindings.authenticationflow.keycloak.crossplane.io
     # -- provider-vault (7 of 248) ----------------------------------------
     - backends.auth.vault.upbound.io
     - authbackends.jwt.vault.upbound.io

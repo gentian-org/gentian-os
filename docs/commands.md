@@ -93,6 +93,19 @@ kubectl gentian tenants set demo --admins-approve-public-addresses=true
 kubectl gentian tenants set demo --admins-approve-public-addresses=false --admins-add-catalogues=true
 ```
 
+A third switch is chosen when the tenant is made and not changed afterwards:
+whether anybody may make an account in its realm themselves
+(`--self-sign-up`, `spec.signUp.enabled`). The command says what that opens
+before it asks the director: a registration page at the cluster's identity
+provider, an e-mail confirmation and a proof-of-work check, and accounts that
+are in none of the tenant's groups and so have nothing of the platform's. For
+a tenant whose apps serve the public, not for a workspace
+([iam.md §1.1b](design/iam.md)):
+
+```bash
+kubectl gentian tenants create customers --display-name "Customers" --self-sign-up
+```
+
 Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,
 `spec.catalogue.delegated`), committed by the director as you
 (`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/perimeter-delegation` and

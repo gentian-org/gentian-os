@@ -857,6 +857,23 @@ spec:
                         type: boolean
                     type: object
                 type: object
+              signUp:
+                description: |-
+                  SignUp is whether people make their own accounts in the realm. Unset
+                  or off, they are invited; see TenantSignUp.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled opens the realm's registration page: anybody on the internet
+                      may make an account, with an e-mail address as the login, a message to
+                      that address to confirm it, and a proof-of-work check against scripted
+                      sign-ups. An account made that way is in none of the tenant's groups:
+                      it has no desktop, no rights on the platform, and is not counted as a
+                      user of the tenant. It is for a tenant whose apps serve the public --
+                      customers with accounts -- and not for a workspace, whose people are
+                      invited. Off by default; off, every account is made by an invitation.
+                    type: boolean
+                type: object
             required:
             - displayName
             type: object

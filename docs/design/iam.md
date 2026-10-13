@@ -98,6 +98,47 @@ next pass: it provisions nothing more for it and says why on its status
 (`TenancyConstraint`), and removes nothing -- its namespaces, data and routes
 stay as they were. The operator reads the mode when it starts.
 
+### 1.1b Sign-up: a tenant whose accounts people make themselves
+
+Every account above is made by an invitation. One kind of tenant is for
+people nobody invites: the customers of an organisation whose apps serve the
+public, with an account each. Such a tenant is created with sign-up on
+(`kubectl gentian tenants create <name> --self-sign-up`, `spec.signUp.enabled`
+on the Tenant; the CLI says what it opens before it asks the director). It is
+off for every other tenant, and a tenant made without it composes exactly as
+it did before the setting existed.
+
+What sign-up changes, and only in that tenant's realm:
+
+- **The realm takes registrations.** The address is the login
+  (`registrationEmailAsUsername`), two accounts cannot share one, and the
+  account is unusable until a message to the address is answered
+  (`verifyEmail`). The realm sends through the cluster's mail, which is why
+  the director makes such a tenant with `mail.mode: transport-only` and the
+  operator mints its submission credential.
+- **The registration page carries the platform's proof-of-work check**
+  (`gentian-pow-captcha`, in the platform's own Keycloak extension): the
+  browser finds a number whose digest with the page's salt begins with
+  enough zero bits -- a second of arithmetic for a person, a cost per
+  account for a script. Nothing is loaded from a third party and nobody's
+  browser is profiled; Keycloak's reCAPTCHA, which sends every visitor to
+  Google, is not used. The challenge is bound to the registration it was
+  made for by the authentication session, so an answer serves one sign-up.
+  The flow is the tenant's own (`gentian-registration`), since Keycloak
+  refuses to add an execution to its built-in one.
+- **An account made that way is a member of nothing.** It is in none of
+  the tenant's groups, so it holds no relation on the platform: the bouncer
+  refuses it the desktop and every app, the director and the usher refuse
+  every tenant route, and a grant of an app to every member does not reach
+  it. The licence report counts the members of such a tenant, not its
+  realm's accounts. Making such an account a member is an administrator
+  putting it in a group, as for anybody.
+
+What it does not change: the realm's administrators, its edge client and
+its groups are as in every tenant; the tenant's own people are still
+invited; and the registrar lists every account of the realm, which is how
+staff look after the customers' accounts.
+
 ### 1.2 Group taxonomy
 
 Gentian uses explicit Keycloak group names for platform roles, tenant

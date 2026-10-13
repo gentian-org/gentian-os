@@ -1470,7 +1470,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}`)
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true`)
 		return
 	}
 	if !gitops.ValidName(body.Name) {
@@ -1502,7 +1502,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return

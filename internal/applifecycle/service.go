@@ -307,7 +307,15 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 		return fmt.Errorf("group %s ID not found", fullGroupName)
 	}
 
-	users, err := kc.ListRealmUsers(ctx, realm)
+	// Everyone in the realm -- unless people sign up to it themselves, when
+	// the realm holds accounts that are nobody's members and a grant to
+	// every member must not reach them.
+	var users []authz.KeycloakUser
+	if tenant.SignUpEnabled() {
+		users, err = kc.ListGroupMembers(ctx, realm, keycloak.TenantMembersGroup(tenantName))
+	} else {
+		users, err = kc.ListRealmUsers(ctx, realm)
+	}
 	if err != nil {
 		return fmt.Errorf("list keycloak users in realm %s: %w", realm, err)
 	}

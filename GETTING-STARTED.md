@@ -639,7 +639,7 @@ asked for (`tenancyMode` on the Cluster claim).
 
 | | Multi-tenancy (`multi`, the default) | Single-tenancy (`single`) |
 |---|---|---|
-| Tenants for users | any number; you create them | exactly one, named `user`; the install creates it (step 5) |
+| Tenants for users | any number; you create them. One may be a tenant people sign up to themselves (`--self-sign-up`, for customers of apps that serve the public: [commands.md](docs/commands.md)) | exactly one, named `user`; the install creates it (step 5) |
 | Its desktop | `https://desktop.<tenant>.<kernel-domain>/` | `https://desktop.<kernel-domain>/` |
 | Its admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
 | In charge of it | a **tenant admin**, `admin@<tenant>.<kernel-domain>` | the **user admin**, `user-admin@<kernel-domain>` |

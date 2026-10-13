@@ -40,6 +40,49 @@ func tenantMeta() gitops.Meta {
 	}
 }
 
+// A tenant made with sign-up says so in its manifest, and sends mail; one
+// made without is the manifest every tenant had before the setting existed.
+// A bundle brought in from elsewhere does not bring it along.
+func TestATenantMadeWithSignUpSaysSoAndATenantWithoutIsUnchanged(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "customers", DisplayName: "Customers", SignUp: true}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	text := dt.RemoteFile(t, remote, dt.TenantPath("customers"))
+	for _, want := range []string{"signUp:\n    enabled: true", "mail:\n    mode: transport-only"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the manifest does not say %q:\n%s", want, text)
+		}
+	}
+	tenants, err := g.TenantDetails(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tn := range tenants {
+		if tn.Name == "customers" && !tn.SignUp {
+			t.Errorf("the listing does not say the tenant takes sign-ups: %+v", tn)
+		}
+	}
+
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "acme", DisplayName: "Acme Ltd"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	if text := dt.RemoteFile(t, remote, dt.TenantPath("acme")); strings.Contains(text, "signUp") || strings.Contains(text, "transport-only") {
+		t.Errorf("a tenant made without sign-up mentions it:\n%s", text)
+	}
+
+	spec := gentianov1alpha1.TenantSpec{DisplayName: "Globex", SignUp: &gentianov1alpha1.TenantSignUp{Enabled: true}}
+	if _, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "globex", Spec: &spec, Origin: "an export"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	if text := dt.RemoteFile(t, remote, dt.TenantPath("globex")); strings.Contains(text, "signUp") {
+		t.Errorf("sign-up travelled with a bundle from elsewhere:\n%s", text)
+	}
+}
+
 // Bringing a customer on is one commit, and what it commits is a manifest a
 // person could have written by hand.
 func TestCreatingATenantIsOneReviewableCommit(t *testing.T) {

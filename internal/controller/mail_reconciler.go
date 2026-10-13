@@ -668,6 +668,23 @@ func (r *TenantReconciler) ensureMailTransportOnly(ctx context.Context, tenant *
 		return fmt.Errorf("ensure SMTP credentials Secret: %w", err)
 	}
 
+	// A tenant people sign up to has a realm that sends mail -- the message
+	// that confirms an address -- and the realm's Composition names the
+	// submission credential this mints, which selfhosted mail mints with the
+	// app passwords and transport-only mail did not. Only where the cluster
+	// runs its own mail: that credential is verified by Dovecot, and a
+	// cluster that relays configures the realm from the relay's instead.
+	if tenant.SignUpEnabled() && r.dovecotDeployed(ctx) {
+		domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
+		seed, err := r.tenantMailSeed(ctx, tenant.Name)
+		if err != nil {
+			return fmt.Errorf("mail seed for the realm's submission credential: %w", err)
+		}
+		if err := r.syncMailSubmissionCredential(ctx, tenant, domain, seed); err != nil {
+			return fmt.Errorf("ensure the realm's submission credential: %w", err)
+		}
+	}
+
 	return nil
 }
 

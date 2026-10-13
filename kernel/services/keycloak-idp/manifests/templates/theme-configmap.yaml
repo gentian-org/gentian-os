@@ -304,6 +304,100 @@ data:
       </div>
     </#if>
     </@layout.registrationLayout>
+  login__messages__messages_de.properties: |-
+    gentianPowWorking=Prüfung, dass dies ein Browser ist… einen Moment.
+    gentianPowDone=Geprüft. Sie können das Konto anlegen.
+    gentianPowFailed=Die Prüfung, dass dies ein Browser ist, kam nicht zu Ende. Laden Sie die Seite neu und versuchen Sie es noch einmal.
+  login__messages__messages_en.properties: |-
+    # The platform's own strings on the login pages. Keycloak's are the parent
+    # theme's; these are the ones it has no word for.
+    gentianPowWorking=Checking that this is a browser… a moment.
+    gentianPowDone=Checked. You can create the account.
+    gentianPowFailed=The check that this is a browser did not complete. Reload the page and try again.
+  login__register.ftl: |-
+    <#-- The registration page, when a tenant takes sign-ups (spec.signUp.enabled).
+
+         keycloak.v2's register.ftl of the Keycloak the platform runs (26.8.0), with
+         one addition: the platform's proof-of-work check (gentian-pow-captcha) puts
+         its challenge on the page, and js/pow-captcha.js has the browser solve it
+         before the form can be sent. Nothing else is changed, so that a newer
+         Keycloak's page can be taken over again by taking its file and adding the
+         one block. A realm that takes no sign-ups never renders this page. -->
+    <#import "template.ftl" as layout>
+    <#import "field.ftl" as field>
+    <#import "user-profile-commons.ftl" as userProfileCommons>
+    <#import "register-commons.ftl" as registerCommons>
+    <#import "password-validation.ftl" as validator>
+    <@layout.registrationLayout displayMessage=messagesPerField.exists('global') displayRequiredFields=true; section>
+    <!-- template: register.ftl -->
+
+        <#if section = "header">
+            <#if messageHeader??>
+                ${msg(messageHeader)}
+            <#else>
+                ${msg("registerTitle")}
+            </#if>
+        <#elseif section = "form">
+            <form id="kc-register-form" class="${properties.kcFormClass!}" action="${url.registrationAction}" method="post" novalidate="novalidate">
+                <@userProfileCommons.userProfileFormFields; callback, attribute>
+                    <#if callback = "afterField">
+                    <#-- render password fields just under the username or email (if used as username) -->
+                        <#if passwordRequired?? && (attribute.name == 'username' || (attribute.name == 'email' && realm.registrationEmailAsUsername))>
+                            <@field.password name="password" required=true label=msg("password") autocomplete="new-password" />
+                            <@field.password name="password-confirm" required=true label=msg("passwordConfirm") autocomplete="new-password" />
+                        </#if>
+                    </#if>
+                </@userProfileCommons.userProfileFormFields>
+
+                <#if gentianPow??>
+                    <div class="${properties.kcFormGroupClass!}" id="gentian-pow" data-salt="${gentianPow.salt}" data-bits="${gentianPow.bits}">
+                        <input type="hidden" id="gentian-pow-answer" name="gentian_pow" value=""/>
+                        <p id="gentian-pow-status" class="gentian-pow-status" aria-live="polite" data-done="${msg("gentianPowDone")}">${msg("gentianPowWorking")}</p>
+                    </div>
+                </#if>
+
+                <@registerCommons.termsAcceptance/>
+
+                <#if recaptchaRequired?? && (recaptchaVisible!false)>
+                    <div class="form-group">
+                        <div class="${properties.kcInputWrapperClass!}">
+                            <div class="g-recaptcha" data-size="compact" data-sitekey="${recaptchaSiteKey}" data-action="${recaptchaAction}"></div>
+                        </div>
+                    </div>
+                </#if>
+
+                <#if recaptchaRequired?? && !(recaptchaVisible!false)>
+                    <script>
+                        function onSubmitRecaptcha(token) {
+                            document.getElementById("kc-register-form").requestSubmit();
+                        }
+                    </script>
+                    <div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
+                        <button class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!} g-recaptcha"
+                                data-sitekey="${recaptchaSiteKey}" data-callback="onSubmitRecaptcha" data-action="${recaptchaAction}" type="submit" id="kc-submit">
+                            ${msg("doRegister")}
+                        </button>
+                    </div>
+                <#else>
+                    <div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
+                        <input class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}" type="submit" value="${msg("doRegister")}"/>
+                    </div>
+                </#if>
+
+                <div class="${properties.kcFormGroupClass!} pf-v5-c-login__main-footer-band">
+                    <div id="kc-form-options" class="${properties.kcFormOptionsClass!} pf-v5-c-login__main-footer-band-item">
+                        <div class="${properties.kcFormOptionsWrapperClass!}">
+                            <span><a href="${url.loginUrl}">${msg("backToLogin")}</a></span>
+                        </div>
+                    </div>
+                </div>
+
+            </form>
+
+            <@validator.templates/>
+            <@validator.script field="password"/>
+        </#if>
+    </@layout.registrationLayout>
   login__resources__css__gentian-login.css: |-
     /* Gentian login theme.
      *
@@ -755,10 +849,20 @@ data:
       box-sizing: border-box;
     }
 
-    /* Keycloak renders identity-provider buttons and a registration link on the
-       login page; the portal's form had neither. */
-    .gentian-hidden, #kc-registration, #kc-registration-container,
-    #kc-social-providers, #kc-info { display: none !important; }
+    /* Keycloak renders identity-provider buttons on the login page; the portal's
+       form had none. The registration link is left to Keycloak, which renders it
+       only for a realm that takes sign-ups. */
+    .gentian-hidden, #kc-social-providers { display: none !important; }
+
+    /* The registration page's proof-of-work check: a line that says the browser
+       is working, then that it is done. */
+    .gentian-pow-status {
+      margin: 0 0 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--gtn-ink-2);
+    }
+    .gentian-pow-status--done { color: var(--gtn-ink-1, var(--gtn-ink-2)); }
   login__resources__js__brand.js: |-
     /* The brand on the sign-in card: its colours, its name and its logo.
      *
@@ -860,6 +964,73 @@ data:
         fill();
       }
     })();
+  login__resources__js__pow-captcha.js: |-
+    // The browser's half of the proof-of-work check on the registration page
+    // (gentian-pow-captcha): find a number whose SHA-256, together with the salt
+    // the page carries, begins with as many zero bits as the page asks for, and
+    // put it in the form. About a second of work; the submit button waits for it.
+    //
+    // Nothing is loaded from anywhere and nothing is sent anywhere: the digest is
+    // the browser's own crypto.subtle, in a worker so the page stays responsive,
+    // on the main thread where there is no worker.
+    (function () {
+      "use strict";
+      var box = document.getElementById("gentian-pow");
+      if (!box) { return; }
+      var salt = box.getAttribute("data-salt") || "";
+      var bits = parseInt(box.getAttribute("data-bits") || "0", 10);
+      var answer = document.getElementById("gentian-pow-answer");
+      var status = document.getElementById("gentian-pow-status");
+      var form = document.getElementById("kc-register-form");
+      var submit = form ? form.querySelector("input[type=submit], button[type=submit]") : null;
+      if (submit) { submit.disabled = true; }
+
+      // The same arithmetic as PowChallenge.java, written once here and run in
+      // either place.
+      var work = function (salt, bits, done) {
+        var enc = new TextEncoder();
+        var leading = function (buf) {
+          var bytes = new Uint8Array(buf), n = 0;
+          for (var i = 0; i < bytes.length; i++) {
+            if (bytes[i] === 0) { n += 8; continue; }
+            n += Math.clz32(bytes[i]) - 24;
+            break;
+          }
+          return n;
+        };
+        var nonce = 0;
+        var step = function () {
+          var batch = 256;
+          var next = function () {
+            if (batch-- === 0) { setTimeout(step, 0); return; }
+            crypto.subtle.digest("SHA-256", enc.encode(salt + ":" + nonce)).then(function (d) {
+              if (leading(d) >= bits) { done(String(nonce)); return; }
+              nonce++;
+              next();
+            });
+          };
+          next();
+        };
+        step();
+      };
+
+      var solved = function (nonce) {
+        answer.value = nonce;
+        if (status) { status.textContent = status.getAttribute("data-done") || ""; status.classList.add("gentian-pow-status--done"); }
+        if (submit) { submit.disabled = false; }
+      };
+
+      var source = "(" + work.toString() + ")(" + JSON.stringify(salt) + "," + bits + ",function(n){postMessage(n)})";
+      var worker = null;
+      try {
+        if (window.Worker && window.Blob && window.URL) {
+          worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+          worker.onmessage = function (e) { solved(e.data); worker.terminate(); };
+          worker.onerror = function () { worker.terminate(); work(salt, bits, solved); };
+        }
+      } catch (e) { worker = null; }
+      if (!worker) { work(salt, bits, solved); }
+    })();
   login__theme.properties: |-
     # Gentian login theme.
     #
@@ -872,14 +1043,17 @@ data:
     styles=css/gentian-login.css
     # login-hint fills the username from the concierge's hint; brand sets
     # the card's name and logo from the cluster's brand. See the files.
-    scripts=js/login-hint.js js/brand.js
+    # pow-captcha solves the registration page's proof-of-work check; it finds
+    # nothing to do on every other page.
+    scripts=js/login-hint.js js/brand.js js/pow-captcha.js
 
     # keycloak.v2's template.ftl renders <body class="${properties.kcBodyClass!}">,
     # which is what the stylesheet centres the card against.
     kcBodyClass=gentian-login
 
-    # The portal's own form had no social/identity-provider buttons and no
-    # registration link, so neither should this.
+    # The portal's own form had no social/identity-provider buttons, so neither
+    # has this. The registration link is Keycloak's to show: it renders one only
+    # for a realm that takes sign-ups (spec.signUp.enabled on the tenant).
     kcFormSocialAccountListClass=gentian-hidden
 binaryData:
   login__resources__img__favicon.ico: AAABAAEAEBAAAAAAIAD4AgAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAQAAAAEAgGAAAAH/P/YQAAAr9JREFUeJyFkztMk2EYhc93+fv3x9IqKMRgA02DEIxBZXGrbmqMmpiaOJhovAzGUSeGSkwccDUOuuigUYquEGGg0UQMEJWIInK/WCi3ltL2v33f5wAoaIxne9+T8+YdzgP8V4oCMfovl/8xE0ABICoUvNqoZKFzfIa8B4BIJMaRABKABJrkpsBmRRkQF6Hg5Waff/8tx1mGa2fa7HzqxmTq2eimrwhA1JYDDQ3XtL6+R06o4tJZozjcqsBtKQXT9QDLLvW0g9J+xoxcLvu9Jbn4enA9q9YPxOjGW1UVF+77AgevC7EiPNzk+QIX0pljXl8NQAiEk3Eda/bpyOTDi4AidCMc9B8N7w3d7NU0//mVpc8I+Dk/duoE/D6TgWiSIOdKN2dpnlJOmVEFANFonHLgtqos/1ilG+E2wwhWO24BSk6A0VUwbiBcW4uKPSGaSS/Qt12f4NFKoIQzAQCp1ADhAFHcc+WOsa2q2jLTlmHk9OOnz4EQjt53ndD1IgghMPxtSAnXJraZzApR6ACAssQXRQFAWsv3LDNpcq1Isx2vGh78ivm5aWiaDsY58vkslhbmFZTJCubEkCn7XwEgccQljaKFjaVe9pvWj5iSeWqZGdH9JoFMOo2Gw0dAKUWwMox99YcoZbtcf+BAgwd1ZwCoCGKMx3FOAFE2Pv2keXfZ8Q+GHmz176jxax6vmpoYIR96etT46KwEFGGcSyFch1Lm/NHEOgUAXDgDurfcR5lPDXwaVELqktIils3YzKPvhKbBAwVI6ToAkEAX1jveJKNoYVOLnbO2tfCCUk5ASqihlzNKaMp1ks+FWJo0CzPthfzoXZfmeteKlBC/WIhjQAGQq5nhRsaLzxDCMzlrttu1Vx6MJR93ADAAFP4F1RbtLj1ZGwjUb/+92aAxRiORGP+boa36ZUajLWwNsK37zfoJwWc7SxaEHE0AAAAASUVORK5CYII=

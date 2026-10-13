@@ -149,6 +149,11 @@ spec:
                  composed. */}}
             {{- $realm := default $tenant (dig "isolation" "keycloakRealm" "" $spec) }}
             {{- $adoptsKernelRealm := and $kernelRealm (eq $realm $kernelRealm) }}
+            {{- /* Whether people make their own accounts in the realm
+                 (spec.signUp.enabled). Off unless the tenant says so, and
+                 off, nothing below renders differently from before the
+                 setting existed. */}}
+            {{- $signUp := dig "signUp" "enabled" false $spec }}
             {{- $provList  := dig "provisioningJobs" list $extraRes }}
             {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
             {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
@@ -2202,6 +2207,87 @@ spec:
 
             {{- end }}{{- /* $kernelBroker */}}
 
+            {{- /* ── sign-up ──────────────────────────────────────────────
+                 The registration flow of a tenant people sign up to. Its own
+                 flow and not Keycloak's built-in one, which Keycloak refuses
+                 to add an execution to: the built-in form (the profile's
+                 fields, the password) with the platform's proof-of-work check
+                 after them, so a scripted sign-up costs its author more than
+                 it costs the realm. Bound to the realm by Bindings rather
+                 than on the Realm: the realm has to exist before a flow in
+                 it does, so the Realm cannot name the flow at creation. */}}
+            {{- if $signUp }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-registration-flow
+              name: {{ $tenant }}-registration-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-registration
+                description: Sign-up with a proof-of-work check
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-registration-form
+              name: {{ $tenant }}-registration-form
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-registration-form
+                parentFlowAlias: gentian-registration
+                providerId: form-flow
+                authenticator: registration-page-form
+                requirement: REQUIRED
+              providerConfigRef:
+                name: keycloak
+            {{- range $i, $auth := (list "registration-user-creation" "registration-password-action" "gentian-pow-captcha") }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-registration-exec-{{ $auth }}
+              name: {{ $tenant }}-registration-exec-{{ $auth }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-registration-form
+                authenticator: {{ $auth }}
+                requirement: REQUIRED
+                {{- /* The order on the form: the account's fields, the
+                     password, then the check. */}}
+                priority: {{ add 10 (mul $i 10) }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Bindings
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-registration-bindings
+              name: {{ $tenant }}-registration-bindings
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                registrationFlow: gentian-registration
+              providerConfigRef:
+                name: keycloak
+            {{- end }}{{- /* $signUp */}}
+
             {{- /* ── the realm's "groups" client scope ────────────────────────
                  What puts a user's group membership into their tokens. Every
                  client in the realm gets it, because the groups Job adds it to
@@ -2415,10 +2501,24 @@ spec:
                      for the unset field), so nobody authenticates with it, and
                      Keycloak only rejects duplicates when they could be used to
                      log in. */}}
-                duplicateEmailsAllowed: true
-                # Nobody self-registers into a tenant realm; membership comes from
-                # the kernel realm through the broker.
-                registrationAllowed: false
+                {{- /* Unless people sign up: then the address IS the login
+                     (registrationEmailAsUsername), and Keycloak refuses a
+                     realm that lets two accounts share one. */}}
+                duplicateEmailsAllowed: {{ not $signUp }}
+                # Nobody self-registers into a tenant realm unless the tenant
+                # says so (spec.signUp.enabled); otherwise membership comes
+                # from an invitation.
+                registrationAllowed: {{ $signUp }}
+                {{- if $signUp }}
+                {{- /* A sign-up is an e-mail address and a password, the
+                     address confirmed by a message to it before the account
+                     is usable, on a flow of the tenant's own with the
+                     platform's proof-of-work check (gentian-registration,
+                     bound by Bindings once its executions exist). */}}
+                registrationEmailAsUsername: true
+                loginWithEmailAllowed: true
+                verifyEmail: true
+                {{- end }}
                 {{- /* Five minutes, the kernel realm's own. A person stays
                      signed in for the session's twelve hours below because
                      the edge refreshes this token against the session; and
@@ -2788,3 +2888,12 @@ spec:
             - vouching-password-.*
             - vouching-secret-.*
             - keycloak-vouching-client-.*
+          # The registration flow before the form in it, the form before its
+          # executions, and all of them before the realm is bound to the
+          # flow. Patterns, so a tenant without sign-up, which renders none
+          # of them, is not held back by their absence.
+          - sequence:
+            - keycloak-registration-flow.*
+            - keycloak-registration-form.*
+            - keycloak-registration-exec-.*
+            - keycloak-registration-bindings.*

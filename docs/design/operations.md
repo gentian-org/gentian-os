@@ -167,7 +167,10 @@ one hour. No failure stops anything else.
  "publicKey": "<base64 Ed25519 public key>"}
 ```
 
-- `tenants[].users` is the number of enabled accounts in the tenant's realm.
+- `tenants[].users` is the number of enabled accounts in the tenant's realm
+  -- or, for a tenant people sign up to themselves (`spec.signUp.enabled`),
+  the number of its members: an account made on the registration page is in
+  no group of the tenant and is not a user of it.
 - `apps` lists only the apps installed through the App Store: the entries of
   `Tenant.spec.apps` that carry a `digest`. `users` is the number of people
   entitled to the app, the members of its group.

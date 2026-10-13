@@ -63,3 +63,16 @@ mvn package        # target/gentian-keycloak-event-listener.jar
 SPIs it implements are internal and move between minor releases too (the
 admin permission classes the activation link uses changed package between
 26.0 and 26.8). Bump both together and build before pushing.
+
+## The registration form's proof-of-work check
+
+The jar also carries `gentian-pow-captcha` (`io.gentianos.keycloak.captcha`),
+a form action for the registration page of a tenant people sign up to
+(`spec.signUp.enabled`; the tenant Composition puts it on the realm's own
+registration flow). It asks the browser for a second of arithmetic -- a nonce
+whose SHA-256 with the page's salt begins with 18 zero bits -- in place of
+Keycloak's reCAPTCHA, which sends every visitor to Google. The challenge
+lives on the authentication session and is spent on the first answer, so it
+serves the registration it was made for and no other. The browser's half is
+the login theme's `js/pow-captcha.js`; `PowChallengeTest` holds the two
+halves to the same arithmetic.

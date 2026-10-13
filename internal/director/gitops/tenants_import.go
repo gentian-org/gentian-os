@@ -118,6 +118,10 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		// administrator's decision; here it is off until this one's turns
 		// it on (SetTenantAdminsApprove).
 		declared.Perimeter = nil
+		// Nor whether anybody may sign up. That a realm elsewhere took
+		// registrations says nothing about this cluster's: a tenant is made
+		// with sign-up on here, deliberately, or not at all.
+		declared.SignUp = nil
 		body, err := yaml.Marshal(map[string]any{
 			"apiVersion": "gentianos.io/v1alpha1",
 			"kind":       "Tenant",
