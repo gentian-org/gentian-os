@@ -637,6 +637,22 @@ is "add --path succeeds" "${RC}" "0"
 is "... and sends the directory and no address" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/catalogues/acme{"path":"catalogue"}'
 has "... and names the commit" "${OUT}" "Catalogue acme added for every tenant of this cluster, as the cluster's administrator: committed (01234567)"
 
+# A private registry: declared for the tenant with its address, the token
+# set afterwards under the name the director answers.
+fresh; reply PUT /v1/tenants/demo/repositories/acme 202 '{"status":"declared","commit":"0123456789abcdef","credentialName":"repository-acme"}'
+gentian repositories declare acme --tenant demo --url oci://ghcr.io/acme
+is "repositories declare sends the address as an apps registry" "$(tr -d ' \n' < "${CALLS}")" \
+    'PUT/v1/tenants/demo/repositories/acme{"role":"apps","type":"oci","url":"oci://ghcr.io/acme"}'
+has "... names the commit" "${OUT}" "Repository acme declared for tenant demo: committed (01234567)"
+has "... and where the token goes" "${OUT}" "under Credentials, as repository-acme"
+fresh
+gentian repositories declare acme --url oci://ghcr.io/acme
+refused "... and a tenant is required"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh; reply DELETE /v1/tenants/demo/repositories/acme 202 '{"status":"removed","commit":"0123456789abcdef"}'
+gentian repositories remove acme --tenant demo
+is "repositories remove asks the tenant's route" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/tenants/demo/repositories/acme'
+
 fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
 gentian catalogues add acme --path=catalogues/acme --tenant demo
 is "add --path for one tenant asks the cluster's route for that tenant" "$(tr -d ' \n' < "${CALLS}")" \

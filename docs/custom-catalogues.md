@@ -894,14 +894,14 @@ above that start from a digest.
 ## 8. Private charts and images
 
 A catalogue at an address is public; the chart and the images need not be. Declare the registry for the tenant,
-then set its password:
+then set its token:
 
-```
-PUT /v1/tenants/<tenant>/repositories/<name>
-{"role": "apps", "type": "oci", "url": "oci://registry.example.com/acme"}
+```bash
+kubectl gentian repositories declare acme --tenant demo --url oci://registry.example.com/acme
 ```
 
-The password is set at the custodian, as for every repository, and becomes a pull Secret in that
+The token is set in the Admin Console of the tenant, under Credentials, as the name the command prints
+(`repository-acme`); it is kept in the vault, as every repository's is, and becomes a pull Secret in that
 tenant's namespace only. A chart whose address lies inside the declared registry
 is pulled with it. The App Store app does both steps itself for what it sells; for your own registry
 they are done once by the tenant's administrator.

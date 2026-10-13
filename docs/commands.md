@@ -346,6 +346,18 @@ Show all available `kubectl gentian` subcommands:
 kubectl gentian --help
 ```
 
+### Private registries
+
+A catalogue is public; the charts and images it names need not be. A tenant
+declares the registry they are in, and the token is set afterwards in the
+Admin Console of the tenant, under Credentials, as the name the command
+prints. A chart whose address lies inside the declared one is pulled with it.
+
+```bash
+kubectl gentian repositories declare acme --tenant demo --url oci://ghcr.io/acme   # then: Credentials, repository-acme
+kubectl gentian repositories remove acme --tenant demo
+```
+
 ## 6. Install and Uninstall Apps
 
 Apps are installed by the director adding them to the tenant's manifest in

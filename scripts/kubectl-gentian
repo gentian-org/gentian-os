@@ -44,6 +44,11 @@
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
 #
+#   kubectl gentian repositories declare <name> --tenant <tenant> --url oci://<host>/<path> [--type oci]
+#                                  a private registry a tenant pulls charts and images from;
+#                                  the token is set in the Admin Console under Credentials
+#   kubectl gentian repositories remove <name> --tenant <tenant>
+#
 #   kubectl gentian models list                  the models the gateway offers, and what the claim says of each
 #   kubectl gentian models show                  the Cluster claim's model settings, as JSON
 #   kubectl gentian models set -f <file.json>    make the claim declare exactly these settings
@@ -1145,6 +1150,58 @@ ${add_usage}"
     esac
 }
 
+# repositories: a private registry a tenant pulls charts and images from.
+#
+# Declared here, with the token set afterwards in the Admin Console of the
+# tenant under Credentials, as the name the director answers: an address is
+# configuration and belongs in git, a token is a credential and belongs in
+# the vault. A chart whose address lies inside the declared one is pulled
+# with it. The route is the tenant's own, under can_write_credential, which
+# is also the relation that lets the same person set the token.
+cmd_repositories() {
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        declare|remove)
+            local name="" t="" url="" type="oci" role="apps"
+            local usage="usage: kubectl gentian repositories declare <name> --tenant <tenant> --url oci://<host>/<path> [--type oci|git] [--role apps]
+       kubectl gentian repositories remove <name> --tenant <tenant>"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tenant|-t) t="${2:?}"; shift 2 ;;
+                    --url) url="${2:?}"; shift 2 ;;
+                    --type) type="${2:?}"; shift 2 ;;
+                    --role) role="${2:?}"; shift 2 ;;
+                    -*) die "unknown option $1" ;;
+                    *) [[ -z "${name}" ]] || die "unexpected argument $1"; name="$1"; shift ;;
+                esac
+            done
+            [[ -n "${name}" && -n "${t}" ]] || die "${usage}"
+            _discover
+            if [[ "${sub}" == "declare" ]]; then
+                [[ -n "${url}" ]] || die "${usage}"
+                need jq
+                _try PUT "/v1/tenants/${t}/repositories/${name}" \
+                    "$(jq -n --arg r "${role}" --arg y "${type}" --arg u "${url}" '{role:$r, type:$y, url:$u}')"
+            else
+                _try DELETE "/v1/tenants/${t}/repositories/${name}"
+            fi
+            [[ "${_TRY_STATUS}" -lt 300 ]] || die "the director answered ${_TRY_STATUS}: ${_TRY_ANSWER:-no detail}"
+            local commit credential
+            commit="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.commit // "" | .[0:8]')"
+            if [[ "${sub}" == "declare" ]]; then
+                credential="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.credentialName // ""')"
+                echo "Repository ${name} declared for tenant ${t}: committed (${commit:-no commit id})."
+                echo "Its token is set in the Admin Console of ${t}, under Credentials, as ${credential:-repository-${name}};"
+                echo "until then nothing is pulled from it. A chart whose address lies inside ${url} is pulled with it."
+            else
+                echo "Repository ${name} removed for tenant ${t}: committed (${commit:-no commit id})."
+            fi
+            ;;
+        *) die "usage: kubectl gentian repositories declare|remove ..." ;;
+    esac
+}
+
 # models: the models the cluster's gateway offers. They are the Cluster
 # claim's (spec.llm) and the cluster administrator's to change: `set` sends
 # the whole of the settings, so a model the file does not name is removed.
@@ -1806,6 +1863,7 @@ main() {
             ;;
         app|apps) cmd_apps "$@" ;;
         catalogue|catalogues) cmd_catalogues "$@" ;;
+        repository|repositories) cmd_repositories "$@" ;;
         model|models) cmd_models "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
