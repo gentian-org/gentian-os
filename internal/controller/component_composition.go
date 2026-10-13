@@ -89,6 +89,25 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	return false
 }
 
+// composedReleaseSuffix is what the app Composition appends to an app's name
+// to name its Helm release (crossplane/compositions/app-default.yaml,
+// $release): one name for as long as the app is the tenant's.
+const composedReleaseSuffix = "-release"
+
+// helmReleaseOf is the Helm release a component's pods belong to, which is
+// what a chart labels them with (componentInstanceLabel) and so what a
+// policy selects them by. The operator names the release it installs itself
+// after the namespace and the component; the app Composition names the one
+// it installs after the app. A policy written with the first name for an
+// app delivered the second way selects no pod at all, and what it was meant
+// to let through is refused with nothing to show for it.
+func helmReleaseOf(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) string {
+	if composedDelivery(profile) {
+		return comp.Name + composedReleaseSuffix
+	}
+	return releaseName(comp)
+}
+
 // defaultAppComposition renders every app whose bundle brings no Composition
 // of its own (crossplane/compositions/app-default.yaml).
 const defaultAppComposition = "app-default"

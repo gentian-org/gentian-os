@@ -73,6 +73,10 @@ type perimeterEnablement struct {
 	spec *gentianov1alpha1.ExposureSpec
 	on   *gentianov1alpha1.ExposureEnablement
 	host string
+	// release is the Helm release the pods behind the surface belong to
+	// (helmReleaseOf): the policies that let the proxy reach them select
+	// them by it.
+	release string
 	// alias is a second host the surface answers at, directly under the
 	// cluster's own domain, where the cluster's administrator gave it one
 	// that is honoured (addresses.AliasHost). Empty otherwise.
@@ -153,6 +157,7 @@ func livePerimeterExposures(
 		}
 		out = append(out, perimeterEnablement{
 			spec: spec, on: on, host: host, website: website,
+			release:     helmReleaseOf(comp, profile),
 			stepsBack:   zone.kernel && spec.Apex && main.held,
 			keepsSignIn: main.signInKept,
 		})
@@ -460,7 +465,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 							"kubernetes.io/metadata.name": comp.Namespace,
 						}},
 						PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-							componentInstanceLabel: releaseName(comp),
+							componentInstanceLabel: p.release,
 						}},
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
@@ -528,7 +533,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{
-				componentInstanceLabel: releaseName(comp),
+				componentInstanceLabel: p.release,
 			}},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
 			Ingress: []networkingv1.NetworkPolicyIngressRule{{
