@@ -58,8 +58,10 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 			"bb0e4ee798d4956cf3fe7481f70f3ac5a4dd5f396618563d9829873937718b8d",
 		},
 		"mariadb setup":  {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
-		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "19414f541375de3bc183e4276409422ded25a5cb38d642b9bb7c1d0c00be311c"},
-		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "06ee93e15655f2d2b6e8a6eac539c43007e0b4aca261b83f6f17b6616b6d65e6"},
+		// Both bucket digests moved once, when the Jobs' image became the
+		// S3 server's own (backup.MinIOClientImage): the script is unchanged.
+		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "b8fc304152ea321c139b08b806a0ef94590934f859419e797c3ca40874cb3c45"},
+		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "ffab1b40a33efec31242354153c7d2191f11e4256ce6335c3333c69499a6225d"},
 		"cache user":     {makeRedisACLJob(tenant, "wiki", "pw"), "980aa4ecd34b77778b2225cbe86860dfe74dd7bd6ee0e79493bc0cfd1235d57a"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {

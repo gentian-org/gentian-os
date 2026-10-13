@@ -12,10 +12,12 @@ because a recovery you cannot perform by hand is one you cannot debug.
 what you are doing:
 
 ```bash
-# mc — the MinIO client, for reading bundles out of object storage
+# mc — the MinIO client, for reading bundles out of object storage. MinIO has
+# archived it; the last release's binaries are still on GitHub, one per
+# platform (https://github.com/minio/mc/releases/tag/RELEASE.2025-08-13T08-35-41Z).
 mkdir -p ~/.local/bin
-curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc
-chmod +x ~/.local/bin/mc          # macOS: brew install minio/stable/mc
+curl -sSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o ~/.local/bin/mc
+chmod +x ~/.local/bin/mc
 
 # to read a QR code back in, and to write one out
 sudo apt install zbar-tools qrencode
