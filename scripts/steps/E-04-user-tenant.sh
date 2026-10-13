@@ -117,8 +117,10 @@ apply() {
     echo ""
     warn "  THE USER ADMIN — in charge of the users and the user tenant"
     warn "  https://desktop.${domain}/"
+    # What to run instead is said where it gave up, with the address that was
+    # typed: issue_admin_activation knows it and this does not.
     issue_tenant_admin_activation "${tenant}" ||
-        warn "  No activation link could be issued for the user admin; later: kubectl gentian tenants activate-admin ${tenant}"
+        warn "  The user admin's account is not activated yet. The install is finished all the same."
     info "  That account is the tenant's, in the tenant's own realm, and is another"
     info "  person's than the platform admin's unless you are both. Nothing here waits"
     info "  for it to be activated."
