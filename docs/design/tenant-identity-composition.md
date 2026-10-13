@@ -36,6 +36,7 @@ administrator Job and no mail-server Job, only its groups.
 | The realm's required actions | OIDC client Jobs, for an app whose client has an OIDC pack ([iam.md §1.7](iam.md)); SAML client Jobs |
 | `gentian-dovecot` and the `mailbox` scope, where the cluster has its own mail server | `keycloak-kernel-tenant-broker-{tenant}`: the kernel realm's own first-broker-login flow |
 | The realm itself, adopted by name | The realm's mail-server settings, where the cluster has SMTP credentials |
+| For a tenant people sign up to (`spec.signUp.enabled`): the realm's registration settings, its registration flow with the platform's proof-of-work check, and the binding of the realm to that flow | |
 
 An app without a pack gets its OIDC client from its own app Composition, not
 from a Job; the operator only seeds the client's secret.

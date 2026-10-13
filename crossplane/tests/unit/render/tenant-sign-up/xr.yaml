@@ -1,0 +1,65 @@
+# tenant-default, with sign-up on (spec.signUp.enabled).
+#
+# What this asserts: the realm takes registrations with the address as the
+# login, confirmed by mail, and refuses two accounts on one address; the
+# registration flow, its form, the three executions ending in the platform's
+# proof-of-work check, and the binding of the realm to that flow. The sibling
+# fixture, tenant-default, must render exactly what it rendered before the
+# setting existed: that is what "off by default" means.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: render-fixture
+  annotations:
+    crossplane.io/external-name: render-fixture
+spec:
+  signUp:
+    enabled: true
+  displayName: Render Fixture
+  adminEmail: admin-render@example.test
+  kernelDomain: platform.example.test
+  apps:
+    - name: catalogue-test-app
+      profile: catalogue-test-app
+  # Every field of TenantQuotas, set so the ResourceQuota is rendered and every
+  # key of it compared. Without quotas the Composition skips that Object
+  # entirely and the mapping from plan quantities to quota keys goes untested.
+  #
+  # Completeness is the point, and it is enforced:
+  # TestRenderFixtureExercisesTheRealQuotas fails when a field of TenantQuotas is
+  # missing here. This fixture writes an XR directly and so skips both hops the
+  # real path takes — Tenant -> XTenant projection, then the XRD's structural
+  # schema — which is how it went on rendering requests.cpu correctly while the
+  # real path pruned it and tenants on a plan got none of the reserved capacity
+  # they were sold.
+  # Every field of TenantSecurity, so the password-policy string the
+  # composition assembles is rendered and compared. That string is the part
+  # that breaks silently: a realm accepts a policy it does not understand by
+  # ignoring it, so a typo costs the policy rather than the install.
+  security:
+    password:
+      minLength: 12
+      requireDigits: true
+      requireLowercase: true
+      requireUppercase: true
+      requireSpecialChars: true
+      historyCount: 3
+      maxAgeDays: 90
+    session:
+      idleMinutes: 30
+      maxHours: 12
+      rememberMe: true
+    bruteForce:
+      enabled: true
+      maxLoginFailures: 5
+      lockoutDurationSeconds: 900
+  quotas:
+    requestsCpu: "2"
+    requestsMemory: 4Gi
+    cpu: "8"
+    memory: 8Gi
+    storage: 50Gi
+    maxApps: 10
+    maxPods: 100
+  compositeDeletePolicy: Background
+  resourceRefs: []

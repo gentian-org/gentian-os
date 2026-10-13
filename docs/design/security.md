@@ -770,7 +770,8 @@ the code does.
 | Publishing proxy: a caller check at the edge (`basic`, `signature`, `jwt`, `bearer`) | **Target**; the values are refused | The schema refuses them on a perimeter entry, so no entry claims a check that is not made (§2.14) |
 | Publishing an entry: who may approve (`can_expose`) | Implemented | The perimeter group's members, the cluster's administrator in a tenant its cluster operates, and the tenant's administrators only by the cluster administrator's switch; the registrar holds back who is in the group (§2.14) |
 | Publishing an entry: approval by the tenant's perimeter approver, of what an installed app declares | Implemented | The director lists every perimeter entry an installed app declares and refuses an approval of anything else, or with a main-address setting that is not the entry's (`internal/director/api/exposure_requests.go`, `internal/addresses`; [routing.md §5](routing.md)) |
-| A website on the cluster's main address | Implemented; the cookie finding is open | §2.10: single-tenancy only, two people say so, the approver acknowledges the rule. A script there can still disturb sign-in on the other addresses |
+| A tenant people sign up to (`spec.signUp.enabled`) | Implemented | Off unless the tenant is made with it. The realm takes registrations with the address confirmed by mail and the platform's own proof-of-work check (no third party); an account made that way is in no group and holds no relation, so every enforcement point refuses it, and it is not counted ([iam.md §1.1b](iam.md)) |
+| A website on the cluster's main address | Implemented; the cookie finding is open | §2.10: one tenant only -- the user tenant under single, or the tenant the claim names under either mode -- two people say so, the approver acknowledges the rule. A script there can still disturb sign-in on the other addresses |
 | Address names the platform keeps | Implemented | `internal/hostnames`, asked by the director and the operator (§2.11) |
 | Default profiles the installer places | Implemented at a stated digest, and compared with the recorded bundle at rollout | Written only when the file hashes to the digest its catalogue's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed. The operator holds the Component it creates for a default profile to the bundle recorded with the profile; nothing apart from the profile states that digest |
 | Mail: one proxy faces the internet, the mail servers do not | Implemented; proven in local containers, not on a cluster | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
@@ -1510,6 +1511,13 @@ Properties:
 extension's `appSecrets`, stored at `…/apps/<app>/internal/<name>`) follow
 the mode like the app's other credentials. An app encrypts and signs its
 data with them, so they travel with the data (§6.4).
+
+**A credential a person supplies for an app** (`spec.secrets.supplied`,
+stored at `…/apps/<app>/supplied/<name>`, one property per field) is under
+neither mode: the app Composition declares it as a `CredentialRequirement`
+of the tenant, the tenant's administrator sets it in the Admin Console, the
+custodian writes it, and the app's credentials Secret reads it from there.
+Purged with the app's other credentials; not in a bundle (§6.4).
 
 Still derived under `random`, because each needs a place in OpenBao that
 nobody has chosen, and neither is part of a tenant's bundle:

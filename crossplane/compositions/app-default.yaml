@@ -168,6 +168,11 @@ spec:
             {{- $package   := dig "package" dict $pSpec }}
             {{- $vm        := dig "valueMapping" dict $package }}
             {{- $appSecrets := dig "secrets" "generated" list $pSpec }}
+            {{- /* Credentials only a person can provide (spec.secrets.supplied):
+                 each becomes a CredentialRequirement of the tenant, set in its
+                 Admin Console, and a set of keys in the app's credentials
+                 Secret below. */}}
+            {{- $supplied  := dig "secrets" "supplied" list $pSpec }}
             {{- $chart     := dig "chart" nil $package }}
 
             {{- $kr := dig "requires" "services" dict $pSpec }}
@@ -187,6 +192,15 @@ spec:
                  the v5 layout does not have, so every app with an internal
                  secret composed an Object that could never be created. */}}
             {{- $provNs     := dig "metadata" "namespace" "kernel-provisioning" $ccCM }}
+            {{- /* The kernel's control namespace, where the custodian looks for
+                 every credential probe. Needed only by an app that asks for a
+                 supplied credential, and then not guessed: a probe in the
+                 wrong namespace is a requirement that reads unsatisfied for
+                 ever. */}}
+            {{- $kernelNs   := dig "kernel.controlNamespace" "" $ccData }}
+            {{- if and (gt (len $supplied) 0) (eq $kernelNs "") }}
+              {{- fail "cluster-config carries no kernel.controlNamespace, which the credential probes of a supplied secret are placed in" }}
+            {{- end }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
 
             {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR.
@@ -367,6 +381,21 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Supplied credentials (spec.secrets.supplied): read from where
+                 the custodian stores what a person typed in. The Secret is
+                 not made until every field is there, so the release waits
+                 for the person, with the requirement listed as unsatisfied in
+                 the Admin Console until then. */}}
+            {{- range $sc := $supplied }}
+            {{- $suppliedPath := printf "gentian-os/tenants/%s/apps/%s/supplied/%s" $tenant $app $sc.name }}
+            {{- range $f := $sc.fields }}
+            {{- if and $f.key $f.valuePath }}
+            {{- $esData = append $esData (dict "secretKey" (printf "supplied-%s-%s" $sc.name $f.key)
+                "remoteRef" (dict "key" $suppliedPath "property" $f.key)) }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Emit OpenBao KV seeders for each app-internal secret ──────── */}}
             {{- /* For each appSecret we emit two composed resources:               */}}
             {{- /*   1. A k8s Secret in the provisioning namespace, holding a seed  */}}
@@ -435,6 +464,103 @@ spec:
                   key: data.json
               providerConfigRef:
                 name: openbao
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Ask for each supplied credential ─────────────────────────────
+                 The declaration the tenant's Admin Console lists and the
+                 custodian writes to, emitted here so it cannot drift from the
+                 path the ExternalSecret above reads (repository-default has
+                 the same arrangement for a repository's credential). Tenant-
+                 scoped and named for this tenant: the tenant's administrator
+                 sets it, and no other tenant's sees it. Grouped under the app
+                 in the console by the provider label.
+
+                 The probe is what makes the requirement satisfied or not: an
+                 ExternalSecret that creates no Secret and exists for ESO's
+                 Ready condition, which the custodian reads. The app's own
+                 Secret is in the tenant's namespace through the tenant's
+                 store; the probe is in the kernel's, through the kernel's,
+                 where the custodian looks for every probe. */}}
+            {{- range $sc := $supplied }}
+            {{- if and $sc.name $sc.fields }}
+            {{- $reqName := printf "app-%s-%s-%s" $tenant $app $sc.name }}
+            {{- $suppliedPath := printf "gentian-os/tenants/%s/apps/%s/supplied/%s" $tenant $app $sc.name }}
+            ---
+            apiVersion: gentianos.io/v1alpha1
+            kind: CredentialRequirement
+            metadata:
+              name: {{ $reqName }}
+              labels:
+                gentianos.io/credential-phase: runtime
+                gentianos.io/credential-scope: tenant
+                gentianos.io/credential-provider: {{ $app }}
+                gentianos.io/tenant: {{ $tenant | quote }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-credreq-{{ $sc.name }}
+                # A declaration: nothing writes conditions to it, so it is
+                # ready when it exists (see repository-default).
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              displayName: {{ $sc.displayName | default $sc.name | quote }}
+              description: {{ printf "%s The app %s waits for it until it is set here." (default "" $sc.description | trim) $app | trim | quote }}
+              phase: runtime
+              scope: tenant
+              tenant: {{ $tenant | quote }}
+              vaultPath: {{ $suppliedPath | quote }}
+              fields:
+                {{- range $f := $sc.fields }}
+                {{- if and $f.key $f.valuePath }}
+                - key: {{ $f.key }}
+                  format: {{ $f.format | default "string" }}
+                  secret: {{ not (default false $f.public) }}
+                  {{- if $f.example }}
+                  example: {{ $f.example | quote }}
+                  {{- end }}
+                {{- end }}
+                {{- end }}
+              validate:
+                type: noop
+              consumedBy:
+                - kind: XApp
+                  name: {{ $xrName }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-credprobe-{{ $sc.name }}
+              name: {{ $xrName }}-credprobe-{{ $sc.name }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: credreq-{{ $reqName }}
+                    namespace: {{ $kernelNs }}
+                    labels:
+                      gentianos.io/credential-requirement: {{ $reqName }}
+                      gentianos.io/credential-phase: runtime
+                      gentianos.io/credential-scope: tenant
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      creationPolicy: None
+                    data:
+                      {{- range $f := $sc.fields }}
+                      {{- if and $f.key $f.valuePath }}
+                      - secretKey: {{ $f.key }}
+                        remoteRef:
+                          key: {{ $suppliedPath | quote }}
+                          property: {{ $f.key }}
+                      {{- end }}
+                      {{- end }}
+              providerConfigRef:
+                name: kubernetes
             {{- end }}
             {{- end }}
 
@@ -597,6 +723,16 @@ spec:
             {{- if and $s.name $s.valuePath }}
             {{- $relSet = append $relSet (dict "name" $s.valuePath
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Supplied credentials: each field to the value the profile names. */}}
+            {{- range $sc := $supplied }}
+            {{- range $f := $sc.fields }}
+            {{- if and $f.key $f.valuePath }}
+            {{- $relSet = append $relSet (dict "name" $f.valuePath
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "supplied-%s-%s" $sc.name $f.key)))) }}
+            {{- end }}
             {{- end }}
             {{- end }}
 

@@ -56,12 +56,15 @@ type ComponentReconciler struct {
 	// holds nothing.
 	Definitions *crdcheck.Holder
 	client.Client
-	Scheme         *runtime.Scheme
-	KernelDomain   string
-	KernelRealm    string
-	TenancyMode    string
-	Cluster        string
-	BouncerService string
+	Scheme       *runtime.Scheme
+	KernelDomain string
+	KernelRealm  string
+	TenancyMode  string
+	// MainAddressTenant is the tenant the cluster names for its main address
+	// (ClusterMainAddressTenant); "" is the tenancy mode's default.
+	MainAddressTenant string
+	Cluster           string
+	BouncerService    string
 	// DirectorURL is where the desktop relays to; empty derives it from the
 	// layout's control namespace.
 	DirectorURL string

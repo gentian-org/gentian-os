@@ -134,17 +134,38 @@ func TestWhoHoldsTheMainAddress(t *testing.T) {
 		if tc.tenant.Name == "platform" {
 			in = mainInputs(t, tc.mode, tc.tenant)
 		}
-		holder := mainAddressHolder(in)
-		if (holder != nil) != tc.holds {
-			t.Errorf("%s: holder = %v, want held=%v", tc.what, holder, tc.holds)
-		}
-		verdict, applies := mainAddressVerdictFor(in, tc.tenant, "website")
-		if !applies || verdict.Reason != tc.reason || (verdict.Entry != "") != tc.holds {
-			t.Errorf("%s: verdict = %+v (applies=%v), want reason %s", tc.what, verdict, applies, tc.reason)
-		}
-		if !tc.holds && !strings.Contains(verdict.Message, "othing is published") && tc.reason != "TenantNotReady" {
-			t.Errorf("%s: the message does not say that nothing is published: %q", tc.what, verdict.Message)
-		}
+		check(t, tc.what, in, tc.tenant, tc.holds, tc.reason)
+	}
+
+	// The cluster may name the tenant instead (mainAddress.tenant on the
+	// claim), under either mode. That tenant holds the address on whatever
+	// domain its other addresses are, and nobody else does.
+	namedAcme := withSite(readyTenant(acmeTenantFixture()), approved("website", now))
+	namedCustom := withSite(readyTenant(acmeTenantFixture()), approved("website", now))
+	namedCustom.Status.Domain = "acme.example"
+	named := []struct {
+		what   string
+		mode   string
+		tenant *gentianov1alpha1.Tenant
+		holds  bool
+		reason string
+	}{
+		{"multi, the tenant the cluster names", "multi", namedAcme, true, "Published"},
+		{"multi, the named tenant on a domain of its own", "multi", namedCustom, true, "Published"},
+		{"single, the tenant the cluster names, which is not the user tenant", "single", namedAcme, true, "Published"},
+		{"multi, another tenant than the one named", "multi", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "NotTheMainAddressTenant"},
+		{"single, the user tenant where the cluster names another", "single", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "NotTheMainAddressTenant"},
+	}
+	for _, tc := range named {
+		in := mainInputs(t, tc.mode, platformWithConcierge(), tc.tenant)
+		in.MainAddressTenant = "acme"
+		check(t, tc.what, in, tc.tenant, tc.holds, tc.reason)
+	}
+	// Naming the platform tenant names nobody: its page is the sign-in form.
+	platformIn := mainInputs(t, "multi", withSite(platformWithConcierge(), approved("website", now)))
+	platformIn.MainAddressTenant = "platform"
+	if holder := mainAddressHolder(platformIn); holder != nil {
+		t.Errorf("the platform tenant named for the main address holds it: %v", holder)
 	}
 
 	// An approval for the main address of an entry the profile did not
@@ -181,6 +202,23 @@ func TestWhoHoldsTheMainAddress(t *testing.T) {
 	in.Profiles["website"] = matrix
 	if mainAddressHolder(in) == nil {
 		t.Fatalf("a website declaring /.well-known/matrix/ is refused")
+	}
+}
+
+// check holds one case of TestWhoHoldsTheMainAddress: who holds the address
+// and what the tenant is told.
+func check(t *testing.T, what string, in mainAddressInputs, tenant *gentianov1alpha1.Tenant, holds bool, reason string) {
+	t.Helper()
+	holder := mainAddressHolder(in)
+	if (holder != nil) != holds {
+		t.Errorf("%s: holder = %v, want held=%v", what, holder, holds)
+	}
+	verdict, applies := mainAddressVerdictFor(in, tenant, "website")
+	if !applies || verdict.Reason != reason || (verdict.Entry != "") != holds {
+		t.Errorf("%s: verdict = %+v (applies=%v), want reason %s", what, verdict, applies, reason)
+	}
+	if !holds && !strings.Contains(verdict.Message, "othing is published") && reason != "TenantNotReady" {
+		t.Errorf("%s: the message does not say that nothing is published: %q", what, verdict.Message)
 	}
 }
 
@@ -588,7 +626,7 @@ func TestTheWebsiteHasAListenerOnTheBareDomain(t *testing.T) {
 	user.Spec.Exposures = []gentianov1alpha1.TenantExposure{approved("website", time.Now())}
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{"website": websiteProfile(t, "website")}
 	bare := func(mode string) *gatewayv1.Listener {
-		gw := buildPerimeterGateway(mainKD, mode, "kernel", []gentianov1alpha1.Tenant{*readyTenant(platformTenantFixture()), *user}, profiles)
+		gw := buildPerimeterGateway(mainKD, mode, "", "kernel", []gentianov1alpha1.Tenant{*readyTenant(platformTenantFixture()), *user}, profiles)
 		for i := range gw.Spec.Listeners {
 			if h := gw.Spec.Listeners[i].Hostname; h != nil && string(*h) == mainKD {
 				return &gw.Spec.Listeners[i]

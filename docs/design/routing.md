@@ -683,9 +683,10 @@ tenancy mode. What a visitor gets there is the mode's
 | `desktop.<kernelDomain>` | `302` to the bare domain (`kernel-desktop-redirect`) | the user tenant's desktop itself, routed by its component |
 | `platform.<kernelDomain>` | the platform admin's desktop | the same |
 
-**A website on the main address (single-tenancy only).** The user tenant may
-put a public website on the bare domain. The main address then behaves like
-this:
+**A website on the main address.** One tenant may put a public website on
+the bare domain: the user tenant of a single-tenancy cluster, or the tenant
+the Cluster claim names for it (`mainAddress.tenant`), under either mode. On
+a single-tenancy cluster the main address then behaves like this:
 
 | Address | no website | website approved, its proxy not up yet | website serving |
 |---|---|---|---|
@@ -700,8 +701,18 @@ this:
 The bare domain is the website's one name; `www` redirects to it, as `www`
 redirects everywhere on this platform. Sign-in does not move: the desktop is
 at `desktop.<kernelDomain>`, and `https://<kernelDomain>/sign-in` always leads
-there, whatever the website does. A multi-tenancy cluster is not affected: its
-main address stays the sign-in form.
+there, whatever the website does.
+
+A multi-tenancy cluster that names no tenant is not affected: its main
+address stays the sign-in form. Where it names one, the website takes the
+front page the way it does above, with two differences. `/sign-in` is not
+sent to a desktop, since there is no one desktop to send it to: the sign-in
+form keeps that path, and `https://<kernelDomain>/sign-in` is where it is
+asked who is asking. And the kernel has no redirect to fall back on while
+the website's proxy comes up, so the front page does not answer for the few
+seconds between the approval and the proxy's first ready pod. The named
+tenant may be on a domain of its own: its website still answers on the bare
+domain, with the cluster's certificate.
 
 *Who may.* Three things must all be true (`main_address.go`):
 

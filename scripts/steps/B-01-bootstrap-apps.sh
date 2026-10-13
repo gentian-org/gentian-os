@@ -176,6 +176,30 @@ _v5_render() {
     return ${rc}
 }
 
+# _v5_os_build_pinned — does the gentian-os Application name the build this
+# run renders?
+#
+# The installer pins the platform's image to the build of the commit it is run
+# from (resolve_gentian_os_image_tag), and this step is what writes the pin.
+# Nothing here asked whether the pin was still that build. So a run from a
+# newer checkout found everything else in place and skipped, `--only B-01` --
+# the command the documentation gives for taking a newer build -- skipped
+# with it, and the cluster went on with new manifests, which Argo CD follows
+# by branch, and the old binary.
+#
+# True where there is nothing to compare: a run that resolved no build
+# (--status collects none), and a cluster whose Application D-01 has not
+# written yet.
+_v5_os_build_pinned() {
+    local want="${GENTIAN_OS_IMAGE_TAG:-}" ns told
+    [[ -n "${want}" ]] || return 0
+    ns="$(ns_kernel gitops)"
+    kubectl get application gentian-os -n "${ns}" >/dev/null 2>&1 || return 0
+    told="$(kubectl get application gentian-os -n "${ns}" \
+        -o jsonpath='{.spec.sources[?(@.path=="charts/gentian-os")].helm.valuesObject.image.tag}' 2>/dev/null)"
+    [[ "${told}" == "${want}" ]]
+}
+
 check() {
     local ns app
     ns="$(ns_kernel gitops)"
@@ -199,6 +223,8 @@ check() {
             -o jsonpath='{.spec.sources[?(@.path=="charts/gentian-os")].helm.valuesObject.kernelNetworkPolicies}' 2>/dev/null)"
         [[ "${told_rules:-false}" == "${want_rules}" ]] || return 1
     fi
+    # And the build: a run from a newer checkout is how a cluster takes it.
+    _v5_os_build_pinned || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0

@@ -50,6 +50,17 @@ spec:
                 adminEmail:
                   type: string
                   description: Contact address for platform notifications.
+                signUp:
+                  type: object
+                  description: >
+                    Whether people make their own accounts in the realm
+                    (spec.signUp on the Tenant). Enabled opens the realm's
+                    registration page with an e-mail confirmation and a
+                    proof-of-work check; such an account is in none of the
+                    tenant's groups.
+                  properties:
+                    enabled:
+                      type: boolean
                 kernelDomain:
                   type: string
                   description: >

@@ -143,6 +143,12 @@ spec:
     generated:                    # made per tenant, stored in OpenBao
       - name: admin_password
         valuePath: "openproject.admin_user.password"
+    supplied:                     # asked of the tenant's admin in the console
+      - name: payments
+        displayName: Payment provider keys
+        description: From the provider's dashboard.
+        fields:
+          - { key: secret_key, format: token, valuePath: "openproject.payments.secretKey" }
 
   expose:
     - name: web

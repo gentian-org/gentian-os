@@ -53,11 +53,21 @@ func (c *LicenceReportCounts) keycloak(ctx context.Context) (*authz.KeycloakAdmi
 	return c.admin, nil
 }
 
-// TenantUsers is the number of enabled accounts in the tenant's realm.
+// TenantUsers is the number of enabled accounts in the tenant's realm -- or,
+// where people sign up to the realm themselves, the number of its members:
+// an account somebody made on the registration page is in no group of the
+// tenant, has nothing of the platform's, and is not a user of it.
 func (c *LicenceReportCounts) TenantUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (int, error) {
 	kc, err := c.keycloak(ctx)
 	if err != nil {
 		return 0, err
+	}
+	if tenant.SignUpEnabled() {
+		members, err := kc.ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
+		if err != nil {
+			return 0, err
+		}
+		return len(members), nil
 	}
 	return kc.CountRealmUsers(ctx, keycloakRealmName(tenant))
 }

@@ -93,6 +93,19 @@ kubectl gentian tenants set demo --admins-approve-public-addresses=true
 kubectl gentian tenants set demo --admins-approve-public-addresses=false --admins-add-catalogues=true
 ```
 
+A third switch is chosen when the tenant is made and not changed afterwards:
+whether anybody may make an account in its realm themselves
+(`--self-sign-up`, `spec.signUp.enabled`). The command says what that opens
+before it asks the director: a registration page at the cluster's identity
+provider, an e-mail confirmation and a proof-of-work check, and accounts that
+are in none of the tenant's groups and so have nothing of the platform's. For
+a tenant whose apps serve the public, not for a workspace
+([iam.md §1.1b](design/iam.md)):
+
+```bash
+kubectl gentian tenants create customers --display-name "Customers" --self-sign-up
+```
+
 Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,
 `spec.catalogue.delegated`), committed by the director as you
 (`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/perimeter-delegation` and
@@ -333,6 +346,18 @@ Show all available `kubectl gentian` subcommands:
 kubectl gentian --help
 ```
 
+### Private registries
+
+A catalogue is public; the charts and images it names need not be. A tenant
+declares the registry they are in, and the token is set afterwards in the
+Admin Console of the tenant, under Credentials, as the name the command
+prints. A chart whose address lies inside the declared one is pulled with it.
+
+```bash
+kubectl gentian repositories declare acme --tenant demo --url oci://ghcr.io/acme   # then: Credentials, repository-acme
+kubectl gentian repositories remove acme --tenant demo
+```
+
 ## 6. Install and Uninstall Apps
 
 Apps are installed by the director adding them to the tenant's manifest in
@@ -518,8 +543,10 @@ approved only with `--acknowledge-main-address-rule`. The command first
 prints the director's rule for a website there in full, and the name of
 whoever acknowledged it is recorded with the entry. `--yes` does not
 acknowledge it, and the flag is refused for an entry that is not for the
-main address. The director approves such an entry only for the user tenant
-of a single-tenancy cluster (`--tenant user`); the website then answers at
+main address. The director approves such an entry only for the one tenant
+that may hold the main address: the user tenant of a single-tenancy cluster
+(`--tenant user`), or the tenant the Cluster claim names for it
+(`mainAddress.tenant`, under either mode); the website then answers at
 `https://<kernel-domain>/` and `www.`.
 
 ```bash

@@ -1257,6 +1257,12 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 	}
 
+	// Stated only where it is on: an XTenant that says nothing has the
+	// Composition's default, which is off, and a tenant made before the
+	// field existed composes exactly as it did.
+	if tenant.SignUpEnabled() {
+		spec["signUp"] = map[string]interface{}{"enabled": true}
+	}
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas
 	}

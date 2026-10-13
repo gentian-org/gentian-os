@@ -726,7 +726,7 @@ namespaces:
                 evidence: [kernel/manifests/cert-manager/chart/templates/_issuers.tpl:30]
       - name: external-dns
         installedBy: bootstrap-application:external-dns
-        readAt: external-dns chart 1.21.1
+        readAt: external-dns chart 1.22.0
         podLabels: {app.kubernetes.io/name: external-dns}
         ports:
           - port: 7979

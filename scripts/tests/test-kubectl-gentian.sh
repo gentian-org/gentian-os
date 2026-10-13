@@ -331,6 +331,18 @@ gentian tenants create globex --admins-add-catalogues
 is "create with one switch states that one" "$(writes | tr -d ' \n')" \
     'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true,"catalogue":{"delegated":true}}'
 
+# Sign-up: stated only when asked for, and said out loud before the director
+# is asked, because it opens the realm to people nobody invited.
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","signUp":true}'
+gentian tenants create customers --self-sign-up
+is "create with sign-up states it, and nothing else" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"customers","displayName":"","requireMFA":true,"signUp":true}'
+has "... warns what it opens" "${OUT}" "WARNING: --self-sign-up lets anybody on the internet make an account"
+has "... and says what was made" "${OUT}" "Anybody may sign up to it"
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
+gentian tenants create globex
+has "... and a tenant made without it is not warned" "$(grep -c 'self-sign-up' <<<"${OUT}" || true)" "0"
+
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true
 is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "
@@ -624,6 +636,22 @@ gentian catalogues add acme --path catalogue
 is "add --path succeeds" "${RC}" "0"
 is "... and sends the directory and no address" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/catalogues/acme{"path":"catalogue"}'
 has "... and names the commit" "${OUT}" "Catalogue acme added for every tenant of this cluster, as the cluster's administrator: committed (01234567)"
+
+# A private registry: declared for the tenant with its address, the token
+# set afterwards under the name the director answers.
+fresh; reply PUT /v1/tenants/demo/repositories/acme 202 '{"status":"declared","commit":"0123456789abcdef","credentialName":"repository-acme"}'
+gentian repositories declare acme --tenant demo --url oci://ghcr.io/acme
+is "repositories declare sends the address as an apps registry" "$(tr -d ' \n' < "${CALLS}")" \
+    'PUT/v1/tenants/demo/repositories/acme{"role":"apps","type":"oci","url":"oci://ghcr.io/acme"}'
+has "... names the commit" "${OUT}" "Repository acme declared for tenant demo: committed (01234567)"
+has "... and where the token goes" "${OUT}" "under Credentials, as repository-acme"
+fresh
+gentian repositories declare acme --url oci://ghcr.io/acme
+refused "... and a tenant is required"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh; reply DELETE /v1/tenants/demo/repositories/acme 202 '{"status":"removed","commit":"0123456789abcdef"}'
+gentian repositories remove acme --tenant demo
+is "repositories remove asks the tenant's route" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/tenants/demo/repositories/acme'
 
 fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
 gentian catalogues add acme --path=catalogues/acme --tenant demo

@@ -355,6 +355,15 @@ key, no Secret and no network path to the gateway, whatever the cluster runs. Wi
 that serves no models, the app is held and its Component says why
 ([app-customization.md §1.1](app-customization.md)).
 
+**An app that needs a credential only a person can provide** — a payment provider's keys, a token
+of a service outside the cluster — declares it under `spec.secrets.supplied`: a name, a display
+name, a description saying where it is obtained, and its fields, each with the Helm value that
+receives it. The platform asks for it rather than makes it: once the app is installed, the
+tenant's Admin Console lists it under Credentials, grouped under the app, and the app waits until
+it is set there. A field that is not secret (`public: true`, a publishable key) is shown as typed;
+every other is never shown again. The value is purged with the app and is not in a tenant's
+bundle: a restore asks for it again, as it does for every credential a person typed in.
+
 **An app that verifies who is asking, and does not take the front door's headers on trust**, sets
 `exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a
@@ -894,14 +903,14 @@ above that start from a digest.
 ## 8. Private charts and images
 
 A catalogue at an address is public; the chart and the images need not be. Declare the registry for the tenant,
-then set its password:
+then set its token:
 
-```
-PUT /v1/tenants/<tenant>/repositories/<name>
-{"role": "apps", "type": "oci", "url": "oci://registry.example.com/acme"}
+```bash
+kubectl gentian repositories declare acme --tenant demo --url oci://registry.example.com/acme
 ```
 
-The password is set at the custodian, as for every repository, and becomes a pull Secret in that
+The token is set in the Admin Console of the tenant, under Credentials, as the name the command prints
+(`repository-acme`); it is kept in the vault, as every repository's is, and becomes a pull Secret in that
 tenant's namespace only. A chart whose address lies inside the declared registry
 is pulled with it. The App Store app does both steps itself for what it sells; for your own registry
 they are done once by the tenant's administrator.

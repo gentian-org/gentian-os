@@ -34,6 +34,27 @@ type TenantAdmin struct {
 	RequireMFA *bool `json:"requireMFA,omitempty"`
 }
 
+// TenantSignUp is whether people make their own accounts in the tenant's
+// realm.
+type TenantSignUp struct {
+	// Enabled opens the realm's registration page: anybody on the internet
+	// may make an account, with an e-mail address as the login, a message to
+	// that address to confirm it, and a proof-of-work check against scripted
+	// sign-ups. An account made that way is in none of the tenant's groups:
+	// it has no desktop, no rights on the platform, and is not counted as a
+	// user of the tenant. It is for a tenant whose apps serve the public --
+	// customers with accounts -- and not for a workspace, whose people are
+	// invited. Off by default; off, every account is made by an invitation.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// SignUpEnabled reports whether people make their own accounts in this
+// tenant's realm (spec.signUp.enabled); off unless the tenant says so.
+func (t *Tenant) SignUpEnabled() bool {
+	return t.Spec.SignUp != nil && t.Spec.SignUp.Enabled
+}
+
 // TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.
 type TenantDeletion struct {
 	// KeepBundles keeps the tenant's backup bucket and the bundles in it
@@ -73,6 +94,11 @@ type TenantSpec struct {
 	// is not here: a person's address committed to git outlives the account.
 	// +optional
 	Admin *TenantAdmin `json:"admin,omitempty"`
+
+	// SignUp is whether people make their own accounts in the realm. Unset
+	// or off, they are invited; see TenantSignUp.
+	// +optional
+	SignUp *TenantSignUp `json:"signUp,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
@@ -259,8 +285,10 @@ type TenantExposure struct {
 
 	// Apex is the approver saying that this surface is for the cluster's
 	// main address: the bare domain. The profile's entry must say apex too;
-	// neither alone publishes anything. It is honoured for the one user
-	// tenant of a single-tenancy cluster and for one surface at a time.
+	// neither alone publishes anything. It is honoured for the one tenant
+	// that may hold the main address -- the one the Cluster claim names, or
+	// the user tenant of a single-tenancy cluster -- and for one surface at
+	// a time.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
 

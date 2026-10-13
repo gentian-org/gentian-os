@@ -579,8 +579,9 @@ image to the build of the commit it is installing from
 (`<branch>-<short-sha>`, or the version for a release tag), so the manifests
 Argo CD syncs and the binary the kubelet pulls come from one commit.
 
-**Nothing advances that pin on its own.** A cluster following a branch takes
-a newer build when `./install.sh --only B-01` is run again; a cluster pins its
+**Nothing in the cluster advances that pin.** A cluster following a branch takes
+a newer build when the installer is run from a newer checkout
+(`./install.sh --only B-01` for that alone); a cluster pins its
 own tag in `clusters/<cluster>/kernel/values.yaml`. `argocd-image-updater` is
 installed with Argo CD, and the platform ships no `ImageUpdater` resource: a
 cluster that wants an image to roll by itself writes one. See

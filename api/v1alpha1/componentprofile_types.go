@@ -435,6 +435,12 @@ type ComponentSecrets struct {
 	// kept in the vault.
 	// +optional
 	Derived []DerivedSecretKey `json:"derived,omitempty"`
+
+	// Supplied secrets are credentials only a person can provide. Each is
+	// asked for in the tenant's Admin Console once the app is installed,
+	// and the app waits for it.
+	// +optional
+	Supplied []SuppliedSecret `json:"supplied,omitempty"`
 }
 
 // SurfaceKind is where an exposure entry is published.
@@ -586,9 +592,11 @@ type ExposureSpec struct {
 	// Apex publishes this entry on the cluster's bare domain -- its main
 	// address -- instead of a host under the zone's domain. Only a perimeter
 	// entry may say it. The operator honours it for the platform tenant,
-	// and for the one user tenant of a single-tenancy cluster when that
-	// tenant's approver published the entry for the main address (apex on
-	// the enablement) and no other surface holds it. Everywhere else an
+	// and for the one tenant that may hold the main address -- the tenant
+	// the Cluster claim names (mainAddress.tenant), or the user tenant of a
+	// single-tenancy cluster -- when that tenant's approver published the
+	// entry for the main address (apex on the enablement) and no other
+	// surface holds it. Everywhere else an
 	// apex entry has no host and is not published: the bare domain is the
 	// first thing anybody typing the cluster's address meets.
 	// +optional
@@ -1007,6 +1015,15 @@ func (p *ComponentProfile) DerivedSecrets() []DerivedSecretKey {
 		return nil
 	}
 	return p.Spec.Secrets.Derived
+}
+
+// SuppliedSecrets are the credentials the profile asks a person for under
+// secrets.supplied, or nil.
+func (p *ComponentProfile) SuppliedSecrets() []SuppliedSecret {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Supplied
 }
 
 // IsAPI reports whether this entry is delivered as an external API rather than

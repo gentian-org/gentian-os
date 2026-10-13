@@ -340,6 +340,36 @@ spec:
                     - single
                     - multi
                   default: multi
+                mainAddress:
+                  type: object
+                  description: >
+                    The cluster's main address: its bare domain, the first
+                    thing anybody typing the cluster's address meets.
+                  properties:
+                    tenant:
+                      type: string
+                      pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+                      description: >
+                        The one tenant that may put a public website on the
+                        main address, under either tenancy mode. Its approver
+                        publishes the website (apex: true, with the
+                        acknowledgement the director asks for), and the
+                        platform keeps /sign-in, /branding/ and the two
+                        certificate paths under /.well-known/ there.
+
+                        Unset is the tenancy mode's default: on a
+                        single-tenancy cluster the user tenant, whose
+                        address the main address is; on a multi-tenancy
+                        cluster nobody, and the main address is the sign-in
+                        form that asks who is asking.
+
+                        Naming a tenant on a multi-tenancy cluster is the
+                        cluster administrator's decision about every tenant:
+                        a script on the bare domain can set cookies browsers
+                        send to every subdomain, so to every tenant's desktop
+                        and sign-in. Name a tenant only where the cluster's
+                        operator controls that website's scripts, as on a
+                        cluster of one organisation.
                 networkMode:
                   type: string
                   description: >

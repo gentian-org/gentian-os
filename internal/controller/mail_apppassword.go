@@ -27,6 +27,10 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
+
+	"github.com/gentian-org/gentian-os/internal/authz"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -218,6 +222,29 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 	return names, nil
 }
 
+// keycloakTenantMembers is the enabled members of the tenant's members group,
+// by username: what keycloakRealmUsers answers, for a realm that also holds
+// accounts people made themselves.
+func (r *TenantReconciler) keycloakTenantMembers(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("load keycloak-admin: %w", err)
+	}
+	members, err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).
+		ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, m := range members {
+		if m.Username != "" {
+			names = append(names, m.Username)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 // keycloakRealmUser is the part of a realm user this file reads.
 type keycloakRealmUser struct {
 	Username string `json:"username"`
@@ -349,7 +376,15 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err != nil {
 		return err
 	}
-	users, err := r.keycloakRealmUsers(ctx, name)
+	// Everyone in the realm -- unless people sign up to it themselves: an
+	// account made on the registration page has no mailbox here and gets
+	// no mail identity.
+	var users []string
+	if tenant.SignUpEnabled() {
+		users, err = r.keycloakTenantMembers(ctx, tenant)
+	} else {
+		users, err = r.keycloakRealmUsers(ctx, name)
+	}
 	if err != nil {
 		return err
 	}

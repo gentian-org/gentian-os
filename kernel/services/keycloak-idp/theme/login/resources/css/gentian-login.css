@@ -448,7 +448,17 @@ body.gentian-login .alert-success {
   box-sizing: border-box;
 }
 
-/* Keycloak renders identity-provider buttons and a registration link on the
-   login page; the portal's form had neither. */
-.gentian-hidden, #kc-registration, #kc-registration-container,
-#kc-social-providers, #kc-info { display: none !important; }
+/* Keycloak renders identity-provider buttons on the login page; the portal's
+   form had none. The registration link is left to Keycloak, which renders it
+   only for a realm that takes sign-ups. */
+.gentian-hidden, #kc-social-providers { display: none !important; }
+
+/* The registration page's proof-of-work check: a line that says the browser
+   is working, then that it is done. */
+.gentian-pow-status {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--gtn-ink-2);
+}
+.gentian-pow-status--done { color: var(--gtn-ink-1, var(--gtn-ink-2)); }

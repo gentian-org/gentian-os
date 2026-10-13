@@ -67,8 +67,11 @@ type GatewayPlatformReconciler struct {
 	client.Client
 	KernelDomain string
 	TenancyMode  string
-	RoutingMode  string
-	Ingress      EdgeIngress
+	// MainAddressTenant is the tenant the cluster names for its main address
+	// (ClusterMainAddressTenant); "" is the tenancy mode's default.
+	MainAddressTenant string
+	RoutingMode       string
+	Ingress           EdgeIngress
 	// Cluster is this cluster's id in the authorization store: the object
 	// the kernel UIs' relations are asked on (cluster:<c>).
 	Cluster string
@@ -282,7 +285,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 	ann := edgeDNSAnnotations(r.Ingress)
 	for _, desired := range []*gatewayv1.Gateway{
 		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
-		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, r.kernelRealm(), tenantList.Items, profiles),
+		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, r.MainAddressTenant, r.kernelRealm(), tenantList.Items, profiles),
 	} {
 		if len(ann) > 0 {
 			if desired.Annotations == nil {
@@ -304,7 +307,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 // the ACME HTTP-01 solver answers and everything else is redirected to https.
 // Under mergeGateways a listener is unique per port and hostname across the
 // class, so :80 lives here and nowhere else.
-func buildPerimeterGateway(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) *gatewayv1.Gateway {
+func buildPerimeterGateway(kernelDomain, tenancyMode, mainAddressTenant, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) *gatewayv1.Gateway {
 	idHost := gatewayv1.Hostname("id." + kernelDomain)
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -321,7 +324,7 @@ func buildPerimeterGateway(kernelDomain, tenancyMode, kernelRealm string, tenant
 			Listeners: append([]gatewayv1.Listener{
 				withAllowedRoutes(tlsListener(perimeterIDListenerName, idHost, kernelWildcardTLSSecretName, servicesNamespace), true),
 				withAllowedRoutes(httpRedirectListener(), true),
-			}, perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm, tenants, profiles)...),
+			}, perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kernelRealm, tenants, profiles)...),
 		},
 	}
 }
@@ -344,7 +347,7 @@ func buildPerimeterGateway(kernelDomain, tenancyMode, kernelRealm string, tenant
 //
 // The certificate is the tenant's own wildcard, which already covers any
 // subdomain of its domain, so publishing a surface issues nothing new.
-func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) []gatewayv1.Listener {
+func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) []gatewayv1.Listener {
 	var out []gatewayv1.Listener
 	seen := map[string]struct{}{}
 	for i := range tenants {
@@ -382,7 +385,8 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 	// not, the website still needs the listener.
 	if holder := mainAddressHolder(mainAddressInputs{
 		Tenants: tenants, Profiles: profiles,
-		KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode, Now: time.Now(),
+		KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode,
+		MainAddressTenant: mainAddressTenant, Now: time.Now(),
 	}); holder != nil {
 		if _, dup := seen[kernelDomain]; !dup {
 			out = append(out, withAllowedRoutes(tlsListener(

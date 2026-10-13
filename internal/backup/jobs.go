@@ -41,18 +41,9 @@ const (
 	// the identity reconciler already authenticates with.
 	KeycloakAdminSecret = "keycloak-admin"
 
-	// mcImage carries the MinIO client used to upload every artefact.
-	// quay.io, not Docker Hub, and a tag that still exists.
-	//
-	// MinIO retired the older mc tags from Docker Hub: pulling
-	// minio/mc:RELEASE.2025-04-03T17-07-56Z now fails with
-	//   pull access denied, repository does not exist or may require authorization
-	// which reads as a credentials problem and is not one — the tag is simply gone.
-	// The Job then sits in ImagePullBackOff, and because tenant provisioning waits
-	// on that Job, the whole tenant stops short of Ready: storage never finishes, so
-	// the stages behind it never run. Both tenants on this cluster were stuck there.
-	//
-	// quay.io is where MinIO publishes now, so it is the registry to track.
+	// mcImage carries the MinIO client used to upload every artefact: the
+	// image the cluster's own S3 server runs, which ships the client beside
+	// the server. See MinIOClientImage.
 	mcImage = MinIOClientImage
 
 	// workDir is the scratch mount a dump is staged in before upload.
@@ -67,8 +58,27 @@ const (
 
 // MinIOClientImage is the image every Job that talks to object storage
 // runs: provisioning a bucket, capturing one, restoring one, destroying one.
-// See mcImage for why it is this registry and this tag.
-const MinIOClientImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+//
+// It is the image the cluster's S3 server runs
+// (kernel/services/infra-minio/manifests/templates/configmap.yaml), which
+// ships the client, mc, on its PATH beside the server and runs it as its
+// own user with a writable config directory; the vendored chart's own
+// provisioning Job runs mc from it the same way. A test holds the two pins
+// together, so the Jobs never run an image the cluster does not already
+// pull.
+//
+// It was quay.io/minio/mc, at the last tag MinIO published. MinIO then
+// withdrew the client's images from quay.io and Docker Hub alike -- both
+// answer 401 to an anonymous pull -- and archived github.com/minio/mc
+// (2025-11-20). The Job then sat in ImagePullBackOff, and because a
+// tenant's provisioning and its teardown each wait on such a Job, a tenant
+// with a bucket stopped short of Ready and a retired one never left. The
+// first install of a cluster never met it, because no bucket had to be
+// made or destroyed before the image was gone.
+//
+// This binds the Jobs to the same frozen image the server is bound to, and
+// no further; the way off it for both is the same decision, taken once.
+const MinIOClientImage = "docker.io/bitnamilegacy/minio:2025.4.22-debian-12-r1"
 
 // JobParams is the shared shape of every capture Job.
 type JobParams struct {

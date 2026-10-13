@@ -2696,8 +2696,10 @@ _verify_gentian_os_ref_exists() {
 # and a deliberate one: nothing ever did here either, because the image-updater
 # annotations the bootstrap chart wrote were read by nobody (the deployed
 # updater is v1.x, which acts on `ImageUpdater` CRs and reads an Application's
-# annotations only when a CR points it at them). `./install.sh --only B-01`
-# advances the pin, which is one command and is honest about what it does.
+# annotations only when a CR points it at them). A run of the installer from a
+# newer checkout advances the pin: B-01's check compares it with this
+# checkout's build (_v5_os_build_pinned). `./install.sh --only B-01` is that
+# and nothing else.
 # =============================================================================
 resolve_gentian_os_image_tag() {
     # The ref first, whether or not the tag is given: every Application

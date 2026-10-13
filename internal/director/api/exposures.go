@@ -177,8 +177,9 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 			s.repoError(w, r, err)
 			return
 		}
-		// No claim is no word that the cluster is single, and so it is not.
-		if !tenancy.SoleUserTenant(settings["tenancyMode"], r.PathValue("t")) {
+		// No claim is no word that the cluster is single, and so it is not;
+		// and no word on who holds the main address is the mode's default.
+		if tenancy.MainAddressTenant(settings["tenancyMode"], settings[mainAddressTenantSetting]) != r.PathValue("t") {
 			s.fail(w, r, http.StatusConflict, mainAddressRefused)
 			return
 		}
@@ -264,11 +265,17 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	s.written(w, r, res, err)
 }
 
-// mainAddressRefused is the answer to apex: true anywhere but the user
-// tenant of a single-tenancy cluster.
-const mainAddressRefused = "a website on the cluster's main address is for the user tenant of a single-tenancy cluster only. " +
-	"On a multi-tenancy cluster the main address is the sign-in form, and the platform tenant's own page is published at install. " +
+// mainAddressRefused is the answer to apex: true anywhere but the one tenant
+// the cluster lets hold its main address.
+const mainAddressRefused = "a website on the cluster's main address is for one tenant only: " +
+	"the one the cluster names for it (mainAddress.tenant on the Cluster claim, the cluster administrator's setting), " +
+	"or, where it names none, the user tenant of a single-tenancy cluster. " +
+	"On a multi-tenancy cluster that names none the main address is the sign-in form, and the platform tenant's own page is published at install. " +
 	"Nothing was changed"
+
+// mainAddressTenantSetting is the Cluster claim's word on who may hold the
+// main address, as ClusterSettingValues keys it.
+const mainAddressTenantSetting = "mainAddress.tenant"
 
 // mainAddressRule is what the approver has to know before a website goes on
 // the main address. The platform cannot check what a website loads, so the

@@ -303,6 +303,40 @@ func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
 	}
 }
 
+// A multi-tenancy cluster may name one tenant for its main address. That
+// tenant's approver publishes a website there as the user tenant of a
+// single-tenancy cluster does, with the same acknowledgement; every other
+// tenant is refused as before, and nothing is committed for them.
+func TestTheTenantTheClusterNamesHoldsTheMainAddressUnderMulti(t *testing.T) {
+	claim := claimWith() + "  tenancyMode: multi\n  mainAddress:\n    tenant: user\n"
+	files := websites()
+	files[dt.ClaimPath] = claim
+	h := startTenancy(t, &residueOperator{}, "", files)
+	uma := h.token(t, "tenant-user", "uma")
+
+	if code, body := h.do(t, "PUT", userSitePath, uma, `{"reason":"the company website","apex":true}`); code != http.StatusBadRequest {
+		t.Fatalf("without the acknowledgement: %d %v, want 400 with the rule", code, body)
+	}
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", userSitePath, uma, mainAddress)
+	if code != http.StatusAccepted || h.tip(t) == before {
+		t.Fatalf("the named tenant's website for the main address: %d %v", code, body)
+	}
+	_, view := h.do(t, "GET", exposuresPath("user"), uma, "")
+	if got := entryOf(t, view, "website", "site")["host"]; got != dt.KernelDomain {
+		t.Fatalf("the named tenant's website answers at %v, want the bare domain %s", got, dt.KernelDomain)
+	}
+
+	// Another tenant of the same cluster is still refused.
+	tom := h.token(t, "tenant-demo", "tom")
+	before = h.tip(t)
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/exposures/website/site", tom, mainAddress)
+	msg, _ := body["error"].(string)
+	if code != http.StatusConflict || !strings.Contains(msg, "mainAddress.tenant") || h.tip(t) != before {
+		t.Fatalf("another tenant: %d %v", code, body)
+	}
+}
+
 // A website on the main address is published only by an approver who was told
 // what a script there can do and said the site is one whose scripts the
 // organisation controls. Without that word the answer is the warning, naming

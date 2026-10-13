@@ -280,9 +280,11 @@ locate_bundle() {
 # tool useless exactly when it is needed. The cluster path stays because it
 # saves looking anything up while the cluster is still there.
 mc_alias() {
+    # MinIO archived the client and took down dl.min.io; the last release's
+    # binaries are still on GitHub, one per platform.
     need mc "mc is the MinIO client, for reading bundles out of object storage:
-  curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc && chmod +x ~/.local/bin/mc
-  macOS: brew install minio/stable/mc" || return 1
+  curl -sSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o ~/.local/bin/mc && chmod +x ~/.local/bin/mc
+  other platforms: the same release's assets, https://github.com/minio/mc/releases/tag/RELEASE.2025-08-13T08-35-41Z" || return 1
     local ak="" sk="" kn
     # Beside the object store: where a destination's credential is
     # materialised, and where the capture Jobs read it.

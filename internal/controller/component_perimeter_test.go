@@ -515,7 +515,7 @@ func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	gw := buildPerimeterGateway("k.example", "", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 
 	var hosts []string
 	for _, l := range gw.Spec.Listeners {
@@ -543,7 +543,7 @@ func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	gw := buildPerimeterGateway("k.example", "", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	for _, l := range gw.Spec.Listeners {
 		if l.Hostname != nil && strings.HasPrefix(string(*l.Hostname), "*") {
 			t.Fatalf("the perimeter claimed a wildcard listener: %s", *l.Hostname)
@@ -560,7 +560,7 @@ func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	gw := buildPerimeterGateway("k.example", "", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	var hosts []string
 	for _, l := range gw.Spec.Listeners {
 		if l.Hostname != nil {
@@ -576,7 +576,7 @@ func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 // listeners the kernel needs.
 func TestATenantPublishingNothingAddsNoListener(t *testing.T) {
 	tenant := acmeTenantFixture()
-	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	gw := buildPerimeterGateway("k.example", "", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	if len(gw.Spec.Listeners) != 2 {
 		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
 	}
@@ -607,7 +607,7 @@ func TestOnlyThePlatformTenantPublishesOnTheBareDomain(t *testing.T) {
 	acme := acmeTenantFixture()
 	acme.Spec.Exposures = published
 
-	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*platform, *acme}, profiles)
+	gw := buildPerimeterGateway("k.example", "", "", "kernel", []gentianov1alpha1.Tenant{*platform, *acme}, profiles)
 	var apex *gatewayv1.Listener
 	for i, l := range gw.Spec.Listeners {
 		if l.Hostname == nil {
@@ -639,7 +639,7 @@ func TestAnEnablementOfNothingDeclaredGetsNoListener(t *testing.T) {
 		{Install: "nextcloud-base-ce", ExposureName: "web", Owner: "u-tom"},
 		{Install: "unknown", ExposureName: "shares", Owner: "u-tom"},
 	}
-	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	gw := buildPerimeterGateway("k.example", "", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	if len(gw.Spec.Listeners) != 2 {
 		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
 	}

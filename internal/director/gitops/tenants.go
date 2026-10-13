@@ -162,6 +162,9 @@ type Tenant struct {
 	// unless set.
 	AdminsApprove       bool `json:"adminsApprove"`
 	CataloguesDelegated bool `json:"cataloguesDelegated"`
+	// SignUp is spec.signUp.enabled: anybody may make an account in the
+	// tenant's realm. Chosen when the tenant is made.
+	SignUp bool `json:"signUp"`
 }
 
 // PurgeAnnotation marks a tenant whose purge was asked for and not finished.
@@ -298,11 +301,15 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						Catalogue struct {
 							Delegated bool `json:"delegated"`
 						} `json:"catalogue"`
+						SignUp struct {
+							Enabled bool `json:"enabled"`
+						} `json:"signUp"`
 					} `json:"spec"`
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
 					t.AdminsApprove = doc.Spec.Perimeter.AdminsApprove
 					t.CataloguesDelegated = doc.Spec.Catalogue.Delegated
+					t.SignUp = doc.Spec.SignUp.Enabled
 					t.DisplayName = doc.Spec.DisplayName
 					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
@@ -335,6 +342,10 @@ type NewTenant struct {
 	// RequireMFA makes the administrator enrol a second factor when they
 	// activate the account. Nil is the default, which is on.
 	RequireMFA *bool `json:"requireMFA,omitempty"`
+	// SignUp opens the realm to accounts people make themselves (Tenant
+	// spec.signUp.enabled). Off unless the request says so: a tenant's
+	// people are invited.
+	SignUp bool `json:"signUp,omitempty"`
 	// Perimeter and Catalogue are the two switches a tenant is created
 	// with, named as the manifest names them: whether its own
 	// administrators may approve public addresses
@@ -402,7 +413,7 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 		return Result{}, err
 	}
 	return g.createTenant(ctx, req.Name, func() ([]byte, error) {
-		text := tenantManifest(req.Name, display, requireMFA)
+		text := tenantManifest(req.Name, display, requireMFA, req.SignUp)
 		var err error
 		if req.Catalogue != nil && req.Catalogue.Delegated {
 			if text, err = setTenantCatalogue(text, TenantCatalogue{Delegated: true}); err != nil {
@@ -669,7 +680,22 @@ func tenantPurgeRequested(text string) bool {
 // into the repository. Whoever reads this file next is reading a commit in a
 // review, and a manifest that explains its own defaults is worth more there
 // than one that is merely valid.
-func tenantManifest(name, display string, requireMFA bool) string {
+func tenantManifest(name, display string, requireMFA, signUp bool) string {
+	// Stated only where it is on, so that a tenant made without it reads as
+	// every tenant did before the setting existed.
+	signUpBlock := ""
+	if signUp {
+		signUpBlock = `  # Anybody may make an account in the realm: a registration page with an
+  # e-mail confirmation and a proof-of-work check. Such an account is in
+  # none of the tenant's groups -- no desktop, no rights, not counted as a
+  # user. The realm sends the confirmation through the cluster's mail, which
+  # is what transport-only mail is.
+  signUp:
+    enabled: true
+  mail:
+    mode: transport-only
+`
+	}
 	return fmt.Sprintf(`# Tenant %s, brought on through the director.
 #
 # Argo CD syncs this file and the operator does the rest: the Keycloak realm,
@@ -687,7 +713,7 @@ spec:
   # through a single-use link the director issues (activate-admin).
   admin:
     requireMFA: %t
-  isolation:
+%s  isolation:
     # A namespace per tenant and a realm of its own. The realm is what keeps
     # one tenant's administrators from seeing another's people at all, rather
     # than being trusted not to look.
@@ -709,5 +735,5 @@ spec:
     maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
-`, name, name, display, requireMFA, name, name, name)
+`, name, name, display, requireMFA, signUpBlock, name, name, name)
 }

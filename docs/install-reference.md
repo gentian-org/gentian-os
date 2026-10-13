@@ -498,10 +498,12 @@ at the main address. `tenants domain user --remove` is not refused, for a
 tenant that was bound before.
 
 A website at the cluster's main address (`https://<kernel-domain>/` and
-`www.`) exists only here. A profile declares the entry (`apex: true`), and
-`kubectl gentian exposures approve <app> <entry> --tenant user
---acknowledge-main-address-rule` publishes it; the director refuses that
-approval for any tenant but the user tenant of a single-tenancy cluster.
+`www.`) is the user tenant's here without the claim saying so. A profile
+declares the entry (`apex: true`), and `kubectl gentian exposures approve
+<app> <entry> --tenant user --acknowledge-main-address-rule` publishes it;
+the director refuses that approval for any other tenant. On a multi-tenancy
+cluster the same is had by naming a tenant in `mainAddress.tenant` on the
+claim ([routing.md §5](design/routing.md#5-redirects-and-url-control)).
 
 Who approves in the user tenant: the platform admin, a member of the group
 `gentian:tenant:user:perimeter`, which the tenant is created with, empty, and
@@ -592,8 +594,10 @@ The model gateway's image (`llm.enabled`) is not a setting. It is one chart
 value, named by tag and digest, and `make lint` (`lint-image-pins`) fails on
 any image under `kernel/`, `charts/` or `crossplane/` tagged `latest`.
 
-Nothing advances the pin on its own. `./install.sh --only B-01`
-does, which is how a cluster following a branch takes a newer build; if the
+Nothing in the cluster advances the pin. A run of the installer from a newer
+checkout does: `B-01` compares the pinned build with the checkout's and moves
+it, and `D-01` waits for both workloads to run it. `./install.sh --only B-01`
+is the short form, and how a cluster following a branch takes a newer build; if the
 commit has not been published yet, the preflight says so rather than leaving
 the cluster on an older image. The tag the installer resolved is written into
 the operator's Argo CD Application as an inline value, which Argo CD ranks

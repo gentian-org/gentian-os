@@ -19,8 +19,10 @@
 #   kubectl gentian tenants show <name>
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #                                  [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]
+#                                  [--self-sign-up]
 #                                  (unstated, approving is off -- and on for the user tenant
-#                                  of a single-tenancy cluster)
+#                                  of a single-tenancy cluster; sign-up is off, and is said
+#                                  out loud when it is on: anybody may make an account)
 #   kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false]
 #                                      [--admins-add-catalogues=true|false]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
@@ -41,6 +43,11 @@
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
+#
+#   kubectl gentian repositories declare <name> --tenant <tenant> --url oci://<host>/<path> [--type oci]
+#                                  a private registry a tenant pulls charts and images from;
+#                                  the token is set in the Admin Console under Credentials
+#   kubectl gentian repositories remove <name> --tenant <tenant>
 #
 #   kubectl gentian models list                  the models the gateway offers, and what the claim says of each
 #   kubectl gentian models show                  the Cluster claim's model settings, as JSON
@@ -446,7 +453,8 @@ cmd_tenants_show() {
         "State:           \(if .purging then "purging" elif .protected then "protected" else "-" end)",
         "",
         "Its administrators may approve public addresses:  \(if .adminsApprove then "yes" else "no" end)",
-        "Its administrators may add catalogues:            \(if .cataloguesDelegated then "yes" else "no" end)"'
+        "Its administrators may add catalogues:            \(if .cataloguesDelegated then "yes" else "no" end)",
+        "Anybody may sign up (chosen when it was made):    \(if .signUp then "yes" else "no" end)"'
     echo ""
     echo "A public address is always approved by a member of the tenant's group"
     echo "gentian:tenant:${name}:perimeter, and by the cluster's administrator while the"
@@ -455,8 +463,8 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" approve="" catalogues="false" answer
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]"
+    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" answer
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
@@ -465,21 +473,33 @@ cmd_tenants_create() {
             --admins-approve-public-addresses=false) approve="false"; shift ;;
             --admins-approve-public-addresses=*) die "--admins-approve-public-addresses is given alone, or as =true or =false" ;;
             --admins-add-catalogues) catalogues="true"; shift ;;
+            --self-sign-up) signup="true"; shift ;;
             -*) die "unknown option $1" ;;
             *) name="$1"; shift ;;
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
     _discover
+    # Said before anything is committed, because it is the one switch here
+    # that opens the cluster to people nobody invited.
+    if [[ "${signup}" == "true" ]]; then
+        echo "WARNING: --self-sign-up lets anybody on the internet make an account in this tenant's" >&2
+        echo "  realm, on a registration page at the cluster's identity provider. Such an account" >&2
+        echo "  is in none of the tenant's groups: no desktop, no rights on the platform, not" >&2
+        echo "  counted as a user of the tenant. The address is confirmed by a message to it and" >&2
+        echo "  the page carries a proof-of-work check; the tenant's mail is transport-only so the" >&2
+        echo "  realm can send. For a tenant whose apps serve the public; not for a workspace." >&2
+    fi
     # A switch is named in the request only when it is stated here. Left out,
     # the director decides: neither is on, which is how every tenant starts --
     # but for the user tenant of a single-tenancy cluster, whose administrators
     # approve its public addresses unless =false says they do not.
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" \
             '{name:$n, displayName:$d, requireMFA:$m}
              + (if $a != "" then {perimeter:{adminsApprove:($a == "true")}} else {} end)
-             + (if $c then {catalogue:{delegated:true}} else {} end)')")" || exit 1
+             + (if $c then {catalogue:{delegated:true}} else {} end)
+             + (if $s then {signUp:true} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
     # What the director wrote, where it says; what was asked for otherwise.
     case "$(printf '%s' "${answer}" | jq -r '.adminsApprove | if . == null then "" else tostring end' 2>/dev/null)" in
@@ -494,6 +514,9 @@ cmd_tenants_create() {
     fi
     if [[ "${catalogues}" == "true" ]]; then
         echo "Its administrators may add catalogues for their tenant."
+    fi
+    if [[ "${signup}" == "true" ]]; then
+        echo "Anybody may sign up to it; an account made that way is a member of nothing."
     fi
     echo "When it is ready, hand the administrator account over:"
     echo "  kubectl gentian tenants activate-admin ${name} [--recovery-email <address>]"
@@ -1124,6 +1147,58 @@ ${add_usage}"
             fi
             ;;
         *) die "usage: kubectl gentian catalogues list|add|remove|residue ..." ;;
+    esac
+}
+
+# repositories: a private registry a tenant pulls charts and images from.
+#
+# Declared here, with the token set afterwards in the Admin Console of the
+# tenant under Credentials, as the name the director answers: an address is
+# configuration and belongs in git, a token is a credential and belongs in
+# the vault. A chart whose address lies inside the declared one is pulled
+# with it. The route is the tenant's own, under can_write_credential, which
+# is also the relation that lets the same person set the token.
+cmd_repositories() {
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        declare|remove)
+            local name="" t="" url="" type="oci" role="apps"
+            local usage="usage: kubectl gentian repositories declare <name> --tenant <tenant> --url oci://<host>/<path> [--type oci|git] [--role apps]
+       kubectl gentian repositories remove <name> --tenant <tenant>"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tenant|-t) t="${2:?}"; shift 2 ;;
+                    --url) url="${2:?}"; shift 2 ;;
+                    --type) type="${2:?}"; shift 2 ;;
+                    --role) role="${2:?}"; shift 2 ;;
+                    -*) die "unknown option $1" ;;
+                    *) [[ -z "${name}" ]] || die "unexpected argument $1"; name="$1"; shift ;;
+                esac
+            done
+            [[ -n "${name}" && -n "${t}" ]] || die "${usage}"
+            _discover
+            if [[ "${sub}" == "declare" ]]; then
+                [[ -n "${url}" ]] || die "${usage}"
+                need jq
+                _try PUT "/v1/tenants/${t}/repositories/${name}" \
+                    "$(jq -n --arg r "${role}" --arg y "${type}" --arg u "${url}" '{role:$r, type:$y, url:$u}')"
+            else
+                _try DELETE "/v1/tenants/${t}/repositories/${name}"
+            fi
+            [[ "${_TRY_STATUS}" -lt 300 ]] || die "the director answered ${_TRY_STATUS}: ${_TRY_ANSWER:-no detail}"
+            local commit credential
+            commit="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.commit // "" | .[0:8]')"
+            if [[ "${sub}" == "declare" ]]; then
+                credential="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.credentialName // ""')"
+                echo "Repository ${name} declared for tenant ${t}: committed (${commit:-no commit id})."
+                echo "Its token is set in the Admin Console of ${t}, under Credentials, as ${credential:-repository-${name}};"
+                echo "until then nothing is pulled from it. A chart whose address lies inside ${url} is pulled with it."
+            else
+                echo "Repository ${name} removed for tenant ${t}: committed (${commit:-no commit id})."
+            fi
+            ;;
+        *) die "usage: kubectl gentian repositories declare|remove ..." ;;
     esac
 }
 
@@ -1788,6 +1863,7 @@ main() {
             ;;
         app|apps) cmd_apps "$@" ;;
         catalogue|catalogues) cmd_catalogues "$@" ;;
+        repository|repositories) cmd_repositories "$@" ;;
         model|models) cmd_models "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
