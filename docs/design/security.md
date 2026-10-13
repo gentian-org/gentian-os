@@ -1512,6 +1512,13 @@ extension's `appSecrets`, stored at `…/apps/<app>/internal/<name>`) follow
 the mode like the app's other credentials. An app encrypts and signs its
 data with them, so they travel with the data (§6.4).
 
+**A credential a person supplies for an app** (`spec.secrets.supplied`,
+stored at `…/apps/<app>/supplied/<name>`, one property per field) is under
+neither mode: the app Composition declares it as a `CredentialRequirement`
+of the tenant, the tenant's administrator sets it in the Admin Console, the
+custodian writes it, and the app's credentials Secret reads it from there.
+Purged with the app's other credentials; not in a bundle (§6.4).
+
 Still derived under `random`, because each needs a place in OpenBao that
 nobody has chosen, and neither is part of a tenant's bundle:
 

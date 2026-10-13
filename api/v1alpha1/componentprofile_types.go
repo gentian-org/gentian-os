@@ -435,6 +435,12 @@ type ComponentSecrets struct {
 	// kept in the vault.
 	// +optional
 	Derived []DerivedSecretKey `json:"derived,omitempty"`
+
+	// Supplied secrets are credentials only a person can provide. Each is
+	// asked for in the tenant's Admin Console once the app is installed,
+	// and the app waits for it.
+	// +optional
+	Supplied []SuppliedSecret `json:"supplied,omitempty"`
 }
 
 // SurfaceKind is where an exposure entry is published.
@@ -1009,6 +1015,15 @@ func (p *ComponentProfile) DerivedSecrets() []DerivedSecretKey {
 		return nil
 	}
 	return p.Spec.Secrets.Derived
+}
+
+// SuppliedSecrets are the credentials the profile asks a person for under
+// secrets.supplied, or nil.
+func (p *ComponentProfile) SuppliedSecrets() []SuppliedSecret {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Supplied
 }
 
 // IsAPI reports whether this entry is delivered as an external API rather than

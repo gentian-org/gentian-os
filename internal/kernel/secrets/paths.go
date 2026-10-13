@@ -44,6 +44,23 @@ func InternalPath(tenant, app, name string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, app, name)
 }
 
+// SuppliedPath is where a credential a person supplies for an app is kept
+// (a ComponentProfile.spec.secrets.supplied entry): one property per field
+// the entry declares. Below AppPath, so purging the app removes it. The app
+// Composition and the custodian's requirement agree on this path through
+// the CredentialRequirement the Composition emits, named by
+// SuppliedRequirementName.
+func SuppliedPath(tenant, app, name string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/supplied/%s", tenant, app, name)
+}
+
+// SuppliedRequirementName is the CredentialRequirement asking for one
+// supplied credential of one app of one tenant. Cluster-scoped, so all three
+// are in the name.
+func SuppliedRequirementName(tenant, app, name string) string {
+	return fmt.Sprintf("app-%s-%s-%s", tenant, app, name)
+}
+
 // ContractPath returns the canonical KV v2 logical path for a contract integration
 // secret shared between provider and consumer.
 func ContractPath(tenant, contract string) string {

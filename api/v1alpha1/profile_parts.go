@@ -1516,6 +1516,75 @@ type AppSecret struct {
 	ValuePath string `json:"valuePath"`
 }
 
+// SuppliedSecret declares a credential an app needs that only a person can
+// provide: a payment provider's keys, an API token of a service outside the
+// cluster. The platform cannot make it, so it asks for it: each entry is a
+// CredentialRequirement of the tenant the app is installed in, shown in that
+// tenant's Admin Console under Credentials and set there, and the app's
+// values carry the fields once they are. Until then the app waits, with the
+// requirement listed as unsatisfied.
+//
+// Stored at gentian-os/tenants/{tenant}/apps/{app}/supplied/{name}, one
+// property per field, with the app's other credentials: purging the app
+// removes it. Not in a tenant's bundle, like every credential a person typed
+// in (security.md §6.4): the issuer has it, and a restore asks for it again.
+type SuppliedSecret struct {
+	// Name identifies the credential within the app: the last part of its
+	// vault path and of the requirement's name, app-{tenant}-{app}-{name}.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// DisplayName is the label the form renders.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	DisplayName string `json:"displayName"`
+
+	// Description says what the credential is for and where to obtain it,
+	// for a tenant administrator who did not write the profile.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// Fields are the values the form collects, set together.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	Fields []SuppliedField `json:"fields"`
+}
+
+// SuppliedField is one value of a supplied credential and where it goes.
+type SuppliedField struct {
+	// Key is the property's name at the vault path and in the form.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z0-9_]+$`
+	Key string `json:"key"`
+
+	// ValuePath is the Helm value key that receives the value, as for a
+	// generated secret.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ValuePath string `json:"valuePath"`
+
+	// Format hints at how the form renders and checks the field.
+	// +kubebuilder:validation:Enum=string;password;token;email;url;hostname;port
+	// +kubebuilder:default=string
+	// +optional
+	Format string `json:"format,omitempty"`
+
+	// Public marks a value that is not secret -- a publishable key, an
+	// account id -- which the form then shows as typed. Every other field
+	// is secret: never displayed or logged once set.
+	// +optional
+	Public bool `json:"public,omitempty"`
+
+	// Example is a non-secret illustration of the expected shape.
+	// +optional
+	Example string `json:"example,omitempty"`
+}
+
 // DerivedSecretKey names one value the platform makes for an app and adds to
 // the credentials Secret it manages for it.
 //

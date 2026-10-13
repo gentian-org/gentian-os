@@ -355,6 +355,15 @@ key, no Secret and no network path to the gateway, whatever the cluster runs. Wi
 that serves no models, the app is held and its Component says why
 ([app-customization.md §1.1](app-customization.md)).
 
+**An app that needs a credential only a person can provide** — a payment provider's keys, a token
+of a service outside the cluster — declares it under `spec.secrets.supplied`: a name, a display
+name, a description saying where it is obtained, and its fields, each with the Helm value that
+receives it. The platform asks for it rather than makes it: once the app is installed, the
+tenant's Admin Console lists it under Credentials, grouped under the app, and the app waits until
+it is set there. A field that is not secret (`public: true`, a publishable key) is shown as typed;
+every other is never shown again. The value is purged with the app and is not in a tenant's
+bundle: a restore asks for it again, as it does for every credential a person typed in.
+
 **An app that verifies who is asking, and does not take the front door's headers on trust**, sets
 `exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a
