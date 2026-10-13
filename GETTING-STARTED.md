@@ -1114,45 +1114,6 @@ Store — no personal data. `./install.sh --no-usage-statistics` (or
 sent, and the App Store is not offered: no tenant has the App Store tile. What is sent, and where to read the
 last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 
-### A cluster handed over before the report was called usage statistics
-
-The key the report is signed with is kept in OpenBao at
-`gentian-os/kernel/usage-statistics`. A cluster installed while the report
-had its earlier name holds its key at `gentian-os/kernel/licence-report`,
-and nothing moves it: after the handover the installer can no longer write
-to OpenBao. Updating such a cluster leaves it without a key. The signs are
-that `D-01` stops with `gentian-os` Synced and Degraded, that the
-ExternalSecret `gentian-os-usage-statistics-key` in `kernel-control` reports
-`SecretSyncedError`, and that no report is sent.
-
-The platform administrator writes the key once, signed in to OpenBao as
-[docs/commands.md §9](docs/commands.md) describes (*Reaching OpenBao with
-the `bao` CLI*). Either the key the cluster had, so that its reports stay
-its own to whoever receives them:
-
-```bash
-bao kv put -mount=secret -cas=0 gentian-os/kernel/usage-statistics \
-  signing_seed="$(bao kv get -mount=secret -field=signing_seed gentian-os/kernel/licence-report)"
-```
-
-or a new one, which a receiver that remembered the old key takes for
-another sender until its record is reset:
-
-```bash
-bao kv put -mount=secret -cas=0 gentian-os/kernel/usage-statistics signing_seed="$(openssl rand -hex 32)"
-```
-
-`-cas=0` writes only where nothing was written before. The Secret follows
-within the hour, or at once when asked:
-
-```bash
-kubectl annotate externalsecret gentian-os-usage-statistics-key -n kernel-control force-sync="$(date +%s)" --overwrite
-```
-
-The operator reads the key for every report, so nothing is restarted, and
-`./install.sh` then passes `D-01`. The old path and the ConfigMap
-`gentian-licence-report` are left behind and can be deleted.
-
 ### Which Crossplane resource types exist
 
 A fresh install creates only the provider resource types the platform uses —
