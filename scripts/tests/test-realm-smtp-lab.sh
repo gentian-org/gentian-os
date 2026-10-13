@@ -19,7 +19,7 @@
 # =============================================================================
 # The installer's two functions are taken out of their library and evaluated,
 # so what they read and call is set and defined here without a visible use.
-# shellcheck disable=SC2030,SC2031,SC2034,SC2329
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317,SC2329
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
