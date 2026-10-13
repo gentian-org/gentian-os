@@ -39,11 +39,10 @@ const (
 
 // Identity is brand.json: what a page needs that is not a style.
 type Identity struct {
-	Name                 string                       `json:"name"`
-	ShortName            string                       `json:"shortName"`
-	Description          string                       `json:"description,omitempty"`
-	Icons                []gentianov1alpha1.BrandIcon `json:"icons,omitempty"`
-	HideVendorPromotions bool                         `json:"hideVendorPromotions,omitempty"`
+	Name        string                       `json:"name"`
+	ShortName   string                       `json:"shortName"`
+	Description string                       `json:"description,omitempty"`
+	Icons       []gentianov1alpha1.BrandIcon `json:"icons,omitempty"`
 }
 
 // Files is a published brand: text files, and the icons a data URL carried,
@@ -101,7 +100,6 @@ func Render(spec *gentianov1alpha1.BrandingSpec) (Files, error) {
 			}
 			id.Icons = append(id.Icons, ic)
 		}
-		id.HideVendorPromotions = spec.HideVendorPromotions
 	}
 	identity, err := json.Marshal(id)
 	if err != nil {

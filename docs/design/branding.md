@@ -15,7 +15,6 @@ declarations (`clusters/<cluster>/kernel/claims/branding.yaml`) by the director:
 |---|---|
 | `identity` | The Web App Manifest's own members: `name`, `shortName`, `description`, `icons` (https URLs, or images as data URLs) |
 | `tokens` | A design-token document in the W3C Design Tokens Community Group format, 2025.10 — the format design tools export |
-| `hideVendorPromotions` | Takes the platform vendor's offers off the consoles |
 
 Pages read these tokens, and keep their own value for one that is absent:
 `color.brand.50`…`800` (the primary scale), `color.ink.0`…`5` (text),

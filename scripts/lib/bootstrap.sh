@@ -1934,6 +1934,45 @@ _claim_drop_external_dns() {
     rm -f "${tmp}"
 }
 
+# drop_branding_removed_fields <branding file>
+#
+# The cluster's Branding, claims/branding.yaml, is the director's file: it
+# writes the whole of it whenever the brand is set. spec.hideVendorPromotions
+# was a field of it that the schema no longer has, and a Branding that still
+# carries it is refused when it is applied, like the fields of the claim
+# above. The director leaves the key out the next time it writes the file;
+# until somebody sets the brand again, the file written before still has it,
+# so it is removed here. A spec that held nothing else is left as `spec: {}`.
+#
+# preview_branding_removed_fields says the same of it, for a run that changes
+# nothing.
+drop_branding_removed_fields() {
+    local file="$1" tmp
+    [[ -f "${file}" ]] || return 0
+    grep -qE '^  hideVendorPromotions: *(true|false) *$' "${file}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        function flush() { if (pending) { print "spec: {}"; pending = 0 } }
+        /^spec: *$/ { pending = 1; next }
+        /^  hideVendorPromotions: *(true|false) *$/ { next }
+        pending && /^  / { print "spec:"; pending = 0 }
+        { flush(); print }
+        END { flush() }
+    ' "${file}" > "${tmp}"
+    if ! cmp -s "${tmp}" "${file}"; then
+        cat "${tmp}" > "${file}"
+        info "claims/branding.yaml: removed spec.hideVendorPromotions; the schema no longer has the field. The rest of the brand is as it was."
+    fi
+    rm -f "${tmp}"
+}
+
+preview_branding_removed_fields() {
+    local file="$1"
+    [[ -f "${file}" ]] || return 0
+    grep -qE '^  hideVendorPromotions: *(true|false) *$' "${file}" || return 0
+    gentian_would "remove spec.hideVendorPromotions, which the schema no longer has, from claims/branding.yaml, then commit and push the edit signed"
+}
+
 # _claim_drop_catalogue_tenants <claim file>
 #
 # A catalogue source used to list the tenants it was open to. The list gated
@@ -3104,9 +3143,11 @@ require_cluster_deployment() {
     local claim="${kernel_dir}/claims/cluster.yaml"
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
+        preview_branding_removed_fields "${kernel_dir}/claims/branding.yaml"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
+        drop_branding_removed_fields "${kernel_dir}/claims/branding.yaml"
     fi
     if [[ -f "${claim}" ]]; then
         local net

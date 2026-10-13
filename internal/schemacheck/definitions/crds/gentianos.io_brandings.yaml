@@ -49,11 +49,6 @@ spec:
           spec:
             description: BrandingSpec is the cluster's brand.
             properties:
-              hideVendorPromotions:
-                description: |-
-                  HideVendorPromotions takes the platform vendor's own offers off the
-                  consoles, for a provider who runs the cluster under its own name.
-                type: boolean
               identity:
                 description: Identity is the product's name and icons.
                 properties:
