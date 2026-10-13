@@ -162,6 +162,46 @@ fi
 `
 }
 
+// ShellAdminCall defines kc_curl: one call to Keycloak's admin API that says
+// what failed when it fails.
+//
+// The scripts called curl -sf. -f turns any answer outside 2xx into exit
+// code 22 and discards the body -- and the body is the reason: a validation
+// message, a conflict, the name of a missing group. A Job that exits 22
+// with nothing in its log held a tenant at Provisioning, over and over, and
+// could not be diagnosed from the cluster. kc_curl keeps curl's options as
+// they were, prints the body on success exactly as -s did, and on any other
+// answer prints the status, the request with its bearer token blanked, and
+// the body to stderr, then exits as set -e would have.
+//
+// Holds a % (printf, curl's -w), so it is concatenated outside a
+// fmt.Sprintf format string, like ShellJSONIDExtractor.
+func ShellAdminCall() string {
+	return `
+kc_curl() {
+  _kc_body="$(mktemp)"
+  _kc_code="$(curl -sS --max-time 30 -o "${_kc_body}" -w '%{http_code}' "$@" 2>"${_kc_body}.err")" || {
+    echo "ERROR: $(printf '%s ' "$@" | sed 's/Bearer [^ "]*/Bearer ***/g'): $(cat "${_kc_body}.err")" >&2
+    rm -f "${_kc_body}" "${_kc_body}.err"
+    exit 1
+  }
+  case "${_kc_code}" in
+    2*)
+      cat "${_kc_body}"
+      rm -f "${_kc_body}" "${_kc_body}.err"
+      ;;
+    *)
+      echo "ERROR: HTTP ${_kc_code} from $(printf '%s ' "$@" | sed 's/Bearer [^ "]*/Bearer ***/g')" >&2
+      head -c 2000 "${_kc_body}" >&2
+      echo >&2
+      rm -f "${_kc_body}" "${_kc_body}.err"
+      exit 1
+      ;;
+  esac
+}
+`
+}
+
 // ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
 func ExtractJSONIDByAttr(raw, attr, value string) string {
 	var walk func(any)

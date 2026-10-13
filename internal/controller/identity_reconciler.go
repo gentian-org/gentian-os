@@ -715,7 +715,11 @@ func buildAdminScript(realmName string) string {
 	//
 	// All steps are idempotent: users/roles are checked for existence before
 	// POST so re-running the Job is safe. Nothing secret is printed.
-	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	//
+	// Every call goes through kc_curl (keycloak.ShellAdminCall), so a call
+	// Keycloak refuses names itself in the Job's log: the status, the
+	// request without its token, and the body.
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 `+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
@@ -725,49 +729,49 @@ if [ "${TENANT_ADMIN_REQUIRE_MFA:-true}" = "true" ]; then
 fi
 
 # --- 1. Create tenant admin user if absent, without a password ---
-EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
 if echo "${EXISTING}" | grep -q '"id"'; then
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "tenant admin ${TENANT_ADMIN_USERNAME} already exists (id=${UID}) in realm %s"
 else
-  curl -sf -X POST -H "${AUTH_HEADER}" \
+  kc_curl -X POST -H "${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/%s/users" \
     -d "{\"username\":\"${TENANT_ADMIN_USERNAME}\",\"enabled\":true,\"emailVerified\":false,\"firstName\":\"Tenant\",\"lastName\":\"Administrator\",\"requiredActions\":[${ACTIONS}]}"
-  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+  EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "tenant admin ${TENANT_ADMIN_USERNAME} created without a password (id=${UID}) in realm %s"
 fi
 
 # --- 2. The second-factor requirement, as declared ---
-USER_JSON=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}")
-CREDS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/credentials")
+USER_JSON=$(kc_curl -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}")
+CREDS=$(kc_curl -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/credentials")
 HAS_OTP=$(echo "${CREDS}" | jq '[.[] | select(.type=="otp")] | length > 0')
 UPDATED=$(echo "${USER_JSON}" | jq \
   --arg mfa "${TENANT_ADMIN_REQUIRE_MFA:-true}" \
   --argjson hasotp "${HAS_OTP}" '
   .requiredActions = ((.requiredActions // []) - ["CONFIGURE_TOTP"])
   | (if $mfa == "true" and ($hasotp | not) then .requiredActions += ["CONFIGURE_TOTP"] else . end)')
-curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+kc_curl -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" -d "${UPDATED}"
 echo "tenant admin: second factor required=${TENANT_ADMIN_REQUIRE_MFA:-true}"
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
-MGMT_CLIENT_ID=$(curl -sf -H "${AUTH_HEADER}" \
+MGMT_CLIENT_ID=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=realm-management" \
   | sed 's/.*"id":"\([^"]*\)".*/\1/')
-ROLE_ID=$(curl -sf -H "${AUTH_HEADER}" \
+ROLE_ID=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients/${MGMT_CLIENT_ID}/roles/realm-admin" \
   | sed 's/.*"id":"\([^"]*\)".*/\1/')
 ROLE_NAME="realm-admin"
-EXISTING_ROLES=$(curl -sf -H "${AUTH_HEADER}" \
+EXISTING_ROLES=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}")
 if echo "${EXISTING_ROLES}" | grep -q '"realm-admin"'; then
   echo "realm-admin role already assigned"
 else
-	curl -sf -X POST -H "${AUTH_HEADER}" \
+	kc_curl -X POST -H "${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}" \
     -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]"
@@ -775,7 +779,7 @@ else
 fi
 
 # --- 4. Assign gentian:tenant:<t>:admins group membership ---
-GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
+GROUP_LIST=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/groups?search=${TENANT_ADMINS_GROUP}&exact=true")
 keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${TENANT_ADMINS_GROUP}"
 ADMINS_GROUP_ID="${_kj_id}"
@@ -783,12 +787,12 @@ if [ -z "${ADMINS_GROUP_ID}" ]; then
   echo "ERROR: tenant admins group ${TENANT_ADMINS_GROUP} not found in realm %s" >&2
   exit 1
 fi
-MEMBER_GROUPS=$(curl -sf -H "${AUTH_HEADER}" \
+MEMBER_GROUPS=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups")
 if echo "${MEMBER_GROUPS}" | grep -q "\"name\":\"${TENANT_ADMINS_GROUP}\""; then
   echo "tenant admin already in group ${TENANT_ADMINS_GROUP}"
 else
-  curl -sf -X PUT -H "${AUTH_HEADER}" \
+  kc_curl -X PUT -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups/${ADMINS_GROUP_ID}"
   echo "tenant admin joined group ${TENANT_ADMINS_GROUP}"
 fi`,

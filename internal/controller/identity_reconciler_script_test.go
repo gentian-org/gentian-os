@@ -30,8 +30,14 @@ func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
 	if !strings.Contains(script, "AUTH_HEADER=\"Authorization: Bearer ${TOKEN}\"") {
 		t.Fatalf("script must define AUTH_HEADER")
 	}
-	if !strings.Contains(script, "curl -sf -H \"${AUTH_HEADER}\"") {
+	if !strings.Contains(script, "kc_curl -H \"${AUTH_HEADER}\"") {
 		t.Fatalf("script must pass authorization via -H \"${AUTH_HEADER}\"")
+	}
+	// Every admin call says what failed: none goes through curl -f, which
+	// hides the answer.
+	// The one curl -f left is the token step, which reports its own failure.
+	if strings.Count(script, "curl -sf") != 1 || !strings.Contains(script, "kc_curl() {") {
+		t.Fatalf("every admin call must go through kc_curl, which reports a refused call")
 	}
 	// No password: the platform neither sets, resets nor prints one. Its
 	// holder sets it through an activation link.

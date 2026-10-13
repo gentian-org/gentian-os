@@ -57,7 +57,7 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", "pw", gentianov1alpha1.SchemaPreferenceAppSchema, true),
 			"bb0e4ee798d4956cf3fe7481f70f3ac5a4dd5f396618563d9829873937718b8d",
 		},
-		"mariadb setup":  {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
+		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
 		// Both bucket digests moved once, when the Jobs' image became the
 		// S3 server's own (backup.MinIOClientImage): the script is unchanged.
 		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "b8fc304152ea321c139b08b806a0ef94590934f859419e797c3ca40874cb3c45"},
