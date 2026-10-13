@@ -109,6 +109,12 @@ func (r *TenantReconciler) SyncMailAppPasswordsForTest(ctx context.Context, tena
 	return r.syncMailAppPasswords(ctx, tenant)
 }
 
+// EnsureRealmMailCredentialForTest exposes the minting of a tenant realm's
+// mail login ahead of the realm. What is asserted is that it needs no realm.
+func (r *TenantReconciler) EnsureRealmMailCredentialForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	return r.ensureRealmMailCredential(ctx, tenant)
+}
+
 // SyncKernelRealmSubmissionIdentityForTest exposes the registration of the
 // kernel realm's submission credential, which is read from one namespace and
 // written to another.

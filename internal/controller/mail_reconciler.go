@@ -338,6 +338,15 @@ func (r *TenantReconciler) defaultTenantMailMode(ctx context.Context) gentianov1
 	return gentianov1alpha1.MailModeTransportOnly
 }
 
+// tenantMailMode is the mode a tenant's mail is provisioned in: what it
+// states, or the cluster's default when it states nothing.
+func (r *TenantReconciler) tenantMailMode(ctx context.Context, tenant *gentianov1alpha1.Tenant) gentianov1alpha1.MailMode {
+	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
+		return tenant.Spec.Mail.Mode
+	}
+	return r.defaultTenantMailMode(ctx)
+}
+
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -353,10 +362,7 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 			"NoMailFunction", "This cluster composes no mail function; nothing to register")
 		return ctrl.Result{}, nil
 	}
-	mode := r.defaultTenantMailMode(ctx)
-	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
-		mode = tenant.Spec.Mail.Mode
-	}
+	mode := r.tenantMailMode(ctx, tenant)
 	// Whether this tenant's people have mailboxes here, for whoever removes
 	// one of them and has to say what becomes of the mailbox.
 	tenant.Status.MailboxDomain = r.mailboxDomainOf(ctx, tenant)

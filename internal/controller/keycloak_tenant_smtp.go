@@ -30,7 +30,12 @@ const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
 
 // Bumped whenever buildTenantSMTPConfigureScript changes in a way that must
 // reach realms already configured; replaceOutdatedTenantSMTPJob acts on it.
-const tenantSMTPVersion = "4"
+//
+// 5: the script takes the cluster's own mail by the mode's name, "system". It
+// compared against "kernel", the name before, so on such a cluster it wrote
+// the kernel realm's login into a tenant realm -- and realms written through
+// the Composition alone, without their password, are written again.
+const tenantSMTPVersion = "5"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
@@ -54,8 +59,8 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}")
-# Kernel mode authenticates too, when the realm has been given an identity to
-# authenticate as.
+# The cluster's own mail authenticates too, when the realm has been given an
+# identity to authenticate as.
 #
 # It used to send anonymously, because relaying was granted by mynetworks and the
 # kernel Postfix advertised no AUTH at all. That made "may this sender relay?" a
@@ -68,7 +73,14 @@ REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
 # whose operator has not yet minted the credential keeps sending rather than
 # failing every invite. mynetworks still permits it; this is a migration, and the
 # grant is removed only once every sender authenticates.
-if [ "${MAIL_SERVICE_MODE:-external}" = "kernel" ]; then
+#
+# "system" is the mode; "kernel" is what it was called, and what a
+# keycloak-smtp-credentials written before the rename still says.
+OWN_MAIL="false"
+case "${MAIL_SERVICE_MODE:-external}" in
+  system|kernel) OWN_MAIL="true" ;;
+esac
+if [ "${OWN_MAIL}" = "true" ]; then
   if [ -n "${KERNEL_SMTP_USER:-}" ] && [ -n "${KERNEL_SMTP_PASSWORD:-}" ] && [ -n "${KERNEL_MAIL_HOST:-}" ]; then
     SMTP_AUTH="true"
     SMTP_USER="${KERNEL_SMTP_USER}"

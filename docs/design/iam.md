@@ -278,6 +278,14 @@ advancing. The zone's sign-in client (`gentian-edge-<zone>`), the fixed
 groups, scopes and mappers are not Jobs: the Composition declares them. The
 platform tenant adopts the kernel realm and gets only the groups Job.
 
+The mail-server Job (`keycloak-tenant-smtp-<tenant>`) writes the realm's
+`smtpServer` with its password, and is built only on a cluster whose
+`keycloak-smtp-credentials` is complete. On a cluster with its own mail the
+Composition declares the same block, and the login it names is minted before
+the realm is declared; which login each realm uses in each mail mode, and
+what Keycloak does with a mail server written without its password, is in
+[mail.md §5d](mail.md).
+
 What is declared and what is still a Job:
 [tenant-identity-composition.md](tenant-identity-composition.md).
 

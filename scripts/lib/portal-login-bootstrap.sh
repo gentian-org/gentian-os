@@ -448,7 +448,12 @@ _keycloak_smtp_settings() {
             KC_SMTP_PASSWORD="${SMTP_RELAY_PASSWORD}"
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
-        kernel)
+        # The platform's own mail. The label is the claim's word for the mode:
+        # it read "kernel" after the mode had been renamed, no mode matched,
+        # and a cluster with its own mail stack got a kernel realm with no
+        # mail server and no keycloak-smtp-credentials -- which is also what
+        # the operator waits for before it writes a tenant realm's.
+        system)
             if ! declare -F _derived >/dev/null 2>&1; then
                 return 1
             fi
