@@ -760,6 +760,16 @@ func (s *Server) handOverAdmin(ctx context.Context, name, email string) (handedO
 		return out, err
 	}
 	out.username = admin.Username
+	if tenant.SignUp && strings.TrimSpace(email) != "" {
+		// Mailing the link means making the address the account's own, and
+		// in a realm people sign up to an account's address is its login:
+		// the administrator would sign in under the recovery address from
+		// then on, the account the operator keeps would be gone under its
+		// name, and the next reconcile would make a second one.
+		return out, &notReady{http.StatusUnprocessableEntity,
+			"tenant " + name + " takes sign-ups, and there an account's address is its login: mailing the link to " +
+				strings.TrimSpace(email) + " would rename the administrator account. Ask for the link without a recovery address; it is shown once"}
+	}
 	client := s.inviteClientID(realm)
 	redirect := s.cfg.InviteRedirectURI
 	if redirect == "" {

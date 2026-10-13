@@ -134,6 +134,14 @@ What sign-up changes, and only in that tenant's realm:
   realm's accounts. Making such an account a member is an administrator
   putting it in a group, as for anybody.
 
+- **The administrator's account carries its login as its address,
+  recorded as verified.** The realm refuses an account without an address,
+  and nothing is delivered to the administrator's: the tenant's mail only
+  sends. For the same reason its activation link is shown, not mailed
+  (`tenants activate-admin <name>` without `--recovery-email`): mailing it
+  would make the recovery address the account's own, and there an address
+  is the login. The registrar refuses that (`422`).
+
 What it does not change: the realm's administrators, its edge client and
 its groups are as in every tenant; the tenant's own people are still
 invited; and the registrar lists every account of the realm, which is how
