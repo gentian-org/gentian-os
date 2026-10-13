@@ -232,7 +232,14 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		}
 		// No portal clients at all: the portal is retired, and a tenant's people
 		// sign in through the edge's zone client, which tenant-default composes.
-		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
+		// The Job writes the mail server the Composition declares, password
+		// included, so it is built exactly where one is declared: a realm
+		// that is to have no mail server gets no Job that would give it one.
+		realmMail, err := r.tenantRealmMail(ctx, tenant)
+		if err != nil {
+			return nil, fmt.Errorf("the realm's mail server: %w", err)
+		}
+		if realmMail != nil && r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			mailHost := ""
 			if r.KernelDomain != "" {
 				mailHost = "mail." + r.KernelDomain

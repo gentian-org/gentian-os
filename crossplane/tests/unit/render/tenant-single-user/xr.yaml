@@ -20,6 +20,16 @@ spec:
     s3Prefix: user-
   deletionPolicy: Retain
   apps: []
+  realmMail:
+    host: mail.platform.example.test
+    port: "587"
+    from: noreply@platform.example.test
+    username: noreply@platform.example.test
+    ssl: false
+    starttls: true
+    passwordSecretRef:
+      name: mail-submission-user
+      key: smtp_password
   quotas:
     requestsCpu: "4"
     requestsMemory: 16Gi

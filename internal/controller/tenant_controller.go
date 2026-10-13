@@ -1065,6 +1065,12 @@ func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov
 		for k, v := range desiredSpec {
 			specMap[k] = v
 		}
+		// Stated or absent, and absent has to arrive too: a merge that only
+		// copies what is there would leave a mail server on the XTenant
+		// after its credential was withdrawn.
+		if _, ok := desiredSpec["realmMail"]; !ok {
+			delete(specMap, "realmMail")
+		}
 	} else {
 		xr.Object["spec"] = desiredSpec
 	}
@@ -1269,6 +1275,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 
 	if security := xtenantSecurity(tenant.Spec.Security); len(security) > 0 {
 		spec["security"] = security
+	}
+
+	// The realm's mail server, stated only once its password exists; see
+	// tenantRealmMail. Absent, the Composition declares none.
+	mail, err := r.tenantRealmMail(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("the realm's mail server: %w", err)
+	}
+	if mail != nil {
+		spec["realmMail"] = xtenantRealmMail(mail)
 	}
 
 	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)

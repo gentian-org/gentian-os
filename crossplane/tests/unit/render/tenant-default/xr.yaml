@@ -43,6 +43,18 @@ spec:
       enabled: true
       maxLoginFailures: 5
       lockoutDurationSeconds: 900
+  # The realm's mail server as the operator states it on a cluster that runs
+  # its own mail: the login minted for this realm, its password by reference.
+  realmMail:
+    host: mail.platform.example.test
+    port: "587"
+    from: noreply@platform.example.test
+    username: noreply@render-fixture.platform.example.test
+    ssl: false
+    starttls: true
+    passwordSecretRef:
+      name: mail-submission-render-fixture
+      key: smtp_password
   quotas:
     requestsCpu: "2"
     requestsMemory: 4Gi

@@ -1,0 +1,30 @@
+# A tenant the operator states no mail server for: the relay's credential not
+# supplied yet, or -- as here, on a cluster with its own mail -- a tenant that
+# is not registered in it and so has no login minted. Its realm is declared
+# without a mail server, rather than with a login nobody holds a password for.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: user
+  annotations:
+    crossplane.io/external-name: user
+spec:
+  displayName: User
+  adminEmail: user-admin@platform.example.test
+  kernelDomain: platform.example.test
+  domain: platform.example.test
+  isolation:
+    keycloakRealm: user
+    databasePrefix: user_
+    s3Prefix: user-
+  deletionPolicy: Retain
+  apps: []
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  compositeDeletePolicy: Background
+  resourceRefs: []

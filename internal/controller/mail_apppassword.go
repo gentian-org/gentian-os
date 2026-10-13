@@ -567,45 +567,149 @@ func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, ten
 	})
 }
 
+// realmMail is the mail server a tenant realm sends through: what the tenant's
+// Composition declares and what the SMTP Job writes. The password is named,
+// never held.
+type realmMail struct {
+	Host, Port, From, Username string
+	SSL, StartTLS              bool
+	// The Secret beside Keycloak that holds the password, and its key.
+	SecretName, SecretKey string
+}
+
+// realmHasOwnMailLogin reports whether the operator mints a mail login for
+// this tenant's realm: a cluster that runs its own mail, and a tenant
+// registered in it -- with mailboxes, or outbound only where people sign up
+// to it, whose realm has to confirm their addresses. The tenant that adopts
+// the kernel realm declares no realm, and the installer gives that realm its
+// own login.
+func (r *TenantReconciler) realmHasOwnMailLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	if r.adoptsKernelRealm(tenant) || !r.dovecotDeployed(ctx) {
+		return false, nil
+	}
+	if present, err := r.mailFunctionPresent(ctx); err != nil || !present {
+		return false, err
+	}
+	if mailDomain(tenant, r.KernelDomain, r.TenancyMode) == "" {
+		return false, nil
+	}
+	switch r.tenantMailMode(ctx, tenant) {
+	case gentianov1alpha1.MailModeSelfhosted:
+		return true, nil
+	case gentianov1alpha1.MailModeTransportOnly:
+		return tenant.SignUpEnabled(), nil
+	}
+	return false, nil
+}
+
 // ensureRealmMailCredential mints the login a tenant realm sends its mail
 // with BEFORE the realm is declared, so that the realm's first write already
 // carries the password.
 //
 // The credential used to be minted only by the mail stage, which runs after
-// the identity stage and, inside it, after the realm's users have been read --
-// so always after the realm existed. Both writers of the realm's mail server
-// read it by reference and neither waits for it: the provider behind the
-// Composition writes the realm with authentication on, the login and no
-// password, and reports it synced; the SMTP Job's pod starts with the
-// variable empty. Keycloak then answers every invitation with "no password
-// specified". The provider does not put that right on its own either: it
-// cannot read a password back, so once it holds the Secret's value it sees no
-// difference from a realm that never received it.
+// the identity stage -- so always after the realm existed. Both writers of the
+// realm's mail server read it by reference and neither waits for it: the
+// provider behind the Composition writes the realm with authentication on, the
+// login and no password, and reports it synced. Keycloak then answers every
+// invitation with "no password specified". The provider does not put that
+// right on its own either: it cannot read a password back, so once it holds
+// the Secret's value it sees no difference from a realm that never received it.
 //
 // Same derivation, same Secret, same passwd-file line as the mail stage, which
 // keeps calling syncMailSubmissionCredential and finds nothing to change.
-// Only where that stage would mint it: a cluster that runs its own mail, and a
-// tenant registered in it. The tenant that adopts the kernel realm declares
-// no realm, and the installer gives that realm its own login.
 func (r *TenantReconciler) ensureRealmMailCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if r.adoptsKernelRealm(tenant) || !r.dovecotDeployed(ctx) {
-		return nil
-	}
-	if present, err := r.mailFunctionPresent(ctx); err != nil || !present {
+	own, err := r.realmHasOwnMailLogin(ctx, tenant)
+	if err != nil || !own {
 		return err
-	}
-	if r.tenantMailMode(ctx, tenant) != gentianov1alpha1.MailModeSelfhosted {
-		return nil
-	}
-	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
-	if domain == "" {
-		return nil
 	}
 	seed, err := r.tenantMailSeed(ctx, tenant.Name)
 	if err != nil {
 		return err
 	}
-	return r.syncMailSubmissionCredential(ctx, tenant, domain, seed)
+	return r.syncMailSubmissionCredential(ctx, tenant, mailDomain(tenant, r.KernelDomain, r.TenancyMode), seed)
+}
+
+// tenantRealmMail is the mail server this tenant's realm is to have, or nil
+// when it is to have none.
+//
+// The cluster's mail mode decides. Where the cluster runs its own mail, a
+// realm the operator mints a login for sends as that login, and any other
+// realm has no mail server. Where the cluster relays, every realm sends as
+// the relay's login, from keycloak-smtp-credentials.
+//
+// Nil until the Secret that holds the password exists and holds one. The
+// provider does not wait for a Secret it is pointed at: a realm declared
+// before it is written with the login and no password, and that realm cannot
+// send. So a cluster whose relay has not been supplied yet gets its realms
+// without a mail server, and the mail server on the reconcile after it has.
+//
+// The relay's host and login are read from the Secret because that is the one
+// place they are: the relay is supplied once, into the vault, and projected
+// here. They are settings, and they go onto the XTenant; the password does
+// not leave the Secret.
+func (r *TenantReconciler) tenantRealmMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*realmMail, error) {
+	if r.KernelRealm == "" || r.KernelDomain == "" || r.adoptsKernelRealm(tenant) {
+		return nil, nil
+	}
+	if r.dovecotDeployed(ctx) {
+		own, err := r.realmHasOwnMailLogin(ctx, tenant)
+		if err != nil || !own {
+			return nil, err
+		}
+		name := mailSubmissionSecretPrefix + tenant.Name
+		sec := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: mailSubmissionNamespace}, sec); err != nil {
+			if errors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if len(sec.Data["smtp_user"]) == 0 || len(sec.Data["smtp_password"]) == 0 {
+			return nil, nil
+		}
+		return &realmMail{
+			Host: "mail." + r.KernelDomain, Port: "587", StartTLS: true,
+			From:       mailSubmissionLocalPart + "@" + r.KernelDomain,
+			Username:   string(sec.Data["smtp_user"]),
+			SecretName: name, SecretKey: "smtp_password",
+		}, nil
+	}
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	d := sec.Data
+	if !smtpCredentialsUsable(d) || len(d["smtp_host"]) == 0 || len(d["smtp_user"]) == 0 || len(d["smtp_password"]) == 0 {
+		return nil, nil
+	}
+	port := string(d["smtp_port"])
+	if port == "" {
+		port = "587"
+	}
+	from := string(d["smtp_from"])
+	if from == "" {
+		from = mailSubmissionLocalPart + "@" + r.KernelDomain
+	}
+	return &realmMail{
+		Host: string(d["smtp_host"]), Port: port, From: from, Username: string(d["smtp_user"]),
+		// As the SMTP Job reads them: only an explicit "true" turns either on.
+		SSL: string(d["smtp_ssl"]) == "true", StartTLS: string(d["smtp_starttls"]) == "true",
+		SecretName: keycloakSMTPCredentialsSecret, SecretKey: "smtp_password",
+	}, nil
+}
+
+// xtenantRealmMail projects it onto the XTenant spec. Every key here is in
+// the realmMail schema of crossplane/xrds/tenant.yaml: an XRD prunes what it
+// does not declare, silently.
+func xtenantRealmMail(m *realmMail) map[string]interface{} {
+	return map[string]interface{}{
+		"host": m.Host, "port": m.Port, "from": m.From, "username": m.Username,
+		"ssl": m.SSL, "starttls": m.StartTLS,
+		"passwordSecretRef": map[string]interface{}{"name": m.SecretName, "key": m.SecretKey},
+	}
 }
 
 // secretKeySafe maps a username onto the charset a Secret key permits.

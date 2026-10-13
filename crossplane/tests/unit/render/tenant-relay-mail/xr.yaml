@@ -1,0 +1,40 @@
+# A tenant on a cluster that relays its mail: the operator states the relay's
+# host and login from keycloak-smtp-credentials, and the realm is declared
+# with them and with the password by reference to that Secret. Left
+# undeclared, the provider rewrote the mail server without its password.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: user
+  annotations:
+    crossplane.io/external-name: user
+spec:
+  displayName: User
+  adminEmail: user-admin@platform.example.test
+  kernelDomain: platform.example.test
+  domain: platform.example.test
+  isolation:
+    keycloakRealm: user
+    databasePrefix: user_
+    s3Prefix: user-
+  deletionPolicy: Retain
+  apps: []
+  realmMail:
+    host: relay.example.test
+    port: "465"
+    from: noreply@platform.example.test
+    username: relay-user
+    ssl: true
+    starttls: false
+    passwordSecretRef:
+      name: keycloak-smtp-credentials
+      key: smtp_password
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  compositeDeletePolicy: Background
+  resourceRefs: []

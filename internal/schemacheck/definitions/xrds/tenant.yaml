@@ -151,6 +151,44 @@ spec:
                       description: >
                         Name of a Secret in the kernel namespace containing SMTP
                         relay credentials. Required when mode=external.
+                realmMail:
+                  type: object
+                  description: >
+                    The mail server the tenant's realm sends invitations and
+                    password resets through. Stated by the operator, not by a
+                    person, and only once the Secret that holds the password
+                    exists: the cluster's own mail and the login minted for
+                    this realm, or the cluster's relay. Absent, the realm is
+                    declared without a mail server. The password is named by
+                    reference and is never a value here.
+                  required: [host, port, from, username, passwordSecretRef]
+                  properties:
+                    host:
+                      type: string
+                    port:
+                      type: string
+                    from:
+                      type: string
+                      description: The sender address of the realm's mail.
+                    username:
+                      type: string
+                      description: The login the realm presents to the mail server.
+                    ssl:
+                      type: boolean
+                      description: TLS from the first byte (port 465).
+                    starttls:
+                      type: boolean
+                    passwordSecretRef:
+                      type: object
+                      description: >
+                        The Secret beside Keycloak, in the identity namespace,
+                        that holds the login's password, and its key.
+                      required: [name, key]
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
                 quotas:
                   type: object
                   description: Resource consumption limits for this tenant.

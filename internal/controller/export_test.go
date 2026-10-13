@@ -115,6 +115,16 @@ func (r *TenantReconciler) EnsureRealmMailCredentialForTest(ctx context.Context,
 	return r.ensureRealmMailCredential(ctx, tenant)
 }
 
+// TenantRealmMailForTest exposes the mail server the operator states on a
+// tenant's XTenant, as projected, or nil when it states none.
+func (r *TenantReconciler) TenantRealmMailForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) (map[string]interface{}, error) {
+	m, err := r.tenantRealmMail(ctx, tenant)
+	if err != nil || m == nil {
+		return nil, err
+	}
+	return xtenantRealmMail(m), nil
+}
+
 // SyncKernelRealmSubmissionIdentityForTest exposes the registration of the
 // kernel realm's submission credential, which is read from one namespace and
 // written to another.

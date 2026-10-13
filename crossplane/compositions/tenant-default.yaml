@@ -2497,8 +2497,8 @@ spec:
                      with "Email already exists".
 
                      Safe because the address is not an identity here:
-                     loginWithEmailAllowed stays false (the provider writes false
-                     for the unset field), so nobody authenticates with it, and
+                     loginWithEmailAllowed is false (declared below), so nobody
+                     authenticates with it, and
                      Keycloak only rejects duplicates when they could be used to
                      log in. */}}
                 {{- /* Unless people sign up: then the address IS the login
@@ -2516,9 +2516,18 @@ spec:
                      platform's proof-of-work check (gentian-registration,
                      bound by Bindings once its executions exist). */}}
                 registrationEmailAsUsername: true
-                loginWithEmailAllowed: true
                 verifyEmail: true
                 {{- end }}
+                {{- /* Stated in both cases, false included. Keycloak makes a
+                     realm with sign-in by e-mail ON, and the realm Job's
+                     bootstrap create says nothing about it. When that Job
+                     made the realm before the provider did, the provider
+                     copied the live "true" into this resource, and then
+                     refused every update of the realm -- "DuplicateEmailsAllowed
+                     cannot be true if LoginWithEmailAllowed is true" -- so
+                     nothing declared here arrived. A declared false leaves
+                     nothing to copy. */}}
+                loginWithEmailAllowed: {{ $signUp }}
                 {{- /* Five minutes, the kernel realm's own. A person stays
                      signed in for the session's twelve hours below because
                      the edge refreshes this token against the session; and
@@ -2599,58 +2608,50 @@ spec:
                         xRobotsTag: "none"
                         xXssProtection: "1; mode=block"
                         referrerPolicy: "no-referrer"
-                {{- /* The realm's mail server, declared rather than left to the Job.
+                {{- /* The realm's mail server, declared rather than left to the Job
+                     alone, in every mail mode.
 
-                     Only the password ever needed a Secret, and the provider takes
-                     that by reference — so the wall this block used to describe was
-                     never in front of the whole field. The host follows the Job's own
-                     rule, mail.<kernelDomain>: the PUBLIC name, because Postfix
-                     withholds AUTH until STARTTLS has succeeded and Java verifies the
-                     certificate against the name it dialled, which no public CA signs
-                     for an in-cluster address.
+                     Left undeclared, the field does not stay unmanaged. The
+                     provider removes a block it finds and was not given, then
+                     late-initialisation copies the live one into
+                     spec.forProvider -- without a reference to the password,
+                     which Keycloak returns as ten asterisks and the CRD models
+                     only as passwordSecretRef -- and the provider's next write
+                     of the realm carries the login and no password. Keycloak
+                     stores that, and the realm cannot send. Declaring every
+                     field, the password by reference, makes the provider a
+                     writer that agrees with the Job.
 
-                     Left undeclared, the field did not stay unmanaged. Upjet
-                     late-initialisation copied whatever was live into
-                     spec.forProvider, and because late-init only fills fields that
-                     are EMPTY it captured the pre-authentication state — in-cluster
-                     host, no auth — and then froze. Every tenant on this cluster
-                     ended up declaring a mail server it had stopped using, which the
-                     provider would have restored on the next refresh that noticed:
-                     host moved back in-cluster, auth, user and password dropped.
-                     Declaring every field is what stops that, because late-init has
-                     nothing left to fill.
-
-                     A password cannot be late-initialised back in, either: Keycloak
-                     returns it as ten asterisks, and the CRD models it only as
-                     passwordSecretRef, so a captured value would be the mask.
-
-                     Gated on serviceMode, not on the Secret: a Composition still
-                     cannot read one, and external mode relays through a provider
-                     whose address is not derivable from the domain. Those clusters
-                     keep the Job's behaviour unchanged. */}}
-                {{- if and (eq (dig "mail.serviceMode" "" $ccData) "system") $kd }}
+                     What is declared is spec.realmMail, which the operator
+                     states: on a cluster with its own mail, the login it
+                     minted for this realm; on a cluster that relays, the
+                     relay's host and login, which are in one Secret a
+                     Composition cannot read. It states it only once the
+                     Secret holding the password exists, because the provider
+                     does not wait for a Secret it is pointed at: a realm
+                     declared before it is written with the login and no
+                     password. Not stated -- a relay not supplied yet, a tenant
+                     the cluster's own mail mints no login for -- the realm is
+                     declared with no mail server. */}}
+                {{- $rm := dig "realmMail" dict $spec }}
+                {{- if $rm }}
                 smtpServer:
-                  - host: {{ printf "mail.%s" $kd | quote }}
-                    port: "587"
-                    from: {{ printf "noreply@%s" $kd | quote }}
+                  - host: {{ $rm.host | quote }}
+                    port: {{ $rm.port | toString | quote }}
+                    from: {{ $rm.from | quote }}
                     fromDisplayName: {{ $brandName | quote }}
-                    ssl: false
-                    starttls: true
+                    ssl: {{ dig "ssl" false $rm }}
+                    starttls: {{ dig "starttls" false $rm }}
                     auth:
-                      {{- /* The identity this realm authenticates as, minted per
-                           tenant by syncMailSubmissionCredential and verified by
-                           Dovecot, which is the SASL server the kernel Postfix asks.
-                           Same Secret and key the Job reads, so the two writers
-                           cannot present different credentials -- and in the
-                           same namespace, beside Keycloak, where the operator
-                           writes it. It was read from the edge namespace, which
-                           the Job never was in, and a credential has no place
-                           in the namespace that faces the internet. */}}
-                      - username: {{ printf "noreply@%s" $domain | quote }}
+                      {{- /* Same Secret and key the Job reads, so the two
+                           writers cannot present different credentials --
+                           and beside Keycloak, never in the namespace that
+                           faces the internet. */}}
+                      - username: {{ $rm.username | quote }}
                         passwordSecretRef:
-                          name: {{ printf "mail-submission-%s" $tenant | quote }}
+                          name: {{ $rm.passwordSecretRef.name | quote }}
                           namespace: {{ $identityNs }}
-                          key: smtp_password
+                          key: {{ $rm.passwordSecretRef.key | quote }}
                 {{- end }}
               providerConfigRef:
                 name: keycloak

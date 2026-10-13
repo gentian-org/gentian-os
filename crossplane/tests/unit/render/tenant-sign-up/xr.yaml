@@ -15,6 +15,18 @@ metadata:
 spec:
   signUp:
     enabled: true
+  # The realm confirms addresses by mail, so the operator mints its login
+  # and states the mail server (a sign-up tenant's mail is outbound only).
+  realmMail:
+    host: mail.platform.example.test
+    port: "587"
+    from: noreply@platform.example.test
+    username: noreply@render-fixture.platform.example.test
+    ssl: false
+    starttls: true
+    passwordSecretRef:
+      name: mail-submission-render-fixture
+      key: smtp_password
   displayName: Render Fixture
   adminEmail: admin-render@example.test
   kernelDomain: platform.example.test

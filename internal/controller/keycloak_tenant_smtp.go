@@ -35,7 +35,12 @@ const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
 // compared against "kernel", the name before, so on such a cluster it wrote
 // the kernel realm's login into a tenant realm -- and realms written through
 // the Composition alone, without their password, are written again.
-const tenantSMTPVersion = "5"
+//
+// 6: no change to the script. A realm on a cluster that relays had its mail
+// server rewritten by the provider without the password; its Composition now
+// declares the block with the password, and this run puts the password back
+// where the provider holds nothing to compare.
+const tenantSMTPVersion = "6"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
@@ -350,6 +355,11 @@ func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gent
 			"secret", fmt.Sprintf("%s/%s", identityNamespace, keycloakSMTPCredentialsSecret),
 			"remedy", "supply the smtp-relay credential (Admin Console -> Credentials)")
 		return true, nil
+	}
+	// No Job where the realm is to have no mail server: buildProvisioningJobs
+	// composed none, for the reason tenantRealmMail gives.
+	if mail, err := r.tenantRealmMail(ctx, tenant); err != nil || mail == nil {
+		return err == nil, err
 	}
 	realmDone, err := r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 	if err != nil || !realmDone {

@@ -213,8 +213,8 @@ func mergeEnv(base map[string]string, k, v string) map[string]string {
 // reaches new tenants only.
 func TestTenantSMTPJobCarriesTheScriptVersion(t *testing.T) {
 	job := makeTenantSMTPJob("demo", "demo", "mail.example.org", "Example Cloud")
-	if got := job.Labels["gentianos.io/keycloak-tenant-smtp"]; got != "5" {
-		t.Fatalf("version label = %q, want 5: the script that knows the mode as \"system\"", got)
+	if got := job.Labels["gentianos.io/keycloak-tenant-smtp"]; got != "6" {
+		t.Fatalf("version label = %q, want 6: the run that puts a relay's password back", got)
 	}
 	for _, c := range job.Spec.Template.Spec.Containers {
 		for _, e := range c.Env {

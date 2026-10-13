@@ -367,12 +367,17 @@ groups, scopes and mappers are not Jobs: the Composition declares them. The
 platform tenant adopts the kernel realm and gets only the groups Job.
 
 The mail-server Job (`keycloak-tenant-smtp-<tenant>`) writes the realm's
-`smtpServer` with its password, and is built only on a cluster whose
-`keycloak-smtp-credentials` is complete. On a cluster with its own mail the
-Composition declares the same block, and the login it names is minted before
-the realm is declared; which login each realm uses in each mail mode, and
-what Keycloak does with a mail server written without its password, is in
-[mail.md §5d](mail.md).
+`smtpServer` with its password. The Composition declares the same block from
+`spec.realmMail`, which the operator states once the Secret holding the
+password exists; a tenant it states none for has neither the block nor the
+Job. Which login a realm uses in each mail mode, and what Keycloak does with
+a mail server written without its password, is in [mail.md §5d](mail.md).
+
+A tenant realm states `loginWithEmailAllowed` in both cases: `false`, and
+`true` where people sign up with their address as the login. Keycloak makes a
+realm with it on, and a realm the realm Job created before the provider did
+was copied that value, after which the provider refused every update beside
+`duplicateEmailsAllowed`.
 
 What is declared and what is still a Job:
 [tenant-identity-composition.md](tenant-identity-composition.md).

@@ -378,7 +378,27 @@ realm names (`smtpServer`), logged in:
 | kernel | `system` | `gentian-system@<kernelDomain>`, password derived by the installer | step `D-03` (`scripts/lib/portal-login-bootstrap.sh`), which also leaves it in `keycloak-smtp-credentials` |
 | kernel | `external` | the relay's | step `D-03`, from `keycloak-smtp-credentials`, which an ExternalSecret builds from the relay credential |
 | tenant | `system` | `noreply@<tenant domain>`, from `mail-submission-<tenant>` | the tenant's Composition, which declares every field, and the Job `keycloak-tenant-smtp-<tenant>`, which writes the same fields with the password |
-| tenant | `external` | the relay's, from `keycloak-smtp-credentials` | the Job `keycloak-tenant-smtp-<tenant>` alone |
+| tenant | `external` | the relay's, from `keycloak-smtp-credentials` | the same two, the Composition naming the password in `keycloak-smtp-credentials` |
+
+**What a tenant's realm is declared with is `spec.realmMail` of its XTenant,
+which the operator states** (`tenantRealmMail`): host, port, sender, login,
+the two TLS switches, and the name and key of the Secret in
+`kernel-authentication` that holds the password. The Composition renders
+`smtpServer` from it and nothing else, and the operator builds the Job for
+exactly the tenants it states it for.
+
+- The cluster's mail mode decides which mail server: on a cluster with its own
+  mail a realm sends as the login minted for it or not at all, and on a
+  cluster that relays every realm sends as the relay's login.
+- A login is minted for a tenant registered in the cluster's own mail: mode
+  `selfhosted`, or `transport-only` where people sign up to it. Any other
+  tenant's realm on such a cluster has no mail server.
+- The relay's host and login are read from `keycloak-smtp-credentials`, the
+  one place they are; nobody states them twice. They are settings and go onto
+  the XTenant. The password does not leave the Secret.
+- It is stated only once that Secret exists and holds a password. A cluster
+  whose relay has not been supplied yet has its realms declared without a
+  mail server, and with one on the tenant's next reconcile after it has.
 
 The operator builds the Job only when `keycloak-smtp-credentials` says
 `smtp_configure: true`, and registers the kernel realm's login with Dovecot
@@ -407,11 +427,12 @@ resource is `Synced` and `Ready`. The fault shows when mail is sent, as
   next poll (ten minutes); after a restart it never is. The Job is what puts
   it right, and it runs again when its script's version changes.
 
-With a relay the Composition declares no mail server, and that does not leave
-the field alone: the provider copies the live block into the resource, without
-a reference to the password, and its next update of the realm writes the block
-without it. The password is then gone until the Job runs again. This is
-open.
+A mail server is therefore never left undeclared where one is to exist.
+Undeclared, the field is not left alone: the provider removes a block it was
+not given, then copies the live one into the resource without a reference to
+the password, and its next write of the realm carries the login and no
+password. That is what a relay cluster's realms had until the Composition
+declared the block there too.
 
 `make test-realm-smtp-lab` holds this against the Keycloak the chart pins and
 a mail server that demands a login: the kernel realm written by the
