@@ -237,10 +237,10 @@ catalogue through the director (`kubectl gentian apps install <app> --tenant
 
 ## 4. Image update policies per stage
 
-Nothing moves a cluster's image on its own. The installer pins the platform's
+Nothing in the cluster moves its image. The installer pins the platform's
 image to the build of the commit it installs from, and renders that tag into
-the `gentian-os` Application; `./install.sh --only B-01` run from a newer
-checkout advances it. `argocd-image-updater` is installed with Argo CD, and
+the `gentian-os` Application; any run of `./install.sh` from a newer checkout
+advances it, and `./install.sh --only B-01` does that and nothing else. `argocd-image-updater` is installed with Argo CD, and
 the platform ships no `ImageUpdater` resource for itself. The detail is in
 [install-reference.md](install-reference.md) §4, "Image tags".
 

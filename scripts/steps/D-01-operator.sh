@@ -30,12 +30,21 @@ source "${SCRIPT_DIR}/scripts/steps/B-01-bootstrap-apps.sh"
 _d01_deployments() { local release="gentian-os"; echo "${release} ${release}-director"; }
 
 check() {
-    local ns d
+    local ns d want="${GENTIAN_OS_IMAGE_TAG:-}"
     ns="$(ns_kernel control)"
     _v5_delivered "$(ns_kernel gitops)" gentian-os || return 1
+    # The build this run renders is the one pinned, and the one running. B-01
+    # may have moved the pin a moment ago: the Application then reads Synced
+    # and Healthy on what it had, and both Deployments are ready on the build
+    # before, which is not this step done.
+    _v5_os_build_pinned || return 1
     for d in $(_d01_deployments); do
         kubectl get deployment "${d}" -n "${ns}" >/dev/null 2>&1 || return 1
         [[ "$(kubectl get deployment "${d}" -n "${ns}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" != "" ]] || return 1
+        if [[ -n "${want}" ]]; then
+            [[ "$(kubectl get deployment "${d}" -n "${ns}" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)" == *":${want}" ]] || return 1
+        fi
     done
 }
 
@@ -46,7 +55,10 @@ apply() {
     ns="$(ns_kernel gitops)"
     info "waiting for gentian-os to be Synced and Healthy"
     t=$((SECONDS + 900))
-    until _v5_delivered "${ns}" gentian-os; do
+    # check, not only "Synced and Healthy": after a move to a newer build the
+    # Application reads both on the build before, until Argo CD has compared
+    # again.
+    until check; do
         # As C-02: an Application whose retries are spent is asked again,
         # not waited on.
         unstick_argo_hook_job "${ns}" gentian-os
@@ -58,7 +70,14 @@ apply() {
         fi
         sleep 10
     done
-    success "the operator is running in $(ns_kernel control)"
+    # And rolled out. A Deployment that names the new build is ready on the
+    # old one for as long as its new Pods take to start.
+    local d
+    for d in $(_d01_deployments); do
+        kubectl rollout status "deployment/${d}" -n "$(ns_kernel control)" --timeout=300s >/dev/null ||
+            { error "${d} has not finished rolling out to ${GENTIAN_OS_IMAGE_TAG:-its build} after 5m."; return 1; }
+    done
+    success "the operator is running in $(ns_kernel control)$([[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]] && echo ", build ${GENTIAN_OS_IMAGE_TAG}")"
 }
 
 destroy() {
