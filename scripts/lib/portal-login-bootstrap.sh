@@ -1791,6 +1791,54 @@ platform_admin_requires_mfa() {
     tenant_admin_requires_mfa platform
 }
 
+# The parts of issue_admin_activation that are used more than once.
+#
+# _activation_admin_token <keycloak-base> <user> <password> — a token of the
+# master realm. It lives for 60 seconds (see _keycloak_refresh_token_shell),
+# which is why issue_admin_activation asks for one again after it has waited
+# for a person, and again after any call that was refused.
+_activation_admin_token() {
+    curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
+        --data-urlencode "username=$2" --data-urlencode "password=$3" \
+        "$1/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty'
+}
+
+# _activation_request <method> <auth-header> <url> <json-body> [max-seconds]
+# — one call to Keycloak, answered as its body, a newline, and the status.
+# The status is kept: under curl -f a refusal and a failure looked alike and
+# neither said why.
+_activation_request() {
+    curl -sS --max-time "${5:-15}" -w '\n%{http_code}' -X "$1" -H "$2" -H "Content-Type: application/json" \
+        "$3" -d "$4" 2>/dev/null || true
+}
+
+# _activation_refused <what was being done> — a call answered 401. That is
+# the installer's own token having run out, or been refused, and it is said
+# as that: it used to surface as whatever the refused call was for. The
+# caller draws a new token and makes the call once more.
+_activation_refused() {
+    warn "  KEYCLOAK REFUSED THE INSTALLER'S TOKEN (HTTP 401) while $1."
+    warn "  A token of the master realm lives for 60 seconds and this one has"
+    warn "  run out. Drawing a new one and trying once more."
+}
+
+# _activation_later <command> <username> <recovery-email> — what to run when
+# nothing was handed over. A tenant's link is issued by the cluster, to
+# somebody signed in to it, so the sign-in is named first; the address that
+# was given is carried along so that it is not typed again.
+_activation_later() {
+    local again="$1" username="$2" email="${3:-}"
+    [[ -n "${again}" ]] || return 0
+    warn "  NO ACTIVATION LINK WAS HANDED OVER for ${username}. The account is there and has no password."
+    warn "  To issue one:"
+    if [[ "${again}" == "kubectl gentian "* ]]; then
+        warn "    kubectl gentian login     # as the platform admin"
+        warn "    ${again}${email:+ --recovery-email ${email}}"
+    else
+        warn "    ${again}"
+    fi
+}
+
 # issue_admin_activation <realm> <username> <require-mfa> <recovery-email> <again>
 # — hand one administrator account to its holder, once.
 #
@@ -1820,17 +1868,27 @@ issue_admin_activation() {
     local svc="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http"
     if [[ -z "${kc_user}" || -z "${kc_pass}" ]] || ! base="$(gentian_service_addr "${svc}" "${ns}" 8080 http)"; then
         warn "  Keycloak cannot be reached from here to issue the activation link."
+        [[ -n "${again}" ]] && warn "  To issue one later: ${again}"
         return 1
     fi
     base="${base}/auth"
-    token="$(curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
-        --data-urlencode "username=${kc_user}" --data-urlencode "password=${kc_pass}" \
-        "${base}/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty')"
-    [[ -n "${token}" ]] || { warn "  Keycloak refused the installer's admin credential."; return 1; }
+    # The address this run was given, kept for the commands printed when
+    # nothing can be handed over: email itself is emptied further down.
+    local given_email="${email}"
+    token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+    if [[ -z "${token}" ]]; then
+        warn "  Keycloak refused the installer's admin credential."
+        _activation_later "${again}" "${username}" "${given_email}"
+        return 1
+    fi
     local auth="Authorization: Bearer ${token}"
     uid="$(curl -sS --max-time 15 -H "${auth}" \
         "${base}/admin/realms/${realm}/users?username=${username}&exact=true" | jq -r '.[0].id // empty')"
-    [[ -n "${uid}" ]] || { warn "  ${username} does not exist in realm ${realm}."; return 1; }
+    if [[ -z "${uid}" ]]; then
+        warn "  ${username} does not exist in realm ${realm}."
+        _activation_later "${again}" "${username}" "${given_email}"
+        return 1
+    fi
     creds="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}/credentials")"
     has_pw="$(printf '%s' "${creds}" | jq '[.[] | select(.type=="password")] | length > 0' 2>/dev/null || echo false)"
     # Forced (./install.sh --activate-admin): a new link even for an account
@@ -1864,6 +1922,20 @@ issue_admin_activation() {
     if [[ "${can_mail}" == "true" && -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
         printf '  Recovery email for %s (Enter to show the link here instead): ' "${username}"
         read -r email || email=""
+        given_email="${email}"
+        # A new token after the question. The master realm's access tokens
+        # live for 60 seconds (see _keycloak_refresh_token_shell), and this
+        # one was drawn before a person was asked to type an address: anyone
+        # who took a minute over it had every call below refused with 401.
+        # The mail was then reported as unsendable and the link as not
+        # issued, on a cluster where both worked.
+        token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+        if [[ -z "${token}" ]]; then
+            warn "  Keycloak refused the installer's admin credential."
+            _activation_later "${again}" "${username}" "${given_email}"
+            return 1
+        fi
+        auth="Authorization: Bearer ${token}"
     fi
     # Where the person lands afterwards: the zone client's own root, read off
     # the client the way the director's invitations read it. A redirect the
@@ -1892,27 +1964,57 @@ issue_admin_activation() {
         mailed_actions="$(jq -c '["VERIFY_EMAIL"] + .' <<<"${actions}")"
         cur="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
         upd="$(printf '%s' "${cur}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
-        if curl -sf --max-time 15 -X PUT -H "${auth}" -H "Content-Type: application/json" \
-                "${base}/admin/realms/${realm}/users/${uid}" -d "${upd}" >/dev/null &&
-           curl -sf --max-time 30 -X PUT -H "${auth}" -H "Content-Type: application/json" \
-                "${base}/admin/realms/${realm}/users/${uid}/execute-actions-email?client_id=${client}${redirect:+&redirect_uri=$(jq -rn --arg r "${redirect}" '$r|@uri')}" \
-                -d "${mailed_actions}" >/dev/null; then
-            success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
-            return 0
+        # What Keycloak answered, kept: the two calls fail for different
+        # reasons -- a refused credential, an address the realm rejects, a
+        # mail server that does not take the message -- and "could not be
+        # sent" with a guess after it named none of them.
+        local saved sent
+        local user_url="${base}/admin/realms/${realm}/users/${uid}" mail_url
+        mail_url="${user_url}/execute-actions-email?client_id=${client}${redirect:+&redirect_uri=$(jq -rn --arg r "${redirect}" '$r|@uri')}"
+        saved="$(_activation_request PUT "${auth}" "${user_url}" "${upd}")"
+        if [[ "${saved##*$'\n'}" == "401" ]]; then
+            _activation_refused "recording ${email} as the recovery address"
+            token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+            auth="Authorization: Bearer ${token}"
+            saved="$(_activation_request PUT "${auth}" "${user_url}" "${upd}")"
         fi
-        warn "  The activation mail could not be sent (is the realm's mail configured yet?)."
-        warn "  ${email} is kept as the recovery address; showing the link here instead."
+        saved="${saved##*$'\n'}"
+        if [[ "${saved}" != 2* ]]; then
+            warn "  ${email} could not be recorded as ${username}'s address: Keycloak answered HTTP ${saved:-nothing}."
+            warn "  Showing the link here instead."
+        else
+            sent="$(_activation_request PUT "${auth}" "${mail_url}" "${mailed_actions}" 30)"
+            if [[ "${sent##*$'\n'}" == "401" ]]; then
+                _activation_refused "mailing the link"
+                token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+                auth="Authorization: Bearer ${token}"
+                sent="$(_activation_request PUT "${auth}" "${mail_url}" "${mailed_actions}" 30)"
+            fi
+            if [[ "${sent##*$'\n'}" == 2* ]]; then
+                success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
+                return 0
+            fi
+            warn "  The activation mail could not be sent: Keycloak answered HTTP ${sent##*$'\n'} $(printf '%s' "${sent%$'\n'*}" | jq -r '.errorMessage // .error // empty' 2>/dev/null)"
+            warn "  ${email} is kept as the recovery address; showing the link here instead."
+        fi
     fi
     local answer link expires
-    answer="$(curl -sS --max-time 15 -w '\n%{http_code}' -X POST -H "${auth}" -H "Content-Type: application/json" \
-        "${base}/realms/${realm}/gentian-activation/users/${uid}/link" \
-        -d "$(jq -n --argjson a "${actions}" --arg c "${client}" --arg r "${redirect}" '{actions:$a, clientId:$c} + (if $r != "" then {redirectUri:$r} else {} end)')")"
+    local link_url="${base}/realms/${realm}/gentian-activation/users/${uid}/link" link_ask
+    link_ask="$(jq -n --argjson a "${actions}" --arg c "${client}" --arg r "${redirect}" '{actions:$a, clientId:$c} + (if $r != "" then {redirectUri:$r} else {} end)')"
+    answer="$(_activation_request POST "${auth}" "${link_url}" "${link_ask}")"
+    if [[ "${answer##*$'\n'}" == "401" ]]; then
+        _activation_refused "asking for the link"
+        token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+        auth="Authorization: Bearer ${token}"
+        answer="$(_activation_request POST "${auth}" "${link_url}" "${link_ask}")"
+    fi
     local status="${answer##*$'\n'}"
     answer="${answer%$'\n'*}"
     link="$(printf '%s' "${answer}" | jq -r '.link // empty' 2>/dev/null)"
     expires="$(printf '%s' "${answer}" | jq -r '.expiresAt // empty' 2>/dev/null)"
     if [[ -z "${link}" ]]; then
         warn "  Keycloak issued no activation link: HTTP ${status} ${answer:-(empty answer)}"
+        _activation_later "${again}" "${username}" "${given_email}"
         return 1
     fi
     echo ""

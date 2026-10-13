@@ -349,10 +349,12 @@ but losing a node leaves pods `Pending`. Close that gap promptly.
 
 ## 8. Node labels
 
-`gentianos.io/mail-egress` looks like it pins mail egress to a node, and does not.
-The Postfix chart emits a nodeSelector for it **only when `egressHost` is set**; with
-`egressHost` empty and `mailServiceMode: external`, Postfix relays through a smarthost
-and no pin exists. Nothing else in the cluster reads the label.
+`gentianos.io/mail-egress` pins Postfix to a node **only when `mail.egressHost` is
+set**. The operator then puts the label on the node that reports the sending address
+as its `ExternalIP` and takes it off every other node, and the Postfix chart selects
+on it; do not set it by hand. A node pool that replaces that node needs the floating
+IP attached to another one ([mail.md §9c](design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)).
+With `egressHost` empty the chart emits no nodeSelector and the label means nothing.
 
 Before treating any node label as load-bearing, confirm something consumes it:
 

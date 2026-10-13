@@ -614,6 +614,28 @@ func TestActivatingATenantAdministrator(t *testing.T) {
 	}
 }
 
+// The account handed over is the one the operator reports, not admin@<domain>
+// composed again. On a single-tenancy cluster the user tenant lives on the
+// cluster's own domain, where admin@ is the platform administrator's, and its
+// administrator is user-admin@. Asked for admin@ there, the realm has no such
+// account and the caller was told the tenant was "still being provisioned"
+// for as long as it asked.
+func TestActivatingTheUserTenantsAdministratorOnASingleTenancyCluster(t *testing.T) {
+	login := "user-admin@" + dt.KernelDomain
+	h := startWithTenants(t, newFakeIdentity("user"), nil, fakeTenants{"user": {
+		Name: "user", Realm: "user", LoginDomain: dt.KernelDomain, AdminLogin: login, AdminRequiresMFA: true,
+	}}, newFakeMailboxes())
+	path := "/v1/clusters/" + dt.Cluster + "/tenants/user/actions/activate-admin"
+
+	status, body := h.do(t, http.MethodPost, path, h.token(t, "gentian", "alice"), "")
+	if status != http.StatusOK {
+		t.Fatalf("activate: %d %v", status, body)
+	}
+	if u, _ := body["username"].(string); u != login {
+		t.Fatalf("the account looked up and handed over is %q, want %q", u, login)
+	}
+}
+
 // The cluster's count is per realm, and a realm the registrar cannot reach
 // makes the total incomplete instead of smaller.
 func TestTheClusterCountsItsPeoplePerRealm(t *testing.T) {

@@ -145,7 +145,7 @@ _a06_register_repo_credentials() {
         argocd_repo_needs_credential "${req}" || continue
         name="$(_repo_credential "${req}" vault)"
         if argocd_claim_repo_credential_present "${req}"; then
-            info "Argo CD reads the ${name} repository's credential from the vault (repo-${name}); no bootstrap credential is needed."
+            info "Argo CD reads the ${name} repository's credential from the vault ($(argocd_claim_repo_secret_name "${req}")); no bootstrap credential is needed."
             continue
         fi
         argocd_bootstrap_repo_credential "${req}"

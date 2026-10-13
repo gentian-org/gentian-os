@@ -88,7 +88,8 @@ func (f fakeTenants) All(context.Context) ([]registrar.Tenant, error) {
 // ownRealm is a tenant with a realm to itself, as the operator reports it.
 func ownRealm(name string) registrar.Tenant {
 	return registrar.Tenant{
-		Name: name, Realm: name, LoginDomain: name + "." + dt.KernelDomain, AdminRequiresMFA: true,
+		Name: name, Realm: name, LoginDomain: name + "." + dt.KernelDomain,
+		AdminLogin: "admin@" + name + "." + dt.KernelDomain, AdminRequiresMFA: true,
 	}
 }
 

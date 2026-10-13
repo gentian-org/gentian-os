@@ -75,7 +75,10 @@ case "${verb}:${kind}" in
     delete:secret)
         rm -f "${STATE}/secrets/${name}.json" ;;
     get:repository.gentianos.io)
-        [[ -f "${STATE}/claims/${name}" ]] || exit 1 ;;
+        [[ -f "${STATE}/claims/${name}" ]] || exit 1
+        # The claim's composite, whose name the Argo CD Secret is made from.
+        [[ "${jsonpath}" == "{.spec.resourceRef.name}" ]] && cat "${STATE}/claims/${name}"
+        exit 0 ;;
     get:crd|get:deployment|get:configmap|get:clusterrolebinding)
         [[ "${ARGOCD_INSTALLED:-0}" == "1" ]] || exit 1
         case "${jsonpath}" in
@@ -119,11 +122,15 @@ secret() { [[ -f "${STATE}/secrets/$1.json" ]]; }
 field()  { jq -r "$2 // empty" "${STATE}/secrets/$1.json" 2>/dev/null; }
 # The Secret a Repository claim composes for Argo CD, as External Secrets
 # writes it: with a login, or (a claim that declares none) without.
+#
+# Named after the claim's composite, repo-<claim>-<suffix>, as
+# repository-default names it. A Secret called repo-<claim> is what the
+# installer once looked for and no cluster has.
 claim_secret() {   # claim_secret <name> [password]
-    touch "${STATE}/claims/$1"
-    jq -n --arg n "repo-$1" --arg p "${2:-}" \
+    printf '%s' "$1-x7k2p" > "${STATE}/claims/$1"
+    jq -n --arg n "repo-$1-x7k2p" --arg p "${2:-}" \
         '{metadata: {name: $n}, stringData: ({url: "x", type: "git"} + if $p == "" then {} else {username: "u", password: $p} end)}' \
-        > "${STATE}/secrets/repo-$1.json"
+        > "${STATE}/secrets/repo-$1-x7k2p.json"
 }
 
 BRIDGE="argocd-repo-creds-bootstrap-deployments"
@@ -270,7 +277,7 @@ fi
 
 claim_secret deployments "from-the-vault"
 out="$(handoff)"
-if [[ "${out}" == *"rc=0"* && "${out}" == *"check=0"* ]] && ! secret "${BRIDGE}" && secret repo-deployments; then
+if [[ "${out}" == *"rc=0"* && "${out}" == *"check=0"* ]] && ! secret "${BRIDGE}" && secret repo-deployments-x7k2p; then
     ok "handoff: the claim's Secret carries a login: the bridge is removed, the claim's Secret is not"
 else
     bad "handoff: the claim's Secret carries a login: the bridge is removed" "${out}"

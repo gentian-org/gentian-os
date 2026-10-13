@@ -72,9 +72,10 @@ func TestATenantsRealmAndLoginDomainComeFromTheCluster(t *testing.T) {
 			t.Status.AdminEmail = "admin@vanity.example"
 			t.Spec.Admin = &gentianov1alpha1.TenantAdmin{RequireMFA: &no}
 		}),
-		// Single tenancy: the operator resolved the kernel domain itself.
+		// Single tenancy: the operator resolved the kernel domain itself, and
+		// its administrator is not admin@, which there is the platform's.
 		tenant("solo", func(t *gentianov1alpha1.Tenant) {
-			t.Status.AdminEmail = "admin@k.example"
+			t.Status.AdminEmail = "user-admin@k.example"
 		}),
 		// Not reconciled yet, and one the operator knows no domain for.
 		tenant("fresh", nil),
@@ -85,10 +86,10 @@ func TestATenantsRealmAndLoginDomainComeFromTheCluster(t *testing.T) {
 	tenants := &registrar.ClusterTenants{Client: c, KernelDomain: "k.example"}
 
 	for name, want := range map[string]registrar.Tenant{
-		"acme":     {Name: "acme", Realm: "acme", LoginDomain: "acme.k.example", AdminRequiresMFA: true},
-		"platform": {Name: "platform", Realm: "kernel", LoginDomain: "k.example", AdminRequiresMFA: true},
-		"vanity":   {Name: "vanity", Realm: "vanity", LoginDomain: "vanity.example", AdminRequiresMFA: false},
-		"solo":     {Name: "solo", Realm: "solo", LoginDomain: "k.example", AdminRequiresMFA: true},
+		"acme":     {Name: "acme", Realm: "acme", LoginDomain: "acme.k.example", AdminLogin: "admin@acme.k.example", AdminRequiresMFA: true},
+		"platform": {Name: "platform", Realm: "kernel", LoginDomain: "k.example", AdminLogin: "admin@k.example", AdminRequiresMFA: true},
+		"vanity":   {Name: "vanity", Realm: "vanity", LoginDomain: "vanity.example", AdminLogin: "admin@vanity.example", AdminRequiresMFA: false},
+		"solo":     {Name: "solo", Realm: "solo", LoginDomain: "k.example", AdminLogin: "user-admin@k.example", AdminRequiresMFA: true},
 		"fresh":    {Name: "fresh", Realm: "fresh", LoginDomain: "", AdminRequiresMFA: true},
 		"lost":     {Name: "lost", Realm: "lost", LoginDomain: "", AdminRequiresMFA: true},
 	} {
