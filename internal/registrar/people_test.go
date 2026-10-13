@@ -12,6 +12,7 @@ package registrar_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -633,6 +634,36 @@ func TestActivatingTheUserTenantsAdministratorOnASingleTenancyCluster(t *testing
 	}
 	if u, _ := body["username"].(string); u != login {
 		t.Fatalf("the account looked up and handed over is %q, want %q", u, login)
+	}
+}
+
+// In a tenant that takes sign-ups an account's address is its login. The
+// administrator's link is handed over printed; mailing it would mean giving
+// the account the recovery address, and with it another name.
+func TestActivatingTheAdministratorOfATenantThatTakesSignUps(t *testing.T) {
+	login := "admin@customers." + dt.KernelDomain
+	h := startWithTenants(t, newFakeIdentity("customers"), nil, fakeTenants{"customers": {
+		Name: "customers", Realm: "customers", LoginDomain: "customers." + dt.KernelDomain,
+		AdminLogin: login, AdminRequiresMFA: true, SignUp: true,
+	}}, newFakeMailboxes())
+	path := "/v1/clusters/" + dt.Cluster + "/tenants/customers/actions/activate-admin"
+	alice := h.token(t, "gentian", "alice")
+
+	status, body := h.do(t, http.MethodPost, path, alice, `{"recoveryEmail":"owner@example.org"}`)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("mailing the link: %d %v, want 422", status, body)
+	}
+	if msg := fmt.Sprint(body["error"]); !strings.Contains(msg, "without a recovery address") || !strings.Contains(msg, "rename") {
+		t.Fatalf("the refusal does not say what to do: %s", msg)
+	}
+
+	status, body = h.do(t, http.MethodPost, path, alice, "")
+	activation, _ := body["activation"].(map[string]any)
+	if status != http.StatusOK || activation["link"] == nil {
+		t.Fatalf("the link without an address: %d %v", status, body)
+	}
+	if u, _ := body["username"].(string); u != login {
+		t.Fatalf("the account handed over is %q, want %q", u, login)
 	}
 }
 

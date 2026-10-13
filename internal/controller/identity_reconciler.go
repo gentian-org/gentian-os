@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -429,6 +430,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *
 		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: username},
 		corev1.EnvVar{Name: "TENANT_ADMIN_REQUIRE_MFA", Value: requireMFA},
+		corev1.EnvVar{Name: "TENANT_SIGN_UP", Value: strconv.FormatBool(tenant.SignUpEnabled())},
 		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
 	return &batchv1.Job{
@@ -728,6 +730,19 @@ if [ "${TENANT_ADMIN_REQUIRE_MFA:-true}" = "true" ]; then
   ACTIONS='"UPDATE_PASSWORD","CONFIGURE_TOTP"'
 fi
 
+# In a realm people sign up to, the address is the login and every account
+# has to have one: Keycloak refuses an account without (error-user-attribute-
+# required). The administrator's is the login itself, and it is recorded as
+# verified, because nothing is delivered there -- such a tenant's mail only
+# sends -- and an account waiting for a confirmation it cannot receive could
+# never be activated. Every other realm is created as before, with no address.
+ADDRESS=''
+VERIFIED=false
+if [ "${TENANT_SIGN_UP:-false}" = "true" ]; then
+  ADDRESS=",\"email\":\"${TENANT_ADMIN_USERNAME}\""
+  VERIFIED=true
+fi
+
 # --- 1. Create tenant admin user if absent, without a password ---
 EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
@@ -738,7 +753,7 @@ else
   kc_curl -X POST -H "${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/%s/users" \
-    -d "{\"username\":\"${TENANT_ADMIN_USERNAME}\",\"enabled\":true,\"emailVerified\":false,\"firstName\":\"Tenant\",\"lastName\":\"Administrator\",\"requiredActions\":[${ACTIONS}]}"
+    -d "{\"username\":\"${TENANT_ADMIN_USERNAME}\",\"enabled\":true,\"emailVerified\":${VERIFIED}${ADDRESS},\"firstName\":\"Tenant\",\"lastName\":\"Administrator\",\"requiredActions\":[${ACTIONS}]}"
   EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
