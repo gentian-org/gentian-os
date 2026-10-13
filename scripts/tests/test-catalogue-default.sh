@@ -149,6 +149,27 @@ before="$(cat "${CLAIM}")"
 run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
 is "a claim that only mentions it in a comment is left as it is" "$(cat "${CLAIM}")" "${before}"
 
+# spec.hideVendorPromotions is no field of the Branding any more. The file is
+# the director's, which leaves the key out the next time it writes it; one
+# written before loses that line and no other, and a run that changes nothing
+# only says so.
+BRAND="${SANDBOX}/branding.yaml"
+printf '# Managed by the director.\napiVersion: gentianos.io/v1alpha1\nkind: Branding\nmetadata:\n  name: default\nspec:\n  hideVendorPromotions: true\n  identity:\n    name: Acme Cloud\n  tokens:\n    color:\n      hideVendorPromotions: true\n' > "${BRAND}"
+want="$(grep -v '^  hideVendorPromotions: true$' "${BRAND}")"
+before="$(cat "${BRAND}")"
+said="$(run GENTIAN_DRY_RUN=1 -- "preview_branding_removed_fields '${BRAND}'")"
+is "a run that changes nothing says the Branding would lose the field" "$(grep -c 'Would remove spec.hideVendorPromotions' <<<"${said}")" "1"
+is "and leaves the file as it is" "$(cat "${BRAND}")" "${before}"
+said="$(run -- "drop_branding_removed_fields '${BRAND}'")"
+is "a Branding that carries hideVendorPromotions loses that line and no other" "$(cat "${BRAND}")" "${want}"
+is "and the installer says so" "$(grep -c 'removed spec.hideVendorPromotions' <<<"${said}")" "1"
+said="$(run -- "drop_branding_removed_fields '${BRAND}'; preview_branding_removed_fields '${BRAND}'")"
+is "a second run finds nothing to remove" "${said}" ""
+printf 'apiVersion: gentianos.io/v1alpha1\nkind: Branding\nmetadata:\n  name: default\nspec:\n  hideVendorPromotions: true\n' > "${BRAND}"
+run -- "drop_branding_removed_fields '${BRAND}'" >/dev/null
+is "a spec that held nothing else is left an empty one" "$(tail -n 1 "${BRAND}")" "spec: {}"
+is "a cluster with no Branding is left without one" "$(run -- "drop_branding_removed_fields '${SANDBOX}/none.yaml'; ls '${SANDBOX}/none.yaml' 2>/dev/null")" ""
+
 echo ""
 if (( fail > 0 )); then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"

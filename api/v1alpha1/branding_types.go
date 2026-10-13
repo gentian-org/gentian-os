@@ -95,11 +95,6 @@ type BrandingSpec struct {
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:validation:Type=object
 	Tokens *runtime.RawExtension `json:"tokens,omitempty"`
-
-	// HideVendorPromotions takes the platform vendor's own offers off the
-	// consoles, for a provider who runs the cluster under its own name.
-	// +optional
-	HideVendorPromotions bool `json:"hideVendorPromotions,omitempty"`
 }
 
 // BrandingStatus says whether the brand is what the pages show.

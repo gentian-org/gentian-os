@@ -1530,7 +1530,7 @@ func (s *Server) clusterBranding(w http.ResponseWriter, r *http.Request, _ call)
 func (s *Server) setClusterBranding(w http.ResponseWriter, r *http.Request, c call) {
 	var spec gentianov1alpha1.BrandingSpec
 	if err := decode(r, &spec); err != nil {
-		s.fail(w, r, http.StatusBadRequest, "body must be a Branding spec: identity, tokens, hideVendorPromotions")
+		s.fail(w, r, http.StatusBadRequest, "body must be a Branding spec: identity, tokens")
 		return
 	}
 	res, err := s.cfg.Repo.SetClusterBranding(r.Context(), spec, c.meta)

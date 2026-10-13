@@ -565,6 +565,30 @@ func TestTheBrandIsCommittedAndABrokenOneIsRefused(t *testing.T) {
 	}
 }
 
+// A Branding written when the kind had a field it no longer has is read
+// without error, and the next write of the brand leaves the key out.
+func TestABrandingCarryingARemovedFieldIsReadAndRewrittenWithoutIt(t *testing.T) {
+	remote := dt.Remote(t)
+	path := "clusters/" + dt.Cluster + "/kernel/claims/" + gitops.BrandingFile
+	dt.Commit(t, remote, map[string]string{path: "apiVersion: gentianos.io/v1alpha1\nkind: Branding\n" +
+		"metadata:\n  name: default\nspec:\n  hideVendorPromotions: true\n  identity:\n    name: Acme Cloud\n"})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	spec, found, err := g.ClusterBranding(ctx)
+	if err != nil || !found || spec.Identity.Name != "Acme Cloud" {
+		t.Fatalf("read: %+v %v %v", spec, found, err)
+	}
+	spec.Identity.ShortName = "Acme"
+	if res, err := g.SetClusterBranding(ctx, *spec, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("set: %+v %v", res, err)
+	}
+	doc := dt.RemoteFile(t, remote, path)
+	if strings.Contains(doc, "hideVendorPromotions") || !strings.Contains(doc, "name: Acme Cloud") {
+		t.Fatalf("branding.yaml after the write:\n%s", doc)
+	}
+}
+
 // multi -> single on a cluster carrying more than a single-tenancy cluster
 // may is refused, loudly and with nothing written: every tenant but the
 // platform's and one named user would be refused by the operator and left
