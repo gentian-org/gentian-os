@@ -142,8 +142,8 @@ spec:
               value: {{ $deployments.cluster | default "" | quote }}
             # Whether this cluster reports what it runs. The App Store is
             # offered only where it does; the tiles answer says which.
-            - name: USHER_LICENCE_REPORT_ENABLED
-              value: {{ include "gentian-os.licenceReporting" . | default "false" | quote }}
+            - name: USHER_USAGE_STATISTICS_ENABLED
+              value: {{ include "gentian-os.usageStatisticsEnabled" . | default "false" | quote }}
             # The operator's listener, for reads of live state, and where this
             # pod's token for it is projected.
             - name: USHER_LIFECYCLE_URL

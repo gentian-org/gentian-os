@@ -98,7 +98,7 @@ func run(log *slog.Logger) error {
 		// Whether the cluster reports what it runs, as the chart rendered it
 		// for the operator: on only with an address to report to. Unset is
 		// off, and off withholds the App Store.
-		LicenceReporting: os.Getenv("USHER_LICENCE_REPORT_ENABLED") == "true",
+		UsageStatisticsEnabled: os.Getenv("USHER_USAGE_STATISTICS_ENABLED") == "true",
 	}
 	// The operator's listener, for reads of live state. The token is this
 	// pod's own ServiceAccount token, projected by the kubelet for the

@@ -22,14 +22,14 @@ import (
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
-// LicenceReportCounts counts people for the licence report.
+// UsageStatisticsCounts counts people for the usage statistics report.
 //
 // With the credential the operator already configures realms with, and no
 // other: the report needs two numbers per tenant, and neither is worth a
 // second way into Keycloak. Both are asked of the realm and the group the
 // identity reconciler made for the tenant, by the names it made them under,
 // which is why the counting is here beside it.
-type LicenceReportCounts struct {
+type UsageStatisticsCounts struct {
 	Client client.Reader
 
 	mu     sync.Mutex
@@ -40,7 +40,7 @@ type LicenceReportCounts struct {
 // keycloak is the admin client, kept between calls so that a pass over every
 // tenant asks for one token and not one per count. It is rebuilt when the
 // credential it was built from has changed.
-func (c *LicenceReportCounts) keycloak(ctx context.Context) (*authz.KeycloakAdminClient, error) {
+func (c *UsageStatisticsCounts) keycloak(ctx context.Context) (*authz.KeycloakAdminClient, error) {
 	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, c.Client)
 	if err != nil {
 		return nil, fmt.Errorf("load keycloak-admin: %w", err)
@@ -57,7 +57,7 @@ func (c *LicenceReportCounts) keycloak(ctx context.Context) (*authz.KeycloakAdmi
 // where people sign up to the realm themselves, the number of its members:
 // an account somebody made on the registration page is in no group of the
 // tenant, has nothing of the platform's, and is not a user of it.
-func (c *LicenceReportCounts) TenantUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (int, error) {
+func (c *UsageStatisticsCounts) TenantUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (int, error) {
 	kc, err := c.keycloak(ctx)
 	if err != nil {
 		return 0, err
@@ -76,7 +76,7 @@ func (c *LicenceReportCounts) TenantUsers(ctx context.Context, tenant *gentianov
 // or of an addon's: the identity reconciler makes a group for each addon an
 // app activates, under the name it would have as an app. A group that does
 // not exist yet has nobody in it.
-func (c *LicenceReportCounts) AppUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (int, error) {
+func (c *UsageStatisticsCounts) AppUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (int, error) {
 	kc, err := c.keycloak(ctx)
 	if err != nil {
 		return 0, err

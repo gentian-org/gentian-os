@@ -246,7 +246,7 @@ type ComponentProfileSpec struct {
 
 	// DefaultWhereStoreOffered means every tenant except the platform tenant
 	// gets a Component of this profile for as long as the cluster offers an
-	// App Store: licence reporting is on and the Cluster claim names a store
+	// App Store: usage statistics are on and the Cluster claim names a store
 	// (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
 	// creates its own.
 	//

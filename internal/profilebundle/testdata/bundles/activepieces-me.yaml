@@ -174,7 +174,7 @@ spec:
   requires:
     services:
       identity:
-      # Activepieces' own single sign-on needs a licence key and is not used.
+      # Activepieces' own single sign-on needs a license key and is not used.
       # Its people are signed in by the platform's sidecar, with the handler
       # in assets/sign-in-handler.js. See customizations/sign-in-sidecar.yaml
       # for the review, and for the question about it that is open.
@@ -282,7 +282,7 @@ spec:
     repackage:
       chartOwnership: patched
     patch:
-      allowed: false      # enterprise features are licence-gated; never patch to unlock
+      allowed: false      # enterprise features are license-gated; never patch to unlock
       seriesPath: patches/series
       requiresApproval: platform-team
     fork:
@@ -407,7 +407,7 @@ spec:
     effect: none
     notes: >-
       Activepieces runs Community Edition here — no AP_EDITION, no AP_LICENSE_KEY.
-      Nothing in these patches touches a licence check or a switch of the platform:
+      Nothing in these patches touches a license check or a switch of the platform:
       nginx serves the app and one script, and the entrypoint starts it. The startup
       license patch and the placeholder AP_LICENSE_KEY were removed in c5b0d4f, which
       also added the absolute prohibition to docs/app-profile-guide.md. The job that
@@ -445,7 +445,7 @@ spec:
   rungJustification:
     L0: >-
       Activepieces' community edition has no setting that takes a person from an
-      identity provider or from a proxy. Its single sign-on is behind a licence key.
+      identity provider or from a proxy. Its single sign-on is behind a license key.
     L1: >-
       The branding drop-in is the only one, and it carries static files.
 
@@ -455,7 +455,7 @@ spec:
     reason: >-
       Single sign-on is what upstream sells. A sign-in that goes around it is not
       something to offer them; the tenant that wants Activepieces' own single sign-on
-      supplies a licence key and the profile then declares identity.oidc.
+      supplies a license key and the profile then declares identity.oidc.
 
   artifacts:
     - repo: gentian-org/gentian-apps
@@ -505,5 +505,5 @@ spec:
       Activepieces' own interface for it, for who holds the platform's App Admin
       role. That is one person, one
       project — not shared projects, project roles or any switch — but it is more than the
-      edition's own interface gives, and whether it is within the licence is a
+      edition's own interface gives, and whether it is within the license is a
       judgement this record does not make.

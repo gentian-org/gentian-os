@@ -603,9 +603,9 @@ No app in the catalogue uses this today. Which ones could:
 | App | Support | Setting |
 | --- | --- | --- |
 | Open WebUI 0.10 | Yes | `WEBUI_AUTH_TRUSTED_EMAIL_HEADER`, and optionally headers for name, groups and role |
-| OpenProject 16 | A header with a shared secret exists (`OPENPROJECT_AUTH__SOURCE__SSO`). The vendor documents it under a paid feature; the code path itself shows no licence check. Not verified which holds | |
+| OpenProject 16 | A header with a shared secret exists (`OPENPROJECT_AUTH__SOURCE__SSO`). The vendor documents it under a paid feature; the code path itself shows no license check. Not verified which holds | |
 | XWiki | Through an extension for header authentication. Seen in search results only, not verified | |
-| LiteLLM console | Only with the vendor's paid licence | |
+| LiteLLM console | Only with the vendor's paid license | |
 | Odoo 19, Mathesar, Docmost, Activepieces | None found | |
 
 **What the person experiences**
@@ -893,7 +893,7 @@ in.
 
   | App | SCIM |
   | --- | --- |
-  | Open WebUI 0.10 | Yes (`ENABLE_SCIM`, `SCIM_TOKEN`); the vendor states no licence requirement |
+  | Open WebUI 0.10 | Yes (`ENABLE_SCIM`, `SCIM_TOKEN`); the vendor states no license requirement |
   | OpenProject 16.2 and later | Yes, in the top paid plan only |
   | Activepieces, Docmost, LiteLLM | Paid editions only |
   | Nextcloud | No server found. Its `scim_client` app goes the other way |
@@ -929,7 +929,7 @@ in.
 **Recommendation.**
 
 1. If the app has OIDC in the installed edition, use it. If single sign-on
-   can be had by a licence the tenant is willing to hold, that is a normal
+   can be had by a license the tenant is willing to hold, that is a normal
    and clean answer.
 2. Otherwise option a, with accounts created by the platform at grant time
    through the app's interface, and removed when the grant is withdrawn.

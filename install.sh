@@ -212,12 +212,12 @@ Other options:
                         Console's service and the API-extension grant it needs
                         -- out of the scaffold. Everything of Gentian OS stays:
                         export, import, purge and the bundle need no extension
-  --no-licence-report   turn the licence report off. By default the cluster
+  --no-usage-statistics   turn the usage statistics report off. By default the cluster
                         tells the report address once a day what it runs:
                         tenants, counts of accounts, and the apps installed
                         through the App Store. No personal data. Off, nothing
                         is sent and the App Store is not offered. The same as
-                        GENTIAN_NO_LICENCE_REPORT=1 in install.env, which is
+                        GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
                         where to put it so a later run does not turn it back on
   --no-cluster-infra    do not issue the kernel wildcard certificate (C-03).
                         That is all it leaves out: cert-manager, CNPG and
@@ -299,7 +299,7 @@ parse_driver_args() {
                 GENTIAN_RECOVER_FROM="$1" ;;
             --rotate-break-glass-key) GENTIAN_ROTATE_BREAK_GLASS="rotate" ;;
             --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
-            --no-licence-report) export GENTIAN_NO_LICENCE_REPORT="1" ;;
+            --no-usage-statistics) export GENTIAN_NO_USAGE_STATISTICS="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1"; GENTIAN_PURGE_CLUSTER_INFRA=1 ;;
             --config-file)

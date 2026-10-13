@@ -1166,7 +1166,7 @@ gentian-os/
 │   ├── signing/director              #   the director's commit-signing key
 │   ├── backup/                       #   recipients, destination, identity
 │   ├── llm, llm-providers            #   model gateway and its upstream keys
-│   ├── licence-report
+│   ├── usage-statistics
 │   └── argocd/github-webhook
 │
 └── tenants/

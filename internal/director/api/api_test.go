@@ -364,7 +364,7 @@ func TestThePlatformAdminReachesOnlyTenantsThatAreOperated(t *testing.T) {
 
 // Installing asks one question, of the person: may they install apps in this
 // tenant. Nothing is asked about the app, the catalogue it comes from or the
-// tenant's right to it -- the platform does no licence gating. (An install
+// tenant's right to it -- the platform does no license gating. (An install
 // for everyone asks a second, about granting: install_for_everyone_test.go.)
 func TestInstallAsksOnlyWhetherThePersonMayInstallInTheTenant(t *testing.T) {
 	h := start(t)

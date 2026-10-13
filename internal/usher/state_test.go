@@ -95,7 +95,7 @@ func TestEachReadAsksItsRelationOnItsObject(t *testing.T) {
 		{"/v1/clusters/demo/backup-schedules", "can_audit", "cluster:demo", "/v1/backup-schedules"},
 		{"/v1/clusters/demo/platform-security", "can_audit", "cluster:demo", "/v1/platform-security"},
 		{"/v1/clusters/demo/customizations", "can_audit", "cluster:demo", "/v1/customizations"},
-		{"/v1/clusters/demo/licence-report", "can_audit", "cluster:demo", "/v1/licence-report"},
+		{"/v1/clusters/demo/usage-statistics", "can_audit", "cluster:demo", "/v1/usage-statistics"},
 		{"/v1/clusters/demo/catalogue/residue", "can_audit", "cluster:demo", "/v1/catalogue/residue"},
 	} {
 		t.Run(c.path, func(t *testing.T) {
@@ -266,10 +266,10 @@ func TestTheUsherHasNoCommandAndNoBundle(t *testing.T) {
 	}
 }
 
-// The last licence report is the operator's record, passed through as it
+// The last usage statistics report is the operator's record, passed through as it
 // came: the body exactly as it was sent, or the plain statement that this
 // cluster does not report.
-func TestTheLicenceReportIsTheOperatorsRecord(t *testing.T) {
+func TestTheUsageStatisticsIsTheOperatorsRecord(t *testing.T) {
 	for _, record := range []string{
 		`{"enabled":false}`,
 		`{"enabled":true,"url":"https://reports.example/v1","attempt":{"at":"2026-01-02T03:04:05Z","outcome":"accepted","httpStatus":202},` +
@@ -277,7 +277,7 @@ func TestTheLicenceReportIsTheOperatorsRecord(t *testing.T) {
 	} {
 		op := &fakeOperator{status: http.StatusOK, body: record}
 		s, _ := stateServer(op, "user:aud can_audit cluster:demo")
-		req := httptest.NewRequest(http.MethodGet, "/v1/clusters/demo/licence-report", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/clusters/demo/usage-statistics", nil)
 		req.Header.Set("Authorization", "Bearer aud")
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, req)

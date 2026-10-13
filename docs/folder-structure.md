@@ -69,7 +69,7 @@ Implementation, split by concern rather than by kind:
 | `customization/` | Generic customization-ladder ordering and policy (L0–L6). App-neutral by rule — see [app-customization.md](app-customization.md). |
 | `backup/` | What a tenant is made of, and capturing it. |
 | `branding/`, `locales/` | The cluster's brand as pages read it; the platform's language set. |
-| `resourceplan/`, `usage/`, `licencereport/` | Resource plans, usage records, and the licence report. |
+| `resourceplan/`, `usage/`, `usagestatistics/` | Resource plans, usage records, and the usage statistics report. |
 | `modelgateway/` | The model gateway as the operator administers it: per-app keys and the tenant's team. |
 | `kernel/secrets/` | OpenBao KV client, HKDF-SHA256 derivation, write-once seeding. |
 | `kernel/netpolicy/`, `kernel/kernelnet/` | NetworkPolicy construction for tenant and kernel namespaces. |
@@ -86,7 +86,7 @@ Tests live beside the code. `internal/controller` runs under **envtest** and is
 excluded from `-race` (see `Makefile`/CI).
 
 ### `hack/`
-Licence-header templates used by `controller-gen` and `golangci-lint`
+License-header templates used by `controller-gen` and `golangci-lint`
 (goheader).
 
 ---

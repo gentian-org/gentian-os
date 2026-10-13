@@ -697,7 +697,7 @@ spec:
                 description: |-
                   DefaultWhereStoreOffered means every tenant except the platform tenant
                   gets a Component of this profile for as long as the cluster offers an
-                  App Store: licence reporting is on and the Cluster claim names a store
+                  App Store: usage statistics are on and the Cluster claim names a store
                   (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
                   creates its own.
 
@@ -2310,7 +2310,7 @@ spec:
                             description: |-
                               StoreURLKey receives the base address of the App Store API this cluster
                               names (the Cluster claim's spec.catalogue.storeUrl), and the empty
-                              string while the cluster offers no App Store: none is named, or licence
+                              string while the cluster offers no App Store: none is named, or license
                               reporting is off.
 
                               Like the URL keys above it is more than a fact. A store is outside the

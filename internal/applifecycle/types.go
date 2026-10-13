@@ -15,7 +15,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/gentian-org/gentian-os/internal/licencereport"
+	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
 // Options configures the lifecycle service.
@@ -26,9 +26,9 @@ type Options struct {
 	// metrics.k8s.io. Off in a cluster without metrics-server, where the
 	// resources API still reports the ceiling and what is committed under it.
 	MetricsEnabled bool
-	// LicenceReport is whether this cluster reports what it runs, and to
+	// UsageStatistics is whether this cluster reports what it runs, and to
 	// where: what the read of the last report answers from.
-	LicenceReport licencereport.Settings
+	UsageStatistics usagestatistics.Settings
 	// Vault is where apps' credentials are stored: what a purge deletes them
 	// from and the retained-data read lists. Nil when the operator has no
 	// vault configured; a purge then fails rather than claim the credentials

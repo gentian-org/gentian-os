@@ -19,7 +19,7 @@ trusted with. The format of every request and answer is in
 |---|---|
 | [store-api.openapi.yaml](../plans/artefacts/store-api.openapi.yaml) | The store API, machine-readable. **Normative**: where this document or the next differs from it, the file is right |
 | [store-api.md](../plans/artefacts/store-api.md) | The same in prose, field by field, with examples. It can be handed to whoever builds a store |
-| [licence-report.openapi.yaml](../plans/artefacts/licence-report.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
+| [usage-statistics.openapi.yaml](../plans/artefacts/usage-statistics.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
 
 This specification and the three format files in `plans/artefacts/` are under
 MPL-2.0, like the rest of the repository; see
@@ -43,7 +43,7 @@ decide for a tenant.
 
 ## 2. No entitlements
 
-The cluster does no licence gating. There is no statement by which a store
+The cluster does no license gating. There is no statement by which a store
 tells a cluster that a tenant may have an app, no key of a store's pinned on
 a cluster, and no relation in the authorization model for a tenant's right to
 a catalogue entry.
@@ -333,7 +333,7 @@ their tenant.
 | `GET /v1/meta` | open | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on |
 | `GET /v1/categories` | open | The categories apps are filed under |
 | `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price |
-| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, licence |
+| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, license |
 | `GET /v1/apps/{catalogue}/{app}/reviews` | open | Reviews — rating, text, the author's name as the store shows it, date — and their summary |
 | `GET /v1/apps/{catalogue}/{app}/reports` | open | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
 | `GET /v1/tenant` | `store.read` | Whether the store serves the tenant in the token; if not, the reason; and notices to show (§6.2) |
@@ -399,20 +399,20 @@ artefact.
 
 A platform UI of its own, component `app-store`, installed per tenant. Its
 tile is shown only to people who may install apps in that tenant. It is
-absent on a cluster whose licence report is off (§6.2) and on one that names
+absent on a cluster whose usage statistics report is off (§6.2) and on one that names
 no store.
 
 **Where it is, and when.** The operator chart ships the component profile
 `app-store`, and the operator places a Component of it on every tenant
 except the platform tenant, where nobody installs apps, for as long as two
-things hold: licence reporting is on, and the Cluster claim names a store
+things hold: usage statistics are on, and the Cluster claim names a store
 (`spec.catalogue.storeUrl`, an https address). When either stops holding the
 Component is removed again — the workload only; the app owns no data — and
 it is placed again when both hold. The operator watches the claim, so a
 change there takes effect when Argo CD has applied it; the reporting setting
 is the operator's own and changes with its rollout. The usher's answer
 (`appStore` beside the tiles) is the same verdict, written by the operator,
-and gives the reason when there is none: `licence-report-disabled`,
+and gives the reason when there is none: `usage-statistics-disabled`,
 `no-store-configured` or `store-address-is-own-host`.
 
 It answers at `store.<the tenant's base domain>`, behind the tenant's
@@ -503,9 +503,9 @@ yields a token valid at the store and nowhere on the cluster, and
 establishes no session with the platform. The cluster's own sign-in stays
 the edge's alone.
 
-### 6.2 Standing, and the dependence on licence reporting
+### 6.2 Standing, and the dependence on usage statistics
 
-The store depends on the cluster's licence report
+The store depends on the cluster's usage statistics report
 ([operations.md §6.2](operations.md)). A cluster that does not report has no
 App Store app: the usher says so and no tile is shown. That is a condition
 on the app existing on a cluster, and it is unchanged by the catalogue being
@@ -522,7 +522,7 @@ URL in the token against the tenant URLs in the reports it has received.
 |---|---|
 | `served: true` | proceeds, and shows every notice it is given |
 | `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers no acquiring. The catalogue stays readable |
-| a notice `free-licence-limit` — the cluster has no subscription | shows it: the text states the terms in the store's own words |
+| a notice `free-license-limit` — the cluster has no subscription | shows it: the text states the terms in the store's own words |
 
 **Nothing on the cluster is blocked by any of this.** A refusal means the
 store will not let this tenant acquire. Installed apps keep running, and an app
@@ -775,7 +775,7 @@ property of the design rather than of this contract:
 * **One cluster is one audience for what it has pulled.** Charts and images
   a tenant pulled with its credential can be used by other tenants of the
   same cluster (§2). The repository controls the first pull into a cluster.
-  What runs on it afterwards is stated by the licence report, not enforced
+  What runs on it afterwards is stated by the usage statistics report, not enforced
   by the credential.
 * **The repository decides what a tag is.** The digest pins the profile, not
   the chart or image the profile names by tag (§4). Whoever controls the
@@ -1097,11 +1097,11 @@ the *repository*, for pulls, with the credential the tenant holds.
 
 * **No call from the store into the cluster.** No webhook, no push, no
   callback. An operation that needed one would not be part of this contract.
-* **No signed statement.** No entitlement, no revocation, no licence file,
+* **No signed statement.** No entitlement, no revocation, no license file,
   no key of a store's on a cluster.
 * **No cluster state sent to the store.** What is installed, who is in the
   tenant, the plan and its use are not sent. A store learns which apps and
-  pinned add-ons a tenant runs from the licence report, which is a separate, open, signed
+  pinned add-ons a tenant runs from the usage statistics report, which is a separate, open, signed
   statement the cluster makes on its own schedule.
 * **No uninstall notice.** The store is not told when an app is removed.
 * **No store content executed.** No HTML, script, style sheet or frame.

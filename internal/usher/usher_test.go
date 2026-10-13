@@ -235,7 +235,7 @@ func TestTheAppStoreIsWithheldWhereTheClusterOffersNone(t *testing.T) {
 	store := &fakeStore{held: map[string]bool{"user:ada can_enter tenant:acme": true}}
 	offered := &tilecatalogue.AppStore{Offered: true}
 	noStore := &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoStore}
-	noReport := &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoLicenceReport}
+	noReport := &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoUsageStatistics}
 	for name, c := range map[string]struct {
 		reporting bool
 		offer     *tilecatalogue.AppStore
@@ -245,13 +245,13 @@ func TestTheAppStoreIsWithheldWhereTheClusterOffersNone(t *testing.T) {
 		"reporting, no store named":          {true, noStore, map[string]any{"available": false, "reason": "no-store-configured"}},
 		"reporting, the store is this host":  {true, &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonOwnHost}, map[string]any{"available": false, "reason": "store-address-is-own-host"}},
 		"reporting, the operator said none":  {true, nil, map[string]any{"available": false, "reason": "no-store-configured"}},
-		"the operator says reporting is off": {true, noReport, map[string]any{"available": false, "reason": "licence-report-disabled"}},
-		"not reporting, a store named":       {false, offered, map[string]any{"available": false, "reason": "licence-report-disabled"}},
-		"not reporting, no store named":      {false, noStore, map[string]any{"available": false, "reason": "licence-report-disabled"}},
+		"the operator says reporting is off": {true, noReport, map[string]any{"available": false, "reason": "usage-statistics-disabled"}},
+		"not reporting, a store named":       {false, offered, map[string]any{"available": false, "reason": "usage-statistics-disabled"}},
+		"not reporting, no store named":      {false, noStore, map[string]any{"available": false, "reason": "usage-statistics-disabled"}},
 	} {
 		s := New(Config{
 			Authn: fakeAuthn{"ada": "ada"}, Authz: store, TilesPath: catalogueWith(t, c.offer),
-			LicenceReporting: c.reporting,
+			UsageStatisticsEnabled: c.reporting,
 		})
 		code, body := ask(t, s, "/v1/tenants/acme/tiles", "ada")
 		if code != http.StatusOK {
@@ -275,7 +275,7 @@ func TestTheAppStoreTileIsForThePeopleWhoMayInstall(t *testing.T) {
 	}}
 	s := New(Config{
 		Authn: fakeAuthn{"ada": "ada", "mel": "mel"}, Authz: store,
-		TilesPath: catalogueWith(t, &tilecatalogue.AppStore{Offered: true}), LicenceReporting: true,
+		TilesPath: catalogueWith(t, &tilecatalogue.AppStore{Offered: true}), UsageStatisticsEnabled: true,
 	})
 	for token, want := range map[string]string{"ada": "[acme/app-store/web]", "mel": "[acme/notes/web]"} {
 		code, body := ask(t, s, "/v1/tenants/acme/tiles", token)

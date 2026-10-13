@@ -41,7 +41,7 @@ import (
 // CatalogueSource is one repository of profile bundles.
 //
 // A source the claim names is offered to every tenant of the cluster. It is
-// what the cluster offers, not a licence: an install is asked of the person
+// what the cluster offers, not a license: an install is asked of the person
 // (can_install_app), and whether the app then arrives is decided where its
 // artefacts are pulled.
 type CatalogueSource struct {

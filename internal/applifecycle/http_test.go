@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/gentian-org/gentian-os/internal/licencereport"
+	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
 const (
@@ -419,7 +419,7 @@ func TestOnlyAGetCanBeRegisteredAsARead(t *testing.T) {
 	g.Read("POST /v1/tenants/{tenant}/actions/backup", func(http.ResponseWriter, *http.Request) {})
 }
 
-// The last licence report is read under the usher's identity, and a cluster
+// The last usage statistics report is read under the usher's identity, and a cluster
 // that does not report says exactly that.
 func TestTheReaderIsToldWhetherTheClusterReports(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -431,7 +431,7 @@ func TestTheReaderIsToldWhetherTheClusterReports(t *testing.T) {
 	h := &HTTPServer{Auth: auth, Service: &Service{client: c, opts: Options{OperatorNamespace: "kernel-control"}}}
 
 	ask := func() (int, string) {
-		r := httptest.NewRequest("GET", "/v1/licence-report", nil)
+		r := httptest.NewRequest("GET", "/v1/usage-statistics", nil)
 		r.Header.Set("Authorization", "Bearer usher")
 		w := httptest.NewRecorder()
 		h.routes().ServeHTTP(w, r)
@@ -441,11 +441,11 @@ func TestTheReaderIsToldWhetherTheClusterReports(t *testing.T) {
 		t.Fatalf("reporting off: %d %s", code, body)
 	}
 
-	h.Service.opts.LicenceReport = licencereport.Settings{Enabled: true, URL: "https://reports.example/v1"}
+	h.Service.opts.UsageStatistics = usagestatistics.Settings{Enabled: true, URL: "https://reports.example/v1"}
 	if code, body := ask(); code != http.StatusOK || body != `{"enabled":true,"url":"https://reports.example/v1"}` {
 		t.Fatalf("reporting on, nothing sent yet: %d %s", code, body)
 	}
-	if got := answer(h.routes(), "GET", "/v1/licence-report", ""); got != http.StatusUnauthorized {
+	if got := answer(h.routes(), "GET", "/v1/usage-statistics", ""); got != http.StatusUnauthorized {
 		t.Fatalf("no token: %d", got)
 	}
 }

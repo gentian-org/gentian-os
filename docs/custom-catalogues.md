@@ -891,7 +891,7 @@ directory of the deployments repository, which is held to the same checks.
   Rules stated on an entry are ignored and make it bind nothing. The platform's set is empty
   today, so a catalogue cannot obtain any access to the Kubernetes API for an app
   ([security.md §3.4](design/security.md)).
-- **Nothing here is a licence check.** Whether an app arrives is decided where its chart and images
+- **Nothing here is a license check.** Whether an app arrives is decided where its chart and images
   are pulled.
 
 An app or an add-on named without a build — `{"profile": …}` with no coordinate and digest — is

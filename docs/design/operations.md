@@ -139,7 +139,7 @@ and logged; the others are unaffected. One tenant's database being unreachable
 never stops the pass, because a single broken tenant must not become a
 cluster-wide gap in the billing record.
 
-### 6.2 Licence report
+### 6.2 Usage statistics report
 
 Gentian OS is free under a usage limit that is enforced legally, not
 technically. So a cluster says, in the open, what it runs, and nothing on the
@@ -152,7 +152,7 @@ that does not arrive is retried with a doubling wait, from one minute up to
 one hour. No failure stops anything else.
 
 **Where.** An HTTP `POST` to one `https` address fixed at install time
-(`licenceReport.url` in the operator chart). A redirect is not followed.
+(`usageStatistics.url` in the operator chart). A redirect is not followed.
 
 **What is sent.**
 
@@ -200,7 +200,7 @@ display names or administrators' addresses, and nothing about apps or add-ons
 that were not installed at a stated build.
 
 **Signing.** Each cluster has an Ed25519 key pair. The installer writes 32
-random bytes to the vault (`gentian-os/kernel/licence-report`, `signing_seed`),
+random bytes to the vault (`gentian-os/kernel/usage-statistics`, `signing_seed`),
 an ExternalSecret hands them to the operator, and the operator derives the pair.
 The exact request body is signed: `X-Gentian-Signature: ed25519=<base64>`, with
 `X-Gentian-Key-Id` naming the key (the first 16 hex characters of the SHA-256 of
@@ -208,12 +208,12 @@ the public key, which is in the body). The seed is never sent or logged. A
 cluster without the seed sends nothing and records why.
 
 **Seeing it.** The last report exactly as sent, and what became of the last
-attempt, are in the ConfigMap `gentian-licence-report` in the control
+attempt, are in the ConfigMap `gentian-usage-statistics` in the control
 namespace. The usher serves the same to whoever holds `can_audit` on the
 cluster:
 
 ```
-GET /v1/clusters/{cluster}/licence-report
+GET /v1/clusters/{cluster}/usage-statistics
 {"enabled": true, "url": "https://…",
  "attempt": {"at": "…", "outcome": "accepted", "httpStatus": 202, "nextAt": "…"},
  "report":  {"sequence": 12, "body": "<the request body, byte for byte>",
@@ -225,8 +225,8 @@ GET /v1/clusters/{cluster}/licence-report
 `signing-key-absent`, `signing-key-invalid` or `inventory-unavailable`) or
 `sending`. A cluster that does not report answers `{"enabled": false}`.
 
-**Turning it off.** `./install.sh --no-licence-report`, or
-`GENTIAN_NO_LICENCE_REPORT=1` in `install.env`; a later run that says neither
+**Turning it off.** `./install.sh --no-usage-statistics`, or
+`GENTIAN_NO_USAGE_STATISTICS=1` in `install.env`; a later run that says neither
 leaves it off. The operator chart's own default is off with no address, so a
 cluster installed without the installer reports nowhere. Off, nothing is sent,
 ever, and no signing key is created.
@@ -235,7 +235,7 @@ ever, and no signing key is created.
 serves a tenant only when the reports it has received list that tenant's
 address ([store-contract.md](store-contract.md) §6.2), so the usher's tiles
 answer (`GET /v1/tenants/{tenant}/tiles`) carries
-`"appStore": {"available": false, "reason": "licence-report-disabled"}`, the
+`"appStore": {"available": false, "reason": "usage-statistics-disabled"}`, the
 operator places the App Store app on no tenant and removes it where it was,
 and no App Store tile is shown; the installer also leaves
 `catalogue.storeUrl` out of a new Cluster claim. (A cluster that reports and
@@ -244,7 +244,7 @@ installed by command.
 
 **For whoever receives it.** The request above is also written down as a
 machine-readable format,
-[licence-report.openapi.yaml](../plans/artefacts/licence-report.openapi.yaml).
+[usage-statistics.openapi.yaml](../plans/artefacts/usage-statistics.openapi.yaml).
 It describes what the operator sends and changes nothing about it.
 
 ## 7. Image Updates via ArgoCD Image Updater

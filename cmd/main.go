@@ -43,10 +43,10 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
-	"github.com/gentian-org/gentian-os/internal/licencereport"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/usage"
+	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
 
@@ -273,8 +273,8 @@ func main() {
 		// Whether the cluster offers an App Store: it reports what it runs
 		// and its claim names a store. The first half is this process's own
 		// setting; the claim is read, and watched, for the second.
-		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
-		WatchClusterClaim: true,
+		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
+		WatchClusterClaim:      true,
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
@@ -372,8 +372,8 @@ func main() {
 		Seeder:            buildSeeder(),
 		Recorder:          mgr.GetEventRecorderFor("component"), //nolint:staticcheck
 		// What a component that asked where the App Store is gets told.
-		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
-		WatchClusterClaim: true,
+		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
+		WatchClusterClaim:      true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
@@ -553,8 +553,8 @@ func main() {
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:  tenancyMode,
 		// Whether the cluster offers an App Store, written beside the tiles.
-		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
-		WatchClusterClaim: true,
+		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
+		WatchClusterClaim:      true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TileProjection")
 		os.Exit(1)
@@ -596,26 +596,26 @@ func main() {
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 
-	// The licence report: what this cluster runs, told to the receiving
+	// The usage statistics report: what this cluster runs, told to the receiving
 	// endpoint once a day, signed, and recorded where it can be read. Added
 	// whether or not reporting is on, so that the log of every operator says
 	// which it is; off, it sends nothing and starts no timer.
-	if err := mgr.Add(&licencereport.Reporter{
+	if err := mgr.Add(&usagestatistics.Reporter{
 		Client:    mgr.GetClient(),
 		Reader:    mgr.GetAPIReader(),
 		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
-		Settings:  licencereport.SettingsFromEnv(),
-		Identity: licencereport.Identity{
+		Settings:  usagestatistics.SettingsFromEnv(),
+		Identity: usagestatistics.Identity{
 			ClusterID:    os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 			TenancyMode:  tenancyMode,
 		},
-		Counter: &controller.LicenceReportCounts{Client: mgr.GetClient()},
-		Key: func() (*licencereport.Key, error) {
-			return licencereport.KeyFromFile(envOrDefault("LICENCE_REPORT_KEY_FILE", "/etc/gentian/licence-report/signing_seed"))
+		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient()},
+		Key: func() (*usagestatistics.Key, error) {
+			return usagestatistics.KeyFromFile(envOrDefault("USAGE_STATISTICS_KEY_FILE", "/etc/gentian/usage-statistics/signing_seed"))
 		},
 	}); err != nil {
-		setupLog.Error(err, "unable to add the licence reporter to manager")
+		setupLog.Error(err, "unable to add the usage statistics reporter to manager")
 		os.Exit(1)
 	}
 

@@ -68,9 +68,9 @@ type Config struct {
 	// the reads of live state unregistered: an usher with no operator to ask
 	// has nothing to answer them with.
 	Lifecycle Lifecycle
-	// LicenceReporting is whether this cluster reports what it runs. The App
+	// UsageStatisticsEnabled is whether this cluster reports what it runs. The App
 	// Store is offered only where it does, and the tiles answer says which.
-	LicenceReporting bool
+	UsageStatisticsEnabled bool
 }
 
 // Lifecycle is the operator's listener, as far as the usher may use it: two
@@ -251,16 +251,16 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore(catalogue.AppStore)})
 }
 
-// appStoreReasonNoLicenceReport is why a cluster that does not report offers
+// appStoreReasonNoUsageStatistics is why a cluster that does not report offers
 // no App Store.
-const appStoreReasonNoLicenceReport = tilecatalogue.AppStoreReasonNoLicenceReport
+const appStoreReasonNoUsageStatistics = tilecatalogue.AppStoreReasonNoUsageStatistics
 
 type appStoreOut struct {
 	// Available is whether a desktop may offer the App Store at all.
 	Available bool `json:"available"`
 	// Reason says why not, for a console to put into words: the App Store
-	// needs licence reporting, which is turned off on this cluster
-	// (licence-report-disabled), the cluster names no store
+	// needs usage statistics, which are turned off on this cluster
+	// (usage-statistics-disabled), the cluster names no store
 	// (no-store-configured), or the address it names is the App Store app's
 	// own host on this cluster (store-address-is-own-host).
 	Reason string `json:"reason,omitempty"`
@@ -270,7 +270,7 @@ type appStoreOut struct {
 //
 // It is not a tile: whether a person may install is asked when they do. This
 // is the one thing in front of that. An app installed through the store is
-// what the licence report lists, so a cluster that sends no report does not
+// what the usage statistics report lists, so a cluster that sends no report does not
 // offer the store; and a cluster whose claim names no store has none to
 // offer. Both are said here instead of leaving an App Store app to show a
 // store that is merely absent.
@@ -281,8 +281,8 @@ type appStoreOut struct {
 // front of it, so that an usher told reporting is off says so whatever it
 // finds in the file.
 func (s *Server) appStore(offer *tilecatalogue.AppStore) appStoreOut {
-	if !s.cfg.LicenceReporting {
-		return appStoreOut{Available: false, Reason: appStoreReasonNoLicenceReport}
+	if !s.cfg.UsageStatisticsEnabled {
+		return appStoreOut{Available: false, Reason: appStoreReasonNoUsageStatistics}
 	}
 	if offer == nil {
 		return appStoreOut{Available: false, Reason: tilecatalogue.AppStoreReasonNoStore}

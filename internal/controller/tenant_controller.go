@@ -248,10 +248,10 @@ type TenantReconciler struct {
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
 	Scheme         *runtime.Scheme
-	// LicenceReporting is whether this cluster reports what it runs: half of
+	// UsageStatisticsEnabled is whether this cluster reports what it runs: half of
 	// whether it offers an App Store, which decides whether a tenant gets the
 	// components that declare defaultWhereStoreOffered.
-	LicenceReporting bool
+	UsageStatisticsEnabled bool
 	// WatchClusterClaim re-runs every tenant when the Cluster claim changes,
 	// so that a store named or withdrawn there places or removes those
 	// components at once. Off where the claim's kind is not installed.

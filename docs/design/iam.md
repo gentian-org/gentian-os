@@ -130,7 +130,7 @@ What sign-up changes, and only in that tenant's realm:
   the tenant's groups, so it holds no relation on the platform: the bouncer
   refuses it the desktop and every app, the director and the usher refuse
   every tenant route, and a grant of an app to every member does not reach
-  it. The licence report counts the members of such a tenant, not its
+  it. The usage statistics report counts the members of such a tenant, not its
   realm's accounts. Making such an account a member is an administrator
   putting it in a group, as for anybody.
 
