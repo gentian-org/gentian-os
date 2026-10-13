@@ -168,6 +168,53 @@ computed from the master password and the cluster's salt, and with
 - A tenant admin: `kubectl gentian tenants activate-admin <tenant>`, by
   somebody who may configure the cluster.
 
+**The invitation of a new tenant's admin.** A new tenant takes minutes to
+exist, and its admin account cannot be activated before it does. Whoever
+creates a tenant in the admin console and gives the admin's recovery address
+does not have to wait: the console hands the address to the registrar, and the
+registrar sends the invitation when the tenant is ready.
+
+- The request is
+  `POST /v1/clusters/{c}/tenants/{t}/actions/request-admin-invitation` with
+  the address. It needs what activating a tenant admin needs — the right to
+  configure the cluster — and the tenant does not have to exist yet. The
+  registrar answers at once.
+- The registrar keeps the request in its own database: the tenant's name, the
+  address, who asked, what allowed them to, and when. This is personal data,
+  and it is the only place the address is kept until the invitation is sent:
+  it is not written to git, to the Tenant, to a ConfigMap or to a log.
+- There is one request per tenant. A second one replaces the first.
+- Every 30 seconds the registrar tries the requests it keeps. As soon as the
+  tenant exists, the registrar holds the credential for its realm and the
+  admin account is there, it does what `activate-admin` does with an address:
+  the address becomes the account's recovery address and Keycloak mails the
+  activation link to it. Then it deletes the request and records that the
+  invitation was sent.
+- A request waits for 24 hours at most (`REGISTRAR_INVITATION_EXPIRY`). After
+  that it is deleted and recorded as expired, and nothing is mailed. So the
+  address is kept for 24 hours at most.
+- If the realm cannot send mail when the tenant is ready, no link is issued:
+  there is nobody to show it to. The address stays on the account as its
+  recovery address, the request is deleted, and the record says it could not
+  be mailed, with the reason Keycloak gave. The admin is then activated by
+  hand, from the console or the command line.
+- If the account holds a platform role, the registrar refuses as it does for
+  `activate-admin`; the request is deleted and recorded as refused.
+- `GET /v1/clusters/{c}/tenants/{t}/admin-invitation` answers the state of a
+  tenant's request — pending, sent, expired, not mailed, refused or none — and
+  `GET /v1/clusters/{c}/admin-invitations` lists the tenants with a pending
+  one. Neither answers the address. Both need the right to configure the
+  cluster.
+- A request without an address is not accepted: the link would have to be
+  shown to a person, once, and that is what `activate-admin` does.
+- A registrar without a database refuses the request, and the admin is
+  activated by hand once the tenant is ready.
+
+When Keycloak cannot send an activation mail, the registrar passes on what
+Keycloak answered — the HTTP status and its message, on one line, with
+anything that looks like an address or a link removed — and logs it as a
+warning.
+
 ### 1.5 User attributes
 
 | Attribute | Purpose |

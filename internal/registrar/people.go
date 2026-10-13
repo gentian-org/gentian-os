@@ -679,52 +679,94 @@ func (s *Server) activateAdmin(w http.ResponseWriter, r *http.Request, c call) {
 	if r.ContentLength != 0 && !s.decode(w, r, &body) {
 		return
 	}
-	tenant, ok := s.tenantFor(w, r)
-	if !ok {
+	handed, err := s.handOverAdmin(identityContext(r), r.PathValue("t"), body.RecoveryEmail)
+	if err != nil {
+		var unread *tenantUnread
+		var waiting *notReady
+		switch {
+		case errors.As(err, &unread):
+			s.tenantError(w, r, unread.err)
+		case errors.As(err, &waiting):
+			s.fail(w, r, waiting.status, waiting.msg)
+		case isAddressError(err):
+			s.fail(w, r, http.StatusBadRequest, "that is not an address")
+		default:
+			s.identityError(w, r, err)
+		}
 		return
 	}
+	s.recordIdentityAction(r, c, "activate-admin", handed.realm, handed.username)
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":     handed.tenant.Name,
+		"username":   handed.username,
+		"activation": handed.activation,
+	})
+}
+
+// handedOver is a tenant's administrator account and how it was handed over,
+// as far as handOverAdmin got.
+type handedOver struct {
+	tenant     Tenant
+	realm      identity.Realm
+	username   string
+	activation identity.Activation
+}
+
+// tenantUnread is a tenant that could not be read from the cluster: one it
+// does not have, or a cluster that did not answer.
+type tenantUnread struct{ err error }
+
+func (e *tenantUnread) Error() string { return e.err.Error() }
+func (e *tenantUnread) Unwrap() error { return e.err }
+
+// notReady is a tenant whose administrator cannot be handed over yet: what a
+// caller is told, and what a caller who can wait waits for.
+type notReady struct {
+	status int
+	msg    string
+}
+
+func (e *notReady) Error() string { return e.msg }
+
+// handOverAdmin is the activation itself, for the route that is asked while
+// somebody waits and for the invitation that is sent when the tenant is
+// ready: the tenant, the credential for its realm, its administrator account,
+// and then the link.
+func (s *Server) handOverAdmin(ctx context.Context, name, email string) (handedOver, error) {
+	var out handedOver
+	tenant, err := s.cfg.Tenants.Tenant(ctx, name)
+	if err != nil {
+		return out, &tenantUnread{err}
+	}
+	out.tenant = tenant
 	realm, err := s.cfg.Identity.Realm(tenant.Realm)
 	if err != nil {
-		s.fail(w, r, http.StatusServiceUnavailable,
-			"this registrar holds no credential for the realm "+tenant.Realm+" yet: the tenant is still being provisioned")
-		return
+		return out, &notReady{http.StatusServiceUnavailable,
+			"this registrar holds no credential for the realm " + tenant.Realm + " yet: the tenant is still being provisioned"}
 	}
+	out.realm = realm
 	if tenant.AdminLogin == "" {
-		s.fail(w, r, http.StatusServiceUnavailable, "this tenant's login domain cannot be read")
-		return
+		return out, &notReady{http.StatusServiceUnavailable, "this tenant's login domain cannot be read"}
 	}
-	ctx := identityContext(r)
+	out.username = tenant.AdminLogin
 	admin, err := s.cfg.Identity.FindUser(ctx, realm, tenant.AdminLogin)
 	if err != nil {
 		if errors.Is(err, identity.ErrNotFound) {
 			// Named, because "does not exist yet" for an account under the
 			// wrong name is waited for by the caller for as long as it asks.
-			s.fail(w, r, http.StatusConflict, "the administrator account "+tenant.AdminLogin+" does not exist yet: the tenant is still being provisioned")
-			return
+			return out, &notReady{http.StatusConflict,
+				"the administrator account " + tenant.AdminLogin + " does not exist yet: the tenant is still being provisioned"}
 		}
-		s.identityError(w, r, err)
-		return
+		return out, err
 	}
+	out.username = admin.Username
 	client := s.inviteClientID(realm)
 	redirect := s.cfg.InviteRedirectURI
 	if redirect == "" {
 		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
 	}
-	activation, err := s.cfg.Identity.ActivateAccount(ctx, realm, admin.ID, body.RecoveryEmail, tenant.AdminRequiresMFA, client, redirect)
-	if err != nil {
-		if isAddressError(err) {
-			s.fail(w, r, http.StatusBadRequest, "that is not an address")
-			return
-		}
-		s.identityError(w, r, err)
-		return
-	}
-	s.recordIdentityAction(r, c, "activate-admin", realm, admin.Username)
-	s.json(w, http.StatusOK, map[string]any{
-		"tenant":     tenant.Name,
-		"username":   admin.Username,
-		"activation": activation,
-	})
+	out.activation, err = s.cfg.Identity.ActivateAccount(ctx, realm, admin.ID, email, tenant.AdminRequiresMFA, client, redirect)
+	return out, err
 }
 
 // listGroupMembers answers who is in one group.

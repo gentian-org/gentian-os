@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
 
@@ -187,4 +189,157 @@ func TestANilStoreIsSilent(t *testing.T) {
 		t.Fatalf("prune on a nil store: %d, %v", n, err)
 	}
 	store.Close()
+}
+
+// An administrator's invitation waits here for its tenant: one request per
+// tenant, replaced by a second, held by whoever attempts it, and gone with
+// its outcome recorded in its place.
+func TestAnInvitationIsKeptReplacedAndSettled(t *testing.T) {
+	ctx := context.Background()
+	store, err := record.Open(ctx, postgres(t), 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(store.Close)
+	asked := time.Now().UTC().Truncate(time.Second)
+	request := func(address, requestID string) record.Invitation {
+		return record.Invitation{
+			Tenant: "newco", Email: address, Principal: "u-alice", Decision: "can_configure cluster:c1",
+			RequestID: requestID, RequestedAt: asked, ExpiresAt: asked.Add(24 * time.Hour),
+		}
+	}
+
+	if st, err := store.InvitationState(ctx, "newco"); err != nil || st.State != record.InvitationNone {
+		t.Fatalf("before anything was asked: %+v (%v)", st, err)
+	}
+	if err := store.RequestInvitation(ctx, request("owner@example.org", "req-first1")); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if err := store.RequestInvitation(ctx, request("second@example.org", "req-second")); err != nil {
+		t.Fatalf("second request: %v", err)
+	}
+	waiting, err := store.PendingInvitations(ctx)
+	if err != nil || len(waiting) != 1 {
+		t.Fatalf("one request per tenant, got %+v (%v)", waiting, err)
+	}
+	if w := waiting[0]; w.Email != "second@example.org" || w.RequestID != "req-second" || w.Principal != "u-alice" ||
+		!w.RequestedAt.Equal(asked) || !w.ExpiresAt.Equal(asked.Add(24*time.Hour)) {
+		t.Fatalf("kept as %+v", w)
+	}
+	if st, err := store.InvitationState(ctx, "newco"); err != nil || st.State != record.InvitationPending ||
+		!st.ExpiresAt.Equal(asked.Add(24*time.Hour)) {
+		t.Fatalf("while it waits: %+v (%v)", st, err)
+	}
+
+	// No outcome leaves it waiting.
+	if err := store.AttemptInvitation(ctx, "newco", func(record.Invitation) *record.Action { return nil }); err != nil {
+		t.Fatalf("attempt: %v", err)
+	}
+	if waiting, _ := store.PendingInvitations(ctx); len(waiting) != 1 {
+		t.Fatalf("an attempt without an outcome removed the request: %+v", waiting)
+	}
+
+	// While one attempt holds it, another does not make the same attempt.
+	held, release, second := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	first := make(chan error, 1)
+	go func() {
+		first <- store.AttemptInvitation(ctx, "newco", func(inv record.Invitation) *record.Action {
+			close(held)
+			<-release
+			return &record.Action{
+				RequestID: inv.RequestID, Action: record.ActionInvitationNotMailed, Realm: "newco", Tenant: inv.Tenant,
+				Target: "admin@newco.example.org", Principal: inv.Principal, Decision: inv.Decision,
+				Detail: "HTTP 500: no relay",
+			}
+		})
+	}()
+	<-held
+	go func() {
+		second <- store.AttemptInvitation(ctx, "newco", func(record.Invitation) *record.Action {
+			t.Error("a request that is held was attempted a second time")
+			return nil
+		})
+	}()
+	if err := <-second; err != nil {
+		t.Fatalf("the second attempt: %v", err)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("the first attempt: %v", err)
+	}
+
+	if waiting, _ := store.PendingInvitations(ctx); len(waiting) != 0 {
+		t.Fatalf("the request outlived its outcome: %+v", waiting)
+	}
+	st, err := store.InvitationState(ctx, "newco")
+	if err != nil || st.State != record.InvitationNotMailed || st.Reason != "HTTP 500: no relay" || st.At.IsZero() {
+		t.Fatalf("after it could not be mailed: %+v (%v)", st, err)
+	}
+	// The record says what was asked and what became of it, and names the
+	// account. The address is in neither row.
+	actions, err := store.ByTenant(ctx, "newco", 10)
+	if err != nil || len(actions) != 3 {
+		t.Fatalf("two requests and an outcome, got %+v (%v)", actions, err)
+	}
+	for _, a := range actions {
+		if strings.Contains(fmt.Sprintf("%+v", a), "@example.org") && a.Target != "admin@newco.example.org" {
+			t.Errorf("the record carries an address: %+v", a)
+		}
+		if strings.Contains(fmt.Sprintf("%+v", a), "owner@") || strings.Contains(fmt.Sprintf("%+v", a), "second@") {
+			t.Errorf("the record carries the recovery address: %+v", a)
+		}
+	}
+
+	// An activation by hand afterwards supersedes it.
+	if err := store.Write(ctx, record.Action{RequestID: "req-manual", Action: record.ActionActivateAdmin,
+		Realm: "newco", Tenant: "newco", Target: "admin@newco.example.org", Principal: "u-alice",
+		Decision: "can_configure cluster:c1", At: time.Now().UTC().Add(time.Minute)}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if st, err := store.InvitationState(ctx, "newco"); err != nil || st.State != record.InvitationNone {
+		t.Fatalf("after an activation by hand: %+v (%v)", st, err)
+	}
+}
+
+// A registrar from before the invitations starts on its old database: the
+// table it already has gains what it lacks, and the new one is made.
+func TestADatabaseFromBeforeTheInvitationsIsBroughtUpToDate(t *testing.T) {
+	ctx := context.Background()
+	dsn := postgres(t)
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE identity_actions (
+		    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+		    request_id  TEXT        NOT NULL,
+		    action      TEXT        NOT NULL,
+		    realm       TEXT        NOT NULL,
+		    tenant      TEXT        NOT NULL,
+		    target      TEXT        NOT NULL,
+		    principal   TEXT        NOT NULL,
+		    decision    TEXT        NOT NULL,
+		    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		INSERT INTO identity_actions (request_id, action, realm, tenant, target, principal, decision)
+		VALUES ('req-old00001', 'invite', 'demo', 'demo', 'tom@example.com', 'u-alice', 'can_manage_users tenant:demo');`); err != nil {
+		t.Fatalf("the old schema: %v", err)
+	}
+
+	store, err := record.Open(ctx, dsn, 0)
+	if err != nil {
+		t.Fatalf("open on the old database: %v", err)
+	}
+	t.Cleanup(store.Close)
+	old, err := store.ByTenant(ctx, "demo", 10)
+	if err != nil || len(old) != 1 || old[0].RequestID != "req-old00001" || old[0].Detail != "" {
+		t.Fatalf("what was recorded before: %+v (%v)", old, err)
+	}
+	if err := store.RequestInvitation(ctx, record.Invitation{Tenant: "newco", Email: "owner@example.org",
+		Principal: "u-alice", Decision: "can_configure cluster:c1", RequestID: "req-new00001",
+		RequestedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatalf("a request on the old database: %v", err)
+	}
 }

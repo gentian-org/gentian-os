@@ -327,6 +327,11 @@ Carried over from before, and still not shown:
 - Opening an app without a second sign-in (M4.6), which changed since it last
   worked.
 
+### Added on 2026-10-13
+
+- The registrar keeping a tenant administrator's invitation until the
+  tenant is ready and mailing it itself (iam.md §1.4).
+
 ## 3. Known defects, open
 
 Defects 1 to 28 are carried from the list as it stood on 2026-10-10.

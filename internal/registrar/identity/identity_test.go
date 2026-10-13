@@ -11,10 +11,12 @@ SPDX-License-Identifier: MPL-2.0
 package identity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,6 +38,8 @@ type fakeKeycloak struct {
 	users  map[string][]userRep
 	// status overrides a path's answer, for the failure cases.
 	status map[string]int
+	// message is what a path overridden by status says went wrong.
+	message map[string]string
 	// clients per realm, for the zone-landing read.
 	clients map[string][]clientRep
 	// mints counts token requests per realm, for the cache test.
@@ -119,7 +123,11 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 	if code, ok := f.status[r.Method+" "+path]; ok {
 		f.mu.Unlock()
 		w.WriteHeader(code)
-		_, _ = w.Write([]byte(`{"errorMessage":"refused by the fake"}`))
+		message := "refused by the fake"
+		if m, ok := f.message[r.Method+" "+path]; ok {
+			message = m
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"errorMessage": message})
 		return
 	}
 	groups := append([]groupRep(nil), f.groups[realm]...)
@@ -758,6 +766,81 @@ func TestActivationFallsBackToTheLinkWhenTheMailFails(t *testing.T) {
 	}
 	if a.Mailed || a.Link == "" || a.Email != "owner@example.org" || a.MailError == "" {
 		t.Fatalf("activation: %+v", a)
+	}
+	// The reason is the realm's own: the status and what it said.
+	if !strings.Contains(a.MailError, "HTTP 500") || !strings.Contains(a.MailError, "refused by the fake") {
+		t.Fatalf("the reason Keycloak gave must be passed on: %q", a.MailError)
+	}
+	if strings.Contains(a.MailError, "abc123") || strings.Contains(a.MailError, "/users/") {
+		t.Fatalf("the reason names the call, which says nothing to its reader: %q", a.MailError)
+	}
+	if puts := f.callsTo(http.MethodPut, "/users/abc123"); len(puts) != 1 || !strings.Contains(puts[0].body, `"email":"owner@example.org"`) {
+		t.Fatalf("the address must still become the recovery address: %+v", puts)
+	}
+}
+
+// What Keycloak says went wrong can name the address it was sending to, and a
+// link. Neither is passed on or logged; the rest of the reason is, on one
+// line and bounded.
+func TestTheReasonAMailFailedCarriesNoAddressAndNoLink(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "admin@demo.k.example", Enabled: true}}
+	f.status["PUT /users/abc123/execute-actions-email"] = http.StatusInternalServerError
+	f.message = map[string]string{"PUT /users/abc123/execute-actions-email": "Failed to send execute actions email:\n 535 Authentication failed for <owner@example.org> via smtp://relay.example.org:587/x?key=secret " +
+		strings.Repeat("and more ", 100)}
+	var logged bytes.Buffer
+	c, err := New(Config{
+		BaseURL:            srv.URL,
+		Source:             StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}},
+		PlatformRoleGroups: roleGroups(platformAdmins),
+		Logger:             slog.New(slog.NewTextHandler(&logged, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := c.Realm("demo")
+
+	a, err := c.ActivateAccount(context.Background(), r, "abc123", "owner@example.org", true, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, text := range map[string]string{"the answer": a.MailError, "the log": logged.String()} {
+		if !strings.Contains(text, "HTTP 500: Failed to send execute actions email: 535 Authentication failed") {
+			t.Errorf("%s should carry the reason: %q", what, text)
+		}
+		for _, secret := range []string{"owner@example.org", "relay.example.org", "key=secret", a.Link} {
+			if strings.Contains(text, secret) {
+				t.Errorf("%s carries %q: %q", what, secret, text)
+			}
+		}
+	}
+	if strings.ContainsAny(a.MailError, "\r\n") || len([]rune(a.MailError)) > 300 {
+		t.Errorf("the reason is one bounded line: %d runes %q", len([]rune(a.MailError)), a.MailError)
+	}
+	if !strings.Contains(logged.String(), "level=WARN") {
+		t.Errorf("a mail that did not go is a warning: %q", logged.String())
+	}
+}
+
+// An activation nobody is waiting for is mailed or not issued: where the realm
+// cannot mail, no link is made at all, and the address still becomes the
+// recovery address.
+func TestAMailOnlyActivationMakesNoLinkWhenTheMailFails(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "admin@demo.k.example", Enabled: true}}
+	f.status["PUT /users/abc123/execute-actions-email"] = http.StatusInternalServerError
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	a, err := c.ActivateAccount(WithMailOnly(context.Background()), r, "abc123", "owner@example.org", true, "gentian-edge-demo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Mailed || a.Link != "" || a.MailError == "" {
+		t.Fatalf("activation: %+v", a)
+	}
+	if links := f.callsTo(http.MethodPost, "/link"); len(links) != 0 {
+		t.Fatalf("no link may be issued with nobody to show it to: %+v", links)
 	}
 	if puts := f.callsTo(http.MethodPut, "/users/abc123"); len(puts) != 1 || !strings.Contains(puts[0].body, `"email":"owner@example.org"`) {
 		t.Fatalf("the address must still become the recovery address: %+v", puts)
