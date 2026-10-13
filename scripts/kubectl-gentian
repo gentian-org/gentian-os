@@ -358,7 +358,10 @@ _call_usher() {
 _ask() {
     local who="$1" base="$2" method="$3" path="$4" body="${5:-}" token out status
     need curl jq python3
-    token="$(_access_token)"
+    # || exit: _access_token says "not signed in" and exits, but inside $( )
+    # that ends only the subshell. The request then went out with no token,
+    # and one cause was reported as two errors, the second a 401.
+    token="$(_access_token)" || exit 1
     out="$(mktemp)"
     if [[ -n "${body}" ]]; then
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
@@ -430,7 +433,9 @@ cmd_tenants_show() {
     [[ -n "${name}" && $# -eq 1 ]] || die "usage: kubectl gentian tenants show <name>"
     _label "The tenant" "${name}"
     _discover
-    entry="$(_call GET "/v1/clusters/${_CLUSTER}/tenants" | jq -c --arg n "${name}" '.tenants[] | select(.name == $n)')"
+    local tenants
+    tenants="$(_call GET "/v1/clusters/${_CLUSTER}/tenants")" || exit 1
+    entry="$(jq -c --arg n "${name}" '.tenants[] | select(.name == $n)' <<<"${tenants}")"
     [[ -n "${entry}" ]] || die "this cluster has no tenant ${name}"
     printf '%s' "${entry}" | jq -r '
         "Tenant:          \(.name)",
@@ -511,8 +516,12 @@ cmd_tenants_activate_admin() {
     # Declared at all? The director knows, from git. The registrar reads the
     # cluster, where a tenant just created has not arrived yet -- so without
     # this a mistyped name would be waited for like a new tenant.
-    _call GET "/v1/clusters/${_CLUSTER}/tenants" |
-        jq -e --arg n "${name}" '.tenants[]? | select(.name == $n)' >/dev/null ||
+    # Asked first and looked through second: piped straight into jq, a call
+    # that failed -- not signed in, say -- left jq nothing to find, and the
+    # failure was reported again as "no tenant named ...".
+    local declared
+    declared="$(_call GET "/v1/clusters/${_CLUSTER}/tenants")" || exit 1
+    jq -e --arg n "${name}" '.tenants[]? | select(.name == $n)' >/dev/null <<<"${declared}" ||
         die "no tenant named ${name}"
     local body answer deadline
     body="$(jq -n --arg e "${email}" 'if $e == "" then {} else {recoveryEmail:$e} end')"
