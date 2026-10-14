@@ -59,9 +59,10 @@ type BuildInput struct {
 // BuildDesired returns all operator-managed NetworkPolicies for a tenant.
 func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
-		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts),
+		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.adapterExclusion()...),
 		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
+	out = append(out, AdapterNetworkPolicies(in)...)
 
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
@@ -159,6 +160,9 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 		for _, np := range ContractNetworkPolicies(in.TenantName, binding, grant, in.PodSelectors) {
 			names[np.Name] = struct{}{}
 		}
+	}
+	for _, np := range AdapterNetworkPolicies(in) {
+		names[np.Name] = struct{}{}
 	}
 	// Only while there is a Memcached app to build them for: named
 	// unconditionally they were never removed, and a tenant whose last such

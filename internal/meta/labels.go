@@ -27,6 +27,9 @@ const (
 	NetPolicyContract     = "contract-allow"
 	NetPolicyTenantCache  = "tenant-cache-access"
 	NetPolicyTenantExport = "tenant-export"
+	// NetPolicyAdapter marks the policies that close an adapter to everything
+	// but the component that speaks as a person, and open its way to its app.
+	NetPolicyAdapter = "adapter"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"
