@@ -137,6 +137,7 @@ spec:
                 - service
                 - app
                 - shared-app
+                - adapter
                 type: string
               config:
                 description: |-
