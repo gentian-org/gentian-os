@@ -410,6 +410,54 @@ component's to decide:
 So the people a component can speak for are the people who said so, for as long as nobody took it
 back.
 
+**An adapter** turns one app's abilities into tools for a program that acts for a person. It is
+an entry of its own, never part of the app's, with `classes: [adapter]` (exclusive) and a block
+`spec.adapter`:
+
+```yaml
+spec:
+  classes: [adapter]
+  launch: none                      # nobody opens an adapter
+  trustTier: certified
+  package: {chart: {repository: oci://example/charts, name: openproject-tools, version: "1.0.0"}}
+  adapter:
+    adapts: {profile: openproject, versions: ["15.4.0"]}   # the app it uses, in the same tenant
+    speaksAs: token                 # token | app-token | headers: how a call reaches the app as the person
+    tools:
+    - name: create-task
+      version: v1                   # what it does, needs or may do changes: a new version
+      description: {en: "Create a task in a project", de: "Eine Aufgabe in einem Projekt anlegen"}
+      class: change                 # read | change | irreversible; none counts as irreversible
+      input: {type: object, properties: {title: {type: string}}, required: [title]}
+      output: {type: object, properties: {id: {type: integer}}}
+      identifiers: [/id]            # fields of the answer the app made up
+      reverse: {name: delete-task, version: v1}
+    - {name: delete-task, version: v1, description: {en: "Delete a task"}, class: change}
+```
+
+The descriptions are what a person reads when asked to allow a tool, so they are the reviewed text;
+what a running adapter says about itself is not consulted. Admission refuses an adapter that anybody
+opens, that exposes anything, that provides a contract or declares integrations, that vouches for
+people, that is an addon, or that is placed by default.
+
+What the platform does with it, and nothing needs granting for:
+
+- The adapter's pods are left out of the tenant's baseline and admit only the tenant's components
+  that speak as a person (those that declare vouching, above); those may reach every adapter.
+- An adapter reaches the app it `adapts` and nothing else in the tenant, and that app admits it. The
+  app is not changed for this.
+- It keeps no credential of its app: the credential for a call arrives with the call. Egress beyond
+  the tenant is a privilege like any other (`requires.privileges.egress`) and opens only once the
+  tenant's approver granted it. Data it keeps about a person is its own and carries the duties of an
+  app's.
+- An adapter may be an `api` instead of a chart: a tool server outside the cluster. It adapts no app
+  of the tenant and runs nothing in it, so the egress granted to it is given to the components that
+  call it.
+
+An install is an adapter when its profile says so. One made before its profile was on the cluster
+is made as an app; once the profile arrives and says adapter, that instance is replaced, and it has
+rolled out nothing in the meantime.
+
 **An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
 `spec.requires.services.mail.imap.tokenSignIn: true`, beside the sign-in client it needs
 (`spec.requires.services.identity.oidc`). Its client is given the optional scope `mailbox`; a token
