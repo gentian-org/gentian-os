@@ -68,6 +68,27 @@ func byProfile(t *testing.T, states []AppState) map[string]AppState {
 	return out
 }
 
+// What the platform places in every tenant is not one of the tenant's apps,
+// whatever its profile says of itself: the operator's label is what tells.
+func TestThePlatformsOwnComponentsAreNotTheTenantsApps(t *testing.T) {
+	desktop := component("desktop", "Ready", "release deployed", true)
+	desktop.Labels = map[string]string{componentOriginLabel: componentOriginDefault}
+	installed := component("wiki", "Ready", "release deployed", true)
+	installed.Labels = map[string]string{componentOriginLabel: "install"}
+	s := appsService(t, demoTenant(), desktop, installed)
+	states, err := s.AppStates(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byProfile(t, states)
+	if _, listed := got["desktop"]; listed {
+		t.Fatalf("a component the platform placed was listed as the tenant's app: %+v", states)
+	}
+	if _, listed := got["wiki"]; !listed {
+		t.Fatalf("an installed app is missing: %+v", states)
+	}
+}
+
 // Three phases, because those are the three things a person can do about an
 // app: wait, use it, or look at it. What separates waiting from looking is
 // whether the reason resolves without anybody changing the install.
