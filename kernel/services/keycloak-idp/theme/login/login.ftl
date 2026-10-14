@@ -51,6 +51,16 @@
           ${msg("doForgotPassword")}
         </a>
       </#if>
+
+      <#-- Only in a realm that takes sign-ups (a tenant created with sign-up
+           on); every other realm's people are invited. Keycloak's own words
+           and its own condition, as its base theme shows the link. -->
+      <#if realm.registrationAllowed && !registrationDisabled??>
+        <p class="gentian-login__subtitle">
+          ${msg("noAccount")}
+          <a class="gentian-login__link" id="kc-registration" href="${url.registrationUrl}">${msg("doRegister")}</a>
+        </p>
+      </#if>
     </#if>
   </div>
 </#if>
