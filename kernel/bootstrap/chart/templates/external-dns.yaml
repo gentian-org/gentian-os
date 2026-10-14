@@ -206,6 +206,16 @@ spec:
         writes to is enough.
         */}}
         txtOwnerId: {{ required "cluster is required: external-dns ownership must identify this cluster, not the product" .Values.cluster | quote }}
+        {{- /* The prefix external-dns reads its record settings under. v0.22.0
+             changed its default from external-dns.alpha.kubernetes.io/ to
+             external-dns.kubernetes.io/, and the operator writes the old one
+             on every record it declares (the target, and cloudflare-proxied
+             on a tunnel cluster's web records). Without this a 0.22 reads
+             none of them: a tunnel cluster's names went out unproxied and
+             could not be reached. Stated, so a later default cannot move it
+             again under the operator's feet. */}}
+        extraArgs:
+          - --annotation-prefix=external-dns.alpha.kubernetes.io/
         {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
         {{- $labels := splitList "." $kd }}
         domainFilters:
