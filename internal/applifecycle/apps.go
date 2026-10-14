@@ -105,12 +105,25 @@ var waitingReasons = map[string]bool{
 	"PrivilegesPending": true,
 }
 
+// componentOriginLabel says who put a component in the tenant, as the
+// operator labels it (internal/controller, componentOriginLabel): "default"
+// for one the platform places in every tenant, "install" for one the
+// tenant installed.
+const (
+	componentOriginLabel   = "gentianos.io/component-origin"
+	componentOriginDefault = "default"
+)
+
 // AppStates reports every app of a tenant as the cluster has it.
 //
-// The platform's own components are left out -- the desktop, the console --
-// because they are not something a tenant administrator installed and the
-// store offers nothing to do about them. So are add-ons: an add-on is
-// switched on inside its base, and its state is the base's.
+// The platform's own components are left out -- the desktop, the consoles,
+// the App Store app -- because they are not something a tenant administrator
+// installed and the store offers nothing to do about them. They are known by
+// the operator's label on the component; the profile's platform-app
+// annotation still counts, but a profile need not carry it, and one that did
+// not was listed as an app the tenant had uninstalled. So are add-ons left
+// out: an add-on is switched on inside its base, and its state is the
+// base's.
 func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState, error) {
 	if _, err := s.getTenant(ctx, tenantName); err != nil {
 		return nil, err
@@ -124,7 +137,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 	for i := range list.Items {
 		comp := &list.Items[i]
 		profile := comp.Spec.ProfileRef.Name
-		if profile == "" {
+		if profile == "" || comp.Labels[componentOriginLabel] == componentOriginDefault {
 			continue
 		}
 		cp := &gentianov1alpha1.ComponentProfile{}
