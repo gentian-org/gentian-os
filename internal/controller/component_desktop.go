@@ -680,16 +680,49 @@ func activePins(app gentianov1alpha1.TenantApp) []gentianov1alpha1.AddonPin {
 	return out
 }
 
+// componentClassAssumedAnnotation marks a Component whose class was assumed
+// because its profile was not on the cluster when it was made. It is removed
+// once the profile is read and agrees, and an instance that still carries it
+// when the profile says otherwise is replaced (ensureComponent).
+const componentClassAssumedAnnotation = "gentianos.io/class-assumed"
+
+// installClass is the class a tenant's install runs under: adapter for a
+// profile certified as one, app otherwise -- including while the profile is
+// not on the cluster yet, which is how an install usually begins.
+func (r *TenantReconciler) installClass(ctx context.Context, profileName string) (gentianov1alpha1.ComponentClass, bool, error) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
+		if errors.IsNotFound(err) {
+			return gentianov1alpha1.ComponentClassApp, false, nil
+		}
+		return "", false, err
+	}
+	if classIncludes(profile, gentianov1alpha1.ComponentClassAdapter) {
+		return gentianov1alpha1.ComponentClassAdapter, true, nil
+	}
+	return gentianov1alpha1.ComponentClassApp, true, nil
+}
+
 // ensureComponent keeps one Component of the tenant: named after its profile,
-// of class app, carrying what the Tenant says about that install.
+// of the class its profile is certified for (installClass), carrying what the
+// Tenant says about that install.
 func (r *TenantReconciler) ensureComponent(
 	ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName, origin, digest string,
 	addons []string, addonPins []gentianov1alpha1.AddonPin, config *gentianov1alpha1.TenantAppConfig,
 ) error {
+	class, profileKnown, err := r.installClass(ctx, profileName)
+	if err != nil {
+		return err
+	}
+	var annotations map[string]string
+	if !profileKnown {
+		annotations = map[string]string{componentClassAssumedAnnotation: "true"}
+	}
 	desired := &gentianov1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      profileName,
-			Namespace: tenantNamespaceName(tenant),
+			Name:        profileName,
+			Namespace:   tenantNamespaceName(tenant),
+			Annotations: annotations,
 			Labels: map[string]string{
 				tenantLabel:          tenant.Name,
 				managedByLabel:       managedByValue,
@@ -698,7 +731,7 @@ func (r *TenantReconciler) ensureComponent(
 		},
 		Spec: gentianov1alpha1.ComponentSpec{
 			ProfileRef: gentianov1alpha1.ProfileRef{Name: profileName, Digest: digest},
-			Class:      gentianov1alpha1.ComponentClassApp,
+			Class:      class,
 			Addons:     addons,
 			AddonPins:  addonPins,
 			Config:     config,
@@ -710,7 +743,7 @@ func (r *TenantReconciler) ensureComponent(
 		return err
 	}
 	existing := &gentianov1alpha1.Component{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
 	if errors.IsNotFound(err) {
 		if err := r.Create(ctx, desired); err != nil {
 			return fmt.Errorf("create %s component: %w", profileName, err)
@@ -719,6 +752,24 @@ func (r *TenantReconciler) ensureComponent(
 	}
 	if err != nil {
 		return err
+	}
+	// Made before its profile was on the cluster, the class was assumed
+	// (componentClassAssumedAnnotation), and the profile now says another.
+	// The class cannot be changed, and the instance has rolled out nothing:
+	// the Component reconciler refuses a class its profile is not certified
+	// for before rendering anything. So it is replaced -- removed here, made
+	// again with the profile's class by the next pass. An instance whose
+	// class was read from its profile is never replaced this way; if its
+	// profile later changes class it is held (ClassMismatch) and says why,
+	// because replacing it would be an uninstall nobody asked for.
+	if existing.Annotations[componentClassAssumedAnnotation] == "true" && profileKnown && existing.DeletionTimestamp == nil {
+		if existing.Spec.Class != class {
+			if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("replace the %s component, made as %s before its profile said %s: %w",
+					profileName, existing.Spec.Class, class, err)
+			}
+			return nil
+		}
 	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
@@ -763,6 +814,11 @@ func (r *TenantReconciler) ensureComponent(
 	}
 	if !equality.Semantic.DeepEqual(existing.Spec.Config, desired.Spec.Config) {
 		existing.Spec.Config = desired.Spec.Config
+		changed = true
+	}
+	// The class is known now and agrees: it is no longer an assumption.
+	if profileKnown && existing.Annotations[componentClassAssumedAnnotation] != "" {
+		delete(existing.Annotations, componentClassAssumedAnnotation)
 		changed = true
 	}
 	if existing.Labels[componentOriginLabel] != origin {

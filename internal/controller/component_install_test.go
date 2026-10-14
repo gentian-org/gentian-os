@@ -314,3 +314,78 @@ func TestAClaimSomethingElseControlsIsNotTaken(t *testing.T) {
 		t.Fatal("the claim was written to while another controller held it")
 	}
 }
+
+// An adapter is installed like an app and runs as an adapter: the class is
+// read from its profile. One that was made before its profile arrived was
+// given the class an install usually has; it is replaced once the profile
+// says otherwise, and one whose class was read from its profile never is.
+func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	ns := tenantNamespaceName(tenant)
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "openproject"}, {Profile: "openproject-tools"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(),
+		profileFixture("openproject", false, gentianov1alpha1.ComponentClassApp),
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+
+	get := func(name string) *gentianov1alpha1.Component {
+		t.Helper()
+		comp := &gentianov1alpha1.Component{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, comp); err != nil {
+			t.Fatal(err)
+		}
+		return comp
+	}
+
+	// The adapter's profile is not on the cluster yet.
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	tools := get("openproject-tools")
+	if tools.Spec.Class != gentianov1alpha1.ComponentClassApp || tools.Annotations[componentClassAssumedAnnotation] != "true" {
+		t.Fatalf("made before its profile: class %q, annotations %v", tools.Spec.Class, tools.Annotations)
+	}
+	if app := get("openproject"); app.Annotations[componentClassAssumedAnnotation] != "" {
+		t.Fatalf("an install whose profile was read has no assumed class: %v", app.Annotations)
+	}
+
+	// The profile arrives, and it is an adapter's: the instance is replaced,
+	// and made again as an adapter.
+	if err := c.Create(ctx, profileFixture("openproject-tools", false, gentianov1alpha1.ComponentClassAdapter)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: "openproject-tools", Namespace: ns}, &gentianov1alpha1.Component{}); err == nil {
+		t.Fatal("the instance made with an assumed class was kept")
+	}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	tools = get("openproject-tools")
+	if tools.Spec.Class != gentianov1alpha1.ComponentClassAdapter || tools.Annotations[componentClassAssumedAnnotation] != "" {
+		t.Fatalf("made again: class %q, annotations %v", tools.Spec.Class, tools.Annotations)
+	}
+
+	// An app's profile later claims another class: the running instance is
+	// held by its own reconciler, never replaced from here.
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "openproject"}, profile); err != nil {
+		t.Fatal(err)
+	}
+	profile.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassAdapter}
+	if err := c.Update(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if get("openproject").Spec.Class != gentianov1alpha1.ComponentClassApp {
+		t.Fatal("an instance whose class was read from its profile was replaced")
+	}
+}

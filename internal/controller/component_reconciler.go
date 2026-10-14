@@ -113,6 +113,9 @@ type ComponentReconciler struct {
 
 const (
 	conditionComponentReady = "Ready"
+	// reasonClassMismatch is a Component whose class is not one its profile
+	// is certified for.
+	reasonClassMismatch = "ClassMismatch"
 	componentFinalizer      = "gentianos.io/component-cleanup"
 	componentLabel          = "gentianos.io/component"
 	componentRequeue        = 15 * time.Second
@@ -213,9 +216,25 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
-	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp {
+	// An app and an adapter run in their tenant's namespace from a release
+	// of their own, and are reconciled alike from here; what an adapter may
+	// reach, and who may reach it, is the tenant's network rules' to say
+	// (netpolicy.AdapterNetworkPolicies), because it depends on what else the
+	// tenant has installed.
+	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp && comp.Spec.Class != gentianov1alpha1.ComponentClassAdapter {
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps and adapters are", comp.Spec.Class), 0)
+	}
+	// The instance runs under one of the modes its profile is certified for.
+	// A Component written before its profile was on the cluster was given
+	// the class an install usually has, and the class cannot be changed
+	// afterwards: an adapter must not run as an app, where the tenant's
+	// rules would treat it as one.
+	if !classIncludes(profile, comp.Spec.Class) {
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonClassMismatch, fmt.Sprintf(
+			"ComponentProfile %q is certified for %v, and this instance is of class %q: "+
+				"nothing is rolled out; uninstall and install it again to take the profile's class",
+			profile.Name, profile.Spec.Classes, comp.Spec.Class), 0)
 	}
 	// An install pinned to a digest rolls out that build and no other. The
 	// director checked the bytes it fetched before it committed them; this is
