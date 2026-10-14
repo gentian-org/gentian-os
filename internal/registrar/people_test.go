@@ -31,6 +31,9 @@ type fakeIdentity struct {
 	held map[string]bool
 	// seen is every realm an operation was performed against, in order.
 	seen []string
+	// shownOnly is whether the last activation was marked to be shown and
+	// never mailed.
+	shownOnly bool
 	// groups is what each realm has.
 	groups map[string][]identity.Group
 	// requestIDs is what travelled with each call.
@@ -461,6 +464,7 @@ func (f *fakeIdentity) FindUser(ctx context.Context, r identity.Realm, username 
 
 func (f *fakeIdentity) ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, _, _ string) (identity.Activation, error) {
 	f.note(ctx, r)
+	f.shownOnly = identity.IsShownOnly(ctx)
 	actions := []string{"UPDATE_PASSWORD"}
 	if requireMFA {
 		actions = append(actions, "CONFIGURE_TOTP")
@@ -642,7 +646,8 @@ func TestActivatingTheUserTenantsAdministratorOnASingleTenancyCluster(t *testing
 // the account the recovery address, and with it another name.
 func TestActivatingTheAdministratorOfATenantThatTakesSignUps(t *testing.T) {
 	login := "admin@customers." + dt.KernelDomain
-	h := startWithTenants(t, newFakeIdentity("customers"), nil, fakeTenants{"customers": {
+	f := newFakeIdentity("customers")
+	h := startWithTenants(t, f, nil, fakeTenants{"customers": {
 		Name: "customers", Realm: "customers", LoginDomain: "customers." + dt.KernelDomain,
 		AdminLogin: login, AdminRequiresMFA: true, SignUp: true,
 	}}, newFakeMailboxes())
@@ -664,6 +669,9 @@ func TestActivatingTheAdministratorOfATenantThatTakesSignUps(t *testing.T) {
 	}
 	if u, _ := body["username"].(string); u != login {
 		t.Fatalf("the account handed over is %q, want %q", u, login)
+	}
+	if !f.shownOnly {
+		t.Fatal("the activation was not marked shown-only: the identity provider would mail it to the account's own address")
 	}
 }
 

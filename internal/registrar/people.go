@@ -770,6 +770,11 @@ func (s *Server) handOverAdmin(ctx context.Context, name, email string) (handedO
 			"tenant " + name + " takes sign-ups, and there an account's address is its login: mailing the link to " +
 				strings.TrimSpace(email) + " would rename the administrator account. Ask for the link without a recovery address; it is shown once"}
 	}
+	if tenant.SignUp {
+		// The account's address is its login, and nothing is delivered
+		// there: a link mailed to it would reach nobody.
+		ctx = identity.WithShownOnly(ctx)
+	}
 	client := s.inviteClientID(realm)
 	redirect := s.cfg.InviteRedirectURI
 	if redirect == "" {
