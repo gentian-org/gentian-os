@@ -447,6 +447,8 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
 			return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
 		}
+	} else if err := r.ensureGrantedEgress(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("granted egress: %w", err)
 	}
 
 	// The package is exactly one of chart, composition, api or addon, and what

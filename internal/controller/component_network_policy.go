@@ -132,6 +132,66 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 	}
 }
 
+func grantedEgressPolicyName(comp *gentianov1alpha1.Component) string {
+	return "granted-egress-" + comp.Name
+}
+
+// ensureGrantedEgress keeps, for an app the Composition installs, the
+// outbound rules a person granted on the install, or removes the policy when
+// none is granted.
+//
+// The Composition writes such an app's policies from its requirements
+// (app-internal-<app>, kernel-access-<app>) and knows nothing of grants, and
+// ensureNetworkPolicy, which carries them for an app the operator installs
+// itself, is not asked for it. So a grant was recorded and opened nothing.
+// This policy holds the granted rules and only those: nothing is reachable
+// through it that a named person did not approve, and revoking the grant
+// takes the rule away. It selects the pods by the release the Composition
+// names (helmReleaseOf).
+func (r *ComponentReconciler) ensureGrantedEgress(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
+	granted := security.GrantedEgressRules(profile, comp, time.Now())
+	key := types.NamespacedName{Name: grantedEgressPolicyName(comp), Namespace: comp.Namespace}
+	existing := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, key, existing)
+	if len(granted) == 0 {
+		if err == nil {
+			return client.IgnoreNotFound(r.Delete(ctx, existing))
+		}
+		return client.IgnoreNotFound(err)
+	}
+	desired := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: componentLabels(comp)},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{componentInstanceLabel: helmReleaseOf(comp, profile)},
+			},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress:      granted,
+		},
+	}
+	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
+		return err
+	}
+	if errors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("create NetworkPolicy %s: %w", desired.Name, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Spec, existing.Labels = desired.Spec, desired.Labels
+	if err := r.Patch(ctx, existing, patch); err != nil {
+		return fmt.Errorf("patch NetworkPolicy %s: %w", desired.Name, err)
+	}
+	return nil
+}
+
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
 //
