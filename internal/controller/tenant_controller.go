@@ -1280,6 +1280,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 		spec["brokeredTo"] = brokered
 	}
+	if len(tenant.Spec.BrokeredFrom) > 0 {
+		from := make([]interface{}, 0, len(tenant.Spec.BrokeredFrom))
+		for _, b := range tenant.Spec.BrokeredFrom {
+			from = append(from, map[string]interface{}{
+				"name": b.Name, "displayName": b.DisplayName, "issuer": b.Issuer,
+				"clientID": b.ClientID, "domain": b.Domain,
+			})
+		}
+		spec["brokeredFrom"] = from
+	}
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas
 	}

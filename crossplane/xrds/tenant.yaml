@@ -81,6 +81,30 @@ spec:
                         type: string
                       jwksURL:
                         type: string
+                brokeredFrom:
+                  type: array
+                  maxItems: 1000
+                  description: >
+                    Realms outside the tenant whose people sign in here, each
+                    as an organization (spec.brokeredFrom on the Tenant). Each
+                    is given an organization with its domain and an identity
+                    provider, org-<name>, that authenticates to the outside
+                    realm by a JWT this realm signs and maps nothing. No
+                    secret.
+                  items:
+                    type: object
+                    required: [name, displayName, issuer, clientID, domain]
+                    properties:
+                      name:
+                        type: string
+                      displayName:
+                        type: string
+                      issuer:
+                        type: string
+                      clientID:
+                        type: string
+                      domain:
+                        type: string
                 kernelDomain:
                   type: string
                   description: >

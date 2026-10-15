@@ -1640,6 +1640,12 @@ spec:
                           required:
                           - enabled
                           type: object
+                        organizations:
+                          description: |-
+                            Organizations declares that the component commissions the sign-in of
+                            outside realms' people into a tenant's realm, as organizations
+                            (Tenant spec.brokeredFrom). See OrganizationsRequirement.
+                          type: object
                         rights:
                           description: |-
                             Rights declares that the component asks the platform whether a person
@@ -3313,6 +3319,12 @@ spec:
                             type: string
                         required:
                         - enabled
+                        type: object
+                      organizations:
+                        description: |-
+                          Organizations declares that the component commissions the sign-in of
+                          outside realms' people into a tenant's realm, as organizations
+                          (Tenant spec.brokeredFrom). See OrganizationsRequirement.
                         type: object
                       rights:
                         description: |-

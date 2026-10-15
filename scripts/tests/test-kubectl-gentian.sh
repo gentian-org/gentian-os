@@ -354,6 +354,24 @@ gentian tenants create acme --brokered-to name=aluvian,redirect=https://x.exampl
 refused "an outside realm without its keys' address is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
+# The other half: a realm of another cluster whose people sign in here, as an
+# organization. The domain is read off the issuer, never typed.
+fresh; reply PUT /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://id.abc.example/auth/realms/main --client-id broker-to-aluvian
+is "organizations add sends one PUT with the issuer's domain" "$(writes | tr -d ' \n')" \
+    'PUT/v1/tenants/customers/brokered-from/abc{"displayName":"ABCAG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}'
+has "... and says who signs in" "${OUT}" "People of abc.example sign in to tenant customers as the organization ABC AG"
+fresh
+gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://login.abc.example/realms/main --client-id broker-to-aluvian
+refused "an issuer that is not id.<domain> is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh; reply DELETE /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants organizations customers remove abc
+is "organizations remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/tenants/customers/brokered-from/abc "
+fresh; reply GET /v1/tenants/customers/brokered-from 200 '{"brokeredFrom":[{"name":"abc","displayName":"ABC AG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}]}'
+gentian tenants organizations customers
+has "organizations lists the sign-in alias" "${OUT}" "sign-in alias org-abc"
+
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true
 is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "

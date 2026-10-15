@@ -2262,6 +2262,130 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── brokered from ────────────────────────────────────────
+                 The other half: realms outside the tenant whose people sign
+                 in here, each as an organization (spec.brokeredFrom). Per
+                 entry an Organization with the entry's domain, and an
+                 identity provider, org-<name>, linked to it.
+
+                 The identity provider authenticates to the outside realm with
+                 a JWT this realm signs (clientAuthMethod private_key_jwt), and
+                 the outside realm checks it against this realm's published
+                 keys: no secret is made. The provider insists on a client
+                 secret all the same, so the Secret below carries a fixed word
+                 that is never sent.
+
+                 It maps nothing and trusts no address: whoever signs in
+                 through it is a member of the organization, with no group and
+                 no role of this realm, and an address that is already an
+                 account here is linked only once that account's owner proves
+                 it (Keycloak's own first-broker-login flow, not the kernel
+                 broker's, which links by address). Hidden on the login page:
+                 Keycloak sends a person there when the domain of the address
+                 they give is the organization's, and a page can name it with
+                 kc_idp_hint.
+
+                 Delete and not Orphan: an entry taken away must stop the
+                 sign-in, not leave it in the realm. */}}
+            {{- range $b := (dig "brokeredFrom" list $spec) }}
+            {{- if regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name) }}
+            {{- $issuer := trimSuffix "/" (toString $b.issuer) }}
+            {{- if hasPrefix "https://" $issuer }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-org-{{ $b.name }}-client
+              name: {{ $tenant }}-org-{{ $b.name }}-client
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-org-{{ $b.name }}-client
+                    namespace: {{ $identityNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: {{ $b.clientID | quote }}
+                    # Never sent: the client authenticates by a signed JWT.
+                    client_secret: private-key-jwt
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: organization.keycloak.crossplane.io/v1alpha1
+            kind: Organization
+            metadata:
+              name: {{ $tenant }}-org-{{ $b.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-org-{{ $b.name }}
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                name: {{ $b.displayName | quote }}
+                alias: {{ $b.name }}
+                enabled: true
+                domain:
+                  - name: {{ $b.domain | quote }}
+                    verified: false
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-org-{{ $b.name }}-idp
+              annotations:
+                crossplane.io/external-name: org-{{ $b.name }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-org-{{ $b.name }}-idp
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                alias: org-{{ $b.name }}
+                displayName: {{ $b.displayName | quote }}
+                providerId: oidc
+                enabled: true
+                trustEmail: false
+                storeToken: false
+                hideOnLoginPage: true
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: IMPORT
+                validateSignature: true
+                defaultScopes: openid profile email
+                issuer: {{ $issuer | quote }}
+                authorizationUrl: {{ printf "%s/protocol/openid-connect/auth" $issuer | quote }}
+                tokenUrl: {{ printf "%s/protocol/openid-connect/token" $issuer | quote }}
+                jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $issuer | quote }}
+                userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $issuer | quote }}
+                logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $issuer | quote }}
+                organizationIdRef:
+                  name: {{ $tenant }}-org-{{ $b.name }}
+                orgDomain: {{ $b.domain | quote }}
+                orgRedirectModeEmailMatches: true
+                extraConfig:
+                  clientAuthMethod: private_key_jwt
+                clientIdSecretRef:
+                  name: {{ $tenant }}-org-{{ $b.name }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-org-{{ $b.name }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* ── sign-up ──────────────────────────────────────────────
                  The registration flow of a tenant people sign up to. Its own
                  flow and not Keycloak's built-in one, which Keycloak refuses
@@ -2438,6 +2562,13 @@ spec:
                 realm: {{ $realm }}
                 enabled: true
                 displayName: {{ $spec.displayName | quote }}
+                {{- /* Organizations, only in a realm that has outside realms
+                     signing in as one (spec.brokeredFrom): every other realm
+                     is composed as it was, and does not grow the identity-first
+                     login step organizations add. */}}
+                {{- if (dig "brokeredFrom" list $spec) }}
+                organizationsEnabled: true
+                {{- end }}
                 {{- /* ── Languages (AD-15) ────────────────────────────────
                      Keycloak ships these translations; a realm just has to say
                      it wants them. Without this the login and account pages

@@ -410,6 +410,15 @@ component's to decide:
 So the people a component can speak for are the people who said so, for as long as nobody took it
 back.
 
+**A component that links other clusters' people to a tenant** declares
+`spec.requires.services.organizations: {}`. It asks the director to add a realm of another cluster
+to a tenant's realm as an organization, or to take one away (`PUT`, `DELETE`, `GET` on
+`/v1/tenants/<t>/brokered-from[/<name>]`, at `DIRECTOR_URL` with `RIGHTS_CHECK_KEY` as the bearer,
+both in its Secret `rights-check-<profile>`). The declaration alone opens nothing: the target
+tenant has to name the component in `spec.organizationCommissioners`, which an administrator
+writes in git. The director commits, the composition makes the organization, and the component
+holds no credential of the realm (docs/identity-brokering.md).
+
 **An adapter** turns one app's abilities into tools for a program that acts for a person. It is
 an entry of its own, never part of the app's, with `classes: [adapter]` (exclusive) and a block
 `spec.adapter`:

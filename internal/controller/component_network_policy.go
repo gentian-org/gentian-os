@@ -86,7 +86,9 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	// A component that vouches for people reaches the registrar as well,
 	// whether or not its chart takes the address as a value: that is where a
 	// person is linked to it, and where it takes a link away.
-	if wantsDirector(profile) || wantsCustodian(profile) || wantsRegistrar(profile) || wantsUsher(profile) || wantsVouching(profile) {
+	// So does one that commissions organizations, at the director.
+	if wantsDirector(profile) || wantsCustodian(profile) || wantsRegistrar(profile) || wantsUsher(profile) ||
+		wantsVouching(profile) || wantsOrganizations(profile) {
 		add(layout.Namespace(layout.Control))
 	}
 	// And the realm, which it posts its statements to.

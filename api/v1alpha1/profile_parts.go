@@ -230,7 +230,31 @@ type ServiceRequirements struct {
 	// answers with a token of that person for one app.
 	// +optional
 	Vouching *VouchingRequirement `json:"vouching,omitempty"`
+
+	// Organizations declares that the component commissions the sign-in of
+	// outside realms' people into a tenant's realm, as organizations
+	// (Tenant spec.brokeredFrom). See OrganizationsRequirement.
+	// +optional
+	Organizations *OrganizationsRequirement `json:"organizations,omitempty"`
 }
+
+// OrganizationsRequirement declares that a component asks the director to add
+// an outside realm to a tenant's realm, as an organization, or to take one
+// away. Being present is the declaration.
+//
+// It is half of a grant. The other half is the tenant whose realm is
+// changed: it names the component in spec.organizationCommissioners, which
+// only an administrator writes. With both, the component's own key (the
+// Secret rights-check-<component>, RIGHTS_CHECK_KEY, as for
+// requires.services.rights) admits it at the director for that tenant's
+// spec.brokeredFrom and nothing else; the Secret also carries the director's
+// address (DIRECTOR_URL), and the component is given a network path to it.
+//
+// What it adds lets an outside realm's people sign in to that tenant. They
+// hold no group and no role there by it, but the realm trusts the outside
+// realm for who they are. So the declaration alone admits nothing: what
+// admits the component is the administrator naming it on the tenant.
+type OrganizationsRequirement struct{}
 
 // VouchingRequirement declares that a component vouches for people at the
 // tenant's realm (RFC 7523, the JWT authorization grant).

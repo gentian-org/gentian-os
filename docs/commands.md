@@ -112,7 +112,19 @@ realm of another cluster that brokers this one (`--brokered-to`, repeatable,
 with no secret ([identity-brokering.md](identity-brokering.md)):
 
 ```bash
-kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
+kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
+```
+
+The other half, on the cluster whose tenant those people sign in to: each
+realm of another cluster becomes an organization of the tenant's realm, with
+an identity provider `org-<name>` (`spec.brokeredFrom`, `can_configure` on
+the cluster; the domain is read off the issuer, `id.<domain>`):
+
+```bash
+kubectl gentian tenants organizations customers      # list them
+kubectl gentian tenants organizations customers add acme --display-name "ACME AG" \
+  --issuer https://id.acme.gentian.cloud/auth/realms/acme --client-id broker-to-aluvian
+kubectl gentian tenants organizations customers remove acme
 ```
 
 Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,

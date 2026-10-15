@@ -71,6 +71,9 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
+	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
@@ -166,6 +169,9 @@ type Config struct {
 	// Nil leaves those routes unregistered: a director with no operator to
 	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
+	// CommissionKeys are the components that may commission organizations,
+	// as the operator lists them (brokered_from.go). Nil recognises none.
+	CommissionKeys *CommissionKeys
 }
 
 // Server is the director's API.
@@ -521,6 +527,14 @@ func (s *Server) routes() {
 		}
 		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
+
+	// A tenant's outside realms: read by whoever may see the tenant, written
+	// by the cluster's administrators and by a component the tenant names
+	// (brokered_from.go).
+	s.commissioned("GET /v1/tenants/{t}/brokered-from", "can_view", tenantObject, s.tenantBrokeredFrom)
+	s.commissioned("PUT /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.setTenantBrokeredFrom)
+	s.commissioned("DELETE /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.removeTenantBrokeredFrom)
+
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)

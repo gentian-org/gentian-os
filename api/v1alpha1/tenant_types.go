@@ -80,6 +80,74 @@ type TenantBrokeredTo struct {
 	JWKSURL string `json:"jwksURL"`
 }
 
+// TenantBrokeredFrom is the other half of TenantBrokeredTo: a realm outside
+// this tenant -- a customer's cluster -- whose people sign in here with their
+// account there. The platform makes, in this tenant's realm, an organization
+// of that name, with the domain given, and an identity provider for the
+// outside realm, linked to the organization (org-<name>).
+//
+// The identity provider authenticates to the outside realm with a JWT this
+// realm signs (private_key_jwt): no secret is made or handed over. It maps
+// nothing: whoever signs in through it is a member of the organization and
+// holds no group and no role of this realm by it. A person who already has an
+// account here links it themself, at their first sign-in through it.
+//
+// The outside realm is a Keycloak realm, such as a Gentian tenant's:
+// its endpoints are read from the issuer by Keycloak's own layout.
+type TenantBrokeredFrom struct {
+	// Name says whose realm it is; the organization's alias, and the identity
+	// provider is org-<name>.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// DisplayName is the organization's name as people read it.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=120
+	DisplayName string `json:"displayName"`
+
+	// Issuer is the outside realm, https://id.<their domain>/auth/realms/<realm>.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/[^\s]*[^/\s]$`
+	Issuer string `json:"issuer"`
+
+	// ClientID is the client the outside realm made for this one, the
+	// broker-to-<name> of its TenantBrokeredTo.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]+$`
+	ClientID string `json:"clientID"`
+
+	// Domain is the organization's domain: the domain of its people's
+	// addresses, which Keycloak sends to this identity provider when one of
+	// them gives their address. One organization per domain.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
+	Domain string `json:"domain"`
+}
+
+// TenantComponentRef names a component of a tenant by the profile it runs.
+type TenantComponentRef struct {
+	// Tenant is the tenant the component runs in.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Tenant string `json:"tenant"`
+
+	// Profile is the profile it runs.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Profile string `json:"profile"`
+}
+
 // SignUpEnabled reports whether people make their own accounts in this
 // tenant's realm (spec.signUp.enabled); off unless the tenant says so.
 func (t *Tenant) SignUpEnabled() bool {
@@ -138,6 +206,26 @@ type TenantSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	BrokeredTo []TenantBrokeredTo `json:"brokeredTo,omitempty"`
+
+	// BrokeredFrom are realms outside this tenant whose people sign in here,
+	// each as an organization; see TenantBrokeredFrom. Written by the
+	// director, as the patch brokered-from.yaml beside the tenant. Empty:
+	// none, and the realm's organizations stay off.
+	// +optional
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=map
+	// +listMapKey=name
+	BrokeredFrom []TenantBrokeredFrom `json:"brokeredFrom,omitempty"`
+
+	// OrganizationCommissioners are the components, of this tenant or
+	// another, that may ask the director to add an entry to BrokeredFrom or
+	// take one away. A component is admitted only when its profile declares
+	// requires.services.organizations as well: the administrator who names
+	// it here grants, and the profile asks. Declared by hand in git; nothing
+	// writes it.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	OrganizationCommissioners []TenantComponentRef `json:"organizationCommissioners,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
