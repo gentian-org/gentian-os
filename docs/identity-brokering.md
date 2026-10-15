@@ -19,11 +19,15 @@ account in the target for anybody they make.
 
 ## Before you start
 
-- **Access.** Keycloak's administration console is at
-  `https://id.<kernel-domain>/auth/admin/`. Today a cluster administrator
-  enters it as the `master` realm's administrator, whose credentials are in
-  the Secret `keycloak-admin` (namespace `kernel-authentication`); see
-  [roadmap.md](roadmap.md) on named access.
+- **Access.** Each realm has its own administration console:
+  `https://id.<kernel-domain>/auth/admin/<realm>/console/`. Opening it takes
+  two sign-ins: first the platform's (the page is behind the kernel session,
+  for whoever may configure the cluster), then the realm's own
+  administrator — the tenant's administrator account, `admin@<tenant>.<kernel-domain>`,
+  which holds `realm-admin` in its realm and in no other. So step 1 is done
+  as the source tenant's administrator, steps 2 and 3 as the target
+  tenant's. The `master` realm's console is refused at the edge for
+  everybody.
 - **The platform's own brokers are not this.** A tenant realm may carry the
   identity providers `kernel` and `vouch-*`, which the platform composes and
   hides on the sign-in page. Leave them alone, and do not add the kernel
