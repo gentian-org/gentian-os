@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // What a realm has to hold for a component to vouch for a person
@@ -268,6 +270,7 @@ func TestTheVouchingClientAsRendered(t *testing.T) {
 			want := map[string]string{
 				"oauth2.jwt.authorization.grant.enabled": "true",
 				"oauth2.jwt.authorization.grant.idp":     VouchingAlias(comp.profile),
+				keycloak.PlatformMarkerAttribute:         keycloak.PlatformMarkerValue,
 			}
 			if !reflect.DeepEqual(attrs, want) {
 				t.Errorf("%s: %s has attributes %v, want %v", c.fixture, alias, attrs, want)

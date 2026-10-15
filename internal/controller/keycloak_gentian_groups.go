@@ -200,7 +200,9 @@ fi
 
 echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
   GROUP_NAME=$(echo "${group}" | jq -r '.name')
-  GROUP_ATTRS=$(echo "${group}" | jq -c '.attributes')
+  # With the platform's mark, which a realm import reads: such a group keeps
+  # the id it has here and is never made from a bundle.
+  GROUP_ATTRS=$(echo "${group}" | jq -c '(.attributes // {}) + {"%[3]s": ["%[4]s"]}')
 
   GROUP_LIST=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?max=1000")
@@ -280,5 +282,5 @@ for ATTR_NAME in ${GENTIAN_GROUP_ATTR_NAMES:-}; do
     echo "mapper ${ATTR_NAME} added to groups client scope"
   fi
 done
-`, realmName, keycloak.ShellWaitForRealm("${REALM}"))
+`, realmName, keycloak.ShellWaitForRealm("${REALM}"), keycloak.PlatformMarkerAttribute, keycloak.PlatformMarkerValue)
 }

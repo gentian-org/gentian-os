@@ -78,9 +78,9 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | Cache user | made | not copied | — | made new | kept | removed; its keys stay | kept | removed; its keys stay |
 | The app's own secrets (in the vault): what its profile has the platform generate, and its data is written with | generated | copied, encrypted by the operator | set to the bundle's values; the app is handed them and restarted | set to the bundle's values, at the new tenant's own paths | kept | destroyed | kept | destroyed |
 | Its other stored credentials (in the vault): a database's, a bucket's, a cache's, a sign-in client's, a model key | generated | never copied | — | generated new | kept | destroyed | kept | destroyed |
-| Access group and who is in it | made | copied, inside the realm | put back | put back | kept | destroyed | kept | destroyed |
+| Access group and who is in it | made | copied, inside the realm | kept under its id, its roles and who is in it put back | made by the platform; who is in it put back | kept | destroyed | kept | destroyed |
 | Sign-in scope | made | not copied | — | made new | kept | destroyed | kept | destroyed |
-| Sign-in client | made | copied, inside the realm, its secret masked | kept: the bundle's is not put over it | made new; the bundle's is not put over it | removed | — | removed, with the running app | destroyed |
+| Sign-in client | made | copied, inside the realm, its secret masked | kept: the bundle's is not put over it | made new by the platform, never from the bundle | removed | — | removed, with the running app | destroyed |
 | Model key (an app that declared the model gateway, on a cluster that serves models) | made | not copied | — | made new | kept | removed | kept | removed |
 | Provisioning records | written | not copied | — | written new | kept | destroyed, last | kept | destroyed, last |
 | **What the cluster owns** | | | | | | | | |
@@ -88,7 +88,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | **What a tenant owns that is no app's** | | | | | | | | |
 | The tenant's entry in git | committed | its settings are copied | — | committed from the bundle | the app is taken off it | — | removed | removed |
 | The namespace | made | — | — | made new | — | — | kept | destroyed |
-| The realm: people, groups, roles | made | copied | groups and roles put back; clients here kept, missing ones added with a new secret; missing people added | made new, then filled | — | — | kept, switched off | destroyed |
+| The realm: people, groups, roles | made | copied | clients, roles and groups here kept under their ids, groups given back their roles and attributes; the tenant's missing ones added (a client with a new secret, at this domain); missing people added | made new, then filled | — | — | kept, switched off | destroyed |
 | People's passwords | set by each person | never copied | not put back | not brought | — | — | kept | destroyed |
 | The desktop's database | made | copied | put back | made new, then filled | — | — | kept | destroyed (the platform tenant's is emptied: the database itself is the cluster's) |
 | The tenant's own stored credentials (in the vault) | generated | never copied | — | generated new | — | — | kept | destroyed |
@@ -418,14 +418,26 @@ Each comes back under the id they had, so an app that keys an account by the
 sign-in's subject finds the same person; one already in the realm keeps the
 id they have there, and the restore's output says so.
 
-Accepted, not a gap: **a client the realm has is not put back.** The
-platform makes each app's client and the realm's own on the cluster, with
-that cluster's secret and addresses, and the export holds a client's secret
-only masked; putting the bundle's over it would replace it under a new id,
-with the old addresses and the mask as its secret. A client the tenant made
-itself and changed since keeps its changes; one that is no longer there is
-made from the bundle with a new secret, which its user reads in the realm,
-and at the addresses the bundle recorded.
+Accepted, not a gap: **nothing the realm has is made anew from the
+bundle.** Each client, role and group here keeps its id, which the
+platform's provider-keycloak resources know it by; Keycloak's OVERWRITE
+would delete it and make it under the bundle's, a role or group held by
+nobody, a client at the old addresses with the export's masked secret. A
+group here gets the bundle's roles added, and its attributes (the
+platform's keeps its own and gains only those it lacks). A client, role or
+group the tenant made and changed since keeps its changes; a role's
+description and composites are not reset.
+
+What the platform declares is never made from the bundle, here or not: a
+client or group marked `gentianos.io/managed-by: platform`, or, in a bundle
+taken before the mark, named as the platform names its own
+(`internal/keycloak` `PlatformClientPatterns` and `PlatformGroupPattern`,
+and each catalogue profile's client). The platform makes it; a copy from
+the bundle would take the name its resource makes it by. A client the
+tenant made that is no longer there is made with a new secret, which its
+user reads in the realm, at the bundle's addresses with each host of the
+tenant's old domain, or the cluster's, moved to the new one; where either
+domain is not known, as the bundle recorded them, and the result says so.
 
 Closed: the data of uninstalled apps, the platform tenant's desktop database
 and mailboxes are in a backup; mailboxes are destroyed with the tenant; the

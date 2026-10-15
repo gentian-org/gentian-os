@@ -291,7 +291,7 @@ var TenantOwned = []TenantRule{
 		What: "the tenant's realm", MadeBy: "the tenant's identity Job and its Composition",
 		Artefact: bundle.ArtefactIdentity,
 		Export:   "carried: configuration, people and memberships, no passwords",
-		Restore:  "groups and roles put back; clients here kept as they are, missing ones added with a new secret; missing people added, enabled and without a password",
+		Restore:  "clients, roles and groups here kept under their ids, groups given back their roles and attributes; the tenant's missing clients, roles and groups added, a client with a new secret and at this domain; the platform's never made from the bundle; missing people added, enabled and without a password",
 		Import:   "the same, into the realm made for the new tenant",
 		Retain:   "disabled",
 		Delete:   "deleted; never when it is the kernel realm, which a tenant only adopts", Destroyed: true,

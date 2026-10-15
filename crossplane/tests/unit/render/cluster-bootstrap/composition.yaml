@@ -676,6 +676,11 @@ spec:
                 validRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
+                {{- /* The platform's mark: a realm import makes no client
+                     carrying it from a bundle (internal/keycloak
+                     PlatformMarkerAttribute). */}}
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: {{ $obSecretName }}
                   namespace: {{ $obNs }}
@@ -792,6 +797,8 @@ spec:
               forProvider:
                 clientId: gentian-dovecot
                 realmId: {{ $realm | quote }}
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 accessType: CONFIDENTIAL
                 enabled: true
                 standardFlowEnabled: false

@@ -1062,6 +1062,10 @@ spec:
             {{- $_ := set $gAttrs $k (ternary $v (list (toString $v)) (kindIs "slice" $v)) }}
             {{- end }}
             {{- end }}
+            {{- /* And the platform's mark, which a realm import reads: a group
+                 carrying it is never made from a bundle, and one that is
+                 here keeps its id (internal/keycloak PlatformMarkerAttribute). */}}
+            {{- $_ := set $gAttrs "gentianos.io/managed-by" "platform" }}
             ---
             apiVersion: group.keycloak.crossplane.io/v1alpha1
             kind: Group
@@ -1074,10 +1078,8 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 name: {{ printf "gentian:tenant:%s:app:%s" $tenant $app | quote }}
-                {{- if $gAttrs }}
                 attributes:
                   {{ toYaml $gAttrs | nindent 18 }}
-                {{- end }}
               providerConfigRef:
                 name: keycloak
 
@@ -1207,6 +1209,11 @@ spec:
                 clientId: {{ $oidcCl.clientId | quote }}
                 name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
                 realmId: {{ $realm }}
+                {{- /* The platform's mark: a realm import makes no client
+                     carrying it from a bundle (internal/keycloak
+                     PlatformMarkerAttribute). */}}
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
@@ -1625,6 +1632,8 @@ spec:
                 clientId: {{ $signInEntity | quote }}
                 name: {{ printf "Sign-in sidecar of %s" $app | quote }}
                 enabled: true
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 {{- /* The response and the assertion in it are both signed by
                      the realm; the sidecar accepts nothing less. */}}
                 signDocuments: true

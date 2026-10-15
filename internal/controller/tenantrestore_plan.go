@@ -223,6 +223,26 @@ func mailRewriteNote(was, now string) string {
 	return ""
 }
 
+// clientAddressNote says where a realm restore makes a sign-in client the
+// tenant made, from the tenant's domain and the cluster's where the bundle
+// was taken (was, wasKernel) to here (now, nowKernel); "" when there is
+// nothing to say.
+func clientAddressNote(was, now, wasKernel, nowKernel string) string {
+	switch {
+	case now == "":
+		return ""
+	case was == "":
+		return "The bundle does not say which domain it was taken on, so a sign-in client the tenant made that is not in the realm here was made at the addresses the bundle recorded."
+	case domainMoved(was, now):
+		note := "A sign-in client the tenant made that is not in the realm here was made with its addresses at " + was + " moved to " + now
+		if domainMoved(wasKernel, nowKernel) {
+			note += ", and those at " + wasKernel + " to " + nowKernel
+		}
+		return note + "; the platform's own clients are made by the platform, not from the bundle."
+	}
+	return ""
+}
+
 // restoreSource is what the manifest says of where the bundle was written,
 // each value only if it is a plain one: they come from a bundle, and are
 // recorded in the restore's status and handed to a profile's commands.
@@ -285,8 +305,9 @@ type planTarget struct {
 	mailDomain  string
 	noMailboxes string
 	// domain is the tenant's domain here, as it is when the plan is made;
-	// "" when it is not known.
-	domain string
+	// "" when it is not known. kernelDomain is the cluster's.
+	domain       string
+	kernelDomain string
 	// cluster is this cluster's id in the rights store, and haveRights
 	// whether the operator has a store to write to.
 	cluster    string
@@ -506,6 +527,13 @@ func planRestore(
 				Kind: kind, Name: m.Identity.Realm, Path: m.Identity.Path, Target: keycloakRealmName(tenant),
 			})
 			if note := mailRewriteNote(wasDomain, target.domain); note != "" {
+				plan.notes = append(plan.notes, note)
+			}
+			wasKernel := ""
+			if plan.source != nil {
+				wasKernel = plan.source.KernelDomain
+			}
+			if note := clientAddressNote(wasDomain, target.domain, wasKernel, target.kernelDomain); note != "" {
 				plan.notes = append(plan.notes, note)
 			}
 		case bundle.ArtefactRights:

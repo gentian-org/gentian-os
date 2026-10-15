@@ -739,14 +739,25 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 			p, unitD := r.placeRestoreUnit(restore, params, d, identityNamespace)
 			p.Name = exportJobName(tenant.Name, restore.Name, backupTenantComponent, "realmr")
 			// The people's addresses follow the tenant's mail domain, from
-			// the one the bundle was taken on to this tenant's; where the
-			// bundle does not say its own, they are left as they are.
+			// the one the bundle was taken on to this tenant's, and so do the
+			// addresses of a client the tenant made, with the cluster's
+			// domain beside it; where the bundle does not say its own, they
+			// are left as they are.
 			source := backup.RealmSource{}
 			if r.Tenant != nil {
 				if was, now := bundleDomain(restore.Status.Source, restore.Status.SourceTenant), r.Tenant.tenantEffectiveDomain(tenant); domainMoved(was, now) {
 					source.MailDomain, source.TargetMailDomain = was, now
+					source.Domain, source.TargetDomain = was, now
+				}
+				if s := restore.Status.Source; s != nil && domainMoved(s.KernelDomain, r.Tenant.KernelDomain) {
+					source.KernelDomain, source.TargetKernelDomain = s.KernelDomain, r.Tenant.KernelDomain
 				}
 			}
+			clients, err := r.catalogueClients(ctx)
+			if err != nil {
+				return nil, err
+			}
+			source.PlatformClients = clients
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
 				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target, source)})
 		case bundle.ArtefactPostgres:
@@ -788,6 +799,32 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 		}
 	}
 	return units, nil
+}
+
+// catalogueClients are the clientIds the platform gives the clients it makes
+// for apps: each profile's identity.oidc.clientId and identity.saml.entityId.
+// A realm import knows by them, in a bundle taken before the platform marked
+// its clients, which of the bundle's clients are the platform's
+// (backup.RealmSource.PlatformClients).
+func (r *TenantRestoreReconciler) catalogueClients(ctx context.Context) ([]string, error) {
+	profiles := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profiles); err != nil {
+		return nil, fmt.Errorf("list the catalogue's profiles: %w", err)
+	}
+	var names []string
+	for i := range profiles.Items {
+		s := profiles.Items[i].Services()
+		if s == nil || s.Identity == nil {
+			continue
+		}
+		if s.Identity.OIDC != nil && s.Identity.OIDC.ClientID != "" {
+			names = append(names, s.Identity.OIDC.ClientID)
+		}
+		if s.Identity.SAML != nil && s.Identity.SAML.EntityID != "" {
+			names = append(names, s.Identity.SAML.EntityID)
+		}
+	}
+	return names, nil
 }
 
 func (r *TenantRestoreReconciler) restoreTenantWide(
@@ -1172,6 +1209,7 @@ func (r *TenantRestoreReconciler) planTarget(ctx context.Context, tenant *gentia
 		}
 		target.noMailboxes = why
 		target.domain = r.Tenant.tenantEffectiveDomain(tenant)
+		target.kernelDomain = r.Tenant.KernelDomain
 		target.cluster = r.Tenant.ClusterID
 		target.haveRights = r.Tenant.Rights != nil && r.Tenant.ClusterID != ""
 	}

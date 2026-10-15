@@ -328,6 +328,7 @@ spec:
     directAccessGrantsEnabled: false
     enabled: true
     extraConfig:
+      gentianos.io/managed-by: platform
       jwks.url: https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
       token.endpoint.auth.signing.alg: RS256
       use.jwks.url: "true"
@@ -374,6 +375,8 @@ spec:
       namespace: system-mail
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     realmId: render-fixture
@@ -414,6 +417,8 @@ spec:
       namespace: kernel-edge
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     name: Acme Cloud edge (token exchange)
@@ -629,6 +634,8 @@ spec:
       namespace: kernel-edge
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     name: Acme Cloud edge (render-fixture zone)
@@ -774,6 +781,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:admins
     realmId: render-fixture
   providerConfigRef:
@@ -797,6 +806,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:app-admins
     realmId: render-fixture
   providerConfigRef:
@@ -820,6 +831,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:members
     realmId: render-fixture
   providerConfigRef:
@@ -843,6 +856,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:perimeter
     realmId: render-fixture
   providerConfigRef:
@@ -1231,6 +1246,7 @@ spec:
     directAccessGrantsEnabled: false
     enabled: true
     extraConfig:
+      gentianos.io/managed-by: platform
       oauth2.jwt.authorization.grant.enabled: "true"
       oauth2.jwt.authorization.grant.idp: vouch-scribe
     fullScopeAllowed: false
@@ -1275,6 +1291,7 @@ spec:
     directAccessGrantsEnabled: false
     enabled: true
     extraConfig:
+      gentianos.io/managed-by: platform
       oauth2.jwt.authorization.grant.enabled: "true"
       oauth2.jwt.authorization.grant.idp: vouch-steward
     fullScopeAllowed: false

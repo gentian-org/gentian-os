@@ -853,6 +853,11 @@ spec:
                      second answer that can disagree with the hosts the
                      Gateway actually serves. */}}
                 rootUrl: https://{{ $zoneDesktop }}
+                {{- /* The platform's mark: a realm import makes no client
+                     carrying it from a bundle (internal/keycloak
+                     PlatformMarkerAttribute). The same on every client here. */}}
+                extraConfig:
+                  gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
 
@@ -1134,6 +1139,8 @@ spec:
                 serviceAccountsEnabled: false
                 fullScopeAllowed: false
                 standardTokenExchangeEnabled: true
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: {{ $exchangeSecret }}
                   namespace: {{ $edgeNs }}
@@ -1615,6 +1622,7 @@ spec:
                 extraConfig:
                   oauth2.jwt.authorization.grant.enabled: "true"
                   oauth2.jwt.authorization.grant.idp: {{ $vouchAlias }}
+                  gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: {{ $vouchSecret }}
                   namespace: {{ $ns }}
@@ -1781,6 +1789,8 @@ spec:
                 directAccessGrantsEnabled: false
                 serviceAccountsEnabled: false
                 fullScopeAllowed: false
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: dovecot-admin
                   namespace: system-mail
@@ -1872,7 +1882,9 @@ spec:
             {{- /* ── the tenant's entitlement groups ─────────────────────────
                  Four fixed, one per app. The names are internal/keycloak/groups.go's
                  contract — members, admins, app-admins, perimeter, and app:<profile> — and
-                 they carry no attributes, checked against the live realm.
+                 they carry one attribute, the platform's mark, which a realm
+                 import reads: such a group keeps the id it has here and is never
+                 made from a bundle (internal/keycloak PlatformMarkerAttribute).
 
                  No external-name. A group is identified by its UUID, so it cannot
                  be adopted from its name; given the realm and the name, the
@@ -1910,6 +1922,8 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 name: {{ $g | quote }}
+                attributes:
+                  gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
             {{- end }}
@@ -2257,6 +2271,7 @@ spec:
                   use.jwks.url: "true"
                   jwks.url: {{ $b.jwksURL | quote }}
                   token.endpoint.auth.signing.alg: RS256
+                  gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
             {{- end }}

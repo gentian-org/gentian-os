@@ -150,6 +150,7 @@ spec:
       - crm
       gentianSingle:
       - one
+      gentianos.io/managed-by: platform
     name: gentian:tenant:demo:app:demo-app
     realmId: demo
   providerConfigRef:
@@ -294,6 +295,8 @@ spec:
       name: render-demo-app-fixture-oidc-client-creds
       namespace: kernel-provisioning
     directAccessGrantsEnabled: false
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     name: Demo App
     realmId: demo

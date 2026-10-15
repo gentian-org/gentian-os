@@ -11,12 +11,15 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -294,5 +297,42 @@ func TestARealmRestoreSaysWhatBecomesOfThePeoplesAddresses(t *testing.T) {
 	}
 	if n := notes("acme.example.org", "acme.example.org"); strings.Contains(n, "address") {
 		t.Errorf("the same domain says something of addresses:\n%s", n)
+	}
+	// And of a sign-in client the tenant made: made at the new addresses, or
+	// at the bundle's where its domain is not known.
+	if n := notes("acme.example.org", "acme.example.net"); !strings.Contains(n, "sign-in client the tenant made that is not in the realm here was made with its addresses at acme.example.org moved to acme.example.net") {
+		t.Errorf("a move does not say where the tenant's clients are made:\n%s", n)
+	}
+	if n := notes("", "acme.example.net"); !strings.Contains(n, "a sign-in client the tenant made that is not in the realm here was made at the addresses the bundle recorded") {
+		t.Errorf("an unknown domain does not say the clients' addresses were left:\n%s", n)
+	}
+	if n := clientAddressNote("acme.old.example", "acme.new.example", "old.example", "new.example"); !strings.Contains(n, "and those at old.example to new.example") {
+		t.Errorf("the cluster's domain is not named: %s", n)
+	}
+}
+
+// The clients the platform makes for apps are named by the catalogue: each
+// profile's OIDC clientId and SAML entity id, so a realm import knows them in
+// a bundle taken before the platform marked its clients.
+func TestTheCatalogueNamesThePlatformsAppClients(t *testing.T) {
+	oidcProfile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"}}
+	oidcProfile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "gentian-xwiki"}}}}
+	samlProfile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "sso"}}
+	samlProfile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Identity: &gentianov1alpha1.IdentityRequirement{SAML: &gentianov1alpha1.SAMLClientSpec{EntityID: "urn:acme:sp", ACSURL: "x"}}}}
+	bare := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "bare"}}
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	r := &TenantRestoreReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(oidcProfile, samlProfile, bare).Build()}
+	got, err := r.catalogueClients(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"gentian-xwiki", "urn:acme:sp"}) {
+		t.Errorf("the catalogue names %v", got)
 	}
 }

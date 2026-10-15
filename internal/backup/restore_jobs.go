@@ -11,15 +11,18 @@ SPDX-License-Identifier: MPL-2.0
 package backup
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -580,8 +583,8 @@ echo "restored volume %s"`, workDir, claim)},
 }
 
 // RealmSource is where a realm capture was taken, as far as a realm import
-// needs it: where the tenant's mail domain there is not the one it is
-// restored into, both mail domains.
+// needs it: where the tenant's domains there are not the ones it is
+// restored into, both of each; and which clients the platform makes.
 type RealmSource struct {
 	// MailDomain is the tenant's mail domain where the capture was taken and
 	// TargetMailDomain the one it is put back into. Set, both, only where
@@ -590,6 +593,25 @@ type RealmSource struct {
 	// address with it. A value that is not a domain's name moves nothing.
 	MailDomain       string
 	TargetMailDomain string
+
+	// Domain is the tenant's domain where the capture was taken and
+	// TargetDomain the one here; KernelDomain and TargetKernelDomain are the
+	// cluster's. Each pair is set only where both are known and differ: a
+	// client the tenant made, made here from the bundle, has each address
+	// at a host of the old domain put at the same host of the new one -- the
+	// tenant's domain before the cluster's, as the tenant's may lie inside
+	// it. A value that is not a domain's name moves nothing.
+	Domain             string
+	TargetDomain       string
+	KernelDomain       string
+	TargetKernelDomain string
+
+	// PlatformClients are the clientIds of the clients the platform makes
+	// for apps, which their profiles name (identity.oidc.clientId,
+	// identity.saml.entityId): with keycloak.PlatformClientPatterns, how a
+	// client of a bundle taken before the platform marked its clients
+	// (keycloak.PlatformMarkerAttribute) is known as the platform's.
+	PlatformClients []string
 }
 
 // mailDomainName is a domain's name, in lower case: what a mail domain a
@@ -600,11 +622,53 @@ var mailDomainName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[
 // both "" when there is no move: they are the same, either is unknown, or
 // either is not a domain's name.
 func (s RealmSource) mailMove() (from, to string) {
-	from, to = strings.ToLower(s.MailDomain), strings.ToLower(s.TargetMailDomain)
-	if from == to || len(from) > 253 || len(to) > 253 || !mailDomainName.MatchString(from) || !mailDomainName.MatchString(to) {
-		return "", ""
+	if move := domainMove(s.MailDomain, s.TargetMailDomain); move != nil {
+		return move[0], move[1]
 	}
-	return from, to
+	return "", ""
+}
+
+// domainMove is one pair of domains a realm import moves addresses
+// between, nil when there is no move: they are the same, either is unknown,
+// or either is not a domain's name.
+func domainMove(from, to string) []string {
+	from, to = strings.ToLower(from), strings.ToLower(to)
+	if from == to || len(from) > 253 || len(to) > 253 || !mailDomainName.MatchString(from) || !mailDomainName.MatchString(to) {
+		return nil
+	}
+	return []string{from, to}
+}
+
+// hostMoves is the JSON list of [from, to] domain pairs a client the tenant
+// made has its addresses moved between, the tenant's domain first.
+func (s RealmSource) hostMoves() string {
+	moves := [][]string{}
+	for _, pair := range [][2]string{{s.Domain, s.TargetDomain}, {s.KernelDomain, s.TargetKernelDomain}} {
+		if move := domainMove(pair[0], pair[1]); move != nil {
+			moves = append(moves, move)
+		}
+	}
+	return mustJSON(moves)
+}
+
+// platformClients is the JSON list of the clientIds RealmSource names, each
+// a plain one: no control character, and no longer than Keycloak keeps.
+func (s RealmSource) platformClients() string {
+	names := []string{}
+	for _, name := range sortedUnique(s.PlatformClients) {
+		if name != "" && len(name) <= 255 && !strings.ContainsFunc(name, unicode.IsControl) {
+			names = append(names, name)
+		}
+	}
+	return mustJSON(names)
+}
+
+func mustJSON(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
 }
 
 // RealmImportJob puts a tenant's realm, its people and their groups back.
@@ -619,14 +683,23 @@ func (s RealmSource) mailMove() (from, to string) {
 // token's subject finds the same person after a restore or an import. A
 // person who is already in the realm is left under the id they have.
 //
-// Groups and the realm's roles are brought back to what the bundle recorded:
-// the bundle is always of the tenant restored into, so the platform's groups
-// (gentian:tenant:<tenant>:…) are named as they are here.
+// Nothing the realm has is deleted and made anew. Every client, role and
+// group here keeps its id, as the platform's provider-keycloak resources know
+// them by it; the bundle is always of the tenant restored into, so the
+// platform's groups (gentian:tenant:<tenant>:…) are named as they are here.
+// A group here gets what the bundle recorded of it put onto it: the tenant's
+// own its description and attributes, the platform's the attributes it
+// lacks, and both the roles it held.
 //
-// Clients are not put back over the ones here. Every client the realm has is
-// left as it is, the platform's above all: it made them on this cluster, with
-// this cluster's secrets and addresses, and the export holds each secret only
-// masked. A client of the bundle that is not here is made, with a new secret.
+// What the platform declares is never made from the bundle: a client or
+// group carrying keycloak.PlatformMarkerAttribute, or, in a bundle taken
+// before the mark, named as the platform names its own
+// (keycloak.PlatformClientPatterns, RealmSource.PlatformClients,
+// keycloak.PlatformGroupPattern). The platform makes it on this cluster; a
+// copy from the bundle would stand under the name its resource makes it by.
+// A client the tenant made that is not here is made, with a new secret
+// (the export holds each only masked), and at this tenant's addresses where
+// the bundle was taken on another domain (RealmSource.Domain).
 //
 // Where the tenant's mail domain is another than where the bundle was taken
 // (RealmSource.MailDomain), each person's address at the old one comes back
@@ -673,34 +746,247 @@ if [ -n "${MAIL_FROM}" ] && [ -n "${MAIL_TO}" ]; then
 fi
 new_token
 
-# Clients first, and only those that are not here: SKIP leaves every client
-# the realm has as it is, with its id, its secret, its addresses and its
-# roles. The platform declares the clients it makes and has made them here
-# already; Keycloak's OVERWRITE would delete each and make it anew from the
-# bundle, under a new id, at the addresses the bundle was taken at, and with
-# the secret the export masked ("**********") as its secret. A client that
-# is not here is made from the bundle without any masked value, so Keycloak
-# gives it a new secret. Its roles come with it; a client here keeps its own.
-jq '{ifResourceExists:"SKIP",
-     clients: [(.clients // [])[]
-               | del(.secret, .registrationAccessToken)
-               | if (.attributes | type) == "object"
-                 then .attributes |= with_entries(select(.value != "**********"))
-                 else . end],
-     roles: {client: (.roles.client // {})}}' \
-  %[2]s/realm.json > %[2]s/import.json
-kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
-
-# Then groups and the realm's roles, with OVERWRITE: brought back to what the
-# bundle recorded. Scoped to the realm's contents; the realm itself, which the
-# platform provisions, is never recreated.
-jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:{realm:(.roles.realm//[])}}' \
-  %[2]s/realm.json > %[2]s/import.json
-kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
-echo "imported realm configuration"
-
 enc() { printf '%%s' "$1" | jq -sRr @uri; }
+segments() { printf '%%s' "$1" | jq -sRr 'ltrimstr("/") | split("/") | map(@uri) | join("/")'; }
 failed=0
+
+# found URL: the answer of a GET; nothing, and 1, where there is no such
+# thing (404); 2, said, where it could not be read.
+found() {
+  _again=1
+  while : ; do
+    _code=$(curl -sS --max-time 120 -o /tmp/kc.answer -w '%%{http_code}' \
+      -H "Authorization: Bearer ${TOKEN}" "$1") \
+      || { echo "ERROR: GET $1: the identity provider did not answer" >&2; return 2; }
+    case "${_code}" in
+      2*) cat /tmp/kc.answer; return 0 ;;
+      404) return 1 ;;
+      401) if [ "${_again}" -eq 1 ]; then _again=0; new_token; continue; fi ;;
+    esac
+    echo "ERROR: GET $1 answered ${_code}: $(head -c 300 /tmp/kc.answer)" >&2
+    return 2
+  done
+}
+
+# What the platform declares, and where a client the tenant made moves.
+# A client or group carrying the platform's mark (MARK) is the platform's;
+# so is one of a bundle taken before the mark, by its name: a clientId
+# PLATFORM_CLIENTS names or CLIENT_PATTERNS match, a group's name
+# GROUP_PATTERN matches. HOST_MOVES are the [from, to] domains an address
+# of a client the tenant made moves between, the tenant's domain first.
+PLATFORM_CLIENTS=%[5]s
+CLIENT_PATTERNS=%[6]s
+GROUP_PATTERN=%[7]s
+HOST_MOVES=%[8]s
+MARK=%[9]s
+MARK_VALUE=%[10]s
+jqd() {
+  jq --argjson names "${PLATFORM_CLIENTS}" --argjson patterns "${CLIENT_PATTERNS}" \
+    --arg gpat "${GROUP_PATTERN}" --argjson moves "${HOST_MOVES}" \
+    --arg mark "${MARK}" --arg markv "${MARK_VALUE}" "$@"
+}
+DEFS='
+def marked: ((.attributes // {})[$mark] // null) as $v
+  | if ($v | type) == "array" then any($v[]; . == $markv) else $v == $markv end;
+def platform_client: marked
+  or ((.clientId // "") as $c | any($names[]; . == $c) or any($patterns[]; . as $p | $c | test($p)));
+def platform_group: marked or ((.name // "") | test($gpat));
+def move_url:
+  if type == "string" and ($moves | length) > 0 then
+    (capture("^(?<pre>[A-Za-z][A-Za-z0-9+.-]*://(?:[^/@?#]*@)?)(?<host>[^/:?#]+)(?<post>.*)$") // null) as $u
+    | if $u == null then . else
+        ($u.host | ascii_downcase) as $h
+        | ([$moves[] | select(.[0] as $d | $h == $d or ($h | endswith("." + $d)))] | first) as $m
+        | if $m == null then . else $u.pre + $h[0:(($h | length) - ($m[0] | length))] + $m[1] + $u.post end
+      end
+  else . end;
+def move_name:
+  if test("^[A-Za-z][A-Za-z0-9+.-]*://") then move_url
+  elif test("^[A-Za-z0-9.-]+$") then ("x://" + .) | move_url | ltrimstr("x://")
+  else . end;
+def at($k; f): if has($k) and .[$k] != null then .[$k] |= f else . end;
+def move_client:
+  at("clientId"; move_name)
+  | at("redirectUris"; map(move_url)) | at("webOrigins"; map(move_url))
+  | at("rootUrl"; move_url) | at("baseUrl"; move_url) | at("adminUrl"; move_url)
+  | at("attributes"; with_entries(
+      if .key == "post.logout.redirect.uris" and (.value | type) == "string"
+      then .value |= (split("##") | map(move_url) | join("##"))
+      else .value |= move_url end));
+'
+
+# ── Clients and roles ───────────────────────────────────────────────────────
+# One partial import, SKIP throughout: whatever the realm has is left as it
+# is, with its id, its secret, its addresses, its roles and who holds them.
+# Keycloak's OVERWRITE deletes a client or a role and makes it anew from the
+# bundle: under a new id, at the addresses the bundle was taken at, with the
+# secret the export masked ("**********") as its secret, and -- a role --
+# held by nobody any more.
+#
+# A client the platform declares is never made from the bundle, here or
+# not: the platform makes it, on this cluster, and its provider-keycloak
+# resource, which makes it when it is missing, could not make it under a
+# name a copy from the bundle already has. Only a client the tenant made
+# comes from the bundle, where it is not here, with no masked value, so
+# Keycloak gives it a new secret, and at the addresses moved to this
+# tenant's domains. Its roles come with it; a client here keeps its own,
+# and a role of a client that is in neither is left out, as Keycloak would
+# refuse the whole import for it.
+kc GET "${API}/clients?first=0&max=100000" > %[2]s/clients-here.json
+CLIENTS_PLAN='
+  [($here[0] // [])[] | .clientId] as $have
+  | [(.clients // [])[] | select(platform_client | not)] as $mine
+  | {have: $have,
+     rename: ([$mine[] | {key: .clientId, value: (move_client | .clientId)}] | from_entries),
+     moved: [$mine[] | select(. != move_client) | .clientId],
+     platform: [(.clients // [])[] | select(platform_client) | .clientId
+                | select(. as $c | any($have[]; . == $c) | not)]}'
+jqd -c --slurpfile here %[2]s/clients-here.json "${DEFS}${CLIENTS_PLAN}" \
+  %[2]s/realm.json > %[2]s/clients-plan.json
+jq -r '.platform[] | ("NOTE: the client \(.) is made by the platform and is not here; it is not made from the bundle, the platform makes it with its app")' \
+  %[2]s/clients-plan.json
+if [ "${HOST_MOVES}" != "[]" ]; then
+  jq -r --argjson moves "${HOST_MOVES}" '.moved[] | ("the client \(.) is made at the addresses of this tenant: \($moves | map("\(.[0]) is now \(.[1])") | join(", "))")' \
+    %[2]s/clients-plan.json
+fi
+CLIENTS_IMPORT='
+  $plan[0] as $p
+  | ($p.have + [$p.rename[]]) as $avail
+  | def kept: . as $c | any($avail[]; . == $c);
+    def renamed: $p.rename[.] // .;
+    def composites: if (.composites.client | type) == "object"
+      then .composites.client |= with_entries(.key |= renamed | select(.key | kept)) else . end;
+  {ifResourceExists: "SKIP",
+   clients: [(.clients // [])[] | select(platform_client | not) | move_client
+             | del(.secret, .registrationAccessToken)
+             | if (.attributes | type) == "object"
+               then .attributes |= with_entries(select(.value != "**********"))
+               else . end],
+   roles: {realm: [(.roles.realm // [])[] | composites],
+           client: ((.roles.client // {}) | with_entries(.key |= renamed | select(.key | kept))
+                    | map_values(map(composites)))}}'
+jqd --slurpfile plan %[2]s/clients-plan.json "${DEFS}${CLIENTS_IMPORT}" \
+  %[2]s/realm.json > %[2]s/import.json
+kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
+
+# ── Groups ──────────────────────────────────────────────────────────────────
+# Each group of the bundle, a group before those in it, by its path. One
+# that is here keeps its id: the platform's provider-keycloak Group knows
+# its own by that id, and Keycloak's OVERWRITE would delete it and make it
+# anew under the bundle's -- with nobody in it and none of its roles, and a
+# Group resource that then makes one of the same name and is refused. What
+# OVERWRITE brought back is put onto it instead: a group the tenant made
+# gets the bundle's description and attributes; one of the platform's keeps
+# its own and gets only those it does not have (the tenant's choices, such
+# as which apps a new person is given); and each gets the roles the bundle
+# says it held, added to those it has.
+#
+# One that is not here is made, with what is in it, under the ids the bundle
+# recorded -- unless it is the platform's: the platform makes it, and its
+# people are put into it below once it has. One made inside a group that is
+# here is made under a new id, Keycloak's API giving no other.
+GROUPS_FLAT='
+  def flat($parent): .[]? as $g
+    | ($g | del(.subGroups) + {parent: $parent, platform: ($g | platform_group)}),
+      (($g.subGroups // []) | flat($g.path));
+  (.groups // []) | flat("")'
+jqd -c "${DEFS}${GROUPS_FLAT}" %[2]s/realm.json > %[2]s/groups.ndjson
+n=0
+while IFS= read -r g; do
+  [ $((n %% 50)) -ne 0 ] || new_token
+  n=$((n + 1))
+  path=$(printf '%%s' "${g}" | jq -r '.path // empty')
+  if [ -z "${path}" ]; then
+    echo "ERROR: the bundle holds a group without a path" >&2; failed=$((failed + 1)); continue
+  fi
+  parent=$(printf '%%s' "${g}" | jq -r '.parent')
+  platform=$(printf '%%s' "${g}" | jq -r '.platform')
+  printf '%%s' "${g}" | jq '{name, description, attributes: (.attributes // {})}' > %[2]s/group-want.json
+  rc=0; found "${API}/group-by-path/$(segments "${path}")" > %[2]s/group.json || rc=$?
+  if [ "${rc}" -eq 2 ]; then failed=$((failed + 1)); continue; fi
+  if [ "${rc}" -eq 0 ]; then
+    gid=$(jq -r '.id // empty' %[2]s/group.json)
+    if [ "${platform}" = true ]; then
+      if ! jq -e --slurpfile b %[2]s/group-want.json '(.attributes // {}) as $a | ($b[0].attributes * $a) == $a' %[2]s/group.json >/dev/null; then
+        jq --slurpfile b %[2]s/group-want.json '{name, description, attributes: ($b[0].attributes * (.attributes // {}))}' \
+          %[2]s/group.json > %[2]s/group-put.json
+        kc PUT "${API}/groups/${gid}" %[2]s/group-put.json >/dev/null \
+          || { echo "ERROR: the attributes of ${path} could not be put back" >&2; failed=$((failed + 1)); }
+      fi
+    else
+      kc PUT "${API}/groups/${gid}" %[2]s/group-want.json >/dev/null \
+        || { echo "ERROR: ${path} could not be put back as the bundle recorded it" >&2; failed=$((failed + 1)); }
+    fi
+  elif [ "${platform}" = true ]; then
+    echo "NOTE: the group ${path} is made by the platform and is not here; it is not made from the bundle, the platform makes it"
+    continue
+  elif [ -z "${parent}" ]; then
+    GROUP_IMPORT='
+      def bare: del(.realmRoles, .clientRoles)
+        | if (.subGroups | type) == "array" then .subGroups |= map(select(platform_group | not) | bare) else . end;
+      {ifResourceExists: "SKIP", groups: [(.groups // [])[] | select(.path == $p) | bare]}'
+    jqd --arg p "${path}" "${DEFS}${GROUP_IMPORT}" \
+      %[2]s/realm.json > %[2]s/group-import.json
+    kc POST "${API}/partialImport" %[2]s/group-import.json >/dev/null \
+      || { echo "ERROR: ${path} could not be made" >&2; failed=$((failed + 1)); continue; }
+  else
+    rc=0; found "${API}/group-by-path/$(segments "${parent}")" > %[2]s/parent.json || rc=$?
+    if [ "${rc}" -eq 2 ]; then failed=$((failed + 1)); continue; fi
+    if [ "${rc}" -eq 1 ]; then
+      echo "NOTE: the group ${path} is not put back: ${parent}, which it is in, is not here"
+      continue
+    fi
+    kc POST "${API}/groups/$(jq -r '.id' %[2]s/parent.json)/children" %[2]s/group-want.json >/dev/null \
+      || { echo "ERROR: ${path} could not be made" >&2; failed=$((failed + 1)); continue; }
+    echo "NOTE: ${path} is made inside ${parent}, which is here, under a new id"
+  fi
+  if [ "${rc}" -ne 0 ]; then
+    if ! found "${API}/group-by-path/$(segments "${path}")" > %[2]s/group.json; then
+      echo "ERROR: ${path} was made and cannot be found" >&2; failed=$((failed + 1)); continue
+    fi
+    gid=$(jq -r '.id // empty' %[2]s/group.json)
+  fi
+
+  # The roles the group held, added to those it has: each found by its name
+  # here, as Keycloak grants a role only by its id. A role at a client that
+  # is not here, or that the client here does not have, is said and left.
+  printf '%%s' "${g}" | jq -r '(.realmRoles // [])[]' > %[2]s/want-roles
+  while IFS= read -r role; do
+    [ -n "${role}" ] || continue
+    rc=0; found "${API}/roles/$(enc "${role}")" > %[2]s/role.json || rc=$?
+    if [ "${rc}" -eq 1 ]; then
+      echo "ERROR: ${path} held the realm role ${role}, which is not in the realm" >&2
+    fi
+    if [ "${rc}" -ne 0 ]; then failed=$((failed + 1)); continue; fi
+    jq -c '[{id, name}]' %[2]s/role.json > %[2]s/grant.json
+    kc POST "${API}/groups/${gid}/role-mappings/realm" %[2]s/grant.json >/dev/null \
+      || { echo "ERROR: ${path} could not be given the realm role ${role}" >&2; failed=$((failed + 1)); }
+  done < %[2]s/want-roles
+  printf '%%s' "${g}" | jq -c --slurpfile plan %[2]s/clients-plan.json \
+    '(.clientRoles // {}) | to_entries[] | (.key | $plan[0].rename[.] // .) as $c | .value[] | [$c, .]' > %[2]s/want-client-roles
+  while IFS= read -r pair; do
+    client=$(printf '%%s' "${pair}" | jq -r '.[0]')
+    role=$(printf '%%s' "${pair}" | jq -r '.[1]')
+    if ! kc GET "${API}/clients?clientId=$(enc "${client}")" > %[2]s/client.json; then
+      failed=$((failed + 1)); continue
+    fi
+    cid=$(jq -r '.[0].id // empty' %[2]s/client.json)
+    if [ -z "${cid}" ]; then
+      echo "NOTE: ${path} held the role ${role} at the client ${client}, which is not here; it does not hold it here"
+      continue
+    fi
+    rc=0; found "${API}/clients/${cid}/roles/$(enc "${role}")" > %[2]s/role.json || rc=$?
+    if [ "${rc}" -eq 2 ]; then failed=$((failed + 1)); continue; fi
+    if [ "${rc}" -eq 1 ]; then
+      echo "NOTE: ${path} held the role ${role} at the client ${client}, which has no such role here; it does not hold it here"
+      continue
+    fi
+    jq -c '[{id, name}]' %[2]s/role.json > %[2]s/grant.json
+    kc POST "${API}/groups/${gid}/role-mappings/clients/${cid}" %[2]s/grant.json >/dev/null \
+      || { echo "ERROR: ${path} could not be given the role ${role} at ${client}" >&2; failed=$((failed + 1)); }
+  done < %[2]s/want-client-roles
+done < %[2]s/groups.ndjson
+echo "imported realm configuration"
 
 # The realm's default role, which POST /users would grant and a partial
 # import does not. It is read from this realm, so the import names no role
@@ -797,7 +1083,10 @@ if [ "${failed}" -ne 0 ]; then
   exit 1
 fi
 echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a password reset"`,
-			quotedRealm(realm), workDir, shellSingleQuote(mailFrom), shellSingleQuote(mailTo))},
+			quotedRealm(realm), workDir, shellSingleQuote(mailFrom), shellSingleQuote(mailTo),
+			shellSingleQuote(source.platformClients()), shellSingleQuote(mustJSON(keycloak.PlatformClientPatterns)),
+			shellSingleQuote(keycloak.PlatformGroupPattern), shellSingleQuote(source.hostMoves()),
+			shellSingleQuote(keycloak.PlatformMarkerAttribute), shellSingleQuote(keycloak.PlatformMarkerValue))},
 		Env:          keycloakAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}

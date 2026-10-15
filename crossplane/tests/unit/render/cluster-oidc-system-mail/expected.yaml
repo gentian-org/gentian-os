@@ -186,6 +186,8 @@ spec:
       namespace: system-mail
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     realmId: kernel
@@ -481,6 +483,8 @@ spec:
       name: openbao-oidc-client
       namespace: kernel-secrets
     directAccessGrantsEnabled: false
+    extraConfig:
+      gentianos.io/managed-by: platform
     name: OpenBao
     realmId: kernel
     serviceAccountsEnabled: false

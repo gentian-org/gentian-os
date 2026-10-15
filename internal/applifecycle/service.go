@@ -298,6 +298,7 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 		attrs = map[string][]string{}
 	}
 	attrs[keycloak.DefaultGrantAttribute] = []string{"true"}
+	attrs[keycloak.PlatformMarkerAttribute] = []string{keycloak.PlatformMarkerValue}
 
 	groupID, err := kc.EnsureGroup(ctx, realm, fullGroupName, attrs)
 	if err != nil {
