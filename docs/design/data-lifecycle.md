@@ -279,7 +279,8 @@ After an **import**, also:
 
 - [ ] Re-enter *every* credential a person had typed in. The new tenant has
       fresh, generated credentials and, but for its apps' own secrets, none
-      of the old ones.
+      of the old ones. An app that asks for one (`secrets.supplied`) waits
+      for it before the restore begins, and the import's status names it.
 - [ ] Data an app encrypted with a secret the platform generated came with
       that secret, also on another cluster and under another name. Two
       cases are left to check: a bundle older than format 4 holds no
@@ -290,8 +291,11 @@ After an **import**, also:
 - [ ] The cache did not come. Mailboxes came only if both clusters run their
       own mail server; the result says when they did not.
 - [ ] Grant again each access right the result names as not brought.
-- [ ] Under another name: check each app's own settings for the old tenant's
-      names (addresses, database names it chose itself).
+- [ ] Under another name or on another domain (`OutsideGuarantee`): check
+      each app's own settings for the old tenant's names and addresses, as
+      far as its profile's post-restore commands did not rewrite them.
+- [ ] On another domain: declare the custom domain again, if the tenant had
+      one (`kubectl gentian tenants domain`).
 - [ ] Point DNS at the new cluster.
 
 Never in a bundle: passwords, stored credentials other than the apps' own

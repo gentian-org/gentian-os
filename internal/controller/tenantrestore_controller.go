@@ -38,6 +38,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
@@ -366,12 +367,19 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 		}
 		if _, err := r.Tenant.runningPodForApp(ctx, tenant.Name, appName, spec.QuiesceContainer()); err != nil {
+			// An app that waits for a credential a person supplies has no
+			// pod until it is set, and no bundle carries one: said by name.
+			why := err.Error()
+			if awaited := credentialprobe.Text(credentialprobe.AwaitedSupplied(ctx, r.Client, tenant.Name, appName, profile)); awaited != "" {
+				why += "; the app " + awaited
+				entry.Message = "resumed; waiting for a pod to run post-restore hooks: the app " + awaited
+			}
 			// Bounded by the clock rather than by an attempt count: the count
 			// already carries the capture Jobs' failures, and a pod that has
 			// not appeared in this long is not going to.
 			if time.Since(entry.QuiesceEnd.Time) > restoreHookPodTimeout {
 				return r.failApp(ctx, restore, tenant, appName, spec,
-					fmt.Sprintf("post-restore hooks: %v", err))
+					fmt.Sprintf("post-restore hooks: %s", why))
 			}
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 		}

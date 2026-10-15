@@ -239,3 +239,29 @@ func TestAnAddonSwitchedOnCountsAsInstalledForProvisioning(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// An app that waits for a credential only a person can provide says which:
+// no bundle carries one, so an import would otherwise wait two hours for a
+// reason nobody is told.
+func TestAnAppWaitingForASuppliedCredentialNamesIt(t *testing.T) {
+	shop := profile("shop", nil)
+	shop.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{Supplied: []gentianov1alpha1.SuppliedSecret{{Name: "payments", DisplayName: "Payment keys"}}}
+	wiki := profile("wiki", nil)
+	wiki.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{Supplied: []gentianov1alpha1.SuppliedSecret{{Name: "token"}}}
+	s := appsService(t, demoTenant(), shop, wiki,
+		component("shop", "Installing", "waiting for the release", false),
+		// Up: whatever it was given, it waits for nothing.
+		component("wiki", "Ready", "release deployed", true),
+	)
+	states, err := s.AppStates(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byProfile(t, states)
+	if a := got["shop"].AwaitingCredentials; len(a) != 1 || a[0].Name != "payments" || a[0].DisplayName != "Payment keys" || a[0].Requirement != "app-demo-shop-payments" {
+		t.Errorf("shop awaits %+v", a)
+	}
+	if a := got["wiki"].AwaitingCredentials; len(a) != 0 {
+		t.Errorf("a ready app awaits %+v", a)
+	}
+}

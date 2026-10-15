@@ -362,7 +362,9 @@ receives it. The platform asks for it rather than makes it: once the app is inst
 tenant's Admin Console lists it under Credentials, grouped under the app, and the app waits until
 it is set there. A field that is not secret (`public: true`, a publishable key) is shown as typed;
 every other is never shown again. The value is purged with the app and is not in a tenant's
-bundle: a restore asks for it again, as it does for every credential a person typed in.
+bundle: a restore asks for it again, as it does for every credential a person typed in. An app
+that waits for one names it in its state (`awaitingCredentials`), and so does an import that waits
+for the app.
 
 **An app whose data remembers where it ran** — its own address, a database's name, a credential it
 copied into a file — rewrites that in `spec.backup.restore.post`, the commands run in the app's pod

@@ -30,6 +30,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -74,6 +75,11 @@ type AppState struct {
 	// While any is listed the install waits on a person, not on the cluster.
 	PendingPrivileges []string       `json:"pendingPrivileges,omitempty"`
 	Conditions        []AppCondition `json:"conditions,omitempty"`
+	// AwaitingCredentials are the credentials the app's profile asks a
+	// person for (spec.secrets.supplied) that are not set yet, while the
+	// app is not up: it waits for them. A bundle carries none, so an
+	// imported app waits for them until they are set.
+	AwaitingCredentials []credentialprobe.Awaited `json:"awaitingCredentials,omitempty"`
 	// Reserved is what the app's pods request: what it costs against the
 	// tenant's ceiling, not what it happens to be using. Absent for an app
 	// with no pods.
@@ -141,7 +147,9 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			continue
 		}
 		cp := &gentianov1alpha1.ComponentProfile{}
+		found := false
 		if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err == nil {
+			found = true
 			if cp.Annotations[platformAppAnnotation] == "true" ||
 				cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
 				continue
@@ -156,6 +164,9 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		}
 		state.Reserved = reservation(pods)
 		if !state.Ready {
+			if found {
+				state.AwaitingCredentials = credentialprobe.AwaitedSupplied(ctx, s.client, tenantName, comp.Name, cp)
+			}
 			failure := workloadFailure(pods)
 			if failure != "" {
 				state.Phase, state.Failure = AppPhaseFailing, failure

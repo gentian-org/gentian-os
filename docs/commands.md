@@ -1259,7 +1259,10 @@ A platform component of an earlier release that this one no longer has
 the reason, and its data is not restored.
 It commits the tenant from the manifest's settings (deletionPolicy Retain,
 whatever the bundle said), waits until the operator reports the tenant Ready
-with its apps up, and starts a `TenantRestore`. The command follows the
+with its apps up, and starts a `TenantRestore`. An app that asks for a
+credential only a person can provide waits for it, since no bundle carries
+one; the status names the app and the credential, which is set under
+Credentials in the tenant's Admin Console. The wait ends after two hours. The command follows the
 import and prints each phase: `declared`, `provisioning`, `restoring`,
 `ready`.
 

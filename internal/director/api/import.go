@@ -721,6 +721,13 @@ func (s *Server) tenantProvisioned(ctx context.Context, name string) (bool, stri
 			Phase             string   `json:"phase"`
 			Failure           string   `json:"failure"`
 			PendingPrivileges []string `json:"pendingPrivileges"`
+			// The credentials a person supplies that the app waits for. A
+			// bundle carries none: an imported app waits for each until it
+			// is set, and the import says which.
+			AwaitingCredentials []struct {
+				Name        string `json:"name"`
+				DisplayName string `json:"displayName"`
+			} `json:"awaitingCredentials"`
 		} `json:"apps"`
 	}
 	if err := json.Unmarshal(body, &apps); err != nil {
@@ -737,6 +744,18 @@ func (s *Server) tenantProvisioned(ctx context.Context, name string) (bool, stri
 		}
 		if len(a.PendingPrivileges) > 0 {
 			why = "privileges pending: " + strings.Join(a.PendingPrivileges, ", ")
+		}
+		if len(a.AwaitingCredentials) > 0 {
+			names := make([]string, 0, len(a.AwaitingCredentials))
+			for _, c := range a.AwaitingCredentials {
+				label := c.DisplayName
+				if label == "" {
+					label = c.Name
+				}
+				names = append(names, label+" ("+c.Name+")")
+			}
+			why = "waits for the credentials a person supplies, which a bundle does not carry: " + strings.Join(names, ", ") +
+				"; set them under Credentials in the tenant's Admin Console"
 		}
 		waiting = append(waiting, a.Profile+" ("+why+")")
 	}

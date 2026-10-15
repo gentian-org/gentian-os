@@ -47,6 +47,8 @@ type importingOperator struct {
 	restores map[string]string
 	// failRestore makes a started restore end Failed.
 	failRestore bool
+	// apps is what apps/status answers; empty is element, up.
+	apps string
 }
 
 const importedManifest = `{"schemaVersion":1,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd","apps":[{"profile":"element"}]},"apps":[]}`
@@ -56,6 +58,9 @@ func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (i
 	defer o.mu.Unlock()
 	switch {
 	case strings.HasSuffix(path, "/apps/status"):
+		if o.apps != "" {
+			return http.StatusOK, []byte(o.apps), nil
+		}
 		return http.StatusOK, []byte(`{"apps":[{"profile":"element","ready":true,"phase":"Ready"}]}`), nil
 	case strings.Contains(path, "/restores/"):
 		name := path[strings.LastIndex(path, "/")+1:]
@@ -562,4 +567,36 @@ func TestAnImportWhoseRestoreWasStartedIsWatchedAfterARestart(t *testing.T) {
 	// The first director is still running in this process, which it is not
 	// after a real restart: let its watcher end before its checkout goes.
 	waitImport(t, h, alice, "imported", "ready", "failed")
+}
+
+// An imported app that waits for a credential a person supplies -- which no
+// bundle carries -- is named with the credential while the import waits, so
+// that nobody waits the two hours out to learn why.
+func TestAnImportWaitingForASuppliedCredentialNamesIt(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	op := &importingOperator{declared: true,
+		apps: `{"apps":[{"profile":"element","ready":false,"phase":"Installing","awaitingCredentials":[{"name":"payments","displayName":"Payment keys","requirement":"app-imported-element-payments"}]}]}`}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`); code != http.StatusAccepted {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, st := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/tenants/imported/import", alice, "")
+		msg, _ := st["message"].(string)
+		if strings.Contains(msg, "element (waits for the credentials a person supplies, which a bundle does not carry: Payment keys (payments)") &&
+			strings.Contains(msg, "under Credentials") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the import does not name the credential it waits for: %v", st)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	if op.restored != 0 {
+		t.Error("the restore began before the app was up")
+	}
 }
