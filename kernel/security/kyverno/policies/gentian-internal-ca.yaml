@@ -1,0 +1,136 @@
+# Only the platform asks the internal CA for a certificate.
+#
+# gentian-ca (kernel/manifests/cert-manager/internal-ca.yaml) signs whatever
+# a Certificate or CertificateRequest asks of it, under any common name, and
+# the object store accepts the client whose common name is seaweedfs-shell as
+# its administrator. So a request naming it is allowed only where the
+# platform's own components run: the kernel and system namespaces. Today the
+# object store's two certificates, in system-s3, are its only users;
+# cert-manager's CertificateRequests for them are made in the same namespace.
+#
+# cert-manager's ingress-shim is covered by the same rule: the Certificate it
+# makes for an Ingress is made in the Ingress's namespace and is refused
+# there. The Ingress rule only says so at the Ingress itself, rather than in
+# cert-manager's log.
+#
+# Kernel namespaces never reach this policy (the webhook skips their tier,
+# kernel/bootstrap/chart/templates/kyverno.yaml); they are excluded here for
+# the background scan, as in gentian-baseline.yaml. A system namespace is
+# excluded only by its tier label AND its name together: a tenant app may
+# write Namespace objects, so a label alone is something it could set on its
+# own namespace, while its Applications can only deploy to tenant-*.
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-restrict-internal-ca
+  annotations:
+    policies.kyverno.io/title: Restrict the internal CA to the platform
+    policies.kyverno.io/category: Certificates
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Denies cert-manager Certificates, CertificateRequests and ingress-shim
+      Ingresses that name the ClusterIssuer gentian-ca outside the kernel and
+      system namespaces.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: certificate-issuer
+    match:
+      any:
+      - resources:
+          kinds:
+          - cert-manager.io/v1/Certificate
+          - cert-manager.io/v1/CertificateRequest
+          operations:
+          - CREATE
+          - UPDATE
+    exclude:
+      any:
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
+      - resources:
+          namespaces:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - gpu-operator-resources
+      - resources:
+          namespaces:
+          - system-*
+          namespaceSelector:
+            matchExpressions:
+            - key: gentianos.io/tier
+              operator: In
+              values:
+              - system
+              - system-dmz
+    validate:
+      message: >-
+        The internal CA gentian-ca issues only to the platform's own
+        components, in the kernel and system namespaces.
+      deny:
+        conditions:
+          all:
+          - key: "{{ request.object.spec.issuerRef.name || '' }}"
+            operator: Equals
+            value: gentian-ca
+          - key: "{{ request.object.spec.issuerRef.kind || '' }}"
+            operator: Equals
+            value: ClusterIssuer
+  - name: ingress-shim-issuer
+    match:
+      any:
+      - resources:
+          kinds:
+          - networking.k8s.io/v1/Ingress
+          operations:
+          - CREATE
+          - UPDATE
+    exclude:
+      any:
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
+      - resources:
+          namespaces:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - gpu-operator-resources
+      - resources:
+          namespaces:
+          - system-*
+          namespaceSelector:
+            matchExpressions:
+            - key: gentianos.io/tier
+              operator: In
+              values:
+              - system
+              - system-dmz
+    context:
+    - name: annotations
+      variable:
+        jmesPath: request.object.metadata.annotations
+        default: {}
+    validate:
+      message: >-
+        The internal CA gentian-ca issues only to the platform's own
+        components; an Ingress outside the kernel and system namespaces
+        cannot ask cert-manager for one of its certificates.
+      # Either form the ingress-shim reads: cluster-issuer, or issuer with
+      # issuer-kind ClusterIssuer.
+      deny:
+        conditions:
+          any:
+          - key: "{{ annotations.\"cert-manager.io/cluster-issuer\" || '' }}"
+            operator: Equals
+            value: gentian-ca
+          - key: >-
+              {{ annotations."cert-manager.io/issuer" || '' }}:{{ annotations."cert-manager.io/issuer-kind" || '' }}
+            operator: Equals
+            value: gentian-ca:ClusterIssuer
