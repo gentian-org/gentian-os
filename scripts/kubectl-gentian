@@ -743,6 +743,9 @@ cmd_tenants_import() {
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
     echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."
+    # Apps of the bundle's tenant left out here: the platform's own
+    # components of an earlier release. Their data is not restored.
+    printf '%s' "${answer}" | jq -r '(.skipped // [])[] | "Skipped app \(.app), its data not restored: \(.reason)"'
     while :; do
         st="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/import")" || exit 1
         phase="$(printf '%s' "${st}" | jq -r '.phase')"

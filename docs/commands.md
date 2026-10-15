@@ -1216,6 +1216,9 @@ It then makes sure of the definition of every app the bundle's tenant lists:
 on the cluster already at the build the bundle records, or fetched at that
 build from one of the cluster's catalogues and committed. If one cannot be
 had, the import is refused with `422`, names each, and has changed nothing.
+A platform component of an earlier release that this one no longer has
+(`app-store-me`) is left out instead: the command prints it as skipped, with
+the reason, and its data is not restored.
 It commits the tenant from the manifest's settings (deletionPolicy Retain,
 whatever the bundle said), waits until the operator reports the tenant Ready
 with its apps up, and starts a `TenantRestore`. The command follows the

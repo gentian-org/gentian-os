@@ -184,7 +184,10 @@ no stored secret, and says so.
 has the definition of every app the bundle's tenant lists: already there at
 the same build, or fetched at that build from one of the cluster's
 catalogues. If one cannot be had, the import is refused, names it, and has
-changed nothing. Then it commits the new tenant by the code a normal create
+changed nothing. The one exception is a platform component of an earlier
+release that this one no longer has (the per-tenant `app-store-me`): it is
+left out of the new tenant, its data is not restored, and the import's result
+lists it under `skipped` with the reason. Then it commits the new tenant by the code a normal create
 uses, waits until the platform has made it and its apps empty, and starts a
 restore that says the tenant was made new for the bundle
 (`TenantRestore.spec.intoNewTenant`).

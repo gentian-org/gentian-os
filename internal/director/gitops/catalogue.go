@@ -101,6 +101,18 @@ var platformProfiles = map[string]bool{"admin-console": true, "app-store": true,
 // PlatformProfile reports whether name is a profile the platform ships.
 func PlatformProfile(name string) bool { return platformProfiles[name] }
 
+// retiredPlatformProfiles are profiles an earlier release of the platform
+// placed on every tenant as its own component and this release no longer
+// has, each with what took its place. A tenant's manifest from that release
+// still names them; nothing of the tenant's own is in them.
+var retiredPlatformProfiles = map[string]string{
+	"app-store-me": "it was the platform's per-tenant App Store, which this release no longer has: the App Store is a platform component now, outside the tenant's apps",
+}
+
+// RetiredPlatformProfile answers why name is a platform profile this release
+// no longer has, or "" when it is not one.
+func RetiredPlatformProfile(name string) string { return retiredPlatformProfiles[name] }
+
 // MaterialisedProfile is what the deployments repository says about one
 // profile of the cluster's catalogue directory.
 type MaterialisedProfile struct {
