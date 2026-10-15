@@ -260,12 +260,18 @@ func (r *TenantExportReconciler) stageFor(
 			return fmt.Errorf("stage credentials in %s: %w", ns, err)
 		}
 	}
-	return nil
+	// And the way out to an external destination, for units in the
+	// tenant's namespace only.
+	return ensureRunDestinationEgress(ctx, r.Client, r.Scheme, export, runKindExport, export.Status.Bundle, units)
 }
 
 func (r *TenantExportReconciler) discardStagedSecrets(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
-	return discardStagedIn(ctx, r.Client,
-		stagedSecretName(tenantNameFromNamespace(export.Namespace), export.Name), export.Namespace)
+	egressErr := discardRunDestinationEgress(ctx, r.Client, export.Namespace, runKindExport, export.Name)
+	if err := discardStagedIn(ctx, r.Client,
+		stagedSecretName(tenantNameFromNamespace(export.Namespace), export.Name), export.Namespace); err != nil {
+		return err
+	}
+	return egressErr
 }
 
 // placeRestoreUnit moves a unit's parameters and its key to the namespace it
@@ -349,10 +355,16 @@ func (r *TenantRestoreReconciler) stageFor(
 			return fmt.Errorf("stage credentials in %s: %w", ns, err)
 		}
 	}
-	return nil
+	// And the way out to an external destination, for units in the
+	// tenant's namespace only.
+	return ensureRunDestinationEgress(ctx, r.Client, r.Scheme, restore, runKindRestore, restore.Status.Bundle, units)
 }
 
 func (r *TenantRestoreReconciler) discardRestoreStagedSecrets(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
-	return discardStagedIn(ctx, r.Client,
-		restoreStagedSecretName(tenantNameFromNamespace(restore.Namespace), restore.Name), restore.Namespace)
+	egressErr := discardRunDestinationEgress(ctx, r.Client, restore.Namespace, runKindRestore, restore.Name)
+	if err := discardStagedIn(ctx, r.Client,
+		restoreStagedSecretName(tenantNameFromNamespace(restore.Namespace), restore.Name), restore.Namespace); err != nil {
+		return err
+	}
+	return egressErr
 }

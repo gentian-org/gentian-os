@@ -27,6 +27,11 @@ const (
 	NetPolicyContract     = "contract-allow"
 	NetPolicyTenantCache  = "tenant-cache-access"
 	NetPolicyTenantExport = "tenant-export"
+	// NetPolicyExportDestination marks the policy that opens one export's or
+	// restore's way to the external destination its bundle is at. It is the
+	// run's, owned by it and removed with it, not the tenant's: the tenant's
+	// policies are pruned around it.
+	NetPolicyExportDestination = "export-destination"
 	// NetPolicyAdapter marks the policies that close an adapter to everything
 	// but the component that speaks as a person, and open its way to its app.
 	NetPolicyAdapter = "adapter"
