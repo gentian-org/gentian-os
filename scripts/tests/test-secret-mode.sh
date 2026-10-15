@@ -290,7 +290,7 @@ check "random: _derive gives a value of its own on each call" \
 # What the installer hands the composition to seed the object store's
 # administrator from: s3-admin and the value derived under "s3".
 fresh
-VAULT_UP='' lib derived 'CROSSPLANE_NAMESPACE=crossplane-system
+VAULT_UP='' lib derived 'CROSSPLANE_NAMESPACE=xp-test
     kubectl() { local a; for a; do [[ "${a}" == --from-literal=data.json=* ]] && printf "%s %s\n" "$4" "${a#--from-literal=data.json=}" >> "${K8S}/applied"; done; return 0; }
     create_crossplane_secrets' >/dev/null
 s3_seed="$(awk '$1 == "gentian-os-kernel-storage-s3" { print $2 }' "${SB}/k8s/applied" 2>/dev/null)"
