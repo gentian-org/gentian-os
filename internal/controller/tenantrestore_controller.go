@@ -412,7 +412,13 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// And always where the app's own secrets were replaced: whatever of the
 	// app was not rolled by the upgrade of its release starts again here,
 	// with the values its data was written with.
-	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) {
+	//
+	// And always where the profile's commands ran on an app resumed by
+	// scaling: it was resumed before them, since they need a pod, and its
+	// pods started on the data as it was put back -- before the commands
+	// rewrote what it remembers of where it ran. They are started again on
+	// the rewritten data.
+	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) || ranRestoreCommands(r.Tenant, spec) {
 		if err := r.Tenant.restartAppWorkloads(ctx, tenant.Name, appName); err != nil {
 			return ctrl.Result{}, fmt.Errorf("restart %s after restore: %w", appName, err)
 		}
@@ -444,6 +450,16 @@ const restoreHookPodTimeout = 5 * time.Minute
 func restoreHooksNeedPod(spec *gentianov1alpha1.BackupSpec) bool {
 	post, verify := spec.RestoreCommands()
 	return len(post) > 0 || len(verify) > 0
+}
+
+// ranRestoreCommands reports whether a restore ran any of the profile's
+// post-restore commands in the app after loading its data.
+func ranRestoreCommands(tr *TenantReconciler, spec *gentianov1alpha1.BackupSpec) bool {
+	if tr == nil || tr.Exec == nil {
+		return false
+	}
+	post, _ := spec.RestoreCommands()
+	return len(post) > 0
 }
 
 // runRestoreHooks runs the profile's post-restore commands and its verification.

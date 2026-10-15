@@ -598,7 +598,9 @@ naming both ends: tenant, domain, platform version, cluster, the app's chart
 versions and each store's name in the bundle and here
 ([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
 each app's profile rewrites what its app cached, reading credentials the
-platform made new from the app's own Secrets. Each of a profile's commands
+platform made new from the app's own Secrets. An app paused by scaling down
+is resumed before them, as they need a pod, and rolled (`rollout restart`)
+once they have run. Each of a profile's commands
 runs for at most 15 minutes (`AppCommandTimeout`); one still running then
 has failed, as one that exits non-zero has.
 

@@ -368,7 +368,10 @@ for the app.
 
 **An app whose data remembers where it ran** — its own address, a database's name, a credential it
 copied into a file — rewrites that in `spec.backup.restore.post`, the commands run in the app's pod
-after its data is put back and before it is resumed. A restore may come from another cluster or
+after its data is put back. An app paused by its maintenance command (`quiesce.mode: command`) runs
+them before it is resumed. One paused by scaling down is resumed first, since a command needs a pod,
+and its pods are started again once the commands have run, so that what it serves is read from the
+rewritten data; until they have, it may answer on what was put back. A restore may come from another cluster or
 domain, and every credential the platform makes (database, bucket, sign-in client) is made new
 there, so each command is run with what it needs to know, and no secret: `GENTIAN_RESTORE_APP`;
 `GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT`, `DOMAIN`,
