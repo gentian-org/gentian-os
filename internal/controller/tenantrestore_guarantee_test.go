@@ -142,8 +142,13 @@ func TestARestoreOnAnotherDomainSaysSoAndThatACustomDomainIsDeclaredAgain(t *tes
 	if r := plan("acme.ch", "acme.ch", "acme.ch", bound); meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee) != nil {
 		t.Errorf("a custom domain bound here again is said to differ: %+v", r.Status.Conditions)
 	}
-	// A bundle that records no domain says nothing of one.
-	if r := plan("", "", "acme.example.net", tenant); meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee) != nil {
-		t.Errorf("a bundle without a domain is said to differ: %+v", r.Status.Conditions)
+	// A bundle that records no domain says nothing of one, nor one that
+	// records something that is not a domain: a bundle comes from anywhere,
+	// and what it says is said back only where it is a plain name.
+	for _, domain := range []string{"", "bad domain; " + strings.Repeat("x", 300)} {
+		if r := plan(domain, domain, "acme.example.net", tenant); meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee) != nil ||
+			r.Status.Source != nil && (r.Status.Source.Domain != "" || r.Status.Source.CustomDomain != "") {
+			t.Errorf("a bundle with the domain %q is said to differ: %+v %+v", domain, r.Status.Conditions, r.Status.Source)
+		}
 	}
 }

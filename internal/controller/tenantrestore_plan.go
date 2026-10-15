@@ -138,8 +138,8 @@ func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, domain s
 				"this platform (version %s) restores it as far as it reads it and converts nothing", backup.PlatformVersionLine)})
 	case !ok:
 		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
-			"the bundle names the platform version %q, which is not one; this platform (version %s) restores it as far as it reads it and converts nothing",
-			m.OperatorVersion, backup.PlatformVersionLine)})
+			"the bundle names a platform version that is not one; this platform (version %s) restores it as far as it reads it and converts nothing",
+			backup.PlatformVersionLine)})
 	case line.Compare(this) < 0:
 		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
 			"the bundle was written by platform version %s and this platform is version %s; it is restored as far as this platform reads it, "+
@@ -148,16 +148,17 @@ func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, domain s
 	if m.Tenant != "" && m.Tenant != tenant.Name {
 		gaps = append(gaps, guaranteeGap{outsideGuaranteeName, fmt.Sprintf(
 			"the bundle is of tenant %s and is restored into %s: what the apps' data itself says of the old name -- addresses, paths, settings -- is not changed",
-			m.Tenant, tenant.Name)})
+			plainValue(m.Tenant), tenant.Name)})
 	}
 	// Another domain is a move the platform supports, and still not the
 	// round trip: the apps' data names the old one.
-	if m.Domain != "" && domain != "" && !strings.EqualFold(m.Domain, domain) {
+	// What the bundle says is said back only where it is a plain name.
+	if was := plainValue(m.Domain); was != "" && domain != "" && !strings.EqualFold(was, domain) {
 		text := fmt.Sprintf("the bundle was taken on the domain %s and the tenant is on %s here: addresses, links and mail addresses "+
-			"the apps' data stores still name %s, as far as each app's own post-restore commands do not rewrite them", m.Domain, domain, m.Domain)
-		if m.CustomDomain != "" && !strings.EqualFold(m.CustomDomain, tenant.Status.Domain) {
+			"the apps' data stores still name %s, as far as each app's own post-restore commands do not rewrite them", was, domain, was)
+		if custom := plainValue(m.CustomDomain); custom != "" && !strings.EqualFold(custom, tenant.Status.Domain) {
 			text += fmt.Sprintf(". %s was a custom domain, bound by a TenantDomain, which a bundle does not declare: declare it again "+
-				"(kubectl gentian tenants domain %s %s) for the tenant to answer there", m.CustomDomain, tenant.Name, m.CustomDomain)
+				"(kubectl gentian tenants domain %s %s) for the tenant to answer there", custom, tenant.Name, custom)
 		}
 		gaps = append(gaps, guaranteeGap{outsideGuaranteeDomain, text})
 	}
