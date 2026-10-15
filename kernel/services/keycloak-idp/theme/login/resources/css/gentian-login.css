@@ -448,10 +448,31 @@ body.gentian-login .alert-success {
   box-sizing: border-box;
 }
 
-/* Keycloak renders identity-provider buttons on the login page; the portal's
-   form had none. The registration link is left to Keycloak, which renders it
-   only for a realm that takes sign-ups. */
-.gentian-hidden, #kc-social-providers { display: none !important; }
+.gentian-hidden { display: none !important; }
+
+/* The identity providers an administrator added (login.ftl): one outlined
+   button each, under the form. The platform's own brokers are not among
+   them -- they are hidden on the login page in the realm itself. */
+.gentian-login__providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.gentian-login__provider {
+  display: block;
+  padding: 9px 24px;
+  border: 1px solid var(--gtn-border);
+  border-radius: var(--gtn-r1);
+  color: var(--gtn-ink-1, inherit);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.gentian-login__provider:hover { border-color: var(--gtn-500); color: var(--gtn-600); }
+.gentian-login__provider:focus-visible { outline: none; box-shadow: var(--gtn-focus-ring); }
 
 /* The registration page's proof-of-work check: a line that says the browser
    is working, then that it is done. */

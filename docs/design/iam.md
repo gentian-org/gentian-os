@@ -147,6 +147,16 @@ its groups are as in every tenant; the tenant's own people are still
 invited; and the registrar lists every account of the realm, which is how
 staff look after the customers' accounts.
 
+### 1.1c Brokering: people of another realm signing in
+
+A realm may let people of another realm — another tenant here, or a tenant of
+another cluster — sign in with their own account, mapped into groups by
+where they come from. It is Keycloak's identity brokering, configured by an
+administrator in its console, not composed by the platform:
+[identity-brokering.md](../identity-brokering.md). The sign-in page shows
+every provider not set to *Hide on login page*; the platform's own (`kernel`,
+`vouch-*`) are, and so stay off it.
+
 ### 1.2 Group taxonomy
 
 Gentian uses explicit Keycloak group names for platform roles, tenant
