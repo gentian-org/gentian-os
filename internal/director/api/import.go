@@ -47,6 +47,15 @@ import (
 // between finds it (ResumeImports) and goes on: it watches the restore when
 // one was started, and otherwise says it needs the bundle's key again, which
 // was given with the request and is kept in memory only.
+//
+// A bundle of a tenant that was bound to a custom domain (a TenantDomain)
+// keeps it unless the request says otherwise (keepCustomDomain: false): the
+// TenantDomain is declared in the commit that declares the tenant, under the
+// rules a bind is under and with the right a bind needs (can_configure on the
+// cluster, which an import needs as well), and the restore starts only once
+// the operator has put the tenant on it. The restore then sees the domain the
+// bundle was taken on, so nothing is moved or left out for a move. Pointing
+// the domain's DNS at this cluster is the person's: the status says so.
 
 // ImportStatus is where one import stands.
 type ImportStatus struct {
@@ -72,6 +81,16 @@ type ImportStatus struct {
 	// Skipped are the apps of the bundle's tenant the tenant here was not
 	// given, each with why (retiredPlatformApps). Their data is not restored.
 	Skipped []gitops.SkippedApp `json:"skipped,omitempty"`
+	// CustomDomain is the bundle's custom domain, declared again with the
+	// tenant; "" when there was none or it was not kept. Its DNS is not the
+	// platform's to point here.
+	CustomDomain string `json:"customDomain,omitempty"`
+}
+
+// dnsNote is what an import that keeps a custom domain says of its DNS.
+func dnsNote(domain string) string {
+	return "The tenant keeps its custom domain " + domain + ": point the DNS of " + domain +
+		" and of its subdomains at this cluster, which the import does not do"
 }
 
 // importWait is how long one watcher of an import waits, for the tenant and
@@ -93,6 +112,10 @@ type importRequest struct {
 	// that still asks for a rename is told so rather than given the
 	// bundle's name without a word.
 	Name string `json:"name,omitempty"`
+	// KeepCustomDomain is whether a tenant the bundle records as bound to a
+	// custom domain is bound to it again here. Unset is yes; false makes the
+	// tenant at <tenant>.<kernel domain>, as a move to another domain.
+	KeepCustomDomain *bool `json:"keepCustomDomain,omitempty"`
 }
 
 // uploadBundle streams the request body to the operator, which lays it out
@@ -192,6 +215,16 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 
+	// The custom domain, kept unless the request says not to: refused here,
+	// before a definition is committed, when it cannot be this tenant's.
+	customDomain := ""
+	if insp.Manifest.CustomDomain != "" && (req.KeepCustomDomain == nil || *req.KeepCustomDomain) {
+		customDomain, err = s.cfg.Repo.CheckImportedDomain(ctx, name, insp.Manifest.CustomDomain)
+		if !s.importDomainRefused(w, r, err) {
+			return
+		}
+	}
+
 	// The platform's own components of an earlier release are left out; the
 	// rest are the tenant's apps, every one of which it is given.
 	spec, skipped := withoutRetiredPlatformApps(insp.Manifest.TenantSpec)
@@ -216,7 +249,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		Tenant: name, Source: insp.Manifest.Tenant, Export: insp.Manifest.Export, Bundle: req.Bundle,
 		Restore:     "import-" + now.Format("20060102-150405"),
 		RequestedAt: now.Format(time.RFC3339), RequestedBy: c.meta.ActorName(),
-		Skipped: skipped,
+		Skipped: skipped, CustomDomain: customDomain,
 	}
 	origin := fmt.Sprintf("export %s of %s, of tenant %s", insp.Manifest.Export, insp.Manifest.CreatedAt, insp.Manifest.Tenant)
 	res, err := s.cfg.Repo.DeclareTenant(ctx, gitops.ImportedTenant{
@@ -226,6 +259,10 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	case errors.Is(err, gitops.ErrTenantExists):
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or retire it and import again")
 		return
+	case errors.Is(err, gitops.ErrDomainHeld), errors.Is(err, gitops.ErrInvalidDomain):
+		// Bound elsewhere between the check above and the commit.
+		s.importDomainRefused(w, r, err)
+		return
 	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
@@ -234,12 +271,35 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	st := ImportStatus{Tenant: name, Phase: "declared", Commit: res.Commit, Bundle: req.Bundle, Restore: pending.Restore,
-		Message: "the tenant is committed; the operator provisions it next", Skipped: pending.Skipped}
+		Message: "the tenant is committed; the operator provisions it next", Skipped: pending.Skipped, CustomDomain: customDomain}
+	if customDomain != "" {
+		st.Message = "the tenant is committed with its custom domain " + customDomain + "; the operator provisions it next. " +
+			dnsNote(customDomain)
+	}
 	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
 		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
 		return
 	}
 	s.json(w, http.StatusAccepted, st)
+}
+
+// importDomainRefused answers a custom domain an import cannot keep, and
+// true when err is nil. Nothing has been changed when it is called.
+func (s *Server) importDomainRefused(w http.ResponseWriter, r *http.Request, err error) bool {
+	const decline = ". Nothing was changed. Import without keeping it (keepCustomDomain: false; " +
+		"kubectl gentian tenants import --drop-custom-domain) to make the tenant at its default address"
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, gitops.ErrDomainHeld):
+		s.fail(w, r, http.StatusConflict, "the bundle's tenant was bound to a custom domain this cluster has bound to another tenant: "+
+			err.Error()+decline+", or free the domain first")
+	case errors.Is(err, gitops.ErrInvalidDomain), errors.Is(err, gitops.ErrSingleTenancy):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the bundle's custom domain cannot be bound here: "+err.Error()+decline)
+	default:
+		s.repoError(w, r, err)
+	}
+	return false
 }
 
 // resumeImport goes on with an import that was begun and has not finished.
@@ -252,7 +312,7 @@ func (s *Server) resumeImport(w http.ResponseWriter, r *http.Request, c call, pe
 		return
 	}
 	st := ImportStatus{Tenant: pending.Tenant, Phase: "provisioning", Bundle: pending.Bundle, Restore: pending.Restore,
-		Message: "going on with the import of this tenant", Skipped: pending.Skipped}
+		Message: "going on with the import of this tenant", Skipped: pending.Skipped, CustomDomain: pending.CustomDomain}
 	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
 		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
 		return
@@ -296,7 +356,7 @@ func (s *Server) ResumeImports(ctx context.Context) {
 	for _, p := range pending {
 		s.cfg.Log.Info("resuming the import of a tenant", "tenant", p.Tenant, "restore", p.Restore)
 		st := ImportStatus{Tenant: p.Tenant, Phase: "provisioning", Bundle: p.Bundle, Restore: p.Restore,
-			Message: "the director restarted during this import and is going on with it", Skipped: p.Skipped}
+			Message: "the director restarted during this import and is going on with it", Skipped: p.Skipped, CustomDomain: p.CustomDomain}
 		s.watchImport(p, nil, "gentian-director", &st)
 	}
 }
@@ -319,7 +379,8 @@ func (s *Server) importStatus(w http.ResponseWriter, r *http.Request, _ call) {
 		return
 	}
 	st := ImportStatus{Tenant: tenant, Phase: "provisioning", Bundle: pending.Bundle, Restore: pending.Restore,
-		Message: "this import was begun before this director started; it is going on with it", Skipped: pending.Skipped}
+		Message: "this import was begun before this director started; it is going on with it", Skipped: pending.Skipped,
+		CustomDomain: pending.CustomDomain}
 	s.watchImport(pending, nil, "gentian-director", &st)
 	s.json(w, http.StatusOK, st)
 }
@@ -371,7 +432,12 @@ func (s *Server) finishImport(background context.Context, pending gitops.Pending
 			st.Message = "waiting for the operator to provision the tenant and its apps"
 		})
 		for {
-			ready, msg, err := s.tenantProvisioned(ctx, name)
+			ready, msg, err := s.tenantProvisioned(ctx, name, pending.CustomDomain)
+			var refused errDomainNotBound
+			if errors.As(err, &refused) {
+				fail(string(refused))
+				return
+			}
 			if err != nil {
 				s.cfg.Log.Warn("asking the cluster about an import", "tenant", name, "error", err.Error())
 			} else if msg != "" {
@@ -444,6 +510,10 @@ func (s *Server) finishImport(background context.Context, pending gitops.Pending
 						st.PasswordResetRequired = rs.PasswordResetRequired
 						st.Complete, st.NotRestored, st.Notes = rs.Complete, rs.NotRestored, rs.Notes
 						st.OutsideGuarantee = rs.OutsideGuarantee
+						if pending.CustomDomain != "" {
+							st.CustomDomain = pending.CustomDomain
+							st.Notes = append(st.Notes, dnsNote(pending.CustomDomain))
+						}
 					})
 					s.cfg.Log.Info("tenant imported", "tenant", name, "restore", pending.Restore)
 					return
@@ -687,9 +757,20 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 	return nil, nil
 }
 
+// errDomainNotBound is a custom domain an import keeps that the operator
+// refused to put the tenant on: the restore would see a move, so it is not
+// started.
+type errDomainNotBound string
+
+func (e errDomainNotBound) Error() string { return string(e) }
+
 // tenantProvisioned is whether the live Tenant is Ready and every app it
-// lists is up -- the restore pauses each app, so each has to exist first.
-func (s *Server) tenantProvisioned(ctx context.Context, name string) (bool, string, error) {
+// lists is up -- the restore pauses each app, so each has to exist first --
+// and, for an import that keeps a custom domain, whether the tenant is on it:
+// the restore compares the domain the bundle was taken on with the tenant's
+// when it runs (status.domain, which the operator sets from the TenantDomain),
+// and Ready alone does not say the operator has read the TenantDomain yet.
+func (s *Server) tenantProvisioned(ctx context.Context, name, customDomain string) (bool, string, error) {
 	code, body, err := s.cfg.Lifecycle.Get(ctx, "/v1/tenants/"+url.PathEscape(name), nil)
 	if err != nil {
 		return false, "", err
@@ -698,14 +779,24 @@ func (s *Server) tenantProvisioned(ctx context.Context, name string) (bool, stri
 		return false, "", fmt.Errorf("the operator answered %d", code)
 	}
 	var state struct {
-		Exists bool   `json:"exists"`
-		Phase  string `json:"phase"`
+		Exists        bool   `json:"exists"`
+		Phase         string `json:"phase"`
+		Domain        string `json:"domain"`
+		DomainRefused string `json:"domainRefused"`
 	}
 	if err := json.Unmarshal(body, &state); err != nil {
 		return false, "", err
 	}
 	if !state.Exists {
 		return false, "waiting for Argo CD to apply the tenant", nil
+	}
+	if customDomain != "" && !strings.EqualFold(state.Domain, customDomain) {
+		if state.DomainRefused != "" {
+			return false, "", errDomainNotBound("the operator did not put the tenant on its custom domain " + customDomain + ": " +
+				state.DomainRefused + ". The tenant is committed and empty, and no restore was started; retire it and import again, " +
+				"once the domain is free or without keeping it")
+		}
+		return false, "waiting for the operator to put the tenant on its custom domain " + customDomain, nil
 	}
 	if state.Phase != "Ready" {
 		return false, "the tenant is " + state.Phase, nil

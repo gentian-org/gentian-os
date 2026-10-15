@@ -73,6 +73,7 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
 	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)

@@ -221,8 +221,9 @@ type Manifest struct {
 
 	// CustomDomain is the custom domain a TenantDomain bound the tenant to
 	// when the bundle was taken, "" without one. The binding is not part of
-	// the tenant's settings and is not declared by a restore or an import:
-	// they say that it has to be declared again. Optional within version 4.
+	// the tenant's settings. An import declares it again with the tenant,
+	// unless asked not to; a restore does not, and says that it has to be
+	// declared again. Optional within version 4.
 	CustomDomain string `json:"customDomain,omitempty"`
 
 	// KernelDomain is the cluster's own domain where the bundle was taken:

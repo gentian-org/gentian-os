@@ -27,9 +27,10 @@
 #                                      [--admins-add-catalogues=true|false]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
-#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase]
+#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain]
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]
-#                                  (--identity-file <f> | --passphrase)
+#                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
+#                                  (the bundle's custom domain is kept unless --drop-custom-domain)
 #   kubectl gentian tenants delegate-catalogues <name> on|off
 #   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
@@ -727,10 +728,11 @@ cmd_tenants_retire() {
 # Import a bundle: upload it, have the director declare the tenant from its
 # manifest and restore into it, and follow the import to its end. The key
 # never travels as an argument: an identity comes from a file, a passphrase
-# from a prompt.
+# from a prompt. A custom domain the bundle's tenant had is declared again
+# with it unless --drop-custom-domain says not to.
 cmd_tenants_import() {
     local file="" idfile="" ask_pw="" name="" identity="" passphrase="" dec body answer bundle st phase msg last=""
-    local bucket="" prefix="" endpoint="" style=""
+    local bucket="" prefix="" endpoint="" style="" keep=true domain=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --identity-file) idfile="${2:?}"; shift 2 ;;
@@ -739,12 +741,13 @@ cmd_tenants_import() {
             --prefix) prefix="${2:?}"; shift 2 ;;
             --endpoint) endpoint="${2:?}"; shift 2 ;;
             --addressing-style) style="${2:?}"; shift 2 ;;
+            --drop-custom-domain) keep=false; shift ;;
             -*) die "unknown flag $1" ;;
             *) file="$1"; shift ;;
         esac
     done
     if [[ -z "${file}" && -z "${bucket}" ]]; then
-        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase)"
+        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase) [--drop-custom-domain]"
     fi
     case "${style}" in
         ""|path|virtualHost) ;;
@@ -775,10 +778,13 @@ cmd_tenants_import() {
         bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
     # The tenant's name is the bundle's: an import does not rename.
-    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" '{bundle:$b, decryption:$d}')"
+    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --argjson k "${keep}" '{bundle:$b, decryption:$d, keepCustomDomain:$k}')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
+    domain="$(printf '%s' "${answer}" | jq -r '.customDomain // ""')"
     echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."
+    [[ -z "${domain}" ]] ||
+        echo "It keeps its custom domain ${domain}: point the DNS of ${domain} and its subdomains at this cluster; the import does not."
     # Apps of the bundle's tenant left out here: the platform's own
     # components of an earlier release. Their data is not restored.
     printf '%s' "${answer}" | jq -r '(.skipped // [])[] | "Skipped app \(.app), its data not restored: \(.reason)"'

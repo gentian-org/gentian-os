@@ -199,8 +199,12 @@ settings are not the bundle's: the new tenant keeps its data when retired
 its own, and a namespace of another name that the old tenant was placed in
 is not carried. An import does not rename: the tenant is made under the name
 its bundle carries, and a request that names another is refused. It may be
-on another domain, which is how a tenant moves with its data; the import
-says so, and a custom domain (`TenantDomain`) the tenant had is declared
+on another domain, which is how a tenant moves with its data, and says so. A
+custom domain (`TenantDomain`) the tenant had is kept unless the import is
+asked not to: it is committed with the tenant, refused before anything is
+written when another tenant here holds it, and the restore waits until the
+tenant is on it, so the domain is the same and nothing below applies; its DNS
+is the person's to point at the new cluster. Not kept, it can be declared
 again with `kubectl gentian tenants domain`. On another domain the people's
 addresses at the old mail domain come back at the new one under the same
 name, and a username that was such an address with them, so that each opens
@@ -208,8 +212,7 @@ the mailbox put back under that name; other addresses are left, and so is
 every address of a bundle that does not record its domain. An app whose
 profile binds its data to its domain (`spec.backup.restore.domainBound`) is
 not restored onto another: it stays as installed, and the restore names it.
-The domain compared is the tenant's when the restore runs, before a custom
-domain is declared again. A `TenantRestore` written by hand can still put a bundle into a tenant of
+The domain compared is the tenant's when the restore runs. A `TenantRestore` written by hand can still put a bundle into a tenant of
 another name; it says that it is outside what the platform guarantees
 (`OutsideGuarantee`), and what the bundle names after the
 old tenant comes back under the new one's names: databases an app made for
@@ -310,8 +313,8 @@ After an **import**, also:
       each app's own settings for the old tenant's names and addresses, as
       far as its profile's post-restore commands did not rewrite them.
 - [ ] On another domain: declare the custom domain again, if the tenant had
-      one (`kubectl gentian tenants domain`). The apps the result names as
-      bound to their domain start empty.
+      one and the import did not keep it (`kubectl gentian tenants domain`).
+      The apps the result names as bound to their domain start empty.
 - [ ] Point DNS at the new cluster.
 
 Never in a bundle: passwords, stored credentials other than the apps' own

@@ -55,6 +55,10 @@ type PendingImport struct {
 	// Skipped are the apps of the bundle's tenant the import left out of the
 	// tenant made here, each with why.
 	Skipped []SkippedApp `json:"skipped,omitempty"`
+	// CustomDomain is the bundle's custom domain, declared again with the
+	// tenant; "" when the bundle had none or the import was asked not to
+	// keep it. The restore waits until the tenant is on it.
+	CustomDomain string `json:"customDomain,omitempty"`
 }
 
 // SkippedApp is one app of a bundle's tenant an import did not give the
@@ -72,7 +76,8 @@ type ImportedTenant struct {
 	Spec *gentianov1alpha1.TenantSpec
 	// Origin says which bundle, for the manifest's header.
 	Origin string
-	// Pending is recorded beside the manifest.
+	// Pending is recorded beside the manifest. Its CustomDomain, when set, is
+	// declared as the tenant's TenantDomain in the same commit.
 	Pending PendingImport
 }
 
@@ -98,6 +103,11 @@ type ImportedTenant struct {
 //     or its own delegation.
 //   - spec.perimeter is dropped: whether a tenant's own administrators
 //     approve its public addresses is not the bundle's to say either.
+//
+// A custom domain the import keeps (Pending.CustomDomain) is declared in the
+// same commit, as SetTenantDomain writes it and under the rules it is under
+// (CheckImportedDomain), so that the tenant is made on that domain from its
+// first reconcile and the restore sees no move.
 func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, meta Meta) (Result, error) {
 	name := imported.Name
 	if imported.Spec == nil {
@@ -105,10 +115,22 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 	}
 	pending := imported.Pending
 	pending.Tenant = name
+	beside := map[string][]byte{}
+	if pending.CustomDomain != "" {
+		domain, err := g.CheckImportedDomain(ctx, name, pending.CustomDomain)
+		if err != nil {
+			return Result{}, err
+		}
+		pending.CustomDomain = domain
+		listed, _ := ensureListed(tenantKustomization(), TenantDomainFile, listResource)
+		beside[TenantDomainFile] = []byte(renderTenantDomain(name, domain))
+		beside["kustomization.yaml"] = []byte(listed)
+	}
 	record, err := json.MarshalIndent(pending, "", "  ")
 	if err != nil {
 		return Result{}, err
 	}
+	beside[ImportFile] = append(record, '\n')
 	manifest := func() ([]byte, error) {
 		declared := imported.Spec.DeepCopy()
 		mode := gentianov1alpha1.IsolationMode("")
@@ -157,7 +179,7 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 `, name, imported.Origin)
 		return append([]byte(header), body...), nil
 	}
-	return g.createTenant(ctx, name, manifest, map[string][]byte{ImportFile: append(record, '\n')},
+	return g.createTenant(ctx, name, manifest, beside,
 		fmt.Sprintf("Import tenant %s", name), "imported", meta)
 }
 

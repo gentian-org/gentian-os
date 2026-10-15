@@ -1248,6 +1248,7 @@ kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt
 kubectl gentian tenants import acme-nightly.gentian --passphrase          # prompts
 kubectl gentian tenants import --bucket acme-gentian-backup --prefix nightly-20261001 --identity-file k.txt
 kubectl gentian tenants import --bucket b --prefix p --endpoint https://s3.example.org --addressing-style virtualHost --identity-file k.txt
+kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt --drop-custom-domain
 ```
 
 What happens: the file is uploaded to the cluster's own storage; the director
@@ -1286,7 +1287,7 @@ Directly against the director:
 ```
 POST /v1/clusters/{c}/bundles                 body: the .gentian bytes -> {bundle}
 POST /v1/clusters/{c}/bundles/inspect         {bundle, decryption} -> manifest
-POST /v1/clusters/{c}/tenants/import          {bundle, decryption} -> 202 status
+POST /v1/clusters/{c}/tenants/import          {bundle, decryption, keepCustomDomain?} -> 202 status
 GET  /v1/clusters/{c}/tenants/{t}/import      the status
 ```
 
@@ -1296,12 +1297,22 @@ come back without credentials (no bundle carries them); the status says
 `passwordResetRequired`, and carries the restore's `complete`, `notRestored`
 and `notes`, and `outsideGuarantee` when the bundle is of an older platform
 version line, or records none, or the tenant's domain here is another (the
-command prints it). A custom domain the tenant had is not bound by the
-import; the message says to declare it again (`tenants domain <name>
-<domain>`). A bundle of a newer version line is refused. The cluster's own
+command prints it). A bundle of a newer version line is refused. The cluster's own
 version line is in the answer to `GET /v1/clusters/{c}/settings` (whoever may
 audit the cluster): `platformVersionLine`, with `build`, the commit the
 operator's image was built from, when the build recorded one.
+
+A custom domain the bundle's tenant had (`customDomain` in the manifest
+`inspect` answers) is kept by default: the `TenantDomain` is committed with
+the tenant, under the rules and the right (`can_configure` on the cluster) of
+`tenants domain`, and the restore starts only once the operator has put the
+tenant on it, so nothing is moved. A domain this cluster has bound to another
+tenant is refused with `409`, one that cannot be bound here (on the kernel
+domain, a single-tenancy cluster) with `422`; both before anything is written.
+The status carries `customDomain`; pointing its DNS at the cluster is yours.
+`keepCustomDomain: false` (`--drop-custom-domain`) makes the tenant at
+`<tenant>.<kernel-domain>` instead: a move, as above, after which the domain
+can be declared again with `tenants domain <name> <domain>`.
 
 The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A
