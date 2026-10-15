@@ -409,6 +409,13 @@ Carried over from before, and still not shown:
   Kyverno CLI. *Needs a cluster:* the policy Ready, a tenant's Certificate
   for `gentian-ca` refused, the store's certificates still issued, and the
   live AppProject without ClusterIssuer after the claim reconciles.
+  *Resolved on `test-cb`:* the tenant AppProject deploys into `tenant-*`
+  only, no longer the Argo CD namespace; and a namespace's tier label is set
+  only by the installer, provider-kubernetes, the operator and
+  `system:masters` (`gentian-namespace-tier`, security.md §12.4). Shown
+  against an API server. *Needs a cluster:* a fresh install and a re-run
+  passing with the guard in place, tenants' and DMZ namespaces still
+  composed, and the live AppProject without the Argo CD namespace.
 
 ## 3. Known defects, open
 

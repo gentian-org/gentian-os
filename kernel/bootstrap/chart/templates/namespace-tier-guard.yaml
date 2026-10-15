@@ -1,0 +1,84 @@
+---
+# Who may set, change or remove a namespace's gentianos.io/tier label.
+#
+# The tier is what the platform's policies select on: Kyverno's webhook skips
+# the kernel tier, the kernel's secret store and the internal CA serve the
+# kernel and system tiers, and the stores admit the tenant tier. A namespace
+# that could relabel itself `kernel` would leave every one of them. A tenant's
+# apps may write Namespace objects (their AppProject allows the kind), so the
+# label needs a guard that is not Kyverno: Kyverno is what the label switches
+# off. This is the API server's own admission, which nothing can label itself
+# out of.
+#
+# The writers are the ones that create the layout, and only they:
+#   - the installer, as whoever it signs in as (A-01 labels the kernel
+#     namespaces and the platform's own; it passes its own user name here);
+#   - provider-kubernetes, which composes the system tier from the Cluster
+#     claim and each tenant's namespace from its Tenant;
+#   - the operator, which makes a tenant's DMZ namespace;
+#   - system:masters, which can remove this policy anyway.
+# Argo CD's application controller is not one of them. No kernel Application
+# writes the label (none creates its namespace), and the same controller
+# syncs whatever a tenant's AppProject lets through. provider-helm is not
+# one either: it installs charts, and no chart of the platform's writes it.
+#
+# A request that leaves the label as it was is not looked at, so re-applying
+# a namespace with the same labels, or changing any other label, passes for
+# everyone. Deleting a namespace is not a CREATE or an UPDATE and passes too.
+{{- $writers := list
+      (printf "system:serviceaccount:%s:%s" (include "ns" (list . "control")) .Values.namespaceTier.operatorServiceAccount)
+      (printf "system:serviceaccount:%s:%s" (include "ns" (list . "provisioning")) .Values.namespaceTier.providerKubernetesServiceAccount) }}
+{{- with .Values.installer.username }}
+{{- $writers = append $writers . }}
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gentian-namespace-tier
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+  annotations:
+    # The installer's user as passed in, which the installer reads back to
+    # tell whether a run under another user has to render this again.
+    gentianos.io/installer-username: {{ .Values.installer.username | quote }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["namespaces"]
+  variables:
+  # "-" is no label value Kubernetes accepts, so it stands for no label.
+  - name: before
+    expression: >-
+      oldObject == null || !has(oldObject.metadata.labels)
+      || !('gentianos.io/tier' in oldObject.metadata.labels)
+      ? '-' : oldObject.metadata.labels['gentianos.io/tier']
+  - name: after
+    expression: >-
+      !has(object.metadata.labels)
+      || !('gentianos.io/tier' in object.metadata.labels)
+      ? '-' : object.metadata.labels['gentianos.io/tier']
+  - name: writer
+    expression: >-
+      request.userInfo.username in {{ $writers | toJson }}
+      || (has(request.userInfo.groups) && 'system:masters' in request.userInfo.groups)
+  validations:
+  - expression: variables.before == variables.after || variables.writer
+    reason: Forbidden
+    messageExpression: >-
+      'the gentianos.io/tier label of namespace ' + object.metadata.name
+      + ' is set by the platform alone (' + variables.before + ' -> ' + variables.after
+      + '); ' + request.userInfo.username + ' may not change it'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gentian-namespace-tier
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  policyName: gentian-namespace-tier
+  validationActions: [Deny]

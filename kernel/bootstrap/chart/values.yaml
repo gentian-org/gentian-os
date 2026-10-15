@@ -112,6 +112,20 @@ operator:
   # itself.
   tag: ""
 
+# Who may set or change a namespace's gentianos.io/tier label
+# (templates/namespace-tier-guard.yaml), beside system:masters.
+installer:
+  # The user the installer signs in to the cluster as, which the installer
+  # passes in (`kubectl auth whoami`). Empty leaves only system:masters for it.
+  username: ""
+namespaceTier:
+  # The operator's ServiceAccount in the control namespace: the gentian-os
+  # chart's, released under the name gentian-os.
+  operatorServiceAccount: gentian-os
+  # provider-kubernetes's, in the provisioning namespace: the fixed name its
+  # DeploymentRuntimeConfig pins (crossplane/providers/providers.yaml).
+  providerKubernetesServiceAccount: provider-kubernetes
+
 # The usage statistics report (docs/design/operations.md): once a day the operator
 # tells an address what this cluster runs -- its tenants, counts of accounts,
 # and the apps installed through the App Store. No personal data, and nothing

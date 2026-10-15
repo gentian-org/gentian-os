@@ -786,6 +786,7 @@ the code does.
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today For an app the app Composition installs, the granted rules are a policy of their own, `granted-egress-<app>`, selecting the app's release; the Composition's own policies carry none. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
+| Who may set a namespace's tier label | Implemented; shown against an API server, not on a cluster | The installer, provider-kubernetes, the operator and `system:masters`; not Argo CD or provider-helm (§12.4) |
 | What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
@@ -1876,13 +1877,25 @@ the Kyverno policy `gentian-restrict-internal-ca`
 `Certificate` or `CertificateRequest` naming the ClusterIssuer `gentian-ca`,
 and an Ingress asking cert-manager's ingress-shim for it, outside the kernel
 and system namespaces. A system namespace counts only by its name
-(`system-*`) and its tier label together, since a tenant's apps may write
-Namespace objects. The object store's two certificates in `system-s3` are its
-only users. The tenant AppProject does not allow ClusterIssuers, so a tenant's
-apps cannot replace `gentian-ca` either. Its project may still deploy into the
-Argo CD namespace, which is a kernel namespace and outside the policy; the
-object store's NetworkPolicy, which admits only its own Jobs' pods to the
-administering ports, stays the guard there.
+(`system-*`) and its tier label together. The object store's two certificates
+in `system-s3` are its only users. The tenant AppProject does not allow
+ClusterIssuers, so a tenant's apps cannot replace `gentian-ca` either, and
+its only destinations are `tenant-*`: the Argo CD namespace, a kernel
+namespace and outside the policy, is no longer one.
+
+A tenant's apps may still write Namespace objects, so the tier label has a
+guard of its own that is not Kyverno, since the kernel tier is what Kyverno
+skips: the ValidatingAdmissionPolicy `gentian-namespace-tier`
+(`kernel/bootstrap/chart/templates/namespace-tier-guard.yaml`, applied by
+`B-01`). A namespace's `gentianos.io/tier` may be set, changed or removed only
+by the installer's own user (`kubectl auth whoami`, passed in at render),
+provider-kubernetes (system and tenant namespaces), the operator (a tenant's
+DMZ) and `system:masters`. Argo CD's application controller and
+provider-helm are refused: they apply what tenants supply, and nothing of the
+platform's they apply writes the label. A write that leaves the label as it
+was passes for anyone. Built-in admission, so Kubernetes 1.30 or newer, which
+pre-flight's 1.33 covers. Shown against an API server
+(`internal/controller/namespace_tier_guard_test.go`), not on a cluster.
 
 ## 13. Licensing & sovereignty summary
 
