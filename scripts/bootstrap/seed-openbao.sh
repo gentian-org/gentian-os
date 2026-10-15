@@ -129,9 +129,9 @@ MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 REDIS_PW=$(derive_password "redis" "password")
 
 # --- The object store's administrator ---
-# Derived under the name it was first derived under, "minio": the path moved
-# with the server, the value did not.
-S3_ADMIN_PW=$(derive_password "minio" "root_password")
+# Derived under "s3", the store's own name, as its path is: a new install's
+# value, which differs from what a cluster seeded under the old name holds.
+S3_ADMIN_PW=$(derive_password "s3" "root_password")
 
 # --- Keycloak ---
 KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
@@ -277,7 +277,7 @@ EOF
 # --- The object store's administrator ---
 kv_put_once "storage/s3" "$(cat <<EOF
 {
-  "root_user":     "minio",
+  "root_user":     "s3-admin",
   "root_password": "${S3_ADMIN_PW}"
 }
 EOF

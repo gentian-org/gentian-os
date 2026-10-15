@@ -210,7 +210,7 @@ func startLiveStore(t *testing.T) *liveStore {
 		_ = exec.Command("docker", "network", "rm", l.net).Run()
 	})
 	l.server = l.net + "-server"
-	admin, secret := "live-admin", "live-admin-secret-key"
+	admin, secret := "s3-admin", "live-admin-secret-key"
 	l.startServer(admin, secret)
 	l.secrets = map[string]map[string]string{
 		StorageAdminSecret: {"endpoint": "http://" + l.server + ":9000", "master": l.server + ":9333", "accessKey": admin, "secretKey": secret},

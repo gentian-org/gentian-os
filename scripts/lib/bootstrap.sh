@@ -371,12 +371,12 @@ create_crossplane_secrets() {
             '{auth_password:$a}')"
 
     # ── storage/s3 (the object store's administrator) ─────────────────────────
-    # Derived under the name it was first derived under, "minio": the path
-    # moved with the server, the value did not.
+    # Derived under "s3", the store's own name, as its path is; the
+    # administrator's access key id is s3-admin, as in seed-openbao.sh.
     _kv_secret "gentian-os-kernel-storage-s3" \
         "$(jq -nc \
-            --arg a "minio" \
-            --arg b "$(_derive minio root_password)" \
+            --arg a "s3-admin" \
+            --arg b "$(_derive s3 root_password)" \
             '{root_user:$a,root_password:$b}')"
 
     # ── identity/keycloak-bootstrap (Suze Keycloak admin password) ─────────────
