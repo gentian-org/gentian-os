@@ -273,7 +273,7 @@ locate_bundle() {
 }
 
 # rclone_remote — point rclone at the bundle's storage, as the remote
-# gtn-recovery.
+# gtnrecovery (a name rclone can be given from the environment).
 #
 # Credentials come from the flags first, then the environment, and only then
 # from the cluster. That order is the whole point: the case this script exists
@@ -316,12 +316,12 @@ rclone_remote() {
     # Through rclone's environment, so no key is on a command line; for this
     # script's commands alone. Path-style addressing, rclone's default for a
     # store it does not name.
-    export RCLONE_CONFIG_GTN_RECOVERY_TYPE=s3 RCLONE_CONFIG_GTN_RECOVERY_PROVIDER=Other
-    export RCLONE_CONFIG_GTN_RECOVERY_ENDPOINT="${BUNDLE_ENDPOINT}"
-    export RCLONE_CONFIG_GTN_RECOVERY_ACCESS_KEY_ID="${ak}" RCLONE_CONFIG_GTN_RECOVERY_SECRET_ACCESS_KEY="${sk}"
+    export RCLONE_CONFIG_GTNRECOVERY_TYPE=s3 RCLONE_CONFIG_GTNRECOVERY_PROVIDER=Other
+    export RCLONE_CONFIG_GTNRECOVERY_ENDPOINT="${BUNDLE_ENDPOINT}"
+    export RCLONE_CONFIG_GTNRECOVERY_ACCESS_KEY_ID="${ak}" RCLONE_CONFIG_GTNRECOVERY_SECRET_ACCESS_KEY="${sk}"
     export RCLONE_S3_NO_CHECK_BUCKET=true RCLONE_CONFIG=/dev/null
     if [[ -n "${BUNDLE_REGION}" ]]; then
-        export RCLONE_CONFIG_GTN_RECOVERY_REGION="${BUNDLE_REGION}"
+        export RCLONE_CONFIG_GTNRECOVERY_REGION="${BUNDLE_REGION}"
     fi
 }
 
@@ -401,7 +401,7 @@ cmd_list() {
         rclone_remote || return 1
         banner "Bundles in ${BUNDLE_BUCKET}"
         info "listed from storage: whether each finished is not recorded here"
-        rclone lsf --dirs-only "gtn-recovery:${BUNDLE_BUCKET}/" | sed 's/^/  /'
+        rclone lsf --dirs-only "gtnrecovery:${BUNDLE_BUCKET}/" | sed 's/^/  /'
         return 0
     fi
 
@@ -447,7 +447,7 @@ cmd_inspect() {
         warn "This bundle is passphrase-encrypted; pass --passphrase."
 
     rclone_remote || return 1
-    local base="gtn-recovery:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
+    local base="gtnrecovery:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
 
     banner "bundle-info.json (never encrypted)"
     rclone cat "${base}/bundle-info.json" || { error "Cannot read the bundle."; return 1; }
