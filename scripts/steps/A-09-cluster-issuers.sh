@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # step: A-09-cluster-issuers
 # phase: control-plane
-# requires: A-02-cert-manager
-# provides: the cluster's trust anchor as ClusterIssuers
-# mutates: cluster-scoped ClusterIssuer objects, a root CA Certificate under self-signed
+# requires: A-02-cert-manager A-03-external-secrets
+# provides: the cluster's trust anchor as ClusterIssuers, and the internal CA gentian-ca on every cluster
+# mutates: cluster-scoped ClusterIssuer objects; the internal CA's ExternalSecret in the cert-manager namespace
 
 # v5 reached the issuers only through C-03's install_kernel_wildcard, which
 # returns early when the DNS provider is `none`. So a cluster without DNS-01
@@ -27,13 +27,44 @@ _v5_cert_manager_namespace() {
     echo "${CERT_MANAGER_NAMESPACE}"
 }
 
-# The claim is authoritative once it exists; the env var is how the installer
-# carries the answer before C-01 has created it.
-_v5_issuer_mode() {
-    local mode
-    mode="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
-        -o jsonpath='{.items[0].spec.certificates.issuerMode}' 2>/dev/null || true)"
-    echo "${mode:-${CERT_ISSUER_MODE:-acme-dns01}}"
+_v5_issuer_mode() { gentian_issuer_mode; }
+
+# The internal CA, gentian-ca, is on every cluster
+# (kernel/manifests/cert-manager/internal-ca.yaml): its ClusterIssuer, and the
+# ExternalSecret that materialises its key from the vault. On a private-ca
+# cluster gentian-ca is the person's own CA instead, applied below as before.
+_v5_internal_ca_manifest() {
+    printf '%s/kernel/manifests/cert-manager/internal-ca.yaml' "${SCRIPT_DIR}"
+}
+
+_v5_internal_ca_present() {
+    kubectl get clusterissuer gentian-ca >/dev/null 2>&1 &&
+        kubectl get externalsecret gentian-root-ca-tls -n "$(_v5_cert_manager_namespace)" >/dev/null 2>&1
+}
+
+# Before the internal CA came from the vault, a self-signed cluster made its
+# CA with cert-manager: a selfSigned issuer signing a CA Certificate into
+# gentian-root-ca-tls. Both go, so that cert-manager no longer reissues a CA
+# beside the vault's. The Secret stays: B-08 seeds the vault from it when the
+# vault holds no CA yet, so the anchor clients were told to trust is kept,
+# and External Secrets takes the Secret over from then on.
+_v5_retire_cert_manager_ca() {
+    local ns; ns="$(_v5_cert_manager_namespace)"
+    if kubectl get certificate gentian-root-ca -n "${ns}" >/dev/null 2>&1; then
+        info "Retiring the CA cert-manager made; the internal CA is the vault's from now on."
+        gentian_run kubectl delete certificate gentian-root-ca -n "${ns}" --ignore-not-found=true >/dev/null
+    fi
+    if kubectl get clusterissuer gentian-selfsigned-bootstrap >/dev/null 2>&1; then
+        gentian_run kubectl delete clusterissuer gentian-selfsigned-bootstrap --ignore-not-found=true >/dev/null
+    fi
+}
+
+_v5_apply_internal_ca() {
+    local ns; ns="$(_v5_cert_manager_namespace)"
+    _v5_retire_cert_manager_ca
+    gentian_run kubectl apply -n "${ns}" -f "$(_v5_internal_ca_manifest)"
+    info "Internal CA gentian-ca applied; it issues once the vault holds its key (B-08) and"
+    info "  the secret store exists (C-01). It serves in-cluster TLS, not the public names."
 }
 
 # The HTTP-01 issuer this cluster's ACME environment names. Checking for "some
@@ -57,14 +88,16 @@ check() {
     case "${mode}" in
         self-signed)
             # Both objects apply() creates. The ClusterIssuer alone existing
-            # does not mean it can still issue: it signs from
-            # gentian-root-ca-tls, which only the Certificate keeps current,
-            # and destroy() removes the two separately.
-            kubectl get clusterissuer gentian-ca >/dev/null 2>&1 || return "${CHECK_MISSING}"
-            kubectl get certificate gentian-root-ca -n "$(_v5_cert_manager_namespace)" >/dev/null 2>&1 ||
+            # does not mean it can issue: it signs from gentian-root-ca-tls,
+            # which only the ExternalSecret makes, and destroy() removes the
+            # two separately. A CA Certificate left from before the CA was
+            # the vault's is a CA beside it, and apply() retires it.
+            _v5_internal_ca_present || return "${CHECK_MISSING}"
+            kubectl get certificate gentian-root-ca -n "$(_v5_cert_manager_namespace)" >/dev/null 2>&1 &&
                 return "${CHECK_MISSING}"
             ;;
         acme-dns01|acme-http01)
+            _v5_internal_ca_present || return "${CHECK_MISSING}"
             kubectl get clusterissuer "$(_v5_http01_issuer_name)" >/dev/null 2>&1 ||
                 return "${CHECK_MISSING}"
             if [[ "$(gentian_dns_provider)" != "none" ]]; then
@@ -111,6 +144,7 @@ apply() {
             # The gateway the HTTP-01 solver routes through lives in the edge
             # namespace on v5, not in v4's platform-kernel.
             export KERNEL_PUBLIC_GATEWAY_NAMESPACE="${KERNEL_PUBLIC_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
+            _v5_apply_internal_ca
             apply_gentian_cluster_issuers
             if [[ "$(gentian_dns_provider)" == "none" ]]; then
                 success "ClusterIssuer $(_v5_http01_issuer_name) applied."
@@ -121,12 +155,9 @@ apply() {
             fi
             ;;
         self-signed)
-            gentian_run kubectl apply -n "${ns}" -f \
-                "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers-selfsigned.yaml"
-            info "Waiting for the root CA to be issued (up to 2m)..."
-            kubectl wait --for=condition=Ready "certificate/gentian-root-ca" \
-                -n "${ns}" --timeout=120s >/dev/null ||
-                warn "gentian-root-ca not Ready yet; gentian-ca will not issue until it is."
+            # The internal CA is the anchor of every name here, public ones
+            # included: there is no other issuer.
+            _v5_apply_internal_ca
             warn "Certificates from this anchor are not publicly trusted."
             warn "  Import ${ns}/gentian-root-ca-tls tls.crt into any client that"
             warn "  validates kernel hostnames from outside the cluster."
@@ -165,12 +196,15 @@ EOF
 }
 
 destroy() {
-    # Only the issuers this installer labelled, and the root CA Certificate
-    # that has no label of its own. A ClusterIssuer somebody else put on this
-    # cluster is not ours to remove -- v4's step ended with a
-    # `delete clusterissuer --all`, which on a shared cluster takes out
-    # everyone else's anchors too.
+    # Only the issuers this installer labelled, the internal CA's
+    # ExternalSecret, and a root CA Certificate left from before the CA was
+    # the vault's. A ClusterIssuer somebody else put on this cluster is not
+    # ours to remove -- v4's step ended with a `delete clusterissuer --all`,
+    # which on a shared cluster takes out everyone else's anchors too. The
+    # CA itself stays in the vault: a reinstall gets the same one back.
     kubectl delete clusterissuer -l app.kubernetes.io/managed-by=gentian-install \
+        --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete externalsecret gentian-root-ca-tls -n "$(_v5_cert_manager_namespace)" \
         --ignore-not-found=true >/dev/null 2>&1 || true
     kubectl delete certificate gentian-root-ca -n "$(_v5_cert_manager_namespace)" \
         --ignore-not-found=true >/dev/null 2>&1 || true

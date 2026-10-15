@@ -727,6 +727,111 @@ seed_secrets_remaining() {
     seed_secrets
     seed_repository_credentials
     seed_usage_statistics_key
+    seed_internal_ca
+    seed_object_store_signing_keys
+}
+
+# _seed_once <kv path> — write the JSON object on stdin to the path, only if
+# the path has never been written. `kv put -cas=0` is that test, made by the
+# vault itself, so a path this run merely failed to read is not replaced.
+# The values travel on stdin, never as arguments a process listing shows.
+_seed_once() {
+    bao kv put -mount=secret -cas=0 "$1" - >/dev/null 2>&1
+}
+
+# =============================================================================
+# seed_internal_ca — the cluster's internal CA, gentian-ca, into the vault
+# =============================================================================
+# A CA certificate and its key, generated here once at random and never
+# again: every certificate the cluster issues in-cluster chains to it, and a
+# new one would be a new anchor that nothing trusts yet. External Secrets
+# materialises it as the ClusterIssuer's Secret
+# (kernel/manifests/cert-manager/internal-ca.yaml), so a reinstall of
+# cert-manager finds the same CA, and the recovery kit, which opens the
+# vault, reaches it. Read by eso-read, as every kernel path is, and by no
+# program besides.
+#
+# A self-signed cluster that predates this had its CA made by cert-manager,
+# and clients may have been told to trust it. That CA is what is seeded
+# then, from the Secret cert-manager wrote -- recognised by the Certificate
+# that wrote it, so that a Secret somebody supplied for private-ca is never
+# read. A private-ca cluster seeds nothing: gentian-ca is the person's own CA.
+# =============================================================================
+seed_internal_ca() {
+    local path="gentian-os/kernel/pki/internal-ca" dir ns adopted=""
+    if [[ "$(gentian_issuer_mode)" == "private-ca" ]]; then
+        info "issuerMode is private-ca: gentian-ca is your own CA, and none is seeded."
+        return 0
+    fi
+    if [[ -n "$(bao kv get -mount=secret -field=certificate "${path}" 2>/dev/null || true)" ]]; then
+        info "Internal CA already in the vault; left as it is."
+        return 0
+    fi
+    dir="$(mktemp -d)" || return 1
+    chmod 700 "${dir}"
+    ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}")"
+    if kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null |
+        jq -e 'select(.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca")' \
+            > "${dir}/secret.json" 2>/dev/null; then
+        (umask 077
+         jq -r '.data["tls.crt"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.crt"
+         jq -r '.data["tls.key"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.key")
+        adopted="the CA cert-manager made on this cluster before"
+    else
+        (umask 077
+         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+             -subj "/O=gentian-os/CN=gentian-root-ca" \
+             -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+             -addext "keyUsage=critical,keyCertSign,cRLSign" \
+             -keyout "${dir}/ca.key" -out "${dir}/ca.crt" >/dev/null 2>&1)
+    fi
+    if ! openssl x509 -noout -in "${dir}/ca.crt" >/dev/null 2>&1 || [[ ! -s "${dir}/ca.key" ]]; then
+        rm -rf "${dir}"
+        error "The internal CA could not be made; gentian-ca cannot issue without it."
+        return 1
+    fi
+    if ! jq -n --rawfile c "${dir}/ca.crt" --rawfile k "${dir}/ca.key" \
+        '{certificate: $c, private_key: $k}' | _seed_once "${path}"; then
+        rm -rf "${dir}"
+        error "The internal CA could not be written to the vault at ${path}."
+        return 1
+    fi
+    rm -rf "${dir}"
+    success "Internal CA stored at ${path}${adopted:+ (${adopted})}."
+}
+
+# =============================================================================
+# seed_object_store_signing_keys — the keys the object store signs tokens with
+# =============================================================================
+# Random, written once, beside the store's administrator
+# (kernel/services/infra-seaweedfs/manifests/templates/externalsecret.yaml
+# says what each one signs). Not derived from the master password: nothing
+# else the cluster holds should reproduce them. Rotating one is writing a new
+# value here and restarting the store (docs/design/operations.md).
+# =============================================================================
+seed_object_store_signing_keys() {
+    local path="gentian-os/kernel/storage/s3/jwt" dir key ok=1
+    if [[ -n "$(bao kv get -mount=secret -field=signing_key "${path}" 2>/dev/null || true)" ]]; then
+        info "Object store signing keys already in the vault; left as they are."
+        return 0
+    fi
+    # Through files, not arguments: a value in an argument list is in the
+    # process table for as long as the command runs.
+    dir="$(mktemp -d)" || return 1
+    chmod 700 "${dir}"
+    for key in signing_key signing_read_key filer_signing_key filer_signing_read_key; do
+        (umask 077; openssl rand -hex 32 | tr -d '\n' > "${dir}/${key}") || ok=0
+    done
+    if (( ok == 0 )) || ! jq -n --rawfile a "${dir}/signing_key" --rawfile b "${dir}/signing_read_key" \
+        --rawfile c "${dir}/filer_signing_key" --rawfile d "${dir}/filer_signing_read_key" \
+        '{signing_key: $a, signing_read_key: $b, filer_signing_key: $c, filer_signing_read_key: $d}' |
+        _seed_once "${path}"; then
+        rm -rf "${dir}"
+        error "The object store's signing keys could not be written to the vault at ${path}."
+        return 1
+    fi
+    rm -rf "${dir}"
+    success "Object store signing keys stored at ${path}."
 }
 
 # =============================================================================
@@ -963,7 +1068,8 @@ resync_credential_consumers() {
     done <<< "$(kubectl get clusterissuers.cert-manager.io -o json 2>/dev/null | jq -r '
         .items[]
         | select([(.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length == 0)
-        | [.spec.acme.solvers[]? | .. | objects | to_entries[] | select(.key | test("SecretRef$")) | .value.name // empty] | .[]' 2>/dev/null | sort -u || true)"
+        | ([.spec.acme.solvers[]? | .. | objects | to_entries[] | select(.key | test("SecretRef$")) | .value.name // empty]
+           + [.spec.ca.secretName // empty]) | .[]' 2>/dev/null | sort -u || true)"
 
     count=0
     while read -r name; do

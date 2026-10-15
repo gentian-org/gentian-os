@@ -1,0 +1,71 @@
+# The cluster's internal CA: the ClusterIssuer gentian-ca, on every cluster.
+#
+# What it is for: TLS between the cluster's own components, where both ends
+# are the platform's and nothing public has to trust the certificate -- the
+# object store's gRPC, for one (kernel/services/infra-seaweedfs). It does not
+# decide which issuer serves the public names: on an ACME cluster the
+# wildcard and every public host stay with Let's Encrypt, and gentian-ca
+# issues only what the platform asks of it in-cluster. On a self-signed
+# cluster, which has no public issuer, it is also the anchor the public names
+# are signed by, as before.
+#
+# Its key is not cert-manager's. The installer generates the CA once, at
+# random, into the vault (gentian-os/kernel/pki/internal-ca; scripts/lib/
+# bootstrap.sh seed_internal_ca) and never again, and External Secrets
+# materialises it here as the CA issuer's Secret. So it survives a reinstall
+# of cert-manager, and the recovery kit, which opens the vault, reaches it.
+#
+# Not applied on a private-ca cluster: there gentian-ca is the person's own
+# CA, from a Secret they supply (A-09).
+#
+# No namespace on either object that has one: cert-manager does not always
+# live in a namespace called cert-manager -- v5 puts it in the edge namespace
+# -- so the applying step passes -n with the namespace it actually resolved.
+# The ExternalSecret needs the openbao ClusterSecretStore, which the Cluster
+# claim composes later in the install; until then, and until the CA is
+# seeded, the issuer is not Ready and issues nothing.
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: gentian-root-ca-tls
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-role: internal-ca
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: gentian-root-ca-tls
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/tls
+      engineVersion: v2
+      data:
+        tls.crt: '{{ .certificate }}'
+        tls.key: '{{ .private_key }}'
+        ca.crt: '{{ .certificate }}'
+  data:
+    - secretKey: certificate
+      remoteRef:
+        key: gentian-os/kernel/pki/internal-ca
+        property: certificate
+    - secretKey: private_key
+      remoteRef:
+        key: gentian-os/kernel/pki/internal-ca
+        property: private_key
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: gentian-ca
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-role: internal-ca
+spec:
+  ca:
+    secretName: gentian-root-ca-tls
