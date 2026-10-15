@@ -124,6 +124,9 @@ type Repository interface {
 	SetPlatformClusterRoles(ctx context.Context, roles []gitops.ClusterRoleAllowance, meta gitops.Meta) (gitops.Result, error)
 	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
 	RemoveRepository(ctx context.Context, tenant, name, confirm string, meta gitops.Meta) (gitops.Result, error)
+	BundleSources(ctx context.Context) ([]gitops.DeclaredBundleSource, error)
+	DeclareBundleSource(ctx context.Context, name string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
+	RemoveBundleSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -519,6 +522,23 @@ func (s *Server) routes() {
 			// own administrators restore under /v1/tenants (restore.go).
 			s.guarded("POST /v1/clusters/{c}/tenants/{t}/bundles/inspect", "can_configure", s.clusterObject, s.inspectTenantBundle)
 			s.action("POST /v1/clusters/{c}/tenants/{t}/actions/restore", "can_configure", s.clusterObject, s.restoreTenant)
+			// Where a bundle is read from besides an upload (bundle_sources.go):
+			// the cluster's declared sources, storage outside it whose address
+			// is a commit and whose keys are the custodian's; and, for the
+			// cluster's administrator, each tenant's own. can_configure, the
+			// right an import needs. A fetch copies one bundle into the
+			// import storage, from where it is downloaded, inspected,
+			// imported or restored as an upload is.
+			s.guarded("GET /v1/clusters/{c}/bundle-sources", "can_configure", s.clusterObject, s.listClusterSources)
+			s.guarded("PUT /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.declareClusterSource)
+			s.guarded("DELETE /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.removeClusterSource)
+			s.guarded("GET /v1/clusters/{c}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.clusterSourceBundles)
+			s.action("POST /v1/clusters/{c}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromClusterSource)
+			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources", "can_configure", s.clusterObject, s.tenantSources)
+			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.tenantSourceBundles)
+			s.action("POST /v1/clusters/{c}/tenants/{t}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromTenantSource)
+			s.guarded("GET /v1/clusters/{c}/bundle-fetches/{f}", "can_configure", s.clusterObject, s.bundleFetch)
+			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/download", "can_configure", s.clusterObject, s.importedBundleDownload)
 		}
 		// Who the caller is at cluster scope: which of the cluster's verbs
 		// they hold. Identified, not guarded: a person with no cluster
@@ -738,6 +758,13 @@ func (s *Server) routes() {
 		s.guarded("POST /v1/tenants/{t}/bundles", "can_set_policy", tenantObject, s.uploadBundle)
 		s.guarded("POST /v1/tenants/{t}/bundles/inspect", "can_set_policy", tenantObject, s.inspectTenantBundle)
 		s.action("POST /v1/tenants/{t}/actions/restore", "can_set_policy", tenantObject, s.restoreTenant)
+		// Where the tenant's bundles are: its bucket in the cluster's storage
+		// and its backup policy's destination, listed for its recovery
+		// (bundle_sources.go). can_set_policy, the relation a restore and the
+		// backup policy are asked under. Only bundles of this tenant are
+		// listed; a destination's bucket may hold other tenants' too.
+		s.guarded("GET /v1/tenants/{t}/bundle-sources", "can_set_policy", tenantObject, s.tenantSources)
+		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
 	}
 
 	// No people, groups or realm settings here. They are the registrar's

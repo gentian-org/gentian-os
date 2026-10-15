@@ -116,3 +116,41 @@ func TestExportDestinationNetworkPolicyIsTheDestinationAlone(t *testing.T) {
 		}
 	}
 }
+
+// A fetch's pod runs where egress is otherwise open; its policy is the whole
+// of where it may go: the source's address and port, the object store's
+// namespace, and DNS.
+func TestAFetchIsConfinedToItsSourceTheStoreAndDNS(t *testing.T) {
+	np, err := BundleFetchNetworkPolicy("system-s3", "gentian-fetch-source-f", "gentianos.io/bundle-fetch", "f", "https://198.51.100.4:8443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if np.Spec.PodSelector.MatchLabels["gentianos.io/bundle-fetch"] != "f" || len(np.Spec.PodSelector.MatchLabels) != 1 {
+		t.Errorf("selects %v", np.Spec.PodSelector.MatchLabels)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+		t.Errorf("policy types %v", np.Spec.PolicyTypes)
+	}
+	if len(np.Spec.Egress) != 3 {
+		t.Fatalf("rules %+v", np.Spec.Egress)
+	}
+	out := np.Spec.Egress[0]
+	if out.To[0].IPBlock.CIDR != "198.51.100.4/32" || out.Ports[0].Port.IntValue() != 8443 {
+		t.Errorf("the way out is %+v", out)
+	}
+	if ns := np.Spec.Egress[1].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; ns != "system-s3" {
+		t.Errorf("the store's namespace is %q", ns)
+	}
+
+	inside, err := BundleFetchNetworkPolicy("system-s3", "p", "k", "f", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range inside.Spec.Egress {
+		for _, to := range rule.To {
+			if to.IPBlock != nil {
+				t.Errorf("a fetch inside the cluster may reach %s", to.IPBlock.CIDR)
+			}
+		}
+	}
+}

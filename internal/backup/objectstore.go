@@ -55,12 +55,16 @@ const (
 // provider it does not name, unless S3_ADDRESSING_STYLE says virtualHost (a
 // destination that serves a bucket only by its own host name); and the
 // region when one is given.
-func rcloneRemote(remote string) string {
+func rcloneRemote(remote string) string { return rcloneRemoteFrom(remote, "S3") }
+
+// rcloneRemoteFrom is rcloneRemote from the variables named <vars>_ENDPOINT,
+// <vars>_ACCESS_KEY and so on: for a container that addresses two stores.
+func rcloneRemoteFrom(remote, vars string) string {
 	r := "RCLONE_CONFIG_" + strings.ToUpper(remote)
 	return fmt.Sprintf(`export %[1]s_TYPE=s3 %[1]s_PROVIDER=Other RCLONE_S3_NO_CHECK_BUCKET=true
-export %[1]s_ENDPOINT="${S3_ENDPOINT}" %[1]s_ACCESS_KEY_ID="${S3_ACCESS_KEY}" %[1]s_SECRET_ACCESS_KEY="${S3_SECRET_KEY}"
-if [ -n "${S3_REGION:-}" ]; then export %[1]s_REGION="${S3_REGION}"; fi
-if [ "${S3_ADDRESSING_STYLE:-path}" = virtualHost ]; then export %[1]s_FORCE_PATH_STYLE=false; else export %[1]s_FORCE_PATH_STYLE=true; fi`, r)
+export %[1]s_ENDPOINT="${%[2]s_ENDPOINT}" %[1]s_ACCESS_KEY_ID="${%[2]s_ACCESS_KEY}" %[1]s_SECRET_ACCESS_KEY="${%[2]s_SECRET_KEY}"
+if [ -n "${%[2]s_REGION:-}" ]; then export %[1]s_REGION="${%[2]s_REGION}"; fi
+if [ "${%[2]s_ADDRESSING_STYLE:-path}" = virtualHost ]; then export %[1]s_FORCE_PATH_STYLE=false; else export %[1]s_FORCE_PATH_STYLE=true; fi`, r, vars)
 }
 
 // storageEnv addresses an object store whose address and keys are all in

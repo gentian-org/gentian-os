@@ -160,7 +160,10 @@ type RestoreRequest struct {
 	// Backup names one of the tenant's own backups instead of a bundle: the
 	// restore is then of that TenantExport (spec.exportRef), whose bundle is
 	// found in the tenant's own namespace and nowhere else.
-	Backup     string     `json:"backup,omitempty"`
+	Backup string `json:"backup,omitempty"`
+	// Source names the bundle at a source instead (bundle_sources.go): one
+	// of the cluster's, or one of the tenant's own. It is read where it is.
+	Source     *SourceRef `json:"source,omitempty"`
 	Decryption Decryption `json:"decryption"`
 	Apps       []string   `json:"apps,omitempty"`
 	// Name names the restore, for a caller that has to find it again: an
@@ -211,6 +214,19 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
 		return nil, err
+	}
+	if req.Source != nil {
+		if req.Bundle.Bucket != "" || req.Bundle.Prefix != "" || req.Backup != "" {
+			return nil, errors.New("name a backup, a bundle or a source, one of them")
+		}
+		if req.Source.Tenant != "" && req.Source.Tenant != tenantName {
+			return nil, fmt.Errorf("a source of tenant %s is restored into tenant %s alone", req.Source.Tenant, req.Source.Tenant)
+		}
+		ref, err := s.ResolveSource(ctx, *req.Source)
+		if err != nil {
+			return nil, err
+		}
+		req.Bundle = ref
 	}
 	byBackup := req.Backup != ""
 	switch {
@@ -342,13 +358,28 @@ func (h *HTTPServer) handleBundleInspect(w http.ResponseWriter, r *http.Request)
 		Bundle gentianov1alpha1.BundleRef `json:"bundle"`
 		// Tenant and Backup name one of a tenant's own backups instead of a
 		// bundle, which is then the one its TenantExport records.
-		Tenant     string     `json:"tenant,omitempty"`
-		Backup     string     `json:"backup,omitempty"`
+		Tenant string `json:"tenant,omitempty"`
+		Backup string `json:"backup,omitempty"`
+		// Source names a bundle at a source instead; the inspection answers
+		// with the bundle it resolved to.
+		Source     *SourceRef `json:"source,omitempty"`
 		Decryption Decryption `json:"decryption"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
+	}
+	if body.Source != nil && body.Backup != "" {
+		writeErr(w, http.StatusBadRequest, errors.New("name a backup or a source, not both"))
+		return
+	}
+	if body.Source != nil {
+		ref, err := h.Service.ResolveSource(r.Context(), *body.Source)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		body.Bundle = ref
 	}
 	if body.Backup != "" {
 		ref, err := h.Service.BackupBundle(r.Context(), body.Tenant, body.Backup)

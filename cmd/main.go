@@ -534,6 +534,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.BundleSourceReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BundleSource")
+		os.Exit(1)
+	}
+	if err := (&controller.BundleFetchReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BundleFetch")
+		os.Exit(1)
+	}
+
 	// The authorization graph's structure: which tenants this cluster has and
 	// which group holds which role over it.
 	//

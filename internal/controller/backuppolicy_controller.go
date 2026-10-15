@@ -414,7 +414,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 // no Secret and exists only so ESO's Ready condition answers "has this been
 // supplied". The custodian reads exactly this object.
 func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPath, scope string) error {
-	return r.applyExternalSecret(ctx, credentialProbePrefix+name, meta.OperatorNamespace, vaultPath, "None", map[string]string{
+	return applyExternalSecret(ctx, r.Client, credentialProbePrefix+name, meta.OperatorNamespace, vaultPath, "None", nil, map[string]string{
 		"gentianos.io/credential-requirement": name,
 		"gentianos.io/credential-phase":       "runtime",
 		"gentianos.io/credential-scope":       scope,
@@ -433,15 +433,20 @@ func (r *BackupPolicyReconciler) ensureConsumingSecret(
 	vaultPath string,
 ) error {
 	name := backup.DestinationSecretName(policy.Spec.Scope, policy.Spec.Tenant)
-	return r.applyExternalSecret(ctx, name, s3Namespace, vaultPath, "Owner", map[string]string{
+	return applyExternalSecret(ctx, r.Client, name, s3Namespace, vaultPath, "Owner", nil, map[string]string{
 		managedByLabel:               managedByValue,
 		"gentianos.io/backup-policy": policy.Name,
 	})
 }
 
-func (r *BackupPolicyReconciler) applyExternalSecret(
+// applyExternalSecret creates or updates an ExternalSecret that reads a
+// destination's or a source's two keys from vaultPath. owners, when given,
+// make it collected with what it serves.
+func applyExternalSecret(
 	ctx context.Context,
+	c client.Client,
 	name, namespace, vaultPath, creationPolicy string,
+	owners []metav1.OwnerReference,
 	labels map[string]string,
 ) error {
 	data := []any{}
@@ -469,13 +474,16 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 		},
 	}}
 	desired.SetLabels(labels)
+	if len(owners) > 0 {
+		desired.SetOwnerReferences(owners)
+	}
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(externalSecretGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
+	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
-		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
+		if err := c.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("create ExternalSecret %s/%s: %w", namespace, name, err)
 		}
 		return nil
@@ -486,11 +494,12 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 	// object on every pass, and ESO writes it too: the two raced, the loser got
 	// a conflict, and the conflict was reported as a failed policy.
 	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
-		equality.Semantic.DeepEqual(existing.GetLabels(), desired.GetLabels()) {
+		equality.Semantic.DeepEqual(existing.GetLabels(), desired.GetLabels()) &&
+		(len(owners) == 0 || equality.Semantic.DeepEqual(existing.GetOwnerReferences(), desired.GetOwnerReferences())) {
 		return nil
 	}
 	desired.SetResourceVersion(existing.GetResourceVersion())
-	if err := r.Update(ctx, desired); err != nil {
+	if err := c.Update(ctx, desired); err != nil {
 		return fmt.Errorf("update ExternalSecret %s/%s: %w", namespace, name, err)
 	}
 	return nil
@@ -499,10 +508,16 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 // credentialSatisfied reads ESO's verdict from the probe, the same way the
 // custodian does.
 func (r *BackupPolicyReconciler) credentialSatisfied(ctx context.Context, name string) (bool, string) {
+	return credentialProbeSatisfied(ctx, r.Client, name)
+}
+
+// credentialProbeSatisfied reads whether the requirement name has been
+// supplied, from its probe.
+func credentialProbeSatisfied(ctx context.Context, c client.Client, name string) (bool, string) {
 	es := &unstructured.Unstructured{}
 	es.SetGroupVersionKind(externalSecretGVK)
 	key := types.NamespacedName{Name: credentialProbePrefix + name, Namespace: meta.OperatorNamespace}
-	if err := r.Get(ctx, key, es); err != nil {
+	if err := c.Get(ctx, key, es); err != nil {
 		return false, "no satisfaction probe found"
 	}
 	conds, found, err := unstructured.NestedSlice(es.Object, "status", "conditions")

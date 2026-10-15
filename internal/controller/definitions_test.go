@@ -455,6 +455,7 @@ func TestEveryReconcilerThatWritesIsBehindTheCheck(t *testing.T) {
 		"gateway_platform_reconciler.go":  "writes Gateway API resources",
 		"concierge_lookup.go":             "writes a ConfigMap",
 		"tenant_apps_helm.go":             "writes a RoleBinding",
+		"bundlefetch_controller.go":       "deletes a fetch's NetworkPolicy",
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

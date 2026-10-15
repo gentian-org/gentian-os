@@ -104,6 +104,58 @@ func ExportDestinationNetworkPolicy(tenantName, nsName, name, runLabelKey, runLa
 	}, nil
 }
 
+// BundleFetchNetworkPolicy is the whole of where one fetch's pod may go: the
+// source its bundle is read from, as ExportDestinationNetworkPolicy opens a
+// destination; the object store's own namespace, which it writes into; and
+// the cluster's DNS. The pod runs in the object store's namespace, which
+// restricts no egress of its own (security.md, gap G28): a policy that
+// selects it is what confines it, and it confines it to these three.
+//
+// Labelled with the platform tenant's name, as every policy of the kernel's.
+//
+// An empty endpoint is a bucket of the cluster's own storage, and opens no
+// way out of the cluster at all.
+func BundleFetchNetworkPolicy(namespace, name, runLabelKey, runLabel, endpoint string) (*networkingv1.NetworkPolicy, error) {
+	protocolTCP := corev1.ProtocolTCP
+	protocolUDP := corev1.ProtocolUDP
+	dns := intstr.FromInt32(53)
+	egress := []networkingv1.NetworkPolicyEgressRule{
+		namespaceEgress(namespace),
+		{Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &protocolUDP, Port: &dns},
+			{Protocol: &protocolTCP, Port: &dns},
+		}},
+	}
+	if endpoint != "" {
+		peer, port, err := destinationPeer(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		p := intstr.FromInt32(port)
+		egress = append([]networkingv1.NetworkPolicyEgressRule{{
+			To:    []networkingv1.NetworkPolicyPeer{peer},
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocolTCP, Port: &p}},
+		}}, egress...)
+	}
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				meta.ManagedByLabel:     meta.ManagedByValue,
+				meta.NetPolicyTypeLabel: meta.NetPolicyBundleFetch,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{
+				runLabelKey: runLabel,
+			}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress:      egress,
+		},
+	}, nil
+}
+
 // destinationPeer is where an endpoint is, as a NetworkPolicy can say it:
 // the address when the endpoint names one, any address when it names a host
 // by name; and the port, the endpoint's own or its scheme's.

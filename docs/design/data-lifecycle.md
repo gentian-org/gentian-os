@@ -253,6 +253,17 @@ another cluster's — each
 is named in the result, for whoever may grant it here, and
 `status.rights.provenance` says why.
 
+**Where a bundle comes from.** An upload; a bucket of the cluster's own
+storage; or a *bundle source*, storage outside the cluster declared like a
+backup destination: its address a commit (`BundleSource`), its keys set at
+the custodian into the vault, read by the platform alone. A tenant's own
+backup bucket and its policy's destination are its sources for its recovery,
+and list only its own bundles. A bundle is named by source and prefix, and
+the platform finds the address and the keys. Listing reads each bundle's
+plaintext `bundle-info.json`; an import or a restore reads the bundle where
+it is; a fetch copies it into `gentian-imports`, from where it is downloaded
+and handled as an upload (commands.md §12a).
+
 The import is recorded in git beside the new tenant until it has finished.
 A director that restarts goes on with it. It needs the bundle's key again
 only if the restore had not yet started: the key is never written down.

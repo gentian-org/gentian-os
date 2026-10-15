@@ -99,6 +99,7 @@ rules:
     - apps.gentianos.io
     - backuppolicies.gentianos.io
     - brandings.gentianos.io
+    - bundlesources.gentianos.io
     - clusters.gentianos.io
     - componentprofiles.gentianos.io
     - components.gentianos.io
@@ -320,6 +321,7 @@ rules:
     - appgrants/status
     - backuppolicies/status
     - brandings/status
+    - bundlesources/status
     - components/status
     - customizations/status
     - integrationbindings/status
@@ -372,6 +374,7 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - bundlesources
     - componentprofiles
     - oidcpackcatalogs
     verbs:

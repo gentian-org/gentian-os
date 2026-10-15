@@ -105,8 +105,13 @@ var importPoll = func() *atomic.Int64 {
 }()
 
 type importRequest struct {
-	Bundle     gentianov1alpha1.BundleRef `json:"bundle"`
-	Decryption json.RawMessage            `json:"decryption"`
+	Bundle gentianov1alpha1.BundleRef `json:"bundle"`
+	// Source names a bundle at one of the cluster's declared sources instead
+	// (bundle_sources.go): {"name": "<source>", "prefix": "<bundle>"}. The
+	// operator finds where it is and with which keys; the import then goes
+	// on with the bundle it resolved to.
+	Source     *importSource   `json:"source,omitempty"`
+	Decryption json.RawMessage `json:"decryption"`
 	// Name is not an override: an import takes the tenant's name from the
 	// bundle. A request that names another is refused, so that a caller
 	// that still asks for a rename is told so rather than given the
@@ -116,6 +121,26 @@ type importRequest struct {
 	// custom domain is bound to it again here. Unset is yes; false makes the
 	// tenant at <tenant>.<kernel domain>, as a move to another domain.
 	KeepCustomDomain *bool `json:"keepCustomDomain,omitempty"`
+}
+
+type importSource struct {
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+}
+
+// inspection is what is asked of the operator to open the bundle a request
+// names, and why it cannot be asked when it cannot.
+func (req importRequest) inspection() (map[string]any, string) {
+	ask := map[string]any{"decryption": req.Decryption}
+	if req.Source == nil {
+		ask["bundle"] = req.Bundle
+		return ask, ""
+	}
+	if req.Bundle.Bucket != "" || req.Bundle.Prefix != "" {
+		return nil, "name a bundle or a source, not both"
+	}
+	ask["source"] = map[string]string{"name": req.Source.Name, "prefix": req.Source.Prefix}
+	return ask, ""
 }
 
 // uploadBundle streams the request body to the operator, which lays it out
@@ -138,8 +163,12 @@ func (s *Server) inspectBundle(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"bundle": {...}, "decryption": {...}}`)
 		return
 	}
-	status, body, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/bundles/inspect", c.meta.ActorName(),
-		map[string]any{"bundle": req.Bundle, "decryption": req.Decryption})
+	ask, why := req.inspection()
+	if why != "" {
+		s.fail(w, r, http.StatusBadRequest, why)
+		return
+	}
+	status, body, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/bundles/inspect", c.meta.ActorName(), ask)
 	if err != nil {
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 		return
@@ -160,8 +189,12 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"bundle": {...}, "decryption": {...}}`)
 		return
 	}
-	status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/bundles/inspect", c.meta.ActorName(),
-		map[string]any{"bundle": req.Bundle, "decryption": req.Decryption})
+	ask, why := req.inspection()
+	if why != "" {
+		s.fail(w, r, http.StatusBadRequest, why)
+		return
+	}
+	status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/bundles/inspect", c.meta.ActorName(), ask)
 	if err != nil {
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 		return
@@ -171,11 +204,17 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	var insp struct {
-		Manifest *backup.Manifest `json:"manifest"`
+		Bundle   gentianov1alpha1.BundleRef `json:"bundle"`
+		Manifest *backup.Manifest           `json:"manifest"`
 	}
 	if err := json.Unmarshal(body, &insp); err != nil || insp.Manifest == nil {
 		s.fail(w, r, http.StatusBadGateway, "the operator's inspection did not parse")
 		return
+	}
+	if req.Source != nil {
+		// From here on, the bundle the source resolved to: it is what the
+		// import is recorded with and restored from.
+		req.Bundle = insp.Bundle
 	}
 	// The tenant's name is the bundle's. The platform brings a tenant back
 	// under the name it had, on this cluster or another; it does not rename.

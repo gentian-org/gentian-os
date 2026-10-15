@@ -54,9 +54,15 @@ import (
 // never logged.
 
 type restoreRequest struct {
-	Backup     string                      `json:"backup,omitempty"`
-	Bundle     *gentianov1alpha1.BundleRef `json:"bundle,omitempty"`
-	Decryption json.RawMessage             `json:"decryption"`
+	Backup string                      `json:"backup,omitempty"`
+	Bundle *gentianov1alpha1.BundleRef `json:"bundle,omitempty"`
+	// Source names a bundle where the tenant's backups are written, by the
+	// source and its prefix there (bundle_sources.go): "storage", its bucket
+	// in the cluster's storage, or "destination", its backup policy's. For a
+	// bundle the cluster no longer lists as a backup. The operator finds the
+	// storage and the keys; the caller names neither.
+	Source     *restoreSource  `json:"source,omitempty"`
+	Decryption json.RawMessage `json:"decryption"`
 	// Apps restores these apps of the bundle and no other; empty is every one.
 	Apps []string `json:"apps,omitempty"`
 }
@@ -64,13 +70,29 @@ type restoreRequest struct {
 // backupName is what a TenantExport can be called.
 var backupName = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
 
-const restoreBodyHelp = `body must be {"backup": "<name>"} or {"bundle": {"bucket": "...", "prefix": "..."}}, with "decryption": {...}`
+const restoreBodyHelp = `body must be {"backup": "<name>"}, {"bundle": {"bucket": "...", "prefix": "..."}} or {"source": {"name": "storage|destination", "prefix": "..."}}, with "decryption": {...}`
+
+type restoreSource struct {
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+}
 
 // which says what the request names, for the operator, or why it is refused.
-func (req restoreRequest) which() (map[string]any, string) {
+func (req restoreRequest) which(tenant string) (map[string]any, string) {
+	named := 0
+	for _, set := range []bool{req.Backup != "", req.Bundle != nil, req.Source != nil} {
+		if set {
+			named++
+		}
+	}
 	switch {
-	case req.Backup != "" && req.Bundle != nil:
-		return nil, "name a backup or a bundle, not both"
+	case named > 1:
+		return nil, "name a backup, a bundle or a source, one of them"
+	case req.Source != nil:
+		if (req.Source.Name != "storage" && req.Source.Name != "destination") || req.Source.Prefix == "" {
+			return nil, `a source restored from is the tenant's own, "storage" or "destination", with the bundle's prefix there`
+		}
+		return map[string]any{"source": map[string]string{"tenant": tenant, "name": req.Source.Name, "prefix": req.Source.Prefix}}, ""
 	case req.Backup != "":
 		if !backupName.MatchString(req.Backup) {
 			return nil, "that is not the name of a backup"
@@ -91,7 +113,7 @@ func (req restoreRequest) which() (map[string]any, string) {
 // answered, and the manifest is nil.
 func (s *Server) inspectFor(w http.ResponseWriter, r *http.Request, c call, req restoreRequest) (map[string]any, *backup.Manifest, json.RawMessage) {
 	tenant := r.PathValue("t")
-	named, why := req.which()
+	named, why := req.which(tenant)
 	if why != "" {
 		s.fail(w, r, http.StatusBadRequest, why)
 		return nil, nil, nil

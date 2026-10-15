@@ -191,3 +191,36 @@ func TestWhoMayRestoreATenant(t *testing.T) {
 		t.Fatalf("restores %v", restores)
 	}
 }
+
+// A bundle where the tenant's backups are written, which the cluster no
+// longer lists as a backup, is restored by its source and prefix: the
+// tenant's own source, named for the tenant in the path and no other, and
+// never one of the cluster's.
+func TestARestoreNamesABundleAtTheTenantsOwnSource(t *testing.T) {
+	op := &restoringOperator{of: "demo"}
+	h := startWith(t, op)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	code, body := h.do(t, "POST", "/v1/tenants/demo/actions/restore", tom,
+		`{"source":{"name":"destination","prefix":"nightly-20261001"},`+restoreKey+`}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("restore = %d %v", code, body)
+	}
+	inspects, restores := op.asked()
+	want := `"source":{"name":"destination","prefix":"nightly-20261001","tenant":"demo"}`
+	if len(inspects) != 1 || !strings.Contains(inspects[0], want) {
+		t.Fatalf("inspected %v", inspects)
+	}
+	if len(restores) != 1 || !strings.Contains(restores[0], want) {
+		t.Fatalf("restores %v", restores)
+	}
+	for _, refused := range []string{
+		`{"source":{"name":"old-store","prefix":"p"},` + restoreKey + `}`,
+		`{"source":{"name":"storage"},` + restoreKey + `}`,
+		`{"source":{"name":"storage","prefix":"p"},"backup":"nightly",` + restoreKey + `}`,
+	} {
+		if code, body := h.do(t, "POST", "/v1/tenants/demo/actions/restore", tom, refused); code != http.StatusBadRequest {
+			t.Errorf("%s = %d %v", refused, code, body)
+		}
+	}
+}

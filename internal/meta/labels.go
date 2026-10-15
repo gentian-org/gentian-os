@@ -32,6 +32,10 @@ const (
 	// run's, owned by it and removed with it, not the tenant's: the tenant's
 	// policies are pruned around it.
 	NetPolicyExportDestination = "export-destination"
+	// NetPolicyBundleFetch marks the policy that confines one fetch of a
+	// bundle from a source outside the cluster to that source, the object
+	// store and DNS. The fetch's, owned by its Job and removed when it ends.
+	NetPolicyBundleFetch = "bundle-fetch"
 	// NetPolicyAdapter marks the policies that close an adapter to everything
 	// but the component that speaks as a person, and open its way to its app.
 	NetPolicyAdapter = "adapter"

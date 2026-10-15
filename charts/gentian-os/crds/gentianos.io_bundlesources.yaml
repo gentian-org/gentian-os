@@ -1,0 +1,198 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: bundlesources.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: BundleSource
+    listKind: BundleSourceList
+    plural: bundlesources
+    shortNames:
+    - bsrc
+    singular: bundlesource
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.endpoint
+      name: Endpoint
+      type: string
+    - jsonPath: .spec.bucket
+      name: Bucket
+      type: string
+    - jsonPath: .spec.prefix
+      name: Prefix
+      type: string
+    - jsonPath: .status.credentialSatisfied
+      name: Credential
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          BundleSource is a place outside the cluster bundles are imported from,
+          declared by the cluster's administrator.
+
+          Cluster-scoped, and the cluster's: what it reaches is read to make a
+          tenant, which is the cluster's administrator's to do. A tenant's own
+          destination is its BackupPolicy's, and is read for its recovery as it is.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              BundleSourceSpec is S3 storage outside the cluster that bundles are read
+              from: another cluster's destination, an old cluster's store, a provider's
+              bucket a tenant's bundles were left in.
+
+              The address is declared here, in git, by the director; the keys are not.
+              They are a CredentialRequirement the operator derives from this object and
+              the custodian fills, at a vault path derived from the name -- exactly as a
+              backup destination's are, and with no field that could name another.
+            properties:
+              addressingStyle:
+                description: |-
+                  AddressingStyle is how a bucket is named in a request to Endpoint:
+                  path (the default when empty) or virtualHost.
+                enum:
+                - path
+                - virtualHost
+                type: string
+              bucket:
+                description: Bucket holds the bundles.
+                maxLength: 63
+                pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                type: string
+              description:
+                description: |-
+                  Description says what the storage is, for whoever picks a bundle
+                  from it.
+                maxLength: 256
+                type: string
+              endpoint:
+                description: |-
+                  Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io. A scheme
+                  is required, as for a destination.
+                maxLength: 2048
+                minLength: 1
+                pattern: ^https?://[^\s/]+(/.*)?$
+                type: string
+              prefix:
+                description: |-
+                  Prefix is where in the bucket the bundles are, each one a prefix of
+                  its own directly below it. Empty is the bucket's top.
+                maxLength: 512
+                pattern: ^$|^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*/?$
+                type: string
+              region:
+                description: Region, for a provider that requires one.
+                maxLength: 64
+                type: string
+            required:
+            - bucket
+            - endpoint
+            type: object
+          status:
+            description: BundleSourceStatus reports whether the source can be read.
+            properties:
+              conditions:
+                description: 'Conditions carries Ready: whether bundles can be read
+                  from here.'
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              credentialRequirement:
+                description: |-
+                  CredentialRequirement names the requirement carrying the keys, and
+                  CredentialSatisfied reports whether it has been filled.
+                type: string
+              credentialSatisfied:
+                type: boolean
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: a bundle source's name is a DNS label of at most 48 characters
+          rule: size(self.metadata.name) <= 48 && self.metadata.name.matches('^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
+    served: true
+    storage: true
+    subresources:
+      status: {}

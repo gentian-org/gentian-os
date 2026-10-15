@@ -1197,8 +1197,8 @@ cluster's administrator any tenant:
 
 ```
 POST /v1/tenants/{t}/bundles                        body: the .gentian bytes -> {bundle}
-POST /v1/tenants/{t}/bundles/inspect                {backup | bundle, decryption} -> manifest
-POST /v1/tenants/{t}/actions/restore                {backup | bundle, decryption, apps?} -> 202 {name, ...}
+POST /v1/tenants/{t}/bundles/inspect                {backup | bundle | source, decryption} -> manifest
+POST /v1/tenants/{t}/actions/restore                {backup | bundle | source, decryption, apps?} -> 202 {name, ...}
 POST /v1/clusters/{c}/tenants/{t}/bundles/inspect   the same, as the cluster's administrator
 POST /v1/clusters/{c}/tenants/{t}/actions/restore   the same, as the cluster's administrator
 GET  /v1/tenants/{t}/restores/{name}                the status (the usher)
@@ -1209,7 +1209,10 @@ The tenant routes ask `can_set_policy` on the tenant, the cluster routes
 `POST /v1/clusters/{c}/bundles`. `backup` is the name of one of the tenant's
 backups, wherever its policy wrote it; `bundle` is what an upload answered,
 and nothing else: a reference with an endpoint or a credential of its own is
-refused. The director opens the manifest with the key first and refuses a
+refused. `source` is a bundle where the tenant's backups are written that the
+cluster may no longer list as a backup, `{"name": "storage"|"destination",
+"prefix": "..."}`, as `GET /v1/tenants/{t}/bundle-sources/{name}/bundles`
+lists them (§12a). The director opens the manifest with the key first and refuses a
 bundle of another tenant with `422` (bringing one here is an import, §12a).
 The key goes to the operator in the request and into a Secret the restore
 owns; it is never committed or logged. The platform's version line, which
@@ -1320,6 +1323,34 @@ POST /v1/clusters/{c}/bundles/inspect         {bundle, decryption} -> manifest
 POST /v1/clusters/{c}/tenants/import          {bundle, decryption, keepCustomDomain?} -> 202 status
 GET  /v1/clusters/{c}/tenants/{t}/import      the status
 ```
+
+**A bundle in storage outside the cluster** is read from a *bundle source*
+the cluster's administrator declares, never with an address and keys typed
+at the import. The address is a commit (`BundleSource`, in
+`clusters/<c>/kernel/claims/bundle-source-<name>.yaml`); the keys are set at
+the custodian as `bundle-source-<name>` (Admin Console, Credentials), stored
+at `gentian-os/kernel/backup/sources/<name>`, and read only by the platform.
+Reading needs only `s3:ListBucket` and `s3:GetObject`. A tenant's own sources
+are where its backups go: `storage` (its bucket here) and `destination` (its
+backup policy's, when it names one).
+
+```
+GET    /v1/clusters/{c}/bundle-sources                          declared, with whether the keys are there
+PUT    /v1/clusters/{c}/bundle-sources/{name}                   {endpoint, bucket, prefix?, region?, addressingStyle?, description?}
+DELETE /v1/clusters/{c}/bundle-sources/{name}                   removed from git and from the cluster
+GET    /v1/clusters/{c}/bundle-sources/{name}/bundles           [{prefix, info}]: each bundle's plaintext header
+POST   /v1/clusters/{c}/bundle-sources/{name}/actions/fetch     {prefix} -> {name, bundle}: copied into gentian-imports
+GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's own (also POST .../{name}/actions/fetch)
+GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
+GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
+GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
+```
+
+All of the cluster's are `can_configure`. An import names a bundle at a
+source instead of a bucket: `{"source": {"name": "old", "prefix":
+"nightly-20261001"}, "decryption": ...}`, read where it is. A fetched bundle
+is in `gentian-imports` like an upload, for a console that rewrites it before
+importing it.
 
 `decryption` is `{"passphrase": "..."}` or `{"identity": "AGE-SECRET-KEY-1..."}`.
 The key is written into a Secret the restore owns and goes with it. Members
