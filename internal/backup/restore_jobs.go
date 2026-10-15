@@ -451,8 +451,8 @@ func (p JobParams) restoreRole() string {
 	return PostgresRole(p.Tenant, p.App)
 }
 
-// S3RestoreJob puts one app bucket back: the bucket, the user and the policy
-// the app reads it with, and its objects.
+// S3RestoreJob puts one app bucket back: the bucket, the identity the app
+// reads it with, and its objects.
 //
 // provision is the container install provisions the bucket with
 // (ObjectStorageProvisionContainer), holding the key pair the vault holds
@@ -492,11 +492,15 @@ echo "unpacked bucket archive"`, workDir)},
 # looks like: an object of the same size and time is not the same object.
 rclone sync --ignore-times %[1]s/restore "%[3]s:%[2]s"
 echo "restored bucket %[2]s"`, workDir, bucket, platformRemote), PlatformStorageEnv())
-	return restoreJob(p, []corev1.Container{
+	job := restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "bucket.tar.gz"),
 		unpack,
 		provision,
 	}, restore, nil)
+	// The provision step administers the store with weed shell, which its
+	// NetworkPolicy admits by this label.
+	job.Spec.Template.Labels[ObjectStorageShellLabel] = "true"
+	return job
 }
 
 // VolumeRestoreJob unpacks one claim's archive back onto it.

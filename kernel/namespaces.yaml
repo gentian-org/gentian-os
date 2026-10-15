@@ -72,7 +72,7 @@ system:
     holds: Redis
   - name: system-s3
     function: s3
-    holds: MinIO, the object store apps take buckets from
+    holds: SeaweedFS, the object store apps take buckets from
   # `when` marks a namespace the claim decides. Without it a namespace is
   # unconditional. A cluster that relays mail through a provider has no
   # mailbox store and no MTA of its own, and composing empty namespaces for

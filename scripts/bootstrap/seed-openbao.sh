@@ -24,7 +24,7 @@ set -euo pipefail
 #   database/postgresql
 #   database/mariadb
 #   cache/redis
-#   storage/minio
+#   storage/s3
 #   identity/keycloak-bootstrap
 #   authz/openfga
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
@@ -128,8 +128,10 @@ MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 # --- Redis ---
 REDIS_PW=$(derive_password "redis" "password")
 
-# --- MinIO ---
-MINIO_ROOT_PW=$(derive_password "minio" "root_password")
+# --- The object store's administrator ---
+# Derived under the name it was first derived under, "minio": the path moved
+# with the server, the value did not.
+S3_ADMIN_PW=$(derive_password "minio" "root_password")
 
 # --- Keycloak ---
 KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
@@ -272,11 +274,11 @@ kv_put_once "cache/redis" "$(cat <<EOF
 EOF
 )"
 
-# --- MinIO ---
-kv_put_once "storage/minio" "$(cat <<EOF
+# --- The object store's administrator ---
+kv_put_once "storage/s3" "$(cat <<EOF
 {
   "root_user":     "minio",
-  "root_password": "${MINIO_ROOT_PW}"
+  "root_password": "${S3_ADMIN_PW}"
 }
 EOF
 )"

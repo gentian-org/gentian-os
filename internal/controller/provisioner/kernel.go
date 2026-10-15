@@ -54,8 +54,8 @@ type JobWaitRequirement struct {
 // keeps the two the same.
 //
 // The servers themselves are composed by the charts under kernel/services,
-// which also write the address the operator reads for Redis and MinIO; the
-// test beside this file holds those to these numbers.
+// which also write the address the operator reads for Redis and the object
+// store; the test beside this file holds those to these numbers.
 //
 // Each of those charts also carries the NetworkPolicy that says who may
 // connect to its server, and admits them on the same port: the server's side
@@ -66,7 +66,13 @@ const (
 	MariaDBPort       int32 = 3306
 	RedisPort         int32 = 6379
 	ObjectStoragePort int32 = 9000
-	MemcachedPort     int32 = 11211
+	// ObjectStoreMasterGRPCPort and ObjectStoreFilerGRPCPort are the object
+	// store's administration: weed shell reaches the master and the filer
+	// there. Only the platform's own Jobs that run it are admitted
+	// (kernel/services/infra-seaweedfs/manifests/templates/networkpolicy.yaml).
+	ObjectStoreMasterGRPCPort int32 = 19333
+	ObjectStoreFilerGRPCPort  int32 = 18888
+	MemcachedPort             int32 = 11211
 )
 
 // ModelGatewayPort is the port the model gateway's pods listen on, in the

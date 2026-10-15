@@ -127,7 +127,7 @@ spec:
             {{- end }}
 
             {{- /* ── System-tier engines (provider-helm Releases) ───────────────
-                 MariaDB, Redis and MinIO, one per system namespace above.
+                 MariaDB, Redis and SeaweedFS, one per system namespace above.
 
                  Composed here because v4 composed them from an InfraData
                  claim and v5 does not have one: the Cluster claim is the
@@ -159,7 +159,7 @@ spec:
             {{- range $e := (list
                   (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m")
                   (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m")
-                  (dict "fn" "s3"      "chart" "minio"   "version" "16.0.10" "values" (list "minio-env-values" "minio-base-values" "minio-cluster-values") "secret" "" "wait" "10m")
+                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m")
                ) }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
@@ -993,7 +993,7 @@ spec:
                   "database/postgresql"
                   "database/mariadb"
                   "cache/redis"
-                  "storage/minio"
+                  "storage/s3"
                   "identity/keycloak-bootstrap"
                   "authz/openfga"
                   "mail/postfix"

@@ -50,8 +50,8 @@ func adminSecrets() []adminSecret {
 			map[string]string{"host": "maria", "port": "3306", "username": "root", "password": "MARIA-ADMIN-PASSWORD"}},
 		{backup.KeycloakAdminSecret, identityNamespace, "kernel/services/keycloak-idp/manifests/templates/externalsecret-admin.yaml",
 			map[string]string{"url": "http://keycloak", "username": "admin", "password": "KC-ADMIN-PASSWORD"}},
-		{backup.StorageAdminSecret, s3Namespace, "kernel/services/infra-minio/manifests/templates/externalsecret.yaml",
-			map[string]string{"endpoint": "http://minio:9000", "accessKey": "minio-root", "secretKey": "MINIO-ROOT-SECRET"}},
+		{backup.StorageAdminSecret, s3Namespace, "kernel/services/infra-seaweedfs/manifests/templates/externalsecret.yaml",
+			map[string]string{"endpoint": "http://s3:9000", "master": "seaweedfs-all-in-one:9333", "accessKey": "s3-admin", "secretKey": "S3-ADMIN-SECRET"}},
 	}
 }
 
@@ -397,10 +397,10 @@ func TestEveryUnitFindsWhatItsPodReadsWhereItRuns(t *testing.T) {
 					t.Fatal(err)
 				}
 				if external {
-					if string(staged.Data[backup.DestinationSecretKeyField]) != "EXT-SECRET" || len(staged.Data["secretKey"]) != 0 && string(staged.Data["secretKey"]) == "MINIO-ROOT-SECRET" {
+					if string(staged.Data[backup.DestinationSecretKeyField]) != "EXT-SECRET" || len(staged.Data["secretKey"]) != 0 && string(staged.Data["secretKey"]) == "S3-ADMIN-SECRET" {
 						t.Errorf("an external bundle's units were staged %v", keysOf(staged.Data))
 					}
-				} else if string(staged.Data["secretKey"]) != "MINIO-ROOT-SECRET" {
+				} else if string(staged.Data["secretKey"]) != "S3-ADMIN-SECRET" {
 					t.Errorf("a platform bundle's units were staged %v", keysOf(staged.Data))
 				}
 

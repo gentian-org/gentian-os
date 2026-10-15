@@ -10,7 +10,7 @@ REPO_URL="${CHART_PACKAGES_REPO_URL:-https://raw.githubusercontent.com/gentian-o
 
 mkdir -p "${PACKAGES}"
 
-for chart in postgresql mariadb redis minio; do
+for chart in postgresql mariadb redis seaweedfs; do
   helm package "${ROOT}/charts/infra/${chart}" -d "${PACKAGES}"
 done
 

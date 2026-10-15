@@ -198,7 +198,7 @@ func newGapsWorld(t *testing.T, extra ...client.Object) *gapsWorld {
 		retainedClaim("files-release-data", "files-release"),
 		databaseRecord("demo", "files"), databaseRecord("demo", "wiki"), databaseRecord("demo", backup.DesktopStore),
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
-			Data: map[string][]byte{"endpoint": []byte("http://minio:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}},
+			Data: map[string][]byte{"endpoint": []byte("http://s3:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: s3Namespace},
 			Data: map[string][]byte{"passphrase": []byte("correct horse")}},
 	}, extra...)

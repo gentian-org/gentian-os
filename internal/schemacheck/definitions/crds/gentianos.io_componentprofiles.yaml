@@ -1670,8 +1670,8 @@ spec:
                                   type: string
                               type: object
                             s3:
-                              description: S3 requests a per-tenant S3 bucket via
-                                the MinIO kernel service.
+                              description: S3 requests a per-tenant S3 bucket from
+                                the platform's object store.
                               properties:
                                 bucketPerTenant:
                                   default: true
@@ -3344,8 +3344,8 @@ spec:
                                 type: string
                             type: object
                           s3:
-                            description: S3 requests a per-tenant S3 bucket via the
-                              MinIO kernel service.
+                            description: S3 requests a per-tenant S3 bucket from the
+                              platform's object store.
                             properties:
                               bucketPerTenant:
                                 default: true

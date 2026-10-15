@@ -20,7 +20,7 @@ relayHost: ""
 egressHost: ""
 storageClass: ""
 
-# Whether the four shared stores -- PostgreSQL, MariaDB, Redis, MinIO -- each
+# Whether the four shared stores -- PostgreSQL, MariaDB, Redis, SeaweedFS -- each
 # get the NetworkPolicy that says who may connect to them
 # (templates/networkpolicy.yaml in each engine's chart). On unless a cluster
 # says otherwise; "false" removes all four and leaves credentials as the only

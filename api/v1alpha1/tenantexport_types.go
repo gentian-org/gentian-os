@@ -158,7 +158,7 @@ type ExportDestination struct {
 	Bucket string `json:"bucket,omitempty"`
 
 	// Region, for providers that require one — Exoscale SOS and AWS do,
-	// MinIO does not.
+	// the platform's own object store does not.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`

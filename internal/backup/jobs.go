@@ -33,7 +33,7 @@ const (
 	// administrator because they read app buckets they were never issued a
 	// key for; the bundle they produce is encrypted, and no tenant workload
 	// can reach it.
-	StorageAdminSecret = "minio-admin"
+	StorageAdminSecret = "s3-admin"
 	// PostgresAdminSecret and MariaDBAdminSecret hold the superuser credentials
 	// the dumps run as. A per-app role can read only its own database, which is
 	// exactly what a dump needs, but the roles are per app and the connection
@@ -53,30 +53,6 @@ const (
 	// to bound it, and streaming is the obvious Phase 6 follow-up.
 	workDir = "/work"
 )
-
-// MinIOClientImage is the image the Jobs that make and destroy an app's
-// bucket run.
-//
-// It is the image the cluster's S3 server runs
-// (kernel/services/infra-minio/manifests/templates/configmap.yaml), which
-// ships the client, mc, on its PATH beside the server and runs it as its
-// own user with a writable config directory; the vendored chart's own
-// provisioning Job runs mc from it the same way. A test holds the two pins
-// together, so the Jobs never run an image the cluster does not already
-// pull.
-//
-// It was quay.io/minio/mc, at the last tag MinIO published. MinIO then
-// withdrew the client's images from quay.io and Docker Hub alike -- both
-// answer 401 to an anonymous pull -- and archived github.com/minio/mc
-// (2025-11-20). The Job then sat in ImagePullBackOff, and because a
-// tenant's provisioning and its teardown each wait on such a Job, a tenant
-// with a bucket stopped short of Ready and a retired one never left. The
-// first install of a cluster never met it, because no bucket had to be
-// made or destroyed before the image was gone.
-//
-// This binds the Jobs to the same frozen image the server is bound to, and
-// no further; the way off it for both is the same decision, taken once.
-const MinIOClientImage = "docker.io/bitnamilegacy/minio:2025.4.22-debian-12-r1"
 
 // JobParams is the shared shape of every capture Job.
 type JobParams struct {
@@ -829,16 +805,6 @@ func bundleEnv(p JobParams) []corev1.EnvVar {
 // that needs both must not assume one covers the other.
 func PlatformStorageEnv() []corev1.EnvVar {
 	return storageEnv(StorageAdminSecret)
-}
-
-// minioAdminEnv is how the bucket and destroy Jobs, which still run MinIO's
-// client, address the server as its administrator.
-func minioAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MINIO_ENDPOINT", StorageAdminSecret, "endpoint"),
-		meta.SecretEnv("MINIO_ACCESS_KEY", StorageAdminSecret, "accessKey"),
-		meta.SecretEnv("MINIO_SECRET_KEY", StorageAdminSecret, "secretKey"),
-	}
 }
 
 // PostgresAdminEnv, MariaDBAdminEnv and CacheAdminEnv are how a Job reaches

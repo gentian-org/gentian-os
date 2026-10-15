@@ -172,7 +172,7 @@ generated() {
     local f
     for f in database/cnpg:superuser_password database/portal-shell:password \
         database/postgresql:postgres_password database/postgresql:keycloak_user_password \
-        database/mariadb:root_password cache/redis:auth_password storage/minio:root_password \
+        database/mariadb:root_password cache/redis:auth_password storage/s3:root_password \
         identity/keycloak-bootstrap:admin_password authz/openfga:preshared_key \
         mail/dovecot:doveadm_password mail/dovecot:oidc_client_secret \
         llm:vllm_api_key llm:litellm_master_key llm:litellm_db_password \

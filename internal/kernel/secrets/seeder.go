@@ -298,7 +298,7 @@ func (s *Seeder) SeedMariaDB(ctx context.Context, tenant, app string, conn Datab
 	return s.SeedDatabase(ctx, tenant, app, conn)
 }
 
-// --- S3 / MinIO --------------------------------------------------------------
+// --- S3 --------------------------------------------------------------------
 
 // S3Creds is the set of values written to …/s3.
 type S3Creds struct {

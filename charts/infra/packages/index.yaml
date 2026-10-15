@@ -5,7 +5,7 @@ entries:
       category: Database
       licenses: Apache-2.0
     apiVersion: v2
-    created: "2026-10-06T08:57:51.446067995+02:00"
+    created: "2026-10-15T12:05:56.964646186+02:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -24,53 +24,11 @@ entries:
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/mariadb-3.0.3.tgz
     version: 3.0.3
-  minio:
-  - annotations:
-      category: Infrastructure
-      images: |
-        - name: minio
-          image: docker.io/bitnami/minio:2025.4.22-debian-12-r1
-        - name: minio-client
-          image: docker.io/bitnami/minio-client:2025.4.16-debian-12-r1
-        - name: os-shell
-          image: docker.io/bitnami/os-shell:12-debian-12-r43
-      licenses: Apache-2.0
-      tanzuCategory: service
-    apiVersion: v2
-    appVersion: 2025.4.22
-    created: "2026-06-28T13:45:31.546511712+02:00"
-    dependencies:
-    - name: common
-      repository: oci://registry-1.docker.io/bitnamicharts
-      tags:
-      - bitnami-common
-      version: 2.x.x
-    description: MinIO(R) is an object storage server, compatible with Amazon S3 cloud
-      storage service, mainly used for storing unstructured data (such as photos,
-      videos, log files, etc.).
-    digest: 85af73c6576c09244d2029e6428a7395cf741493c226ff4818a1e0c8c3be440f
-    home: https://bitnami.com
-    icon: https://dyltqmyl993wv.cloudfront.net/assets/stacks/minio/img/minio-stack-220x234.png
-    keywords:
-    - minio
-    - storage
-    - object-storage
-    - s3
-    - cluster
-    maintainers:
-    - name: Broadcom, Inc. All Rights Reserved.
-      url: https://github.com/bitnami/charts
-    name: minio
-    sources:
-    - https://github.com/bitnami/charts/tree/main/bitnami/minio
-    urls:
-    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/minio-16.0.10.tgz
-    version: 16.0.10
   postgresql:
   - annotations:
       category: Database
     apiVersion: v2
-    created: "2026-06-28T13:45:31.547776803+02:00"
+    created: "2026-10-15T12:05:56.96545234+02:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -106,7 +64,7 @@ entries:
       licenses: Apache-2.0
     apiVersion: v2
     appVersion: 7.2.3
-    created: "2026-06-28T13:45:31.550772936+02:00"
+    created: "2026-10-15T12:05:56.968729668+02:00"
     dependencies:
     - name: common
       repository: oci://registry-1.docker.io/bitnamicharts
@@ -132,4 +90,14 @@ entries:
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/redis-18.6.1.tgz
     version: 18.6.1
-generated: "2026-10-06T08:57:51.446067995+02:00"
+  seaweedfs:
+  - apiVersion: v1
+    appVersion: "4.48"
+    created: "2026-10-15T12:05:56.971300769+02:00"
+    description: SeaweedFS
+    digest: ef3582fb5f8b8f7327b61181778f2ad6ae8c96183fc984564844ce38f7b7e5d8
+    name: seaweedfs
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/seaweedfs-4.48.0.tgz
+    version: 4.48.0
+generated: "2026-10-15T12:05:56.963226342+02:00"

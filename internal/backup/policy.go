@@ -87,8 +87,8 @@ func scopeTag(scope, tenant string) string {
 // use: "where do my backups go" must have exactly one answer, and an admin
 // should be able to read it rather than derive it.
 type Effective struct {
-	// Endpoint is empty for the platform's own MinIO, which is the case the
-	// capture Jobs already handle with the kernel's minio-admin credentials.
+	// Endpoint is empty for the platform's own object store, which is the case
+	// the capture Jobs already handle with its administrator's credentials.
 	Endpoint string
 	Bucket   string
 	Region   string
@@ -114,7 +114,7 @@ type Effective struct {
 	Overridden bool
 }
 
-// PlatformStorage reports whether bundles go to the platform's own MinIO.
+// PlatformStorage reports whether bundles go to the platform's own object store.
 func (e Effective) PlatformStorage() bool { return e.Endpoint == "" }
 
 // ApplyExportDestination narrows a resolved policy to what one export asked

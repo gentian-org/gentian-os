@@ -144,7 +144,7 @@ mailServiceMode: external
 mailEgressHost: ""
 
 # Whether the shared stores of the system tier -- PostgreSQL, MariaDB, Redis,
-# MinIO -- each get the NetworkPolicy that says who may connect to them. On by
+# SeaweedFS -- each get the NetworkPolicy that says who may connect to them. On by
 # default. "false" removes all four, and a connection is then checked by its
 # credentials alone. The installer passes STORE_NETWORK_POLICIES.
 # The same switch covers the policies on the kernel's own PostgreSQL

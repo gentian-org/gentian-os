@@ -24,10 +24,10 @@ import (
 
 // BackupDestination names object storage to write bundles to.
 //
-// The platform's own MinIO is the default and needs none of this. A
+// The platform's own object store is the default and needs none of this. A
 // destination is stated when bundles should live somewhere else — which, on a
-// cluster whose MinIO shares a disk with the data it protects, is the only
-// arrangement that survives losing that disk.
+// cluster whose object store shares a disk with the data it protects, is the
+// only arrangement that survives losing that disk.
 //
 // There is deliberately no credential field. The keys for an endpoint are a
 // CredentialRequirement, which the operator derives from this policy and the
@@ -37,7 +37,7 @@ import (
 // hand-managed way to hold the same credential with none of that.
 type BackupDestination struct {
 	// Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io or
-	// https://minio.example.org:9000. Empty means the platform's own storage.
+	// https://s3.example.org:9000. Empty means the platform's own storage.
 	//
 	// A scheme is required: "s3.example.org" is ambiguous about TLS, and a
 	// backup silently sent in plaintext is worse than one that fails.
@@ -52,8 +52,8 @@ type BackupDestination struct {
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
 	Bucket string `json:"bucket,omitempty"`
 
-	// Region, for providers that require one — Exoscale SOS and AWS do, MinIO
-	// does not.
+	// Region, for providers that require one — Exoscale SOS and AWS do, the
+	// platform's own store does not.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`

@@ -109,7 +109,7 @@ func newRestoreWorld(t *testing.T, mutate func(*gentianov1alpha1.TenantRestore))
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "r1-key", Namespace: "tenant-demo"},
 			Data: map[string][]byte{"passphrase": []byte("correct horse")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
-			Data: map[string][]byte{"endpoint": []byte("http://minio:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}},
+			Data: map[string][]byte{"endpoint": []byte("http://s3:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "wiki-release-data", Namespace: "tenant-demo",
 			Annotations: map[string]string{"meta.helm.sh/release-name": "wiki-release"}}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "drive-release-data", Namespace: "tenant-demo",
@@ -283,10 +283,10 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 		t.Errorf("sourceTenant = %q; the notes do not say the bundle is another tenant's", got.Status.SourceTenant)
 	}
 
-	// The bucket's user and policy are made before its objects are written.
+	// The bucket and its identity are made before its objects are written.
 	if s3 := jobs["tx-demo-r1-wiki-s3r"]; s3 != nil {
 		inits := s3.Spec.Template.Spec.InitContainers
-		if last := inits[len(inits)-1]; last.Name != "provision-bucket" || !strings.Contains(last.Command[2], `mc mb --ignore-existing "gentian/demo-wiki"`) {
+		if last := inits[len(inits)-1]; last.Name != "provision-bucket" || !strings.Contains(last.Command[2], `shell "s3.bucket.create -name demo-wiki"`) {
 			t.Errorf("the bucket is not provisioned before it is filled: %+v", last.Name)
 		}
 	}

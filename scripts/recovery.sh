@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # The namespace the object store is in, by its function: a name written here
 # is a name that stays behind when the layout changes, which is how this
-# script came to look for MinIO's credentials in a namespace that no longer
+# script came to look for the object store's credentials in a namespace that no longer
 # exists.
 NAMESPACES_FILE="${REPO_ROOT}/kernel/namespaces.yaml"
 # shellcheck source=scripts/lib/namespaces.sh
@@ -362,17 +362,17 @@ platform_storage_forward() {
     need kubectl || return 1
     local raw host svc ns port lport=19000 s3ns
     s3ns="$(ns_system s3)" || return 1
-    raw="$(kubectl get secret minio-admin -n "${s3ns}" \
+    raw="$(kubectl get secret s3-admin -n "${s3ns}" \
         -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${raw}" ]] || { error "Cannot read the minio-admin endpoint in ${s3ns}."; return 1; }
+    [[ -n "${raw}" ]] || { error "Cannot read the s3-admin endpoint in ${s3ns}."; return 1; }
 
     host="${raw#*://}"; port="${host##*:}"; host="${host%%:*}"
     svc="${host%%.*}"; ns="${host#*.}"; ns="${ns%%.*}"
     [[ -n "${svc}" && -n "${ns}" ]] || { error "Cannot parse ${raw}"; return 1; }
 
-    OPT_S3_AK="$(kubectl get secret minio-admin -n "${s3ns}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
-    OPT_S3_SK="$(kubectl get secret minio-admin -n "${s3ns}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the minio-admin credentials."; return 1; }
+    OPT_S3_AK="$(kubectl get secret s3-admin -n "${s3ns}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
+    OPT_S3_SK="$(kubectl get secret s3-admin -n "${s3ns}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
+    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the s3-admin credentials."; return 1; }
 
     info "forwarding ${svc}.${ns}:${port} to localhost:${lport}"
     kubectl port-forward -n "${ns}" "svc/${svc}" "${lport}:${port}" >/dev/null 2>&1 &

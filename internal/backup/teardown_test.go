@@ -174,7 +174,7 @@ func destroyScripts() map[string]string {
 	return map[string]string{
 		"postgres": postgresDestroyScript("demo_wiki", "demo_wiki"),
 		"mariadb":  mariadbDestroyScript("demo_wiki", "demo_wiki"),
-		"minio":    objectStorageDestroyScript("demo-wiki"),
+		"s3":       objectStorageDestroyScript("demo-wiki"),
 		"redis":    cacheDestroyScript("demo-wiki"),
 	}
 }
@@ -215,11 +215,11 @@ func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
 			t.Errorf("the PostgreSQL script is missing %q", want)
 		}
 	}
-	// The user and policy are found through the policy statement that names
-	// the bucket exactly -- a prefix match would take a sibling bucket's
-	// user with it.
-	for _, want := range []string{`mc rb --force "gentian/demo-wiki"`, "mc admin user rm", `mc admin policy rm gentian "${policy}"`, `arn:aws:s3:::demo-wiki"`} {
-		if !strings.Contains(scripts["minio"], want) {
+	// The bucket is found in the store's listing by its whole name -- a
+	// prefix match would take a sibling bucket with it -- and the identity
+	// by its name, which is the bucket's.
+	for _, want := range []string{`grep -qxF 'demo-wiki'`, `shell "s3.bucket.delete -name demo-wiki"`, `shell "s3.configure -user=demo-wiki -delete -apply"`, "timeout -s KILL 120 weed shell"} {
+		if !strings.Contains(scripts["s3"], want) {
 			t.Errorf("the object-storage script is missing %q", want)
 		}
 	}
@@ -241,7 +241,7 @@ func TestTheDestroyJobs(t *testing.T) {
 	}{
 		{PostgresDestroyJob(tenant, "wiki", DestroyWithinARequest), "pg-delete-demo-wiki", "system-postgresql", "demo_wiki"},
 		{MariaDBDestroyJob(tenant, "wiki", DestroyWithinARequest), "mariadb-delete-demo-wiki", "system-mariadb", "DROP DATABASE"},
-		{ObjectStorageDestroyJob(tenant, "wiki", DestroyWithinARequest), "s3-delete-demo-wiki", "system-s3", "gentian/demo-wiki"},
+		{ObjectStorageDestroyJob(tenant, "wiki", DestroyWithinARequest), "s3-delete-demo-wiki", "system-s3", "-name demo-wiki"},
 		{CacheDestroyJob(tenant, "wiki", DestroyWithinARequest), "redis-acl-delete-demo-wiki", "system-cache", "demo-wiki"},
 	}
 	for _, c := range cases {
@@ -276,7 +276,7 @@ func TestTheDestroyJobs(t *testing.T) {
 	// The backup bucket is deleted as its own unit, and the unit's name
 	// resolves to exactly the bucket exports write to.
 	backupJob := ObjectStorageDestroyJob(tenant, "gentian-backup", DestroyInTheBackground)
-	if !strings.Contains(strings.Join(backupJob.Spec.Template.Spec.Containers[0].Command, " "), "gentian/"+BackupBucket(tenant)) {
+	if !strings.Contains(strings.Join(backupJob.Spec.Template.Spec.Containers[0].Command, " "), "-name "+BackupBucket(tenant)+`"`) {
 		t.Error("the backup bucket's unit does not name the bucket exports write to")
 	}
 }
@@ -375,7 +375,7 @@ func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 	if last.Command[2] != install.Command[2] || !reflect.DeepEqual(last.Env, install.Env) {
 		t.Error("a restore provisions the bucket with something other than what install runs")
 	}
-	for _, want := range []string{"mc admin user add", "mc admin policy create", "mc admin policy attach", `arn:aws:s3:::demo-wiki`} {
+	for _, want := range []string{`shell "s3.bucket.create -name demo-wiki"`, `-buckets=demo-wiki -actions=Read,Write,List,Tagging -apply`} {
 		if !strings.Contains(last.Command[2], want) {
 			t.Errorf("provisioning lacks %q", want)
 		}

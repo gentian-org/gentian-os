@@ -203,7 +203,7 @@ func startLiveStore(t *testing.T) *liveStore {
 	admin, secret := "live-admin", "live-admin-secret-key"
 	l.startServer(admin, secret)
 	l.secrets = map[string]map[string]string{
-		StorageAdminSecret: {"endpoint": "http://" + l.server + ":9000", "accessKey": admin, "secretKey": secret},
+		StorageAdminSecret: {"endpoint": "http://" + l.server + ":9000", "master": l.server + ":9333", "accessKey": admin, "secretKey": secret},
 	}
 	deadline := time.Now().Add(90 * time.Second)
 	for {
@@ -218,13 +218,34 @@ func startLiveStore(t *testing.T) *liveStore {
 	}
 }
 
-// startServer starts the S3 server the cluster runs, with its
-// administrator's keys.
+// startServer starts the S3 server the cluster runs, at the image the
+// platform pins, with the arguments its chart gives it
+// (kernel/services/infra-seaweedfs; charts/infra/seaweedfs all-in-one), as
+// the user the chart runs it as, and with its administrator's identity in
+// the file the chart mounts.
 func (l *liveStore) startServer(accessKey, secretKey string) {
 	l.t.Helper()
-	out, err := exec.Command("docker", "run", "-d", "--name", l.server, "--network", l.net,
-		"-e", "MINIO_ROOT_USER="+accessKey, "-e", "MINIO_ROOT_PASSWORD="+secretKey,
-		MinIOClientImage).CombinedOutput()
+	dir := l.t.TempDir()
+	config := fmt.Sprintf(`{"identities":[{"name":"storage_admin","credentials":[{"accessKey":%q,"secretKey":%q}],"actions":["Admin","Read","Write","List","Tagging"]}]}`, accessKey, secretKey)
+	master := "[master.volume_growth]\ncopy_1 = 1\ncopy_2 = 2\ncopy_3 = 3\ncopy_other = 1\n"
+	for name, body := range map[string]string{"seaweedfs_s3_config": config, "master.toml": master} {
+		if err := os.WriteFile(dir+"/"+name, []byte(body), 0o644); err != nil {
+			l.t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		l.t.Fatal(err)
+	}
+	out, err := exec.Command("docker", "run", "-d", "--name", l.server, "--network", l.net, "--user", "1000:1000",
+		"-v", dir+"/seaweedfs_s3_config:/etc/sw/s3/seaweedfs_s3_config:ro",
+		"-v", dir+"/master.toml:/etc/seaweedfs/master.toml:ro",
+		"--entrypoint", "/bin/sh", kernel.DefaultSeaweedFSImage, "-ec",
+		"exec /usr/bin/weed -v=1 server -dir=/data -master -volume -ip=$(hostname -i) -ip.bind=0.0.0.0 -idleTimeout=30 "+
+			"-volume.max=1000 -master.port=9333 -master.defaultReplication=000 -master.volumeSizeLimitMB=1000 "+
+			"-volume.port=8080 -volume.readMode=proxy -volume.minFreeSpacePercent=1 -volume.compactionMBps=50 "+
+			"-filer -filer.port=8888 -filer.dirListLimit=100000 -filer.defaultReplicaPlacement=000 "+
+			"-s3 -s3.port=9000 -s3.config=/etc/sw/s3/seaweedfs_s3_config -s3.port.iceberg=0 -s3.port.lance=0 -s3.iam=false",
+	).CombinedOutput()
 	if err != nil {
 		l.t.Fatalf("docker run: %v\n%s", err, out)
 	}
@@ -417,6 +438,41 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 		t.Errorf("a store that cannot be reached was read as nothing to delete:\n%s", out)
 	}
 
+	// ── isolation: an app's key reaches its own bucket and nothing else ─────
+	const (
+		other    = "demo-files"
+		otherKey = "demo-files-key"
+		otherSec = "demo-files-secret-0123456789"
+	)
+	if out, err := l.pod("s3-bucket-demo-files", ObjectStorageProvisionContainer("create-bucket", other, otherKey, otherSec)); err != nil {
+		t.Fatalf("the bucket Job failed: %v\n%s", err, out)
+	}
+	l.admin("files\n", "rcat", "s:"+other+"/f.txt")
+	refused := func(what string, out string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("an app's key could %s:\n%s", what, out)
+		} else if !strings.Contains(out, "AccessDenied") {
+			t.Errorf("%s failed for another reason than the key's rights:\n%s", what, out)
+		}
+	}
+	out, err = l.rclone(appKey, appSec, "", "cat", "s:"+other+"/f.txt")
+	refused("read another app's bucket", out, err)
+	out, err = l.rclone(appKey, appSec, "x\n", "rcat", "s:"+other+"/g.txt")
+	refused("write into another app's bucket", out, err)
+	out, err = l.rclone(appKey, appSec, "", "rmdir", "s:"+bucket)
+	refused("delete its own bucket", out, err)
+	out, err = l.rclone(appKey, appSec, "", "--s3-no-check-bucket=false", "mkdir", "s:demo-new-bucket")
+	if err == nil && strings.Contains(l.admin("", "lsd", "s:"), " demo-new-bucket\n") {
+		t.Errorf("an app's key made a bucket:\n%s", out)
+	}
+	if out, err := l.rclone(appKey, appSec, "", "lsd", "s:"); err != nil || strings.Contains(out, other) || !strings.Contains(out, bucket) {
+		t.Errorf("an app's key lists more than its own bucket (%v):\n%s", err, out)
+	}
+	if out, err := l.rclone("", "", "", "lsf", "s:"+bucket); err == nil {
+		t.Errorf("a request without a key could list a bucket:\n%s", out)
+	}
+
 	// ── purge: the app's bucket and its key go ──────────────────────────────
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	l.mustRun(ObjectStorageDestroyJob(tenant, "wiki", DestroyInTheBackground))
@@ -426,7 +482,31 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 	if out, err := l.rclone(appKey, appSec, "", "lsd", "s:"); err == nil {
 		t.Errorf("the app's key still works after the purge:\n%s", out)
 	}
-	if out := l.mustRun(ObjectStorageDestroyJob(tenant, "wiki", DestroyInTheBackground)); !strings.Contains(out, "not there") {
-		t.Errorf("a second purge did not say the bucket is gone:\n%s", out)
+	if out := l.mustRun(ObjectStorageDestroyJob(tenant, "wiki", DestroyInTheBackground)); !strings.Contains(out, "bucket demo-wiki is not there") ||
+		!strings.Contains(out, "identity demo-wiki is not there") {
+		t.Errorf("a second purge did not say the bucket and the identity are gone:\n%s", out)
+	}
+	// The other app's bucket and key are untouched by the first's purge.
+	if out, err := l.rclone(otherKey, otherSec, "", "cat", "s:"+other+"/f.txt"); err != nil || out != "files\n" {
+		t.Errorf("purging one app's bucket touched another's (%v): %q", err, out)
+	}
+	// Nothing the Jobs printed holds a key: s3.configure answers with the
+	// identity it wrote, secret and all.
+	for name, job := range map[string]*batchv1.Job{
+		"destroy": ObjectStorageDestroyJob(tenant, "files", DestroyInTheBackground),
+	} {
+		out := l.mustRun(job)
+		if strings.Contains(out, otherSec) || strings.Contains(out, otherKey) {
+			t.Errorf("the %s Job printed a key:\n%s", name, out)
+		}
+	}
+	if out, err := l.pod("s3-bucket-demo-files-again", ObjectStorageProvisionContainer("create-bucket", other, otherKey, otherSec)); err != nil || strings.Contains(out, otherSec) {
+		t.Errorf("the bucket Job failed or printed the key (%v):\n%s", err, out)
+	}
+	// The unreachable store: the bucket Job fails, it does not wait forever
+	// or report a bucket made.
+	l.secrets[StorageAdminSecret]["master"] = "nothing-here.invalid:9333"
+	if out, err := l.pod("s3-bucket-unreachable", ObjectStorageProvisionContainer("create-bucket", "demo-x", "", "")); err == nil {
+		t.Errorf("the bucket Job succeeded against a store it cannot reach:\n%s", out)
 	}
 }

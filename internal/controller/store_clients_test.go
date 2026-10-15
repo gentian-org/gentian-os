@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -230,6 +231,13 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"llm": provisioner.ModelGatewayPort,
 	}
 
+	// The object store's administration: the master's and the filer's gRPC
+	// ports, which the Jobs that run weed shell dial besides, or instead of,
+	// the S3 port (kernel/services/infra-seaweedfs).
+	adminPorts := map[string]map[int32]bool{
+		"s3": {provisioner.ObjectStoreMasterGRPCPort: true, provisioner.ObjectStoreFilerGRPCPort: true},
+	}
+
 	seen := map[string]bool{}
 	for _, c := range table.Clients {
 		port, known := dataPort[c.Store]
@@ -245,10 +253,14 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 			t.Errorf("%s: the file says it is built by %q, which this test does not know how to build", c.Client, c.Built)
 			continue
 		}
-		if seen[c.Built] {
-			t.Errorf("%s: %q is named by two rows", c.Client, c.Built)
+		row := fmt.Sprintf("%s:%d", c.Built, c.Port)
+		if seen[row] {
+			t.Errorf("%s: %q is named by two rows for port %d", c.Client, c.Built, c.Port)
 		}
-		seen[c.Built] = true
+		seen[row], seen[c.Built] = true, true
+		if adminPorts[c.Store][c.Port] {
+			port = c.Port
+		}
 		if c.Port != port {
 			t.Errorf("%s: the file says port %d, %s answers on %d", c.Client, c.Port, c.Store, port)
 		}

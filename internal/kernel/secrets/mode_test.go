@@ -66,7 +66,7 @@ func seedAll(t *testing.T, s *secrets.Seeder) map[string]string {
 		t.Fatalf("kernel database: %v", err)
 	}
 	out["kernel database password"] = kdb.Password
-	s3, err := s.SeedS3(ctx, "acme", "wiki", secrets.S3Creds{Endpoint: "http://minio:9000", Bucket: "acme-wiki", Region: "us-east-1"})
+	s3, err := s.SeedS3(ctx, "acme", "wiki", secrets.S3Creds{Endpoint: "http://s3:9000", Bucket: "acme-wiki", Region: "us-east-1"})
 	if err != nil {
 		t.Fatalf("s3: %v", err)
 	}

@@ -443,8 +443,8 @@ func TestBundleDeleteScopesToThePrefixAndRefusesAnEmptyOne(t *testing.T) {
 }
 
 // Volume Jobs run in the tenant namespace, so their credentials cannot come
-// from minio-admin — the controller stages a copy and names it in JobParams.
-// Every MinIO env var must follow that name, or the Job mounts a Secret that
+// from s3-admin — the controller stages a copy and names it in JobParams.
+// Every S3_ env var must follow that name, or the Job mounts a Secret that
 // does not exist where it runs and sits in CreateContainerConfigError.
 func TestVolumeArchiveUsesStagedCredentialsWhenNamed(t *testing.T) {
 	p := params()

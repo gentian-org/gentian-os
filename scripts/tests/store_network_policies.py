@@ -38,7 +38,12 @@ STORES = ("postgresql", "mariadb", "cache", "s3")
 # forgot, and on a cluster that is a probe or a client that hangs.
 CLOSED = {
     "postgresql": {9187: "metrics: nothing the platform runs scrapes it"},
-    "s3": {9001: "the console: nothing routes to it and nothing uses it"},
+    "s3": {
+        9333: "the master's HTTP port: the kubelet's probes, from the pod's node, and nothing else",
+        8888: "the filer's HTTP port: S3 clients use the S3 port, the shell Jobs the filer's gRPC port",
+        8080: "the volume server's HTTP port: reached from inside the pod only",
+        18080: "the volume server's gRPC port: reached from inside the pod only",
+    },
 }
 
 # CloudNativePG builds the instance pods, not a chart in this repository, so

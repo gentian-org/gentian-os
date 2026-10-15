@@ -130,13 +130,13 @@ func runSecret(name, namespace, tenantName, run string, data map[string][]byte) 
 // encrypting export, the key a restore opens the bundle with). Idempotent.
 //
 // sourceSecret names where those credentials come from, beside the object
-// store. For a bundle going to the platform's own storage that is the MinIO
-// admin Secret; for an external destination it is the Secret ESO materialised
+// store. For a bundle going to the platform's own storage that is the object
+// store's administrator's Secret; for an external destination it is the Secret ESO materialised
 // from the destination's credential, and the two are different accounts on
 // different systems.
 //
-// Getting that wrong is invisible until the upload runs: staging MinIO's
-// keys and sending them to an external store failed only in the units that
+// Getting that wrong is invisible until the upload runs: staging the
+// platform store's keys and sending them to an external store failed only in the units that
 // read the staged copy, and only after the archive had been made and
 // encrypted:
 //

@@ -34,10 +34,10 @@ func TestTheStoreChartsAnswerOnThePortsAppsAreGiven(t *testing.T) {
 			fmt.Sprintf(`port: "%d"`, RedisPort)},
 		{"the Redis pod's port", filepath.Join(infra, "redis", "values.yaml"),
 			fmt.Sprintf("redis: %d", RedisPort)},
-		{"the MinIO address", filepath.Join(services, "infra-minio", "manifests", "templates", "externalsecret.yaml"),
-			fmt.Sprintf(".svc.cluster.local:%d", ObjectStoragePort)},
-		{"the MinIO pod's port", filepath.Join(infra, "minio", "values.yaml"),
-			fmt.Sprintf("api: %d", ObjectStoragePort)},
+		{"the object store's address", filepath.Join(services, "infra-seaweedfs", "manifests", "templates", "externalsecret.yaml"),
+			`endpoint: "http://s3.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.networkPolicy.ports.api }}"`},
+		{"the object store's pod's port", filepath.Join(services, "infra-seaweedfs", "manifests", "templates", "configmap.yaml"),
+			fmt.Sprintf("\n        port: %d\n", ObjectStoragePort)},
 		// And the port each store's NetworkPolicy admits its clients on
 		// (templates/networkpolicy.yaml beside each of these): the server's
 		// side of the rule the tenant's side opens with the same constant.
@@ -47,8 +47,12 @@ func TestTheStoreChartsAnswerOnThePortsAppsAreGiven(t *testing.T) {
 			fmt.Sprintf("\n    mariadb: %d\n", MariaDBPort)},
 		{"the port Redis's policy admits", filepath.Join(services, "infra-redis", "manifests", "values.yaml"),
 			fmt.Sprintf("\n    redis: %d\n", RedisPort)},
-		{"the port MinIO's policy admits", filepath.Join(services, "infra-minio", "manifests", "values.yaml"),
+		{"the port the object store's policy and Service admit", filepath.Join(services, "infra-seaweedfs", "manifests", "values.yaml"),
 			fmt.Sprintf("\n    api: %d\n", ObjectStoragePort)},
+		{"the object store's master gRPC port its policy admits the shell Jobs to", filepath.Join(services, "infra-seaweedfs", "manifests", "values.yaml"),
+			fmt.Sprintf("\n    masterGrpc: %d\n", ObjectStoreMasterGRPCPort)},
+		{"the object store's filer gRPC port its policy admits the shell Jobs to", filepath.Join(services, "infra-seaweedfs", "manifests", "values.yaml"),
+			fmt.Sprintf("\n    filerGrpc: %d\n", ObjectStoreFilerGRPCPort)},
 	} {
 		b, err := os.ReadFile(c.file)
 		if err != nil {

@@ -648,7 +648,7 @@ const (
 
 // StorageRequirement specifies object storage and/or filesystem needs.
 type StorageRequirement struct {
-	// S3 requests a per-tenant S3 bucket via the MinIO kernel service.
+	// S3 requests a per-tenant S3 bucket from the platform's object store.
 	// +optional
 	S3 *S3Requirement `json:"s3,omitempty"`
 

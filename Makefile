@@ -227,7 +227,7 @@ test-bootstrap-switches:
 test-operator-network-policy:
 	@bash scripts/tests/test-operator-network-policy.sh
 
-## The NetworkPolicy on each shared store -- PostgreSQL, MariaDB, Redis, MinIO --
+## The NetworkPolicy on each shared store -- PostgreSQL, MariaDB, Redis, SeaweedFS --
 ## selects that server's pods, lists or records as closed every port they
 ## declare, and admits every client of scripts/tests/store-clients.yaml and
 ## nobody it says to refuse. Needs helm, no cluster.

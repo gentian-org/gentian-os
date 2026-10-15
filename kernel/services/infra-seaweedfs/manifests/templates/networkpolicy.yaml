@@ -1,0 +1,119 @@
+{{- /*
+  Who may open a connection to the object store.
+
+  One pod runs the whole server: the master, a volume server, the filer and
+  the S3 gateway (weed server). Of its ports two kinds are reached from
+  outside it.
+
+  The S3 port, where a key pair is checked on every request, is admitted
+  from exactly whom MinIO's was:
+
+    tenant namespaces   every namespace labelled gentianos.io/tier=tenant.
+                        The server cannot tell one tenant's app from another's
+                        pod; the tenant's side narrows it, where egress is
+                        denied by default (tenant-isolation), kernel-access-<app>
+                        opens this port for an app that declared a bucket, and
+                        gentian-tenant-export opens it for the volume capture
+                        and restore pods, which run in the tenant's namespace
+                        because a claim mounts nowhere else. This rule keeps
+                        out everything that is not a tenant namespace or a
+                        client named here; those keep out the apps that asked
+                        for no bucket.
+    this namespace      the operator's bucket and destroy Jobs, and the
+                        capture and restore of a bucket and of a bundle's
+                        manifest, run beside the server (storage_reconciler.go,
+                        tenantexport_controller.go, backup/teardown.go). A pod
+                        here can mount the administrator's Secret, so naming
+                        pods would keep nobody out.
+    capture and restore the units of an export and a restore that run where
+                        their own administrator's Secret is -- a database's
+                        beside PostgreSQL or MariaDB, the realm's in the
+                        identity namespace (tenantexport_placement.go), the
+                        mailboxes' beside the mail server's volume
+                        (backup/mailboxes.go), the desktop's database of the
+                        tenant that adopts the kernel realm beside the
+                        kernel's PostgreSQL (backup/desktop.go) -- and write
+                        to or read from the bundle here. Admitted by the label
+                        every such pod carries,
+                        gentianos.io/component=tenant-export, from those five
+                        namespaces alone; no other pod of them is.
+    the operator        reads a bundle's manifest, streams a bundle to the
+                        person downloading it and writes an imported one
+                        (internal/bundlestore, applifecycle/bundle_*.go).
+
+  The master's and the filer's gRPC ports check nothing: whoever reaches them
+  can make and delete buckets and identities and read every object. They are
+  what the platform's Jobs administer the store through (weed shell), and are
+  admitted from those Jobs' pods alone, by the label they carry,
+  gentianos.io/object-store-shell=true, in this namespace: the bucket Job
+  (s3-bucket-<tenant>-<app>), the destroy Job (s3-delete-<tenant>-<unit>) and
+  the restore of an app's bucket, whose first step makes the bucket and its
+  identity (backup.ObjectStorageShellLabel). weed shell asks the master
+  where the filer is and is answered with the pod's own address, so both are
+  reached on the pod, whatever Service the master's address names.
+
+  Every other port is closed: the master's and the filer's HTTP ports, the
+  volume server's, and the S3 gateway's gRPC port. The pod's components
+  reach one another inside the pod. The kubelet's probes use the master's
+  HTTP port; traffic from a pod's own node is not subject to a
+  NetworkPolicy.
+
+  Rendered on the v5 layout only (a namespace is stated), with the
+  administrator's Secret beside it. Sync wave -1, with the values the release
+  is installed from: the release cannot start a pod before this object
+  exists.
+*/ -}}
+{{- if and .Values.namespace (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: store-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: s3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: seaweedfs
+      app.kubernetes.io/instance: seaweedfs
+      app.kubernetes.io/component: seaweedfs-all-in-one
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.control | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gentian-os
+              app.kubernetes.io/component: operator
+        {{- range $fn := list "postgresql" "mariadb" "authentication" "mail" "data" }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ index $np.namespaces $fn | quote }}
+          podSelector:
+            matchLabels:
+              gentianos.io/component: tenant-export
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.api }}
+    - from:
+        - podSelector:
+            matchLabels:
+              gentianos.io/object-store-shell: "true"
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.masterGrpc }}
+        - protocol: TCP
+          port: {{ $np.ports.filerGrpc }}
+{{- end }}

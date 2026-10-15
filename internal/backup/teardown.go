@@ -55,7 +55,7 @@ const (
 	KindAccessGroup Kind = "accessGroup"
 	// KindDatabase is the app's relational database and its login role.
 	KindDatabase Kind = "database"
-	// KindObjectStorage is the app's bucket, with the user and the policy
+	// KindObjectStorage is the app's bucket, with the identity
 	// made for it.
 	KindObjectStorage Kind = "objectStorage"
 	// KindCache is the app's user in the shared cache.
@@ -185,7 +185,7 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindObjectStorage, MadeBy: "the tenant reconciler's bucket Job",
-		Export: Carries, ExportNote: "the bucket's objects; a restore makes the bucket, its user and its policy with the code install uses, then writes the objects",
+		Export: Carries, ExportNote: "the bucket's objects; a restore makes the bucket and its identity with the code install uses, then writes the objects",
 		Artefacts: []string{bundle.ArtefactS3},
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's record of what was provisioned",
@@ -500,26 +500,35 @@ func DeclaresModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 // --- making a store ---------------------------------------------------------
 
 // ObjectStorageProvisionContainer makes an app's bucket and, when it is
-// given the key pair the vault holds for the app, the user and the policy
-// the app reads the bucket with. It is the one piece of code that does:
-// install runs it as the bucket Job, and a restore runs it before it writes
-// a bucket's objects back.
+// given the key pair the vault holds for the app, the identity the app reads
+// the bucket with. It is the one piece of code that does: install runs it as
+// the bucket Job, and a restore runs it before it writes a bucket's objects
+// back.
 //
 // The key pair is passed in because the operator seeds it and a Job cannot
 // read the vault. Without one only the bucket is made, which is what install
 // does on a cluster with no vault.
+//
+// It runs weed shell, in the server's own image, against the master: the
+// store is administered through the master and the filer, which check no
+// key -- the NetworkPolicy beside the server admits this pod to them by its
+// ObjectStorageShellLabel and nothing else.
 func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) corev1.Container {
 	no := false
+	yes := true
+	user := objectStoreUser
 	c := corev1.Container{
 		Name:    name,
-		Image:   MinIOClientImage,
+		Image:   kernel.SeaweedFSImage(),
 		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket)},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: &no,
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			RunAsNonRoot:             &yes,
+			RunAsUser:                &user,
 		},
-		Env: append(minioAdminEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
+		Env: []corev1.EnvVar{objectStoreMasterEnv(), {Name: "BUCKET_NAME", Value: bucket}},
 	}
 	if accessKey != "" && secretKey != "" {
 		c.Env = append(c.Env,
@@ -530,21 +539,61 @@ func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) 
 	return c
 }
 
+// ObjectStorageShellLabel marks the pods that administer the object store
+// with weed shell: the bucket Job, the destroy Job and a bucket's restore.
+// The object store's NetworkPolicy admits these pods, and no other, to the
+// master's and the filer's ports (kernel/services/infra-seaweedfs).
+const ObjectStorageShellLabel = "gentianos.io/object-store-shell"
+
+// objectStoreUser is the server image's own user, seaweed.
+const objectStoreUser int64 = 1000
+
+// objectStoreMasterEnv is the master's address, which the administrator's
+// Secret carries beside the S3 endpoint and the keys.
+func objectStoreMasterEnv() corev1.EnvVar {
+	return meta.SecretEnv("S3_MASTER", StorageAdminSecret, "master")
+}
+
+// objectStoreShell is how the scripts below run one weed shell command: one
+// command a call, so that its exit status is that command's; bounded, since
+// a shell that cannot reach the master waits for it forever -- and bounded by
+// SIGKILL, because weed shell answers SIGTERM by exiting 0, which read as the
+// bucket made; and with the answer kept out of the log. s3.configure answers with the identity it
+// wrote, secret key and all, so nothing it says is printed but the lines
+// that say what failed.
+const objectStoreShell = `shell() {
+  printf '%s\n' "$1" | timeout -s KILL 120 weed shell -master="${S3_MASTER}" > /tmp/shell.out 2>&1
+}
+shell_error() {
+  grep -i -e '^error' -e 'timeout' -e 'connection' /tmp/shell.out | head -n 5 >&2
+}
+`
+
+// objectStorageProvisionScript makes the bucket and the identity named after
+// it, allowed Read, Write, List and Tagging on that bucket alone: never
+// Admin, so the app can neither delete its bucket nor see or make another.
+// The identity is made again from nothing on every run: s3.configure adds a
+// key pair to an identity that has one, and a re-seeded key must replace the
+// old one, not join it.
 func objectStorageProvisionScript(bucket string) string {
 	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc mb --ignore-existing "gentian/%[1]s"
-mc anonymous set none "gentian/%[1]s"
-if [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
-  mc admin user remove gentian "${APP_ACCESS_KEY}" >/dev/null 2>&1 || true
-  mc admin user add gentian "${APP_ACCESS_KEY}" "${APP_SECRET_KEY}"
-  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%[1]s","arn:aws:s3:::%[1]s/*"]}]}' > /tmp/policy.json
-  mc admin policy rm gentian "${APP_ACCESS_KEY}-policy" >/dev/null 2>&1 || true
-  mc admin policy create gentian "${APP_ACCESS_KEY}-policy" /tmp/policy.json
-  mc admin policy attach gentian "${APP_ACCESS_KEY}-policy" --user "${APP_ACCESS_KEY}"
-  echo "minio user for bucket %[1]s ready"
+%[2]sif shell "s3.bucket.create -name %[1]s"; then
+  echo "bucket %[1]s made"
+elif grep -q 'already exists' /tmp/shell.out; then
+  echo "bucket %[1]s is there"
+else
+  echo "ERROR: bucket %[1]s could not be made:" >&2; shell_error; exit 1
 fi
-echo "bucket %[1]s ready"`, bucket)
+if [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
+  if ! shell "s3.configure -user=%[1]s -delete -apply" && ! grep -q 'not found' /tmp/shell.out; then
+    echo "ERROR: the identity %[1]s could not be replaced:" >&2; shell_error; exit 1
+  fi
+  if ! shell "s3.configure -user=%[1]s -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=%[1]s -actions=Read,Write,List,Tagging -apply"; then
+    echo "ERROR: the identity %[1]s could not be made:" >&2; shell_error; exit 1
+  fi
+  echo "identity for bucket %[1]s ready"
+fi
+echo "bucket %[1]s ready"`, bucket, objectStoreShell)
 }
 
 // --- destroying a store -----------------------------------------------------
@@ -631,41 +680,35 @@ echo "role %[2]s dropped"
 `, database, role, postgresOwnedSQL, shellSingleQuote(role), shellSingleQuote(database))
 }
 
-// objectStorageDestroyScript removes the bucket and the user and policy that
-// were made for it. The user is found through the policy, whose statement
-// names the bucket: the key pair itself was seeded and is not known to a
-// delete Job.
+// objectStorageDestroyScript removes the bucket, with every object in it,
+// and the identity named after it. The backup bucket has no identity; one
+// that is not there is not an error.
 //
-// Whether the bucket exists is read from the server's own listing, so a
-// server that cannot be reached fails the Job. `mc rb … || echo "already
-// gone"` reported success for exactly that.
+// Whether the bucket exists is read from the store's own listing, so a store
+// that cannot be reached fails the Job. A delete whose failure was read as
+// "already gone" once reported success for exactly that.
 func objectStorageDestroyScript(bucket string) string {
 	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" >/dev/null
-buckets="$(mc ls gentian)"
-if printf '%%s\n' "${buckets}" | grep -q ' %[1]s/$'; then
-  mc rb --force "gentian/%[1]s"
+%[2]sif ! shell "s3.bucket.list"; then
+  echo "ERROR: the store did not list its buckets:" >&2; shell_error; exit 1
+fi
+if awk '{print $1}' /tmp/shell.out | grep -qxF '%[1]s'; then
+  if ! shell "s3.bucket.delete -name %[1]s"; then
+    echo "ERROR: bucket %[1]s could not be removed:" >&2; shell_error; exit 1
+  fi
   echo "bucket %[1]s removed"
 else
   echo "bucket %[1]s is not there"
 fi
-policies="$(mc admin policy ls gentian)"
-for policy in ${policies}; do
-  case "${policy}" in *-policy) ;; *) continue ;; esac
-  info="$(mc admin policy info gentian "${policy}")"
-  case "${info}" in *'arn:aws:s3:::%[1]s"'*) ;; *) continue ;; esac
-  user="${policy%%-policy}"
-  if ! mc admin user rm gentian "${user}"; then
-    if mc admin user info gentian "${user}" >/dev/null 2>&1; then
-      echo "ERROR: user ${user} could not be removed" >&2; exit 1
-    fi
-    echo "user ${user} is not there"
-  fi
-  mc admin policy rm gentian "${policy}"
-  echo "user ${user} and its policy removed"
-done
+if shell "s3.configure -user=%[1]s -delete -apply"; then
+  echo "identity %[1]s removed"
+elif grep -q 'not found' /tmp/shell.out; then
+  echo "identity %[1]s is not there"
+else
+  echo "ERROR: the identity %[1]s could not be removed:" >&2; shell_error; exit 1
+fi
 echo "object storage for %[1]s purged"
-`, bucket)
+`, bucket, objectStoreShell)
 }
 
 // cacheDestroyScript removes the app's ACL user.
@@ -730,18 +773,24 @@ func MariaDBDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline Des
 		})
 }
 
-// ObjectStorageDestroyJob removes a bucket with its user and policy. unit is
+// ObjectStorageDestroyJob removes a bucket with the identity made for it. unit is
 // the app the bucket is for, or the name of a bucket that is no app's (the
 // tenant's backup bucket) -- S3Bucket and BackupBucket agree on what a unit
 // names, which is what lets one Job serve both.
 func ObjectStorageDestroyJob(tenant *gentianov1alpha1.Tenant, unit string, deadline DestroyDeadline) *batchv1.Job {
-	return destroyJob(layout.System("s3"), ObjectStorageDestroyJobName(tenant.Name, unit), tenant.Name, unit, deadline,
+	job := destroyJob(layout.System("s3"), ObjectStorageDestroyJobName(tenant.Name, unit), tenant.Name, unit, deadline,
 		corev1.Container{
 			Name:    "delete-bucket",
-			Image:   MinIOClientImage,
+			Image:   kernel.SeaweedFSImage(),
 			Command: []string{"/bin/sh", "-c", objectStorageDestroyScript(S3Bucket(tenant, unit))},
-			Env:     minioAdminEnv(),
+			Env:     []corev1.EnvVar{objectStoreMasterEnv()},
 		})
+	yes := true
+	user := objectStoreUser
+	sc := job.Spec.Template.Spec.Containers[0].SecurityContext
+	sc.RunAsNonRoot, sc.RunAsUser = &yes, &user
+	job.Spec.Template.Labels = map[string]string{ObjectStorageShellLabel: "true"}
+	return job
 }
 
 // CacheDestroyJob removes an app's user from the shared cache.

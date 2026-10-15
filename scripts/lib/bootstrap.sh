@@ -370,8 +370,10 @@ create_crossplane_secrets() {
             --arg a "$(_derive redis password)" \
             '{auth_password:$a}')"
 
-    # ── storage/minio ─────────────────────────────────────────────────────────
-    _kv_secret "gentian-os-kernel-storage-minio" \
+    # ── storage/s3 (the object store's administrator) ─────────────────────────
+    # Derived under the name it was first derived under, "minio": the path
+    # moved with the server, the value did not.
+    _kv_secret "gentian-os-kernel-storage-s3" \
         "$(jq -nc \
             --arg a "minio" \
             --arg b "$(_derive minio root_password)" \
@@ -407,7 +409,7 @@ create_crossplane_secrets() {
     # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=system) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
-    # the minio secret for cross-service derivation consistency.
+    # the object store's secret for cross-service derivation consistency.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
             --arg doveadm "$(_derive dovecot doveadm_password)" \
@@ -1005,7 +1007,7 @@ resync_credential_consumers() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_s3_ready argocd_url
 
     # Around a dozen cluster queries, and on a remote API server they add up to
     # the better part of a minute. Announce it: the last thing printed before
@@ -1056,7 +1058,7 @@ print_summary_cp() {
     infra_pg_ready=$(_release_ready postgresql)
     infra_mdb_ready=$(_release_ready mariadb)
     infra_redis_ready=$(_release_ready redis)
-    infra_minio_ready=$(_release_ready minio)
+    infra_s3_ready=$(_release_ready seaweedfs)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
@@ -1094,7 +1096,7 @@ print_summary_cp() {
     echo -e "${GREEN}  System PG      : ${xr_name}-postgresql (Ready=${infra_pg_ready})${NC}"
     echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
     echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
-    echo -e "${GREEN}  System MinIO   : ${xr_name}-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  System S3      : ${xr_name}-seaweedfs (Ready=${infra_s3_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
     if [[ -n "${_gentian_handover_done:-}" ]]; then
