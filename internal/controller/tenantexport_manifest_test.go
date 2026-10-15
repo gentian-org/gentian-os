@@ -140,8 +140,11 @@ func TestAManifestRecordsTheVersionLineTheDomainAndTheCluster(t *testing.T) {
 	if m.OperatorVersion != backup.PlatformVersionLine || m.Domain != "demo.example.org" || m.Cluster != "zrh-1" {
 		t.Errorf("operatorVersion %q, domain %q, cluster %q", m.OperatorVersion, m.Domain, m.Cluster)
 	}
+	if m.CustomDomain != "" {
+		t.Errorf("customDomain %q without a TenantDomain", m.CustomDomain)
+	}
 	tenant.Status.Domain = "acme.ch"
-	if m := r.buildManifest(export, tenant); m.Domain != "acme.ch" {
-		t.Errorf("domain %q, want the bound custom domain", m.Domain)
+	if m := r.buildManifest(export, tenant); m.Domain != "acme.ch" || m.CustomDomain != "acme.ch" {
+		t.Errorf("domain %q, customDomain %q, want the bound custom domain", m.Domain, m.CustomDomain)
 	}
 }

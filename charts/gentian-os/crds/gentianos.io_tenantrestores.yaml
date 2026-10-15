@@ -762,6 +762,12 @@ spec:
                     description: Cluster is the id of the cluster it was written on.
                     maxLength: 253
                     type: string
+                  customDomain:
+                    description: |-
+                      CustomDomain is the custom domain a TenantDomain bound the tenant to
+                      there. A restore does not bind it; it says to declare it again.
+                    maxLength: 253
+                    type: string
                   domain:
                     description: Domain is the tenant's domain where it was written.
                     maxLength: 253

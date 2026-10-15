@@ -198,8 +198,10 @@ settings are not the bundle's: the new tenant keeps its data when retired
 (`deletionPolicy: Retain`) whatever the old one said, it has no catalogues of
 its own, and a namespace of another name that the old tenant was placed in
 is not carried. An import does not rename: the tenant is made under the name
-its bundle carries, and a request that names another is refused. A
-`TenantRestore` written by hand can still put a bundle into a tenant of
+its bundle carries, and a request that names another is refused. It may be
+on another domain, which is how a tenant moves with its data; the import
+says so, and a custom domain (`TenantDomain`) the tenant had is declared
+again with `kubectl gentian tenants domain`. A `TenantRestore` written by hand can still put a bundle into a tenant of
 another name; it says that it is outside what the platform guarantees
 (`OutsideGuarantee`), and what the bundle names after the
 old tenant comes back under the new one's names: databases an app made for

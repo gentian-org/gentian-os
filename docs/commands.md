@@ -1290,8 +1290,10 @@ The key is written into a Secret the restore owns and goes with it. Members
 come back without credentials (no bundle carries them); the status says
 `passwordResetRequired`, and carries the restore's `complete`, `notRestored`
 and `notes`, and `outsideGuarantee` when the bundle is of an older platform
-version line, or records none (the command prints it). A bundle of a newer
-version line is refused.
+version line, or records none, or the tenant's domain here is another (the
+command prints it). A custom domain the tenant had is not bound by the
+import; the message says to declare it again (`tenants domain <name>
+<domain>`). A bundle of a newer version line is refused.
 
 The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A

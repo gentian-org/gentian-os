@@ -579,9 +579,13 @@ restored by a platform of the version line that wrote it (`operatorVersion`),
 into the tenant it was taken of, on the same domain. A bundle of an older
 line, or one that records none (written before the field was), is restored as
 far as this platform reads it and nothing in it is converted; one of another
-tenant is restored under this tenant's names. Either way the restore carries
-the condition `OutsideGuarantee` (reason `OtherVersion`, `OtherName` or
-`SeveralDifferences`), whose message says what differs and is
+tenant is restored under this tenant's names; one taken on another domain is
+restored, and the apps' data still names the old domain where their
+`restore.post` commands do not rewrite it. A custom domain is not declared by
+a restore or an import: the message names it and the command that declares
+it again. Each way the restore carries the condition `OutsideGuarantee`
+(reason `OtherVersion`, `OtherName`, `OtherDomain` or `SeveralDifferences`),
+whose message says what differs and is
 repeated in `status.notes`. A bundle of a newer line is refused, as a newer
 format is, by the restore and by the import's inspection alike.
 
@@ -625,8 +629,9 @@ none and restores as before, changing no stored secret
 ([security.md §6.4](security.md)). Also within format 4, and optional, the
 manifest says by what and where it was written: `operatorVersion`, the
 platform's version line (`0.5`); `domain`, the tenant's domain, its custom one
-where a `TenantDomain` bound it; and `cluster`, the cluster's id in its
-deployments repository. A bundle without them reads as before. A manifest of a
+where a `TenantDomain` bound it, and `customDomain`, that one alone; and
+`cluster`, the cluster's id in its deployments repository. A bundle without
+them reads as before. A manifest of a
 format newer than the platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`

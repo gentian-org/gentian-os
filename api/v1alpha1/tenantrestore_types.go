@@ -296,6 +296,11 @@ type RestoreSource struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	Domain string `json:"domain,omitempty"`
+	// CustomDomain is the custom domain a TenantDomain bound the tenant to
+	// there. A restore does not bind it; it says to declare it again.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	CustomDomain string `json:"customDomain,omitempty"`
 	// Cluster is the id of the cluster it was written on.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253

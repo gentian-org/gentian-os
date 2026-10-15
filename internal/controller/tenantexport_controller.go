@@ -1214,6 +1214,10 @@ func (r *TenantExportReconciler) buildManifest(
 		m.Domain = r.Reconciler.tenantEffectiveDomain(tenant)
 		m.Cluster = r.Reconciler.ClusterID
 	}
+	// The binding is a TenantDomain beside the tenant, not one of its
+	// settings: recorded so that wherever the bundle goes it can be said
+	// that it has to be declared again.
+	m.CustomDomain = tenant.Status.Domain
 	// What is the tenant's own, from what the status says was captured: the
 	// desktop's database and, where the cluster keeps them, the mailboxes.
 	for _, app := range export.Status.Apps {

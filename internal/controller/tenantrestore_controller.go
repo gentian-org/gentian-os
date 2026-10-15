@@ -1012,6 +1012,7 @@ func (r *TenantRestoreReconciler) planTarget(ctx context.Context, tenant *gentia
 			target.mailDomain = boxes.Domain
 		}
 		target.noMailboxes = why
+		target.domain = r.Tenant.tenantEffectiveDomain(tenant)
 		target.cluster = r.Tenant.ClusterID
 		target.haveRights = r.Tenant.Rights != nil && r.Tenant.ClusterID != ""
 	}

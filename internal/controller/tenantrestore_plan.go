@@ -119,6 +119,7 @@ const (
 	conditionOutsideGuarantee = "OutsideGuarantee"
 	outsideGuaranteeVersion   = "OtherVersion"
 	outsideGuaranteeName      = "OtherName"
+	outsideGuaranteeDomain    = "OtherDomain"
 	outsideGuaranteeSeveral   = "SeveralDifferences"
 )
 
@@ -127,7 +128,7 @@ const (
 // by a platform of the version line that wrote it, into the tenant it was
 // taken of. Anything else is restored as far as it can be and said; a newer
 // line's bundle never gets here (bundlestore.OpenManifest refuses it).
-func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant) []guaranteeGap {
+func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, domain string) []guaranteeGap {
 	var gaps []guaranteeGap
 	this := backup.ThisVersionLine()
 	switch line, ok := backup.ParseVersionLine(m.OperatorVersion); {
@@ -149,6 +150,17 @@ func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant) []guaran
 			"the bundle is of tenant %s and is restored into %s: what the apps' data itself says of the old name -- addresses, paths, settings -- is not changed",
 			m.Tenant, tenant.Name)})
 	}
+	// Another domain is a move the platform supports, and still not the
+	// round trip: the apps' data names the old one.
+	if m.Domain != "" && domain != "" && !strings.EqualFold(m.Domain, domain) {
+		text := fmt.Sprintf("the bundle was taken on the domain %s and the tenant is on %s here: addresses, links and mail addresses "+
+			"the apps' data stores still name %s, as far as each app's own post-restore commands do not rewrite them", m.Domain, domain, m.Domain)
+		if m.CustomDomain != "" && !strings.EqualFold(m.CustomDomain, tenant.Status.Domain) {
+			text += fmt.Sprintf(". %s was a custom domain, bound by a TenantDomain, which a bundle does not declare: declare it again "+
+				"(kubectl gentian tenants domain %s %s) for the tenant to answer there", m.CustomDomain, tenant.Name, m.CustomDomain)
+		}
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeDomain, text})
+	}
 	return gaps
 }
 
@@ -159,6 +171,7 @@ func restoreSource(m *backup.Manifest) *gentianov1alpha1.RestoreSource {
 	source := gentianov1alpha1.RestoreSource{
 		PlatformVersion: plainValue(m.OperatorVersion),
 		Domain:          plainValue(m.Domain),
+		CustomDomain:    plainValue(m.CustomDomain),
 		Cluster:         plainValue(m.Cluster),
 	}
 	if source == (gentianov1alpha1.RestoreSource{}) {
@@ -211,6 +224,9 @@ type planTarget struct {
 	// where it is empty.
 	mailDomain  string
 	noMailboxes string
+	// domain is the tenant's domain here, as it is when the plan is made;
+	// "" when it is not known.
+	domain string
 	// cluster is this cluster's id in the rights store, and haveRights
 	// whether the operator has a store to write to.
 	cluster    string
@@ -268,7 +284,7 @@ func planRestore(
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
 	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
-		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant), source: restoreSource(m)}
+		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant, target.domain), source: restoreSource(m)}
 	if !m.NamesArtefacts() {
 		plan.derivation = gentianov1alpha1.RestoreNamesDerived
 	}

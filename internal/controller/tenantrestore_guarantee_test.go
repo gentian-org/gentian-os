@@ -90,3 +90,60 @@ func TestARestoreOutsideTheRoundTripSaysWhatDiffers(t *testing.T) {
 		})
 	}
 }
+
+// A tenant may move to another domain with its data; the restore goes ahead
+// and says that the data names the old domain, and, where the old one was a
+// custom domain, that its binding has to be declared again.
+func TestARestoreOnAnotherDomainSaysSoAndThatACustomDomainIsDeclaredAgain(t *testing.T) {
+	plan := func(domain, custom, here string, tenant *gentianov1alpha1.Tenant) *gentianov1alpha1.TenantRestore {
+		t.Helper()
+		m := wikiManifest()
+		m.Tenant, m.OperatorVersion, m.Domain, m.CustomDomain = tenant.Name, backup.PlatformVersionLine, domain, custom
+		profiles := map[string]*gentianov1alpha1.ComponentProfile{
+			"wiki":  chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
+			"notes": chartProfile("notes", "1.0.0", "", false),
+		}
+		claims := map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}}
+		target := targetOf(tenant)
+		target.domain = here
+		p, err := planRestore(m, tenant, nil, false, target, liveFrom(tenant, profiles, claims))
+		if err != nil {
+			t.Fatal(err)
+		}
+		restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "tenant-" + tenant.Name}}
+		recordPlan(restore, p)
+		return restore
+	}
+	tenant := planTenant("acme", "wiki", "notes")
+
+	// The same domain: the round trip.
+	if r := plan("acme.example.org", "", "acme.example.org", tenant); meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee) != nil {
+		t.Errorf("the same domain is said to differ: %+v", r.Status.Conditions)
+	}
+	// Another cluster's domain.
+	r := plan("acme.example.org", "", "acme.example.net", tenant)
+	cond := meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee)
+	if cond == nil || cond.Reason != outsideGuaranteeDomain || !strings.Contains(cond.Message, "taken on the domain acme.example.org and the tenant is on acme.example.net") ||
+		strings.Contains(cond.Message, "TenantDomain") {
+		t.Fatalf("condition = %+v", cond)
+	}
+	// A custom domain, not bound here.
+	r = plan("acme.ch", "acme.ch", "acme.example.net", tenant)
+	cond = meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee)
+	if cond == nil || !strings.Contains(cond.Message, "declare it again (kubectl gentian tenants domain acme acme.ch)") {
+		t.Fatalf("condition = %+v", cond)
+	}
+	if r.Status.Source == nil || r.Status.Source.CustomDomain != "acme.ch" || r.Status.Source.Domain != "acme.ch" {
+		t.Errorf("source = %+v", r.Status.Source)
+	}
+	// Bound here already: the round trip again.
+	bound := planTenant("acme", "wiki", "notes")
+	bound.Status.Domain = "acme.ch"
+	if r := plan("acme.ch", "acme.ch", "acme.ch", bound); meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee) != nil {
+		t.Errorf("a custom domain bound here again is said to differ: %+v", r.Status.Conditions)
+	}
+	// A bundle that records no domain says nothing of one.
+	if r := plan("", "", "acme.example.net", tenant); meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee) != nil {
+		t.Errorf("a bundle without a domain is said to differ: %+v", r.Status.Conditions)
+	}
+}

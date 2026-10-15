@@ -219,6 +219,12 @@ type Manifest struct {
 	Domain  string `json:"domain,omitempty"`
 	Cluster string `json:"cluster,omitempty"`
 
+	// CustomDomain is the custom domain a TenantDomain bound the tenant to
+	// when the bundle was taken, "" without one. The binding is not part of
+	// the tenant's settings and is not declared by a restore or an import:
+	// they say that it has to be declared again. Optional within version 4.
+	CustomDomain string `json:"customDomain,omitempty"`
+
 	// Apps records what was captured per app, including the pause window. The
 	// windows are published rather than smoothed over: an export is consistent
 	// within an app and not across them, and the timestamps are what make that
