@@ -30,7 +30,7 @@ import (
 // both sides, and for the app its versions and each store's two names.
 func TestPostRestoreCommandsAreToldWhereTheDataCameFromAndWhereItIs(t *testing.T) {
 	m := wikiManifest()
-	m.OperatorVersion, m.Domain, m.Cluster = "0.4", "old.example.org", "zrh-1"
+	m.OperatorVersion, m.Domain, m.Cluster, m.KernelDomain = "0.4", "old.example.org", "zrh-1", "example.org"
 	m.Apps[0].Stores = append(m.Apps[0].Stores, backup.ManifestStore{Kind: "s3", Name: "bad name;rm", Path: "s3/x.tar.gz"})
 	tenant := planTenant("old", "wiki", "notes")
 	profile := chartProfile("wiki", "2.1.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true)
@@ -51,6 +51,8 @@ func TestPostRestoreCommandsAreToldWhereTheDataCameFromAndWhereItIs(t *testing.T
 		"GENTIAN_RESTORE_TARGET_TENANT=old",
 		"GENTIAN_RESTORE_SOURCE_DOMAIN=old.example.org",
 		"GENTIAN_RESTORE_TARGET_DOMAIN=old.example.net",
+		"GENTIAN_RESTORE_SOURCE_KERNEL_DOMAIN=example.org",
+		"GENTIAN_RESTORE_TARGET_KERNEL_DOMAIN=example.net",
 		"GENTIAN_RESTORE_SOURCE_PLATFORM_VERSION=0.4",
 		"GENTIAN_RESTORE_TARGET_PLATFORM_VERSION=" + backup.PlatformVersionLine,
 		"GENTIAN_RESTORE_SOURCE_CLUSTER=zrh-1",

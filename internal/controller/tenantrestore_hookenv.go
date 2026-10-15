@@ -24,8 +24,9 @@ const RestoreEnvPrefix = "GENTIAN_RESTORE_"
 
 // restoreHookEnv is what a profile's post-restore commands are told of the
 // restore, as NAME=value: where the bundle was written and where it is put
-// back -- tenant, domain, platform version, cluster -- and, for the app, its
-// version that wrote the data and the one installed, and each store's name
+// back -- tenant, domain, the cluster's own domain, platform version,
+// cluster -- and, for the app, its version that wrote the data and the one
+// installed, and each store's name
 // in the bundle and here. They are what an app's own data may have cached
 // and has to be told of: an address on the old domain, a database's old
 // name. A credential is never among them: what the platform made new here
@@ -44,9 +45,9 @@ func restoreHookEnv(
 	if restore.Status.Source != nil {
 		source = *restore.Status.Source
 	}
-	targetDomain, targetCluster := "", ""
+	targetDomain, targetKernelDomain, targetCluster := "", "", ""
 	if tr != nil {
-		targetDomain, targetCluster = tr.tenantEffectiveDomain(tenant), tr.ClusterID
+		targetDomain, targetKernelDomain, targetCluster = tr.tenantEffectiveDomain(tenant), tr.KernelDomain, tr.ClusterID
 	}
 	entry := appStatus(&restore.Status.Apps, appName)
 	pairs := map[string][]string{}
@@ -70,6 +71,8 @@ func restoreHookEnv(
 		{"TARGET_TENANT", tenant.Name},
 		{"SOURCE_DOMAIN", source.Domain},
 		{"TARGET_DOMAIN", targetDomain},
+		{"SOURCE_KERNEL_DOMAIN", source.KernelDomain},
+		{"TARGET_KERNEL_DOMAIN", targetKernelDomain},
 		{"SOURCE_PLATFORM_VERSION", source.PlatformVersion},
 		{"TARGET_PLATFORM_VERSION", backup.PlatformVersionLine},
 		{"SOURCE_CLUSTER", source.Cluster},

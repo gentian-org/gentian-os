@@ -173,6 +173,7 @@ func restoreSource(m *backup.Manifest) *gentianov1alpha1.RestoreSource {
 		PlatformVersion: plainValue(m.OperatorVersion),
 		Domain:          plainValue(m.Domain),
 		CustomDomain:    plainValue(m.CustomDomain),
+		KernelDomain:    plainValue(m.KernelDomain),
 		Cluster:         plainValue(m.Cluster),
 	}
 	if source == (gentianov1alpha1.RestoreSource{}) {

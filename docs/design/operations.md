@@ -594,7 +594,8 @@ store of that kind the installed app has, by the inventory's names — which
 differ from the bundle's whenever the tenant's name or prefixes do, as when a
 bundle is restored into a tenant of another name.
 A profile's `restore.post` commands run with `GENTIAN_RESTORE_*` variables
-naming both ends: tenant, domain, platform version, cluster, the app's chart
+naming both ends: tenant, domain, the cluster's own (kernel) domain, platform
+version, cluster, the app's chart
 versions and each store's name in the bundle and here
 ([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
 each app's profile rewrites what its app cached, reading credentials the
@@ -635,8 +636,9 @@ none and restores as before, changing no stored secret
 ([security.md §6.4](security.md)). Also within format 4, and optional, the
 manifest says by what and where it was written: `operatorVersion`, the
 platform's version line (`0.5`); `domain`, the tenant's domain, its custom one
-where a `TenantDomain` bound it, and `customDomain`, that one alone; and
-`cluster`, the cluster's id in its deployments repository. A bundle without
+where a `TenantDomain` bound it, and `customDomain`, that one alone;
+`kernelDomain`, the cluster's own domain, under which its sign-in issuer is;
+and `cluster`, the cluster's id in its deployments repository. A bundle without
 them reads as before. A manifest of a
 format newer than the platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and

@@ -225,6 +225,12 @@ type Manifest struct {
 	// they say that it has to be declared again. Optional within version 4.
 	CustomDomain string `json:"customDomain,omitempty"`
 
+	// KernelDomain is the cluster's own domain where the bundle was taken:
+	// the one its sign-in issuer is under (id.<kernel domain>), which an
+	// app's data may name apart from the tenant's domain. Optional within
+	// version 4, and not secret.
+	KernelDomain string `json:"kernelDomain,omitempty"`
+
 	// Apps records what was captured per app, including the pause window. The
 	// windows are published rather than smoothed over: an export is consistent
 	// within an app and not across them, and the timestamps are what make that

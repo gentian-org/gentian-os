@@ -301,6 +301,11 @@ type RestoreSource struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	CustomDomain string `json:"customDomain,omitempty"`
+	// KernelDomain is the domain of the cluster it was written on, the one
+	// its sign-in issuer is under.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	KernelDomain string `json:"kernelDomain,omitempty"`
 	// Cluster is the id of the cluster it was written on.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253

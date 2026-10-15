@@ -772,6 +772,12 @@ spec:
                     description: Domain is the tenant's domain where it was written.
                     maxLength: 253
                     type: string
+                  kernelDomain:
+                    description: |-
+                      KernelDomain is the domain of the cluster it was written on, the one
+                      its sign-in issuer is under.
+                    maxLength: 253
+                    type: string
                   platformVersion:
                     description: PlatformVersion is the version line of the platform
                       that wrote it.

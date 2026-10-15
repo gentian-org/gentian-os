@@ -140,6 +140,9 @@ func TestAManifestRecordsTheVersionLineTheDomainAndTheCluster(t *testing.T) {
 	if m.OperatorVersion != backup.PlatformVersionLine || m.Domain != "demo.example.org" || m.Cluster != "zrh-1" {
 		t.Errorf("operatorVersion %q, domain %q, cluster %q", m.OperatorVersion, m.Domain, m.Cluster)
 	}
+	if m.KernelDomain != "example.org" {
+		t.Errorf("kernelDomain %q, want the cluster's own domain", m.KernelDomain)
+	}
 	if m.CustomDomain != "" {
 		t.Errorf("customDomain %q without a TenantDomain", m.CustomDomain)
 	}

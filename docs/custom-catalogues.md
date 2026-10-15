@@ -377,9 +377,9 @@ could not run and the app was scaled down instead, its `quiesce.post` command is
 mode. A restore may come from another cluster or
 domain, and every credential the platform makes (database, bucket, sign-in client) is made new
 there, so each command is run with what it needs to know, and no secret: `GENTIAN_RESTORE_APP`;
-`GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT`, `DOMAIN`,
-`PLATFORM_VERSION`, `CLUSTER` and the app's `CHART_VERSION` (a source value the bundle does not
-record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
+`GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT`, `DOMAIN`, `KERNEL_DOMAIN`
+(the cluster's own domain, whose sign-in issuer is `id.<kernel domain>`), `PLATFORM_VERSION`,
+`CLUSTER` and the app's `CHART_VERSION` (a source value the bundle does not record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
 `GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>`. A new
 credential the command reads from the app's own Secrets, as the app does. The container needs
 `env(1)`, which the platform runs the command through. Each command, as each `quiesce` command, has

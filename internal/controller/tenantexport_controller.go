@@ -1213,6 +1213,7 @@ func (r *TenantExportReconciler) buildManifest(
 	if r.Reconciler != nil {
 		m.Domain = r.Reconciler.tenantEffectiveDomain(tenant)
 		m.Cluster = r.Reconciler.ClusterID
+		m.KernelDomain = r.Reconciler.KernelDomain
 	}
 	// The binding is a TenantDomain beside the tenant, not one of its
 	// settings: recorded so that wherever the bundle goes it can be said
