@@ -27,6 +27,30 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-15** (1.1, additive: a 1.0 client reads every answer as before)
+
+1. **Reviews are written.** `PUT` and `DELETE /v1/apps/{catalogue}/{app}/reviews/mine`,
+   and `GET` for one's own, with the new scope `store.review`. A review
+   says whether its author would recommend the app and gives stars for
+   features, ease of use and ease of setup, and on an `ee` entry for
+   support and value for money (`ReviewScores`). `rating` stays: the
+   rounded mean of the scores.
+2. **Reviews carry their author's company size and industry**
+   (`reviewer`), never the company's name, and `GET …/reviews` takes
+   `companySize` and `industry` to narrow both the list and the summary.
+   The summary adds `recommend` and the mean of each score.
+3. **An account has a company.** `GET` and `PUT /v1/account/company`
+   (scope `store.account`): a name, a size (`CompanySize`, the EU size
+   classes with large split at 1000) and an industry (`Industry`, the NACE
+   sections, as Odoo lists them). A review is refused (`409`,
+   `company-missing`) until there is one.
+4. **`GET /v1/meta`** names the sizes and industries in the request's
+   language and says whether a review needs an acquisition
+   (`reviewing.requireAcquisition`; refused with `403`,
+   `review-not-acquired`). `features` gains `review-writing` and `company`.
+5. **A link may be `rel: donate`**: where to give money to the people who
+   build an app that is not sold.
+
 **2026-10-07**
 
 1. **`repository.name` is removed** from the confirmation — schema,
@@ -666,7 +690,37 @@ the page.
 | `version` | string \| null | no | The version reviewed, when the author said |
 
 A store with no reviews answers an empty list and a summary with `count` 0.
-This version has no operation that writes a review (§9).
+
+Since 1.1 a review also carries `recommend` (boolean | null), `scores`
+(`features`, `easeOfUse`, `easeOfSetup`, and on an `ee` entry `support` and
+`value`, each 1–5) and `reviewer` (`size` and `industry` of the author's
+company, never its name), and the summary carries `recommend.yes`,
+`recommend.no` and the mean and count of each score. `?companySize=` and
+`?industry=` narrow the list and the summary alike.
+
+### PUT /v1/apps/{catalogue}/{app}/reviews/mine
+
+The signed-in person's review, written or replaced; one per person and
+entry. Scope `store.review`.
+
+```jsonc
+{"recommend": true,
+ "scores": {"features": 4, "easeOfUse": 5, "easeOfSetup": 3, "support": null, "value": null},
+ "title": "Does what we need", "text": "Running it for forty people since spring.", "version": "31.0.4"}
+```
+
+Refused with `409 company-missing` while the account names no company, with
+`403 review-not-acquired` where the store requires an acquisition
+(`reviewing.requireAcquisition`) and no tenant the person signed in for has
+one, and with `400` for `support` or `value` on an entry that is not `ee`.
+`GET` answers one's own review or `404`; `DELETE` withdraws it.
+
+### GET and PUT /v1/account/company
+
+The company the person is with: `{"name": "Acme AG", "size": "10-49",
+"industry": "information-communication"}`. `PUT` needs `store.account`.
+The App Store app asks once, at the first sign-in that finds none. The
+sizes and industries, with their names, are in `GET /v1/meta`.
 
 ### GET /v1/apps/{catalogue}/{app}/reports
 
