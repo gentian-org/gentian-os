@@ -211,6 +211,14 @@ func OpenManifest(cipher []byte, ids []age.Identity) (*bundle.Manifest, error) {
 			"a bundle written by a newer platform has to be restored by one at least as new",
 			m.SchemaVersion, bundle.OldestReadableSchemaVersion, bundle.SchemaVersion)
 	}
+	// A newer version line is refused like a newer format: what a later
+	// platform keeps, and where, this one cannot know. An older line, or
+	// none recorded, is read as far as it can be; the restore says so.
+	if line, ok := backup.ParseVersionLine(m.OperatorVersion); ok && line.Compare(backup.ThisVersionLine()) > 0 {
+		return nil, fmt.Errorf("the bundle was written by platform version %s and this platform is version %s; "+
+			"a bundle written by a newer platform has to be restored by one at least as new",
+			line, backup.PlatformVersionLine)
+	}
 	return &m, nil
 }
 

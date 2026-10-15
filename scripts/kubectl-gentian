@@ -793,6 +793,7 @@ cmd_tenants_import() {
         case "${phase}" in
             ready)
                 echo "Tenant ${name} imported."
+                printf '%s' "${st}" | jq -r '.outsideGuarantee // empty'
                 [[ "$(printf '%s' "${st}" | jq -r '.passwordResetRequired')" != "true" ]] ||
                     echo "Members have no credentials yet: send them a password reset from the console, or activate the administrator with 'tenants activate-admin ${name}'."
                 return 0 ;;

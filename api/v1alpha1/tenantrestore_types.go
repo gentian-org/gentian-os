@@ -178,7 +178,11 @@ type TenantRestoreStatus struct {
 	// +optional
 	Phase TenantExportPhase `json:"phase,omitempty"`
 
-	// Conditions carry Accepted (admitted, and preflight passed) and Complete.
+	// Conditions carry Accepted (admitted, and preflight passed) and Complete,
+	// and OutsideGuarantee when the restore is not the round trip the
+	// platform guarantees -- a bundle of its own version line, restored into
+	// the tenant it was taken of, on the same domain -- with what differs.
+	// Such a restore goes ahead as far as it can.
 	// +optional
 	// +listType=map
 	// +listMapKey=type

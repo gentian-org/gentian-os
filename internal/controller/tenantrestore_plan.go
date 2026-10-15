@@ -96,6 +96,74 @@ type restorePlan struct {
 	// notes are said on the result: what of the tenant's own the bundle
 	// holds and this restore does not put back, and why.
 	notes []string
+	// outside is where this restore leaves what the platform guarantees: a
+	// bundle of its own version line, of the tenant restored into, on its
+	// domain. Empty when it is all three.
+	outside []guaranteeGap
+}
+
+// guaranteeGap is one way a restore differs from the one the platform
+// guarantees, as the reason of the OutsideGuarantee condition and a sentence.
+type guaranteeGap struct {
+	reason string
+	text   string
+}
+
+// The reasons of the OutsideGuarantee condition. One that names several is
+// outsideGuaranteeSeveral.
+const (
+	conditionOutsideGuarantee = "OutsideGuarantee"
+	outsideGuaranteeVersion   = "OtherVersion"
+	outsideGuaranteeName      = "OtherName"
+	outsideGuaranteeSeveral   = "SeveralDifferences"
+)
+
+// guaranteeGaps compares where the bundle was written with where it is
+// restored. What the platform guarantees is a round trip: a bundle restored
+// by a platform of the version line that wrote it, into the tenant it was
+// taken of. Anything else is restored as far as it can be and said; a newer
+// line's bundle never gets here (bundlestore.OpenManifest refuses it).
+func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant) []guaranteeGap {
+	var gaps []guaranteeGap
+	this := backup.ThisVersionLine()
+	switch line, ok := backup.ParseVersionLine(m.OperatorVersion); {
+	case m.OperatorVersion == "":
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
+			"the bundle does not say which platform version wrote it, so it is older than the bundles that do; "+
+				"this platform (version %s) restores it as far as it reads it and converts nothing", backup.PlatformVersionLine)})
+	case !ok:
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
+			"the bundle names the platform version %q, which is not one; this platform (version %s) restores it as far as it reads it and converts nothing",
+			m.OperatorVersion, backup.PlatformVersionLine)})
+	case line.Compare(this) < 0:
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
+			"the bundle was written by platform version %s and this platform is version %s; it is restored as far as this platform reads it, "+
+				"and what the newer version keeps differently is not converted", line, this)})
+	}
+	if m.Tenant != "" && m.Tenant != tenant.Name {
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeName, fmt.Sprintf(
+			"the bundle is of tenant %s and is restored into %s: what the apps' data itself says of the old name -- addresses, paths, settings -- is not changed",
+			m.Tenant, tenant.Name)})
+	}
+	return gaps
+}
+
+// outsideGuaranteeCondition is the condition's reason and message, or
+// false when the restore is the one the platform guarantees.
+func outsideGuaranteeCondition(gaps []guaranteeGap) (reason, message string, ok bool) {
+	if len(gaps) == 0 {
+		return "", "", false
+	}
+	reason = gaps[0].reason
+	texts := make([]string, 0, len(gaps))
+	for _, g := range gaps {
+		if g.reason != reason {
+			reason = outsideGuaranteeSeveral
+		}
+		texts = append(texts, g.text)
+	}
+	return reason, "This restore is outside what the platform guarantees, a bundle restored into the tenant it was taken of, " +
+		"on the same domain, by the platform version that wrote it: " + strings.Join(texts, "; ") + ".", true
 }
 
 // planTarget is the tenant restored into, as far as the plan needs to know
@@ -166,7 +234,7 @@ func planRestore(
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
 	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
-		notIncluded: m.NotIncluded, sourceTenant: m.Tenant}
+		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant)}
 	if !m.NamesArtefacts() {
 		plan.derivation = gentianov1alpha1.RestoreNamesDerived
 	}

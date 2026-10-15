@@ -66,6 +66,9 @@ type ImportStatus struct {
 	Complete    *bool             `json:"complete,omitempty"`
 	NotRestored []json.RawMessage `json:"notRestored,omitempty"`
 	Notes       []string          `json:"notes,omitempty"`
+	// OutsideGuarantee is the restore's word too: what makes this import
+	// other than the round trip the platform guarantees, when something does.
+	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
 	// Skipped are the apps of the bundle's tenant the tenant here was not
 	// given, each with why (retiredPlatformApps). Their data is not restored.
 	Skipped []gitops.SkippedApp `json:"skipped,omitempty"`
@@ -414,6 +417,7 @@ func (s *Server) finishImport(background context.Context, pending gitops.Pending
 				Complete              *bool             `json:"complete"`
 				NotRestored           []json.RawMessage `json:"notRestored"`
 				Notes                 []string          `json:"notes"`
+				OutsideGuarantee      string            `json:"outsideGuarantee"`
 			}
 			if json.Unmarshal(body, &rs) == nil {
 				switch rs.Phase {
@@ -433,6 +437,7 @@ func (s *Server) finishImport(background context.Context, pending gitops.Pending
 						st.Message = rs.Message
 						st.PasswordResetRequired = rs.PasswordResetRequired
 						st.Complete, st.NotRestored, st.Notes = rs.Complete, rs.NotRestored, rs.Notes
+						st.OutsideGuarantee = rs.OutsideGuarantee
 					})
 					s.cfg.Log.Info("tenant imported", "tenant", name, "restore", pending.Restore)
 					return
@@ -441,9 +446,12 @@ func (s *Server) finishImport(background context.Context, pending gitops.Pending
 					fail("the restore failed: " + rs.Message)
 					return
 				default:
-					if rs.Message != "" {
-						s.setImport(name, func(st *ImportStatus) { st.Message = rs.Message })
-					}
+					s.setImport(name, func(st *ImportStatus) {
+						if rs.Message != "" {
+							st.Message = rs.Message
+						}
+						st.OutsideGuarantee = rs.OutsideGuarantee
+					})
 				}
 			}
 		}

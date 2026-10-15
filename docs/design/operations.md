@@ -574,6 +574,17 @@ anything is changed; the plan is in the restore's status.
 4. With `spec.apps`, only the apps named are considered and each has to be
    restorable; otherwise the restore is refused before anything is changed.
 
+**What is guaranteed.** The platform guarantees the round trip: a bundle
+restored by a platform of the version line that wrote it (`operatorVersion`),
+into the tenant it was taken of, on the same domain. A bundle of an older
+line, or one that records none (written before the field was), is restored as
+far as this platform reads it and nothing in it is converted; one of another
+tenant is restored under this tenant's names. Either way the restore carries
+the condition `OutsideGuarantee` (reason `OtherVersion`, `OtherName` or
+`SeveralDifferences`), whose message says what differs and is
+repeated in `status.notes`. A bundle of a newer line is refused, as a newer
+format is, by the restore and by the import's inspection alike.
+
 Each artefact is fetched from the path the manifest gives and loaded into the
 store of that kind the installed app has, by the inventory's names — which
 differ from the bundle's whenever the tenant's name or prefixes do, as when a

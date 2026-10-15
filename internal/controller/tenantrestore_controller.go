@@ -1082,6 +1082,13 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 			restore.Status.Notes = append(restore.Status.Notes, "A right the bundle holds was NOT brought: "+left+".")
 		}
 	}
+	// Where this restore leaves the round trip the platform guarantees: a
+	// condition, so that it is read before the notes, and the same sentence
+	// among them.
+	if reason, message, ok := outsideGuaranteeCondition(plan.outside); ok {
+		setRestoreCondition(restore, conditionOutsideGuarantee, metav1.ConditionTrue, reason, message)
+		restore.Status.Notes = append(restore.Status.Notes, message)
+	}
 	if plan.sourceTenant != "" && plan.sourceTenant != tenantNameFromNamespace(restore.Namespace) {
 		restore.Status.Notes = append(restore.Status.Notes, "The bundle is of tenant "+plan.sourceTenant+
 			", not of this one. Every store is restored under this tenant's own names: a database an app made for itself is put back under this tenant's database name, "+

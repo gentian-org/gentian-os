@@ -1289,7 +1289,9 @@ GET  /v1/clusters/{c}/tenants/{t}/import      the status
 The key is written into a Secret the restore owns and goes with it. Members
 come back without credentials (no bundle carries them); the status says
 `passwordResetRequired`, and carries the restore's `complete`, `notRestored`
-and `notes`.
+and `notes`, and `outsideGuarantee` when the bundle is of an older platform
+version line, or records none (the command prints it). A bundle of a newer
+version line is refused.
 
 The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A

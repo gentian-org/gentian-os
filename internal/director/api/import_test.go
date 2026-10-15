@@ -69,7 +69,7 @@ func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (i
 				phase = "Failed"
 			}
 		}
-		return http.StatusOK, []byte(`{"name":"` + name + `","phase":"` + phase + `","message":"1 app(s) restored","passwordResetRequired":true}`), nil
+		return http.StatusOK, []byte(`{"name":"` + name + `","phase":"` + phase + `","message":"1 app(s) restored","passwordResetRequired":true,"outsideGuarantee":"written by platform version 0.4"}`), nil
 	case strings.HasPrefix(path, "/v1/tenants/"):
 		if !o.declared || time.Now().Before(o.readyAt) {
 			return http.StatusOK, []byte(`{"name":"imported","exists":false}`), nil
@@ -172,7 +172,8 @@ func TestAnImportDeclaresWaitsAndRestores(t *testing.T) {
 			phases = append(phases, phase)
 		}
 		if phase == "ready" {
-			if st["passwordResetRequired"] != true || !strings.HasPrefix(st["restore"].(string), "import-") {
+			if st["passwordResetRequired"] != true || !strings.HasPrefix(st["restore"].(string), "import-") ||
+				st["outsideGuarantee"] != "written by platform version 0.4" {
 				t.Fatalf("final status = %v", st)
 			}
 			break

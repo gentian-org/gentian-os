@@ -177,6 +177,11 @@ type RestoreStatus struct {
 	Notes []string `json:"notes,omitempty"`
 	// NameDerivation is "manifest", or "derived" for a bundle of format 1.
 	NameDerivation string `json:"nameDerivation,omitempty"`
+	// OutsideGuarantee says what makes this restore other than the round
+	// trip the platform guarantees -- another version line, another tenant
+	// name, another domain -- when something does: the message of the
+	// restore's OutsideGuarantee condition.
+	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
 }
 
 // StartRestore writes the key into a Secret the TenantRestore names, owned
@@ -260,6 +265,12 @@ func restoreStatus(r *gentianov1alpha1.TenantRestore, tenant string) *RestoreSta
 		Complete:              r.Status.Complete, NotRestored: r.Status.NotRestored,
 		Notes: r.Status.Notes, NameDerivation: r.Status.NameDerivation}
 	for _, c := range r.Status.Conditions {
+		if c.Type == "OutsideGuarantee" {
+			if c.Status == metav1.ConditionTrue {
+				out.OutsideGuarantee = c.Message
+			}
+			continue
+		}
 		if c.Message != "" {
 			out.Message = c.Message
 		}

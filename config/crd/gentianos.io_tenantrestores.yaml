@@ -573,8 +573,12 @@ spec:
                 format: date-time
                 type: string
               conditions:
-                description: Conditions carry Accepted (admitted, and preflight passed)
-                  and Complete.
+                description: |-
+                  Conditions carry Accepted (admitted, and preflight passed) and Complete,
+                  and OutsideGuarantee when the restore is not the round trip the
+                  platform guarantees -- a bundle of its own version line, restored into
+                  the tenant it was taken of, on the same domain -- with what differs.
+                  Such a restore goes ahead as far as it can.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
