@@ -619,9 +619,14 @@ func (s RealmSource) mailMove() (from, to string) {
 // token's subject finds the same person after a restore or an import. A
 // person who is already in the realm is left under the id they have.
 //
-// Groups, roles and clients are brought back to what the bundle recorded:
+// Groups and the realm's roles are brought back to what the bundle recorded:
 // the bundle is always of the tenant restored into, so the platform's groups
 // (gentian:tenant:<tenant>:…) are named as they are here.
+//
+// Clients are not put back over the ones here. Every client the realm has is
+// left as it is, the platform's above all: it made them on this cluster, with
+// this cluster's secrets and addresses, and the export holds each secret only
+// masked. A client of the bundle that is not here is made, with a new secret.
 //
 // Where the tenant's mail domain is another than where the bundle was taken
 // (RealmSource.MailDomain), each person's address at the old one comes back
@@ -668,10 +673,28 @@ if [ -n "${MAIL_FROM}" ] && [ -n "${MAIL_TO}" ]; then
 fi
 new_token
 
-# partialImport with OVERWRITE brings groups, roles and clients back to what the
-# bundle recorded. It is scoped to the realm's contents and never recreates the
-# realm itself, which the platform provisions.
-jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:(.roles//{}), clients:(.clients//[])}' \
+# Clients first, and only those that are not here: SKIP leaves every client
+# the realm has as it is, with its id, its secret, its addresses and its
+# roles. The platform declares the clients it makes and has made them here
+# already; Keycloak's OVERWRITE would delete each and make it anew from the
+# bundle, under a new id, at the addresses the bundle was taken at, and with
+# the secret the export masked ("**********") as its secret. A client that
+# is not here is made from the bundle without any masked value, so Keycloak
+# gives it a new secret. Its roles come with it; a client here keeps its own.
+jq '{ifResourceExists:"SKIP",
+     clients: [(.clients // [])[]
+               | del(.secret, .registrationAccessToken)
+               | if (.attributes | type) == "object"
+                 then .attributes |= with_entries(select(.value != "**********"))
+                 else . end],
+     roles: {client: (.roles.client // {})}}' \
+  %[2]s/realm.json > %[2]s/import.json
+kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
+
+# Then groups and the realm's roles, with OVERWRITE: brought back to what the
+# bundle recorded. Scoped to the realm's contents; the realm itself, which the
+# platform provisions, is never recreated.
+jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:{realm:(.roles.realm//[])}}' \
   %[2]s/realm.json > %[2]s/import.json
 kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
 echo "imported realm configuration"

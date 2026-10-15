@@ -80,7 +80,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | Its other stored credentials (in the vault): a database's, a bucket's, a cache's, a sign-in client's, a model key | generated | never copied | — | generated new | kept | destroyed | kept | destroyed |
 | Access group and who is in it | made | copied, inside the realm | put back | put back | kept | destroyed | kept | destroyed |
 | Sign-in scope | made | not copied | — | made new | kept | destroyed | kept | destroyed |
-| Sign-in client | made | copied, inside the realm | put back | made new, then put back as the bundle recorded it | removed | — | removed, with the running app | destroyed |
+| Sign-in client | made | copied, inside the realm, its secret masked | kept: the bundle's is not put over it | made new; the bundle's is not put over it | removed | — | removed, with the running app | destroyed |
 | Model key (an app that declared the model gateway, on a cluster that serves models) | made | not copied | — | made new | kept | removed | kept | removed |
 | Provisioning records | written | not copied | — | written new | kept | destroyed, last | kept | destroyed, last |
 | **What the cluster owns** | | | | | | | | |
@@ -88,7 +88,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | **What a tenant owns that is no app's** | | | | | | | | |
 | The tenant's entry in git | committed | its settings are copied | — | committed from the bundle | the app is taken off it | — | removed | removed |
 | The namespace | made | — | — | made new | — | — | kept | destroyed |
-| The realm: people, groups, roles | made | copied | groups, roles and clients put back; missing people added | made new, then filled | — | — | kept, switched off | destroyed |
+| The realm: people, groups, roles | made | copied | groups and roles put back; clients here kept, missing ones added with a new secret; missing people added | made new, then filled | — | — | kept, switched off | destroyed |
 | People's passwords | set by each person | never copied | not put back | not brought | — | — | kept | destroyed |
 | The desktop's database | made | copied | put back | made new, then filled | — | — | kept | destroyed (the platform tenant's is emptied: the database itself is the cluster's) |
 | The tenant's own stored credentials (in the vault) | generated | never copied | — | generated new | — | — | kept | destroyed |
@@ -396,6 +396,15 @@ Each comes back under the id they had, so an app that keys an account by the
 sign-in's subject finds the same person; one already in the realm keeps the
 id they have there, and the restore's output says so.
 
+Accepted, not a gap: **a client the realm has is not put back.** The
+platform makes each app's client and the realm's own on the cluster, with
+that cluster's secret and addresses, and the export holds a client's secret
+only masked; putting the bundle's over it would replace it under a new id,
+with the old addresses and the mask as its secret. A client the tenant made
+itself and changed since keeps its changes; one that is no longer there is
+made from the bundle with a new secret, which its user reads in the realm,
+and at the addresses the bundle recorded.
+
 Closed: the data of uninstalled apps, the platform tenant's desktop database
 and mailboxes are in a backup; mailboxes are destroyed with the tenant; the
 rights that follow from nothing else are in a backup; a removed person's
@@ -411,8 +420,8 @@ storage is given none.
 What only a cluster can confirm: that each step's pod starts in its namespace
 and reaches the object store through the network policies, the mailbox steps
 beside the mail server's volume among them; that the realm
-steps work against the running sign-in service; and that restoring clients
-into a realm leaves each app's sign-in working.
+steps work against the running sign-in service; and that each app signs
+people in after its realm is put back.
 
 Further technical limits (bundle format, MariaDB naming, cache keys) are in
 [operations.md](operations.md) §9.6.

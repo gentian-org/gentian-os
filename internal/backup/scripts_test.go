@@ -493,6 +493,65 @@ func TestARealmImportMovesAddressesToTheNewMailDomain(t *testing.T) {
 	}
 }
 
+// The bundle's clients are never put over the realm's. Keycloak's export
+// masks a client's secret ("**********"), and OVERWRITE deletes the client
+// and makes it anew from the bundle: under a new id, at the addresses the
+// bundle was taken at, with the mask as its secret, so every app the platform
+// made a client for here could no longer sign anyone in. Clients go in a
+// partial import of their own with SKIP, with their roles, and with no masked
+// value, so a client that is not here gets a new secret; groups and the
+// realm's roles follow with OVERWRITE, as before.
+func TestARealmImportNeverPutsTheBundlesClientsOverTheRealms(t *testing.T) {
+	w := newRealmWorld(t)
+	realm := `{"realm":"acme",
+ "groups":[{"name":"staff","path":"/staff","clientRoles":{"acme-wiki":["user"]}}],
+ "roles":{"realm":[{"name":"auditor"}],"client":{"acme-wiki":[{"name":"user"}],"realm-management":[{"name":"realm-admin"}]}},
+ "clients":[{"id":"c1","clientId":"acme-wiki","secret":"**********","registrationAccessToken":"**********",
+             "redirectUris":["https://wiki.old.example/*"],
+             "attributes":{"saml.signing.certificate.private.key":"**********","post.logout.redirect.uris":"+"}},
+            {"id":"c2","clientId":"acme-tool","publicClient":true}]}`
+	w.archive(realm, "", "")
+	w.answer("POST", "acme/partialImport", 200, `{}`)
+	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
+
+	out, err := w.run(importScript("acme", RealmSource{}))
+	if err != nil {
+		t.Fatalf("the import failed: %v\n%s\n%s", err, out, w.log())
+	}
+	var imports []string
+	for _, line := range strings.Split(compactJSON(w.log()), "\n") {
+		if strings.HasPrefix(line, "BODY POST acme/partialImport ") {
+			imports = append(imports, line)
+		}
+	}
+	if len(imports) != 2 {
+		t.Fatalf("want two partial imports of the realm's configuration, got %d:\n%s", len(imports), w.log())
+	}
+	clients, rest := imports[0], imports[1]
+	for _, want := range []string{`"ifResourceExists":"SKIP"`, `"clientId":"acme-wiki"`, `"clientId":"acme-tool"`,
+		`"client":{"acme-wiki":[{"name":"user"}],"realm-management":[{"name":"realm-admin"}]}`,
+		`"post.logout.redirect.uris":"+"`} {
+		if !strings.Contains(clients, want) {
+			t.Errorf("the clients' import does not carry %s:\n%s", want, clients)
+		}
+	}
+	for _, not := range []string{"**********", `"secret"`, "registrationAccessToken", "OVERWRITE", `"groups"`, `"realm":[`} {
+		if strings.Contains(clients, not) {
+			t.Errorf("the clients' import carries %s:\n%s", not, clients)
+		}
+	}
+	for _, want := range []string{`"ifResourceExists":"OVERWRITE"`, `"name":"staff"`, `"realm":[{"name":"auditor"}]`} {
+		if !strings.Contains(rest, want) {
+			t.Errorf("the groups' and roles' import does not carry %s:\n%s", want, rest)
+		}
+	}
+	for _, not := range []string{`"clients"`, `"client":`, "acme-tool"} {
+		if strings.Contains(rest, not) {
+			t.Errorf("the groups' and roles' import, under OVERWRITE, carries %s:\n%s", not, rest)
+		}
+	}
+}
+
 // What the import used to pass over in silence now fails it, with the name:
 // a person the provider refuses, a group that is not there, a membership
 // that is refused -- and it still goes to the end, so the output names all.
@@ -502,8 +561,9 @@ func TestARealmImportFailsForWhatItCouldNotPutBack(t *testing.T) {
 	w.answer("POST", "acme/partialImport", 200, `{}`)
 	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
 	w.answer("GET", "acme/users?exact=true&username=ada", 200, `[]`)
-	// The first partial import is the realm's configuration, the second ada.
-	w.answerNth("POST", "acme/partialImport", 2, 409, `{"errorMessage":"User exists with same email"}`)
+	// The first two partial imports are the realm's configuration (clients,
+	// then groups and roles), the third ada.
+	w.answerNth("POST", "acme/partialImport", 3, 409, `{"errorMessage":"User exists with same email"}`)
 	w.answer("GET", "acme/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
 	// The members group is not there; nothing answers for it.
 
