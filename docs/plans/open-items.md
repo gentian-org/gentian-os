@@ -246,7 +246,7 @@ been seen working on a cluster. Until it has, it is not done.
   set again by a restore and by an import at the app's own paths, the app
   handed them and restarted; and an app's own secrets drawn at random under
   `secretMode: random`. The operator's part is proven in local containers,
-  against MinIO and OpenBao. That External Secrets fills the app's Secret
+  against the object store and OpenBao (SeaweedFS since 2026-10-15). That External Secrets fills the app's Secret
   again when told to, and that the Helm provider upgrades a release whose
   value changed, is played by the tests and has not been seen.
 - A tenant's deletion removing its mailboxes, and failing loudly.
@@ -343,6 +343,27 @@ Carried over from before, and still not shown:
 - The registrar keeping a tenant administrator's invitation until the
   tenant is ready and mailing it itself (iam.md §1.4).
 
+### Added on 2026-10-15
+
+- SeaweedFS 4.48 as the platform's object store, in place of MinIO: one pod
+  (master, volume server, filer, S3 gateway) from its own chart, vendored in
+  `charts/infra/seaweedfs` and served from the platform's chart index; the
+  administrator's credential at `gentian-os/kernel/storage/s3`; `s3-admin`
+  in place of `minio-admin`; the master's and the filer's ports admitted only
+  to the Jobs that run `weed shell`. An app's bucket and the identity it
+  reads it with (one per bucket, named after it, never Admin) made and
+  destroyed with `weed shell`. Every Job that moves a tenant's objects on
+  rclone, in the platform's storage tools image. New installs only; nothing
+  migrates. Proven in local containers against the pinned server
+  (`make test-object-storage-lab`): the bucket and destroy Jobs, a capture
+  and a restore of a bucket and of a volume, the upload and its checksum,
+  the manifest, a bundle's deletion, and that one app's key cannot read,
+  write or list another app's bucket, cannot delete its own, and is refused
+  once its bucket is purged. *Needs a cluster:* the Release under
+  provider-helm, the pod under the Kyverno baseline, the NetworkPolicy under
+  Calico (the master's address names a Service, the filer is reached at the
+  pod), and an app writing to its bucket.
+
 ## 3. Known defects, open
 
 Defects 1 to 28 are carried from the list as it stood on 2026-10-10.
@@ -352,7 +373,8 @@ day. What the two checks of 2026-10-11 found is in sections 7, 8 and 9
 and is not repeated in this table. Defects 29 and 30 were added on 2026-10-11
 from the repair of the catalogue's sign-in test and were read in the code
 at `be3cbea3` of `develop`. Defect 31 was added on 2026-10-13 from a mail
-fault on an installed cluster and reproduced in local containers.
+fault on an installed cluster and reproduced in local containers. Defect 32
+was added on 2026-10-15.
 
 | | Defect | Where it is described |
 | --- | --- | --- |
@@ -387,6 +409,7 @@ fault on an installed cluster and reproduced in local containers.
 | 29 | **The sign-in sidecar names a person to its app by Keycloak's email field, which holds the recovery address.** The sidecar's SAML client is composed with `forceNameIdFormat: true` and `nameIdFormat: email` (`crossplane/compositions/app-default.yaml`), and the comment there says the address is the one thing the sidecar reads. The registrar creates a person with the workspace address as the username and, when the invitation gave a different address, that other address in the email field (`internal/registrar/identity/people.go`, `Invite`): the field is the private address a password reset is mailed to. For such a person the app beside a sidecar (Docmost, Activepieces, OpenProject) is told the recovery address as who they are, or the sidecar refuses the sign-in because the address differs from the person the front door admitted. A person whose two addresses are the same is not affected, and the sidecar's own test has only such people. The realm's shared `email` scope and the OIDC packs of Nextcloud, XWiki and Element were pointed at the username for this reason; the SAML path was not. *Confirmed in code* for the two settings; what an app then shows, or whether the sign-in is refused, *needs a cluster* | [iam.md §1.11](../design/iam.md), [security.md §2.12](../design/security.md) |
 | 30 | **Nothing found sets the `uid` attribute that two packs read as the account name.** The OIDC packs of Nextcloud (both editions) and XWiki in the catalogue repository (`develop`, `03fcda7`) carry a mapper that writes the claim `gentian_username` (`opendesk_username` in one edition) from the user attribute `uid`. The registrar's invitation writes the username, the email field, the names, the groups and, where the addresses differ, the invitation address (`internal/registrar/identity/people.go`, `Invite`); it writes no `uid`. The tenant's Composition declares the attribute in the realm's user profile and writes no value; the only mappers in this repository that carry `uid` belong to the kernel identity provider in tenant realms, which is switched off. If nothing fills it, a person invited on the platform reaches these apps with an empty account-name claim: the app then falls back to another claim, or refuses the sign-in. *Confirmed in code* that the registrar does not set it; that nothing else does is *reasoned, not confirmed* (no writer was found); the effect in Nextcloud and XWiki *needs a cluster* | the catalogue repository's `profiles/nextcloud/base/*/oidc-catalog.yaml`, `profiles/xwiki/xwiki-ce/oidc-catalog.yaml` |
 | 31 | **A realm on a cluster with its own mail had a mail server without its password. Closed in the code on 2026-10-13 and shown in local containers, not yet on a cluster.** Keycloak answered an invitation with `failed to connect, no password specified?`. Two causes, both reproduced against Keycloak 26.8.0 with provider-keycloak v2.19.0. (a) The mail mode was renamed from `kernel` to `system` and two comparisons kept the old word: the installer gave the kernel realm no mail server and wrote no `keycloak-smtp-credentials`, so the operator built no mail-server Job for any tenant, and the Job's script would have handed a tenant realm the kernel realm's login. (b) That left the tenant's Composition as the only writer, and it names the password by reference to a Secret the operator wrote only after the realm existed: the provider wrote authentication on, the login and no password, and reported `Synced`. It puts that right at its next poll only if it has not restarted since; after a restart it never does, because it cannot read a password back. Now: both comparisons say `system`, the Job runs again over existing realms (version 5), the login is minted before the realm is declared, and step `D-03` reports work to do on a `system` cluster without the Secret. **An installed cluster needs** the operator's new image, the definitions (`./install.sh --only B-06`) and, with its own mail, `./install.sh --only D-03`. **Closed in the code on 2026-10-13 beside it, shown with the provider in local containers:** with a relay the Composition declared no mail server, the provider copied the live one into the resource without a password reference and wrote it back without the password two seconds after the Job; the Composition now declares the block in both modes from `spec.realmMail`, which the operator states once the password's Secret exists (Job version 6). A tenant the cluster's own mail mints no login for is declared no mail server and gets no Job. `loginWithEmailAllowed` is declared, so a realm the realm Job creates first is no longer refused its updates. The operator's image and the definitions of step `B-06` go together: the new Composition under an operator that states no `realmMail` declares no mail server. **Not established:** what the kernel realm's mail server held on the cluster when it failed the same way; by the code it had none, which fails with another message, and this is accepted as unexplained for now. **Not built:** a realm that had a mail server and is no longer stated one keeps the block the provider copied. | [mail.md §5d](../design/mail.md), `scripts/lib/portal-login-bootstrap.sh`, `internal/controller/keycloak_tenant_smtp.go`, `internal/controller/mail_apppassword.go`, `make test-realm-smtp-lab` |
+| 32 | **Every restore failed on its first step. Closed in the code on 2026-10-15, shown in local containers, not yet on a cluster.** Each restore Job's fetch step downloaded MinIO's client from `dl.min.io` when it ran; the address stopped answering when MinIO withdrew the client, and every restore of every kind -- database, bucket, volume, realm, mailboxes, desktop -- failed before it read a byte. Now the fetch, like every Job that moves a tenant's objects, runs rclone and age from the platform's storage tools image, at the operator's own tag, and downloads nothing. A bundle written before keeps restoring: the checksum beside an artefact has the format it had | `internal/backup/restore_jobs.go`, `kernel/images/storage-tools`, `make test-object-storage-lab` |
 
 
 ## 4. Decisions waiting for the owner
@@ -1160,7 +1183,7 @@ the code or its commit, the entry says so.
       volume claims (`charts/gentian-os/templates/clusterrole.yaml`,
       commit `fe3d387a`, 2026-10-09). The object store's network rule
       admits backup pods from those namespaces
-      (`kernel/services/infra-minio/manifests/templates/networkpolicy.yaml`).
+      (`kernel/services/infra-seaweedfs/manifests/templates/networkpolicy.yaml`).
       *That the backup key is staged into `kernel-data` and `system-mail`
       is reasoned, not confirmed.*
     - *Option A:* confirm it.

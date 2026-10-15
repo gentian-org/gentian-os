@@ -1038,10 +1038,21 @@ once you are sure:
 
 ```bash
 # What a deleted tenant left behind
-mc ls gentian/demo-gentian-backup/
+rclone lsf gentian:demo-gentian-backup/
 
 # Removing it is not reversible and no backup remains afterwards
-mc rm --recursive --force gentian/demo-gentian-backup/
+rclone purge gentian:demo-gentian-backup
+```
+
+`gentian:` is an rclone remote for the platform's own object store, set up
+from its administrator's Secret and a port-forward to its Service:
+
+```bash
+kubectl port-forward -n system-s3 svc/s3 19000:9000 &
+export RCLONE_CONFIG_GENTIAN_TYPE=s3 RCLONE_CONFIG_GENTIAN_PROVIDER=Other \
+  RCLONE_CONFIG_GENTIAN_ENDPOINT=http://localhost:19000 RCLONE_S3_NO_CHECK_BUCKET=true
+export RCLONE_CONFIG_GENTIAN_ACCESS_KEY_ID="$(kubectl get secret s3-admin -n system-s3 -o jsonpath='{.data.accessKey}' | base64 -d)"
+export RCLONE_CONFIG_GENTIAN_SECRET_ACCESS_KEY="$(kubectl get secret s3-admin -n system-s3 -o jsonpath='{.data.secretKey}' | base64 -d)"
 ```
 
 ### Reading a bundle
@@ -1051,7 +1062,7 @@ encrypted; `bundle-info.json` is deliberately not, and names the command that
 opens the rest:
 
 ```bash
-mc cat gentian/demo-gentian-backup/nightly-2026-08-18/bundle-info.json
+rclone cat gentian:demo-gentian-backup/nightly-2026-08-18/bundle-info.json
 
 # Platform key
 age -d -i /path/to/identity manifest.json.age > manifest.json
@@ -1076,10 +1087,10 @@ and still restores. Format 4 is what an export writes now.
 
 #### When the bundle is on external storage
 
-`mc` above is aliased to the platform's own MinIO. A tenant whose policy names
-an external endpoint writes there instead, with a credential the operator keeps
-in the kernel namespace rather than the tenant's — so reading such a bundle
-means aliasing that endpoint first:
+`gentian:` above is the platform's own object store. A tenant whose policy
+names an external endpoint writes there instead, with a credential the
+operator keeps in the kernel namespace rather than the tenant's — so reading
+such a bundle means a remote for that endpoint first:
 
 ```bash
 ns=system-s3                             # not the tenant namespace
@@ -1087,9 +1098,12 @@ sec=backup-destination-<tenant>          # from status.bundle.credentialSecret
 ak=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.accessKey}'  | base64 -d)
 sk=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.secretKey}' | base64 -d)
 
-mc alias set ext https://sos-ch-dk-2.exo.io "$ak" "$sk" --api S3v4
-mc ls  ext/<bucket>/<prefix>/
-mc cat ext/<bucket>/<prefix>/bundle-info.json
+export RCLONE_CONFIG_EXT_TYPE=s3 RCLONE_CONFIG_EXT_PROVIDER=Other \
+  RCLONE_CONFIG_EXT_ENDPOINT=https://sos-ch-dk-2.exo.io RCLONE_CONFIG_EXT_REGION=ch-dk-2 \
+  RCLONE_CONFIG_EXT_ACCESS_KEY_ID="$ak" RCLONE_CONFIG_EXT_SECRET_ACCESS_KEY="$sk" \
+  RCLONE_S3_NO_CHECK_BUCKET=true
+rclone lsf ext:<bucket>/<prefix>/
+rclone cat ext:<bucket>/<prefix>/bundle-info.json
 ```
 
 `kubectl get tenantexport <name> -n tenant-<t> -o jsonpath='{.status.bundle}'`
@@ -1101,7 +1115,7 @@ or — on a cluster that escrows it — straight out of OpenBao:
 
 ```bash
 bao kv get -mount=secret -field=identity gentian-os/kernel/backup/identity > id.txt
-mc cat ext/<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
+rclone cat ext:<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
 ```
 
 ## 12. Tenant Restore
@@ -1256,8 +1270,8 @@ The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A
 restore refused before it changed anything leaves it, so the import can be
 asked for again without uploading twice; an upload that is never restored
-stays until it is removed by hand (`mc rm --recursive --force
-gentian/gentian-imports/<prefix>/`). App grants are not in a bundle: they are
+stays until it is removed by hand (`rclone purge
+gentian:gentian-imports/<prefix>`). App grants are not in a bundle: they are
 declared in git, and a tenant imported into another cluster has them to set
 again. An import brings the data of apps that were uninstalled with their
 data kept, as uninstalled apps, when this cluster has their definitions. It
@@ -1346,12 +1360,11 @@ after a tenant moves its storage.
 ### Object Lock
 
 Full bundles suit WORM storage because no object is ever rewritten; each export
-occupies a fresh prefix. Set a default retention on the bucket and every
-uploaded object inherits it:
-
-```bash
-mc retention set --default COMPLIANCE 30d gentian/gentian-bundles
-```
+occupies a fresh prefix. Object Lock is a property a bucket is made with and
+cannot be switched on later, so this is for an external destination whose
+bucket you create with it, with a default retention every uploaded object
+inherits (e.g. `aws s3api put-object-lock-configuration` there). The
+platform's own store makes the bundle bucket itself, without a lock.
 
 Retention deletes will then fail for locked objects until they expire, which is
 the lock doing its job. Size the policy's tiers against the lock period rather

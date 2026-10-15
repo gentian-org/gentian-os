@@ -12,27 +12,22 @@ because a recovery you cannot perform by hand is one you cannot debug.
 what you are doing:
 
 ```bash
-# mc — the MinIO client, for reading bundles out of object storage. MinIO has
-# archived it; the last release's binaries are still on GitHub, one per
-# platform (https://github.com/minio/mc/releases/tag/RELEASE.2025-08-13T08-35-41Z).
-mkdir -p ~/.local/bin
-curl -sSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o ~/.local/bin/mc
-chmod +x ~/.local/bin/mc
+# rclone, for reading bundles out of object storage: any S3 store, the
+# platform's own or an external destination (https://rclone.org/install/).
+sudo apt install rclone        # or: brew install rclone
 
 # to read a QR code back in, and to write one out
 sudo apt install zbar-tools qrencode
 ```
 
-If `mc` is still not found after that, `~/.local/bin` is not on this shell's
-`PATH` — `~/.profile` adds it only when the directory existed at login, so the
+The installer puts `bao` in `~/.local/bin`. If it is not found, that directory
+is not on this shell's `PATH` — `~/.profile` adds it only when the directory existed at login, so the
 first thing you ever install there is invisible until you say so:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"                      # this shell
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # and future ones
 ```
-
-The installer puts `bao` in the same place, so this fixes both at once.
 
 `jq` is needed for anything that asks the cluster, and `bao` for
 `--from-vault`. Each is named at the point it is missing, so you can also just
@@ -398,14 +393,17 @@ scripts/recovery.sh inspect --tenant <t> --from-vault
 With no `--export` it takes the newest completed backup and says which one it
 chose. Name a specific one with `--export <name>`, or point straight at storage
 with `--s3-bucket` when there is no cluster to ask. It reads the bundle's
-location from the export's own status, aliases the endpoint with the credential
-the operator keeps, prints `bundle-info.json` and decrypts the manifest —
+location from the export's own status, points rclone at the endpoint with the
+credential the operator keeps, prints `bundle-info.json` and decrypts the manifest —
 writing nothing. By hand:
 
 ```bash
-mc cat <alias>/<bucket>/<prefix>/bundle-info.json
-mc cat <alias>/<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
+rclone cat <remote>:<bucket>/<prefix>/bundle-info.json
+rclone cat <remote>:<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
 ```
+
+(an rclone remote set up as [commands.md](commands.md) §11 shows, from the
+environment, for the platform's own store or an external one).
 
 If the manifest decrypts, the bundle is readable and the key is the right one —
 which is most of what a restore needs to be true.

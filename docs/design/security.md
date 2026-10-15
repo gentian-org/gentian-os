@@ -121,7 +121,7 @@ One engine opens nothing of the other. The ports are the ones the app is handed 
 
 ### 2.7 Who may reach a shared store
 
-Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on its server's pods. It is delivered by the engine's own chart (`templates/networkpolicy.yaml` in `kernel/data/tenant-postgres` and `kernel/services/infra-{mariadb,redis,minio}/manifests`), in the Argo CD sync that brings the values the server is installed from, so a server is never up without it. A connection is admitted from the sources below, on the port named, and from nowhere else.
+Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on its server's pods. It is delivered by the engine's own chart (`templates/networkpolicy.yaml` in `kernel/data/tenant-postgres` and `kernel/services/infra-{mariadb,redis,seaweedfs}/manifests`), in the Argo CD sync that brings the values the server is installed from, so a server is never up without it. A connection is admitted from the sources below, on the port named, and from nowhere else.
 
 | Server | Port | Admitted |
 | --- | --- | --- |
@@ -129,9 +129,11 @@ Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on it
 | | 8000 | CloudNativePG's operator in `kernel-data`, which asks each instance for its state |
 | MariaDB, `system-mariadb` | 3306 | tenant namespaces; pods of `system-mariadb` itself (the setup and destroy Jobs, and the dump and load of a backup and a restore) |
 | Redis, `system-cache` | 6379 | tenant namespaces; pods of `system-cache` itself (the ACL and destroy Jobs) |
-| MinIO, `system-s3` | 9000 | tenant namespaces (apps, and the volume capture and restore pods, which run where the claim is); pods of `system-s3` itself (the bucket and destroy Jobs, the capture and restore of a bucket, a bundle's manifest); pods labelled `gentianos.io/component=tenant-export` in `system-postgresql`, `system-mariadb`, the identity namespace, `system-mail` (the copy of a tenant's mailboxes, beside the mail server's volume) and `kernel-data` (the desktop database of the tenant that adopts the kernel realm, beside the kernel's PostgreSQL), which are the steps of a backup and a restore that run beside their own service and write to or read from the bundle; the operator's pods in `kernel-control` (a bundle's manifest, download and import) |
+| SeaweedFS, `system-s3` | 9000 (S3) | tenant namespaces (apps, and the volume capture and restore pods, which run where the claim is); pods of `system-s3` itself (the bucket and destroy Jobs, the capture and restore of a bucket, a bundle's manifest); pods labelled `gentianos.io/component=tenant-export` in `system-postgresql`, `system-mariadb`, the identity namespace, `system-mail` (the copy of a tenant's mailboxes, beside the mail server's volume) and `kernel-data` (the desktop database of the tenant that adopts the kernel realm, beside the kernel's PostgreSQL), which are the steps of a backup and a restore that run beside their own service and write to or read from the bundle; the operator's pods in `kernel-control` (a bundle's manifest, download and import) |
 
-Closed, deliberately: PostgreSQL's metrics port (9187) and MinIO's console (9001). Nothing the platform runs uses either; a cluster that brings a Prometheus adds a policy of its own selecting the same pods, since policies add up.
+SeaweedFS's master and filer gRPC ports (19333, 18888) check no key: whoever reaches them can make and delete buckets and identities and read every object. They are admitted only from pods of `system-s3` labelled `gentianos.io/object-store-shell=true`, the platform's bucket Job, destroy Job and a bucket's restore, which administer the store with `weed shell`. An app's isolation from another app's bucket is its key: one identity per bucket, named after it, allowed Read, Write, List and Tagging on that bucket alone, never Admin.
+
+Closed, deliberately: PostgreSQL's metrics port (9187), and SeaweedFS's master and filer HTTP ports and its volume server's ports (reached inside the pod only; the kubelet's probes come from the node). Nothing the platform runs uses them; a cluster that brings a Prometheus adds a policy of its own selecting the same pods, since policies add up.
 
 **The rule has two sides, and neither is enough alone.** A server cannot tell one tenant's app from another's pod, so its policy admits every namespace labelled `gentianos.io/tier=tenant`. It keeps out everything that is not a tenant namespace or a client named above: the kernel's other namespaces, the other system namespaces, a tenant's DMZ, a namespace outside the layout. What keeps out an app that declared no such store is the tenant's side (§2.6): `tenant-isolation` denies egress for every pod of a tenant's namespace -- the platform tenant's and a single-tenancy cluster's `user` tenant included, since both are Tenants and the same reconcile writes it -- and `kernel-access-<app>` opens one store's port for the app that declared it. Two things on that side are wider than a declaring app: a component with a database requirement (the desktop) is opened the whole of `system-postgresql`, which the server now narrows to 5432, and a capture pod (`gentian-tenant-export`) is opened the three stores a bundle can hold.
 
@@ -764,7 +766,7 @@ the code does.
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
 | NetworkPolicy in the kernel namespaces | Implemented for ingress, **off by default**; egress open | With `KERNEL_NETWORK_POLICIES=true` each of the eleven kernel namespaces refuses an ingress nothing lists, from one inventory (`internal/kernel/kernelnet/inventory.yaml`) the policies are generated from; webhook ports admit any source, because no portable rule names the API server (§2.13). Applied by the installer with the namespaces. Off until a cluster has run them; without the switch a kernel pod is selected only by the policies its own chart delivers. No kernel namespace restricts egress (gap G28, the egress half) |
-| NetworkPolicy in system and shared namespaces | **Partial**: ingress to twelve servers, egress from one | One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One each on Dovecot and Postfix, which no longer face the internet, and one on the proxy in the mail DMZ that does -- the one pod of these whose egress is restricted too (§2.8). One on each server of the model gateway's namespace (§2.9). The kernel's own PostgreSQL and the operator keep the policies their charts deliver, beside the kernel namespaces' rules |
+| NetworkPolicy in system and shared namespaces | **Partial**: ingress to twelve servers, egress from one | One on each shared store -- PostgreSQL, MariaDB, Redis, SeaweedFS -- admitting tenant namespaces and the platform's named clients (§2.7). One each on Dovecot and Postfix, which no longer face the internet, and one on the proxy in the mail DMZ that does -- the one pod of these whose egress is restricted too (§2.8). One on each server of the model gateway's namespace (§2.9). The kernel's own PostgreSQL and the operator keep the policies their charts deliver, beside the kernel namespaces' rules |
 | Publishing proxy: declared paths only, one reading of a path, every identity header removed, size, time and rate limits per client address | Implemented | `component_perimeter_config.go`; run against the proxy itself (§2.14) |
 | Publishing proxy: passing the caller's credential to the app (`authMode: app`) | Implemented | Only for an entry approved as that kind; `Cookie` and identity headers still removed; a lower rate per client address (§2.14). The platform checks no caller: accepted (AD-1) |
 | Publishing proxy: a caller check at the edge (`basic`, `signature`, `jwt`, `bearer`) | **Target**; the values are refused | The schema refuses them on a perimeter entry, so no entry claims a check that is not made (§2.14) |
@@ -1155,7 +1157,7 @@ gentian-os/
 │   ├── internal/master-password      #   value, salt (§6)
 │   ├── database/                     #   postgresql, mariadb, cnpg, portal-shell
 │   ├── cache/redis
-│   ├── storage/                      #   minio, registry
+│   ├── storage/                      #   s3, registry
 │   ├── identity/keycloak-bootstrap   #   Keycloak's bootstrap administrator
 │   ├── authz/openfga                 #   the rights store's preshared key
 │   ├── oidc/openbao                  #   OpenBao's own sign-in client
@@ -1638,7 +1640,7 @@ known.
 Nothing the platform generates overwrites a credential that is already there.
 
 - **Kernel paths the `Cluster` Composition makes** (`database/postgresql`,
-  `database/mariadb`, `cache/redis`, `storage/minio`,
+  `database/mariadb`, `cache/redis`, `storage/s3`,
   `identity/keycloak-bootstrap`, `authz/openfga`, `mail/postfix`,
   `mail/dovecot`, `oidc/openbao`) and the platform tenant's desktop database
   credential beside them (`tenants/platform/apps/shell/database`) are managed

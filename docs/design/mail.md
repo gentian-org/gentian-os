@@ -117,7 +117,7 @@ This is the same model every other shared kernel component uses:
 |---|---|---|
 | Keycloak | Realm per tenant | 2–3 (shared) |
 | PostgreSQL | Database + user per tenant | 2–3 (shared) |
-| MinIO | Bucket + IAM policy per tenant | 2–3 (shared) |
+| SeaweedFS | Bucket + scoped identity per app | 2–3 (shared) |
 | Redis | ACL user per tenant | 2–3 (shared) |
 | **Mail** | **SASL credentials + mailbox path per tenant** | **6–9 (shared)** |
 

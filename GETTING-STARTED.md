@@ -428,7 +428,7 @@ syncs from the repository and not from your checkout, so nothing it syncs —
 the claims, later the tenants — reaches the cluster until the push lands.
 
 There is no `claims/infra-data.yaml`. The shared Postgres, MariaDB, Redis and
-MinIO are composed with the cluster into the system tier, and the installer
+SeaweedFS are composed with the cluster into the system tier, and the installer
 refuses to commit a claim whose kind this checkout does not define — so a
 leftover from an older checkout stops step 0 rather than reaching the cluster.
 

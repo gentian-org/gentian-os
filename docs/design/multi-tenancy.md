@@ -15,12 +15,12 @@ A **tenant** is an organisation. Each tenant gets:
 - A dedicated Keycloak realm with its own user pool, branding, and
   password policy.
 - Per-app PostgreSQL/MariaDB databases with isolated users.
-- Per-app MinIO buckets with IAM policies scoped to that tenant.
+- Per-app buckets in the object store, each with an identity scoped to that bucket.
 - Per-app Redis ACL users.
 - (If mail enabled) a dedicated mail domain with isolated mailbox path
   and DKIM keys.
 
-Kernel services (Keycloak, PostgreSQL, MinIO, Redis, Postfix, Dovecot)
+Kernel services (Keycloak, PostgreSQL, SeaweedFS, Redis, Postfix, Dovecot)
 are **shared infrastructure with tenant-scoped configuration** — the
 same model every shared OS service uses (a Linux kernel runs one
 filesystem driver and isolates users via UID/GID, not by booting one
@@ -272,7 +272,7 @@ Manifests: production `cluster-issuers.yaml`; staging `cluster-issuers-staging.y
 NetworkPolicies enforce three rules at the CNI level:
 
 1. Tenant namespaces can reach kernel services (Keycloak, PostgreSQL,
-   MinIO, Redis, Postfix).
+   SeaweedFS, Redis, Postfix).
 2. Tenant namespaces **cannot** reach other tenant namespaces.
 3. App-to-app calls within a tenant need a grant. Two profiles that
    name the same contract, one under `provides` and one under

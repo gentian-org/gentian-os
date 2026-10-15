@@ -669,7 +669,7 @@ copied anywhere.
 | Mailbox copy and load | `system-mail` | the mail server's volume |
 | MariaDB dump and load | `system-mariadb` | `mariadb-admin` |
 | Realm export and import | the identity namespace (`kernel-authentication`) | `keycloak-admin` |
-| Bucket archive and load, the manifest, a bundle's removal | `system-s3` | `minio-admin`, and the bundle's own credential and key |
+| Bucket archive and load, the manifest, a bundle's removal | `system-s3` | `s3-admin`, and the bundle's own credential and key |
 | Volume archive and load | the tenant's namespace | the claim |
 | An app's own secrets, into the bundle and back | no Job: the operator itself | the vault, as the operator; the bundle's credential in `system-s3`; the key from the export's or the restore's own Secret |
 
