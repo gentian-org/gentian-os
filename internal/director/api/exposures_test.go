@@ -392,3 +392,41 @@ func TestTheMainAddressNeedsTheApproversAcknowledgement(t *testing.T) {
 		}
 	}
 }
+
+// The perimeter is read by those who answer for it. pat, who holds can_expose
+// and nothing else, sees the registry and its history; mia, a member, sees
+// neither here.
+func TestThePerimeterIsReadByItsApprovers(t *testing.T) {
+	h := start(t)
+	pat := h.token(t, "tenant-demo", "pat")
+	mia := h.token(t, "tenant-demo", "mia")
+
+	if code, body := h.do(t, "PUT", sharesPath, pat, publishBody(time.Now().Add(24*time.Hour))); code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	code, body := h.do(t, "GET", "/v1/tenants/demo/perimeter/exposures", pat, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET perimeter/exposures = %d %v", code, body)
+	}
+	if live, _ := body["live"].([]any); len(live) != 1 {
+		t.Fatalf("the approver does not see what they published: %v", body)
+	}
+	code, body = h.do(t, "GET", "/v1/tenants/demo/perimeter/history", pat, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET perimeter/history = %d %v", code, body)
+	}
+	changes, _ := body["changes"].([]any)
+	if len(changes) != 1 {
+		t.Fatalf("history = %v, want the one publication", changes)
+	}
+	first, _ := changes[0].(map[string]any)
+	if first["decision"] != "can_expose tenant:demo" || first["throughPlatform"] != true {
+		t.Fatalf("the publication does not say what allowed it: %v", first)
+	}
+
+	for _, path := range []string{"/v1/tenants/demo/perimeter/exposures", "/v1/tenants/demo/perimeter/history"} {
+		if code, _ := h.do(t, "GET", path, mia, ""); code != http.StatusForbidden {
+			t.Errorf("a member read %s: %d", path, code)
+		}
+	}
+}

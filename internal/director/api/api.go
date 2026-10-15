@@ -108,6 +108,7 @@ type Repository interface {
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
 	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
+	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
@@ -556,6 +557,12 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/exposures", "can_view", tenantObject, s.tenantExposures)
 	s.guarded("PUT /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.publishExposure)
 	s.guarded("DELETE /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.withdrawExposure)
+
+	// The perimeter as those who answer for it see it: the same registry, and
+	// its history. can_expose, so an approver who is not otherwise a member
+	// of the tenant sees what they approve -- and nothing else of the tenant's.
+	s.guarded("GET /v1/tenants/{t}/perimeter/exposures", "can_expose", tenantObject, s.tenantExposures)
+	s.guarded("GET /v1/tenants/{t}/perimeter/history", "can_expose", tenantObject, s.perimeterHistory)
 
 	// Where software comes from: the repositories a tenant, or the cluster,
 	// installs from. The address is configuration -- it decides what may

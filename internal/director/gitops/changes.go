@@ -76,6 +76,19 @@ const maxChanges = 500
 
 // TenantChanges lists the commits that touched one tenant's directory.
 func (g *GitOps) TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]Change, error) {
+	return g.tenantChanges(ctx, tenant, "", limit, since)
+}
+
+// TenantExposureChanges lists the commits that published, reviewed or
+// withdrew one of the tenant's public entries: the perimeter's own history,
+// for those who answer for the perimeter, without the rest of the tenant's.
+func (g *GitOps) TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]Change, error) {
+	return g.tenantChanges(ctx, tenant, ExposuresFile, limit, since)
+}
+
+// tenantChanges lists the commits that touched one tenant's directory, or
+// one file in it.
+func (g *GitOps) tenantChanges(ctx context.Context, tenant, file string, limit int, since string) ([]Change, error) {
 	if !ValidName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
@@ -88,6 +101,9 @@ func (g *GitOps) TenantChanges(ctx context.Context, tenant string, limit int, si
 	dir, err := filepath.Rel(g.path, filepath.Dir(manifest))
 	if err != nil {
 		return nil, err
+	}
+	if file != "" {
+		dir = filepath.Join(dir, file)
 	}
 	return g.changes(ctx, dir, limit, since)
 }
