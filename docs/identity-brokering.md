@@ -103,6 +103,25 @@ shows the button (or, to go straight to the source, add
 `&kc_idp_hint=<alias>` to a sign-in URL of the target); after signing in at the source, they are back in the
 target, in the group.
 
+## The source on another cluster, commissioned with the tenant
+
+When the source realm is a tenant of *this* cluster and the target is on
+another — a hosted tenant whose people sign in to their provider's
+customer realm — step 1 need not be done by hand. The tenant is created with
+the target named:
+
+```bash
+kubectl gentian tenants create acme \
+  --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
+```
+
+The platform makes the client `broker-to-aluvian` in the tenant's realm. It
+has no secret: the target authenticates with a JWT signed by its own realm
+key, which the client checks against the keys the target publishes
+(`jwks`). In the target, step 2 is then done with *Client authentication*
+set to **JWT signed with private key** instead of a client secret, and
+*Client ID* `broker-to-aluvian`. Nothing secret crosses between the clusters.
+
 ## Removing it
 
 Delete the identity provider in the target, and the client in the source.

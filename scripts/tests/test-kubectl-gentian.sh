@@ -343,6 +343,17 @@ fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"012
 gentian tenants create globex
 has "... and a tenant made without it is not warned" "$(grep -c 'self-sign-up' <<<"${OUT}" || true)" "0"
 
+# An outside realm its people sign in at: named, sent as brokeredTo, said.
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","brokeredTo":1}'
+gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.example/auth/realms/customers/broker/acme/endpoint,jwks=https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
+is "create with an outside realm sends it as brokeredTo" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"acme","displayName":"","requireMFA":true,"brokeredTo":[{"name":"aluvian","redirectURI":"https://id.aluvian.example/auth/realms/customers/broker/acme/endpoint","jwksURL":"https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs"}]}'
+has "... and says where its people may sign in" "${OUT}" "Its people may sign in at: aluvian"
+fresh
+gentian tenants create acme --brokered-to name=aluvian,redirect=https://x.example/e
+refused "an outside realm without its keys' address is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true
 is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "

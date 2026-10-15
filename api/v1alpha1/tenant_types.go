@@ -49,6 +49,37 @@ type TenantSignUp struct {
 	Enabled bool `json:"enabled,omitempty"`
 }
 
+// TenantBrokeredTo is a realm outside this tenant -- usually of another
+// cluster -- where this tenant's people may sign in with their account here:
+// that realm brokers this one. The platform makes the client the outside
+// realm signs in with, in this tenant's realm, and nothing else: which of
+// the people who arrive there get any rights is the outside realm's to say.
+//
+// No secret is made or handed over. The client authenticates the outside
+// realm by a JWT that realm signs with its own key, checked against the
+// keys it publishes (JWKSURL): what crosses between the clusters is public.
+type TenantBrokeredTo struct {
+	// Name says whose realm it is; the client is broker-to-<name>.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// RedirectURI is the outside realm's broker endpoint for this tenant,
+	// https://id.<their domain>/auth/realms/<realm>/broker/<alias>/endpoint:
+	// the one address the client sends a person back to.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/[^\s]*$`
+	RedirectURI string `json:"redirectURI"`
+
+	// JWKSURL is where the outside realm publishes its signing keys,
+	// https://id.<their domain>/auth/realms/<realm>/protocol/openid-connect/certs.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/[^\s]*$`
+	JWKSURL string `json:"jwksURL"`
+}
+
 // SignUpEnabled reports whether people make their own accounts in this
 // tenant's realm (spec.signUp.enabled); off unless the tenant says so.
 func (t *Tenant) SignUpEnabled() bool {
@@ -99,6 +130,14 @@ type TenantSpec struct {
 	// or off, they are invited; see TenantSignUp.
 	// +optional
 	SignUp *TenantSignUp `json:"signUp,omitempty"`
+
+	// BrokeredTo are realms outside this tenant where its people may sign in
+	// with their account here; see TenantBrokeredTo. Empty: none.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=map
+	// +listMapKey=name
+	BrokeredTo []TenantBrokeredTo `json:"brokeredTo,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional

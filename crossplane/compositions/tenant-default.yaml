@@ -2207,6 +2207,61 @@ spec:
 
             {{- end }}{{- /* $kernelBroker */}}
 
+            {{- /* ── brokered to ──────────────────────────────────────────
+                 Realms outside the tenant -- usually of another cluster --
+                 where its people may sign in with their account here
+                 (spec.brokeredTo): one client each, broker-to-<name>, that
+                 sends a person back to the outside realm's broker endpoint
+                 and nowhere else.
+
+                 No secret. The outside realm authenticates with a JWT it
+                 signs with its own key (Keycloak's "JWT signed with private
+                 key" on its identity provider), and the client checks it
+                 against the keys that realm publishes: what crosses between
+                 the clusters is public, and nothing has to be handed over or
+                 rotated in two places.
+
+                 No role of this realm goes with a token (fullScopeAllowed
+                 off); the realm's default scopes do, the groups claim among
+                 them, which is how the outside realm can give rights by the
+                 groups a person has here. Orphan and everything except
+                 LateInitialize, as on the zone's client. */}}
+            {{- range $b := (dig "brokeredTo" list $spec) }}
+            {{- if regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name) }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-broker-to-{{ $b.name }}-client
+              annotations:
+                crossplane.io/external-name: broker-to-{{ $b.name }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-to-{{ $b.name }}-client
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: broker-to-{{ $b.name }}
+                name: {{ printf "Sign-in at %s" $b.name | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                clientAuthenticatorType: client-jwt
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                validRedirectUris:
+                  - {{ $b.redirectURI | quote }}
+                extraConfig:
+                  use.jwks.url: "true"
+                  jwks.url: {{ $b.jwksURL | quote }}
+                  token.endpoint.auth.signing.alg: RS256
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+
             {{- /* ── sign-up ──────────────────────────────────────────────
                  The registration flow of a tenant people sign up to. Its own
                  flow and not Keycloak's built-in one, which Keycloak refuses

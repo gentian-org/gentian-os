@@ -1269,6 +1269,17 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	if tenant.SignUpEnabled() {
 		spec["signUp"] = map[string]interface{}{"enabled": true}
 	}
+	// The same: only where there is one, so a tenant without composes as it
+	// did.
+	if len(tenant.Spec.BrokeredTo) > 0 {
+		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo))
+		for _, b := range tenant.Spec.BrokeredTo {
+			brokered = append(brokered, map[string]interface{}{
+				"name": b.Name, "redirectURI": b.RedirectURI, "jwksURL": b.JWKSURL,
+			})
+		}
+		spec["brokeredTo"] = brokered
+	}
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas
 	}

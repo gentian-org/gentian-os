@@ -106,6 +106,15 @@ a tenant whose apps serve the public, not for a workspace
 kubectl gentian tenants create customers --display-name "Customers" --self-sign-up
 ```
 
+And where else the tenant's people may sign in with their account here — a
+realm of another cluster that brokers this one (`--brokered-to`, repeatable,
+`spec.brokeredTo`): a client per realm, trusting that realm's published keys,
+with no secret ([identity-brokering.md](identity-brokering.md)):
+
+```bash
+kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
+```
+
 Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,
 `spec.catalogue.delegated`), committed by the director as you
 (`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/perimeter-delegation` and
