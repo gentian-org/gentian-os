@@ -13,6 +13,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -49,6 +50,9 @@ func (o *sourcingOperator) Get(ctx context.Context, path string, q url.Values) (
 	case path == "/v1/bundle-sources":
 		return http.StatusOK, []byte(`{"sources":[{"name":"left-behind","endpoint":"https://s3.example","bucket":"b","ready":true}]}`), nil
 	case strings.Contains(path, "bundle-sources") || strings.HasPrefix(path, "/v1/bundle-fetches/"):
+		if len(q) > 0 {
+			path += "?" + q.Encode()
+		}
 		o.record("GET " + path)
 		return http.StatusOK, []byte(`{"bundles":[]}`), nil
 	}
@@ -70,6 +74,17 @@ func (o *sourcingOperator) Do(ctx context.Context, path, actor string, body any)
 		return http.StatusOK, []byte(`{"bundle":{"bucket":"old","prefix":"nightly","endpoint":"https://s3.example","credentialSecret":"bundle-source-old"},"manifest":` + importedManifest + `}`), nil
 	}
 	return o.importingOperator.Do(ctx, path, actor, body)
+}
+
+func (o *sourcingOperator) Stream(_ context.Context, path string) (*http.Response, error) {
+	o.record("STREAM " + path)
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("tar"))}, nil
+}
+
+func (o *sourcingOperator) Upload(_ context.Context, path, _ string, body io.Reader) (int, []byte, error) {
+	_, _ = io.Copy(io.Discard, body)
+	o.record("UPLOAD " + path)
+	return http.StatusCreated, []byte(`{"bundle":{"bucket":"gentian-imports","prefix":"20261016-000000-aaaaaaaa"}}`), nil
 }
 
 // A source's address is a commit; the list says what git declares beside what
@@ -182,5 +197,58 @@ func TestAnImportFromADeclaredSourceRestoresTheBundleItResolvedTo(t *testing.T) 
 	waitImport(t, h, alice, "imported", "ready", "failed")
 	if !strings.Contains(op.seen(), `"bundle":{"bucket":"old","prefix":"nightly","endpoint":"https://s3.example","credentialSecret":"bundle-source-old"}`) {
 		t.Errorf("the restore was not of the resolved bundle: %s", op.seen())
+	}
+}
+
+// A tenant's administrator fetches from the tenant's own sources under
+// can_set_policy, and the operator is told whose fetch it is, so that it
+// fetches only the tenant's bundles and counts the copy towards the tenant's
+// limits; the fetch, the copy and an upload of the tenant's are read and
+// made as the tenant's. The cluster's routes ask nothing of the kind.
+func TestATenantsAdministratorFetchesFromItsOwnSourcesAsTheTenant(t *testing.T) {
+	op := &sourcingOperator{}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	tom := h.token(t, "tenant-demo", "tom")
+
+	code, body := h.do(t, "POST", "/v1/tenants/demo/bundle-sources/destination/actions/fetch", tom, `{"prefix":"nightly"}`)
+	if code != http.StatusAccepted || body["name"] != "bundle-fetch-1" {
+		t.Fatalf("tom's fetch = %d %v", code, body)
+	}
+	if !strings.Contains(op.seen(), `/v1/bundle-fetches {"source":{"name":"destination","prefix":"nightly","tenant":"demo"},"tenant":"demo"}`) {
+		t.Errorf("the operator was asked %s", op.seen())
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/solo/bundle-sources/storage/actions/fetch", tom, `{"prefix":"nightly"}`); code != http.StatusForbidden {
+		t.Errorf("tom fetched from another tenant's source: %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/demo/bundle-sources/storage/actions/fetch", tom, `{"prefix":"nightly"}`); code != http.StatusForbidden {
+		t.Errorf("tom used the cluster's fetch: %d", code)
+	}
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/bundle-fetches/bundle-fetch-1", tom, ""); code != http.StatusOK {
+		t.Errorf("tom's fetch status = %d", code)
+	}
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/bundles/20261016-000000-aaaaaaaa/download", tom, ""); code != http.StatusOK {
+		t.Errorf("tom's copy = %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/bundles", tom, "tar"); code/100 != 2 {
+		t.Errorf("tom's upload = %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/bundles", alice, "tar"); code/100 != 2 {
+		t.Errorf("alice's upload = %d", code)
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/bundle-fetches/bundle-fetch-1", alice, ""); code != http.StatusOK {
+		t.Errorf("alice's fetch status = %d", code)
+	}
+	seen := op.seen()
+	for _, want := range []string{
+		"GET /v1/bundle-fetches/bundle-fetch-1?tenant=demo\n",
+		"STREAM /v1/bundles/20261016-000000-aaaaaaaa/download?tenant=demo\n",
+		"UPLOAD /v1/bundles?tenant=demo\n",
+		"UPLOAD /v1/bundles\n",
+		"GET /v1/bundle-fetches/bundle-fetch-1\n",
+	} {
+		if !strings.Contains(seen+"\n", want) {
+			t.Errorf("the operator was not asked %q:\n%s", want, seen)
+		}
 	}
 }

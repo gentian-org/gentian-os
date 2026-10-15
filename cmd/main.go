@@ -515,6 +515,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
 		os.Exit(1)
 	}
+	// Nothing stays in the import bucket longer than a week, used or not.
+	if err := mgr.Add(&bundlestore.Sweeper{
+		Store:  &bundlestore.Store{Client: mgr.GetClient()},
+		Client: mgr.GetClient(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the import bucket sweep")
+		os.Exit(1)
+	}
 
 	if err := (&controller.TenantExportScheduleReconciler{
 		Definitions: held,

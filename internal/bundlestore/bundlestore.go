@@ -311,14 +311,5 @@ func (s *Store) RemoveImported(ctx context.Context, ref gentianov1alpha1.BundleR
 	if err != nil {
 		return err
 	}
-	prefix := ObjectPrefix(ref)
-	for obj := range mc.ListObjects(ctx, ref.Bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
-		if obj.Err != nil {
-			return fmt.Errorf("listing the uploaded bundle %s: %w", ref.Prefix, obj.Err)
-		}
-		if err := mc.RemoveObject(ctx, ref.Bucket, obj.Key, minio.RemoveObjectOptions{}); err != nil {
-			return fmt.Errorf("removing %s: %w", obj.Key, err)
-		}
-	}
-	return nil
+	return ImportsOf(mc).Remove(ctx, ref.Prefix)
 }

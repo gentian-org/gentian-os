@@ -765,6 +765,13 @@ func (s *Server) routes() {
 		// listed; a destination's bucket may hold other tenants' too.
 		s.guarded("GET /v1/tenants/{t}/bundle-sources", "can_set_policy", tenantObject, s.tenantSources)
 		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
+		// Fetching one of them into the cluster's import storage, to rewrite
+		// it before it is restored: only a bundle whose header names the
+		// tenant, counted towards the tenant's limits there, and its fetch
+		// and its copy are the tenant's to read alone.
+		s.action("POST /v1/tenants/{t}/bundle-sources/{name}/actions/fetch", "can_set_policy", tenantObject, s.fetchFromOwnSource)
+		s.guarded("GET /v1/tenants/{t}/bundle-fetches/{f}", "can_set_policy", tenantObject, s.bundleFetch)
+		s.guarded("GET /v1/tenants/{t}/bundles/{prefix}/download", "can_set_policy", tenantObject, s.importedBundleDownload)
 	}
 
 	// No people, groups or realm settings here. They are the registrar's

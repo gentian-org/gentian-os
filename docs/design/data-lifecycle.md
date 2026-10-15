@@ -264,6 +264,17 @@ plaintext `bundle-info.json`; an import or a restore reads the bundle where
 it is; a fetch copies it into `gentian-imports`, from where it is downloaded
 and handled as an upload (commands.md §12a).
 
+**Clean-up of the import storage.** What is in `gentian-imports`, uploaded
+or fetched, goes once the restore or import that read it has run, and in
+any case seven days after it was put there: the operator sweeps the bucket
+hourly by the record each upload and fetch writes beside the bundle
+(`.records/<prefix>.json`: tenant, kind, time), sparing a bundle a restore
+that has not ended reads. A tenant's administrator may put one bundle of at
+most 20 GiB there, and 50 GiB at once for the tenant, uploads and fetches
+together (constants in `internal/bundlestore/imports.go`); past either the
+request is refused with `413` and nothing is kept. The cluster's
+administrator is not bounded.
+
 The import is recorded in git beside the new tenant until it has finished.
 A director that restarts goes on with it. It needs the bundle's key again
 only if the restore had not yet started: the key is never written down.

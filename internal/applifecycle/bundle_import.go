@@ -71,39 +71,62 @@ type Inspection struct {
 }
 
 // UploadBundle lays a .gentian tar out under a fresh prefix in the import
-// bucket and returns where it went.
-func (s *Service) UploadBundle(ctx context.Context, body io.Reader) (*gentianov1alpha1.BundleRef, error) {
+// bucket and returns where it went. tenant is the tenant whose administrator
+// uploads it, empty for the cluster's: a tenant's upload is recorded as its
+// own and refused past its limits (bundlestore.MaxTenantUpload,
+// MaxTenantImports), by the sizes the tar's own headers give before each
+// file is stored, and what was stored of a refused one is removed.
+func (s *Service) UploadBundle(ctx context.Context, body io.Reader, tenant string) (*gentianov1alpha1.BundleRef, error) {
 	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
 	if err != nil {
 		return nil, err
 	}
-	if err := mc.MakeBucket(ctx, importBucket, minio.MakeBucketOptions{}); err != nil {
-		if exists, eerr := mc.BucketExists(ctx, importBucket); eerr != nil || !exists {
-			return nil, fmt.Errorf("import bucket: %w", err)
+	if err := bundlestore.EnsureBucket(ctx, mc); err != nil {
+		return nil, err
+	}
+	imports := bundlestore.ImportsOf(mc)
+	allowance := int64(-1)
+	if tenant != "" {
+		if allowance, err = imports.TenantAllowance(ctx, tenant); err != nil {
+			return nil, err
 		}
 	}
-	prefix := time.Now().UTC().Format("20060102-150405") + "-" + uuid.NewString()[:8]
+	now := time.Now().UTC()
+	prefix := now.Format("20060102-150405") + "-" + uuid.NewString()[:8]
+	if err := imports.PutRecord(ctx, prefix, bundlestore.Record{Tenant: tenant, Kind: "upload", At: now}); err != nil {
+		return nil, err
+	}
+	discard := func(cause error) error {
+		if rerr := imports.Remove(context.WithoutCancel(ctx), prefix); rerr != nil {
+			return fmt.Errorf("%w (and what was stored of it could not be removed: %v)", cause, rerr)
+		}
+		return cause
+	}
 	tr := tar.NewReader(body)
 	var count int
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("the upload is not a bundle (tar): %w", err)
+			return nil, discard(fmt.Errorf("the upload is not a bundle (tar): %w", err))
 		}
 		name := strings.TrimPrefix(hdr.Name, "./")
 		if hdr.Typeflag != tar.TypeReg || name == "" || strings.Contains(name, "..") {
 			continue
 		}
+		if total += hdr.Size; allowance >= 0 && total > allowance {
+			return nil, discard(bundlestore.TooLarge(total, allowance))
+		}
 		if _, err := mc.PutObject(ctx, importBucket, prefix+"/"+name, tr, hdr.Size, minio.PutObjectOptions{}); err != nil {
-			return nil, fmt.Errorf("storing %s: %w", name, err)
+			return nil, discard(fmt.Errorf("storing %s: %w", name, err))
 		}
 		count++
 	}
 	if count == 0 {
-		return nil, errors.New("the upload holds no files")
+		return nil, discard(errors.New("the upload holds no files"))
 	}
 	return &gentianov1alpha1.BundleRef{Bucket: importBucket, Prefix: prefix}, nil
 }
@@ -345,8 +368,14 @@ func (h *HTTPServer) handleBundleUpload(w http.ResponseWriter, r *http.Request) 
 	// An upload is as large as the bundle; the server's read deadline is for
 	// requests that fit in memory.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
-	ref, err := h.Service.UploadBundle(r.Context(), r.Body)
-	if err != nil {
+	// tenant is the tenant whose administrator uploads, which the director
+	// sets from its route: the upload counts towards that tenant's limits.
+	ref, err := h.Service.UploadBundle(r.Context(), r.Body, r.URL.Query().Get("tenant"))
+	switch {
+	case errors.Is(err, bundlestore.ErrImportLimit):
+		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	case err != nil:
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}

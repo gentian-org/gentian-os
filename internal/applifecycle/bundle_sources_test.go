@@ -11,10 +11,15 @@ SPDX-License-Identifier: MPL-2.0
 package applifecycle
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +34,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
+	"github.com/gentian-org/gentian-os/internal/bundlestore/s3test"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -43,6 +49,18 @@ func sourcesService(t *testing.T, objects ...client.Object) (*Service, client.Cl
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 	return &Service{client: c}, c
+}
+
+// clusterStorage is the cluster's own storage, in memory, and the Secret
+// that holds its address and keys.
+func clusterStorage(t *testing.T) (*s3test.Server, *corev1.Secret) {
+	t.Helper()
+	s3 := s3test.New(t)
+	return s3, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: layout.System("s3")},
+		Data: map[string][]byte{"endpoint": []byte(s3.URL),
+			backup.DestinationAccessKeyField: []byte("a"), backup.DestinationSecretKeyField: []byte("b")},
+	}
 }
 
 func oldStore() *gentianov1alpha1.BundleSource {
@@ -120,8 +138,9 @@ func TestATenantsSourcesAreWhereItsBackupsGo(t *testing.T) {
 // A fetch is made suspended, confined, and only then let run; its way out
 // is owned by it and names the source's address alone.
 func TestAFetchRunsOnlyOnceItIsConfinedToItsSource(t *testing.T) {
-	s, c := sourcesService(t, oldStore())
-	st, err := s.StartFetch(context.Background(), SourceRef{Name: "old-store", Prefix: "export-20261001"}, "ada")
+	s3, secret := clusterStorage(t)
+	s, c := sourcesService(t, oldStore(), secret)
+	st, err := s.StartFetch(context.Background(), SourceRef{Name: "old-store", Prefix: "export-20261001"}, "ada", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,9 +173,18 @@ func TestAFetchRunsOnlyOnceItIsConfinedToItsSource(t *testing.T) {
 	if err := c.Status().Update(context.Background(), &job); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Fetch(context.Background(), st.Name)
+	got, err := s.Fetch(context.Background(), st.Name, "")
 	if err != nil || got.Phase != "ready" || got.Source.Name != "old-store" || got.RequestedBy != "ada" {
 		t.Errorf("fetch %+v, %v", got, err)
+	}
+	// Recorded when it was asked for, as no tenant's, for the sweep.
+	var rec bundlestore.Record
+	if err := json.Unmarshal(s3.Get(bundlestore.ImportBucket, bundlestore.RecordKey(st.Bundle.Prefix)), &rec); err != nil ||
+		rec.Kind != "fetch" || rec.Tenant != "" || rec.At.IsZero() {
+		t.Errorf("record %+v, %v", rec, err)
+	}
+	if _, err := s.Fetch(context.Background(), st.Name, "demo"); err == nil {
+		t.Error("a tenant's administrator was shown the cluster's fetch")
 	}
 }
 
@@ -164,8 +192,9 @@ func TestAFetchRunsOnlyOnceItIsConfinedToItsSource(t *testing.T) {
 // of the cluster at all.
 func TestAFetchFromTheClustersOwnStorageHasNoWayOut(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "corp"}}
-	s, c := sourcesService(t, tenant)
-	st, err := s.StartFetch(context.Background(), SourceRef{Tenant: "corp", Name: TenantSourceStorage, Prefix: "nightly-1"}, "ada")
+	_, secret := clusterStorage(t)
+	s, c := sourcesService(t, tenant, secret)
+	st, err := s.StartFetch(context.Background(), SourceRef{Tenant: "corp", Name: TenantSourceStorage, Prefix: "nightly-1"}, "ada", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,5 +223,97 @@ func TestATenantsSourceIsRestoredIntoThatTenantAlone(t *testing.T) {
 	}, "ada")
 	if err == nil || !strings.Contains(err.Error(), "alone") {
 		t.Errorf("a source of corp was restored into other: %v", err)
+	}
+}
+
+// A tenant's administrator fetches from the tenant's own sources alone, only
+// a bundle whose header names the tenant, and only while it fits in what the
+// tenant may still put into the import storage; the copy is recorded as the
+// tenant's, and its fetch, and the copy, are the tenant's to see alone.
+func TestATenantsAdministratorFetchesOnlyTheTenantsOwnBundlesWithinItsLimit(t *testing.T) {
+	ctx := context.Background()
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "corp"}}
+	s3, secret := clusterStorage(t)
+	s, _ := sourcesService(t, tenant, oldStore(), secret)
+	bucket := backup.BackupBucket(tenant)
+	now := time.Now()
+	s3.Put(bucket, "nightly-1/bundle-info.json", []byte(`{"tenant":"corp"}`), now)
+	s3.Put(bucket, "nightly-1/manifest.json.age", make([]byte, 2048), now)
+	s3.Put(bucket, "stray/bundle-info.json", []byte(`{"tenant":"acme"}`), now)
+
+	if _, err := s.StartFetch(ctx, SourceRef{Name: "old-store", Prefix: "x"}, "eve", "corp"); !errors.Is(err, errNoSuchSource) {
+		t.Errorf("a tenant fetched from the cluster's source: %v", err)
+	}
+	if _, err := s.StartFetch(ctx, SourceRef{Tenant: "corp", Name: TenantSourceStorage, Prefix: "stray"}, "eve", "corp"); !errors.Is(err, errNotTenants) {
+		t.Errorf("a tenant fetched a bundle of another: %v", err)
+	}
+	st, err := s.StartFetch(ctx, SourceRef{Tenant: "corp", Name: TenantSourceStorage, Prefix: "nightly-1"}, "eve", "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec bundlestore.Record
+	if err := json.Unmarshal(s3.Get(bundlestore.ImportBucket, bundlestore.RecordKey(st.Bundle.Prefix)), &rec); err != nil ||
+		rec.Tenant != "corp" || rec.Size != 2048+int64(len(`{"tenant":"corp"}`)) {
+		t.Errorf("record %+v, %v", rec, err)
+	}
+	if _, err := s.Fetch(ctx, st.Name, "corp"); err != nil {
+		t.Errorf("the tenant cannot see its own fetch: %v", err)
+	}
+	if _, err := s.Fetch(ctx, st.Name, "acme"); err == nil {
+		t.Error("another tenant saw the fetch")
+	}
+	s3.Put(bundlestore.ImportBucket, st.Bundle.Prefix+"/manifest.json.age", []byte("x"), now)
+	if _, err := s.importedRef(ctx, st.Bundle.Prefix, "corp"); err != nil {
+		t.Errorf("the tenant cannot read its own copy: %v", err)
+	}
+	if _, err := s.importedRef(ctx, st.Bundle.Prefix, "acme"); !errors.Is(err, errNoImported) {
+		t.Errorf("another tenant reads the copy: %v", err)
+	}
+
+	// Past the tenant's total, refused before anything is made.
+	s3.Put(bundlestore.ImportBucket, bundlestore.RecordKey("20261001-000000-ffffffff"),
+		[]byte(`{"tenant":"corp","kind":"fetch","at":"2026-10-01T00:00:00Z","size":`+strconv.FormatInt(bundlestore.MaxTenantImports, 10)+`}`), now)
+	if _, err := s.StartFetch(ctx, SourceRef{Tenant: "corp", Name: TenantSourceStorage, Prefix: "nightly-1"}, "eve", "corp"); !errors.Is(err, bundlestore.ErrImportLimit) {
+		t.Errorf("a fetch past the limit was started: %v", err)
+	}
+}
+
+// A tenant's upload is recorded as its own and refused, with what was
+// stored of it removed, once it is larger than the tenant may still put
+// into the import storage; the cluster's administrator's is not bounded.
+func TestATenantsUploadIsBoundedByItsLimit(t *testing.T) {
+	ctx := context.Background()
+	s3, secret := clusterStorage(t)
+	s, _ := sourcesService(t, secret)
+	bundle := func(sizes ...int) *bytes.Buffer {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for i, n := range sizes {
+			_ = tw.WriteHeader(&tar.Header{Name: "f" + strconv.Itoa(i) + ".age", Mode: 0o644, Size: int64(n)})
+			_, _ = tw.Write(make([]byte, n))
+		}
+		_ = tw.Close()
+		return &buf
+	}
+	ref, err := s.UploadBundle(ctx, bundle(10), "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec bundlestore.Record
+	if err := json.Unmarshal(s3.Get(bundlestore.ImportBucket, bundlestore.RecordKey(ref.Prefix)), &rec); err != nil || rec.Tenant != "corp" || rec.Kind != "upload" {
+		t.Errorf("record %+v, %v", rec, err)
+	}
+	// Leave the tenant 100 bytes.
+	s3.Put(bundlestore.ImportBucket, bundlestore.RecordKey("20261001-000000-ffffffff"),
+		[]byte(`{"tenant":"corp","kind":"fetch","at":"2026-10-01T00:00:00Z","size":`+strconv.FormatInt(bundlestore.MaxTenantImports-110, 10)+`}`), time.Now())
+	before := len(s3.Keys(bundlestore.ImportBucket))
+	if _, err := s.UploadBundle(ctx, bundle(60, 60), "corp"); !errors.Is(err, bundlestore.ErrImportLimit) {
+		t.Fatalf("an upload past the limit was taken: %v", err)
+	}
+	if got := len(s3.Keys(bundlestore.ImportBucket)); got != before {
+		t.Errorf("a refused upload left %d objects behind", got-before)
+	}
+	if _, err := s.UploadBundle(ctx, bundle(60, 60), ""); err != nil {
+		t.Errorf("the cluster's administrator's upload was bounded: %v", err)
 	}
 }

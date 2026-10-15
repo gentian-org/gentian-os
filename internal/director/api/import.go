@@ -147,7 +147,13 @@ func (req importRequest) inspection() (map[string]any, string) {
 // in the cluster's storage and answers with where.
 func (s *Server) uploadBundle(w http.ResponseWriter, r *http.Request, _ call) {
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
-	status, body, err := s.cfg.Lifecycle.Upload(r.Context(), "/v1/bundles", r.Header.Get("Content-Type"), r.Body)
+	path := "/v1/bundles"
+	if t := r.PathValue("t"); t != "" && r.PathValue("c") == "" {
+		// A tenant's administrator's: recorded as the tenant's, and bounded
+		// by what a tenant may put into the import storage.
+		path += "?tenant=" + url.QueryEscape(t)
+	}
+	status, body, err := s.cfg.Lifecycle.Upload(r.Context(), path, r.Header.Get("Content-Type"), r.Body)
 	if err != nil {
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 		return

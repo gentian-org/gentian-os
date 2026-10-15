@@ -1613,6 +1613,11 @@ Specified by [sovereignty-concept.md](sovereignty-concept.md).
   decisions 31 and 32): the platform keeps a "destination and key" setting
   that a manual export reads, and v0.5 does not upgrade a cluster that
   already has schedules. Whether and when the move starts is open (§4, 32).
+- **Import storage clean-up**: a bundle in `gentian-imports` is also removed
+  when the restore that read it began and failed (behaviour from before,
+  kept), not only on success; and two uploads or fetches of one tenant made
+  at the same moment are each checked against its 50 GiB total alone, so
+  together they can pass it until the sweep. *reasoned, not confirmed*
 
 ### Not this repository's
 

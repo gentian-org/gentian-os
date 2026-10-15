@@ -1344,7 +1344,16 @@ GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's
 GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
 GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
 GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
+POST   /v1/tenants/{t}/bundle-sources/{name}/actions/fetch      {prefix}: the tenant's administrator's fetch
+GET    /v1/tenants/{t}/bundle-fetches/{f}                       a fetch made on the tenant's route
+GET    /v1/tenants/{t}/bundles/{prefix}/download                its copy, or the tenant's upload
 ```
+
+A tenant's administrator fetches from the tenant's own sources alone, only a
+bundle whose header names the tenant (`422` otherwise), and the copy counts
+towards the tenant's limits in `gentian-imports`, as its uploads do: one
+bundle at most 20 GiB, 50 GiB at once (`413`). Everything there goes once
+it is restored or imported, or after seven days (data-lifecycle.md §4).
 
 All of the cluster's are `can_configure`. An import names a bundle at a
 source instead of a bucket: `{"source": {"name": "old", "prefix":

@@ -221,16 +221,22 @@ type fetchRequest struct {
 
 // fetchFrom starts a fetch of one bundle at a source: the cluster's when
 // tenant is empty, else that tenant's. The source is the route's, never the
-// body's.
-func (s *Server) fetchFrom(w http.ResponseWriter, r *http.Request, c call, tenant string) {
+// body's. forTenant is the tenant whose administrator asks, on the tenant's
+// own route: the operator then fetches only a bundle whose header names the
+// tenant, and counts the copy towards the tenant's limits.
+func (s *Server) fetchFrom(w http.ResponseWriter, r *http.Request, c call, tenant, forTenant string) {
 	var body fetchRequest
 	if err := decode(r, &body); err != nil || body.Prefix == "" {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"prefix": "<the bundle's prefix at the source>"}`)
 		return
 	}
-	status, answer, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/bundle-fetches", c.meta.ActorName(), map[string]any{
+	ask := map[string]any{
 		"source": map[string]string{"tenant": tenant, "name": r.PathValue("name"), "prefix": body.Prefix},
-	})
+	}
+	if forTenant != "" {
+		ask["tenant"] = forTenant
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/bundle-fetches", c.meta.ActorName(), ask)
 	if err != nil {
 		s.lifecycleError(w, r, err)
 		return
@@ -239,22 +245,42 @@ func (s *Server) fetchFrom(w http.ResponseWriter, r *http.Request, c call, tenan
 }
 
 func (s *Server) fetchFromClusterSource(w http.ResponseWriter, r *http.Request, c call) {
-	s.fetchFrom(w, r, c, "")
+	s.fetchFrom(w, r, c, "", "")
 }
 
 func (s *Server) fetchFromTenantSource(w http.ResponseWriter, r *http.Request, c call) {
-	s.fetchFrom(w, r, c, r.PathValue("t"))
+	s.fetchFrom(w, r, c, r.PathValue("t"), "")
+}
+
+// fetchFromOwnSource is a tenant's administrator's fetch from the tenant's
+// own sources.
+func (s *Server) fetchFromOwnSource(w http.ResponseWriter, r *http.Request, c call) {
+	s.fetchFrom(w, r, c, r.PathValue("t"), r.PathValue("t"))
+}
+
+// ownTenant is the query that confines an operator read to what was made
+// for the tenant of a tenant's route; none on the cluster's.
+func ownTenant(r *http.Request) url.Values {
+	if r.PathValue("c") != "" || r.PathValue("t") == "" {
+		return nil
+	}
+	return url.Values{"tenant": {r.PathValue("t")}}
 }
 
 func (s *Server) bundleFetch(w http.ResponseWriter, r *http.Request, _ call) {
-	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/bundle-fetches/"+url.PathEscape(r.PathValue("f")), nil)
+	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/bundle-fetches/"+url.PathEscape(r.PathValue("f")), ownTenant(r))
 	s.relay(w, r, status, body, err)
 }
 
 // importedBundleDownload relays a bundle of the cluster's import storage --
-// an upload or a fetch -- as one file, as a backup's download is relayed.
+// an upload or a fetch -- as one file, as a backup's download is relayed. On
+// a tenant's route, only one recorded as that tenant's.
 func (s *Server) importedBundleDownload(w http.ResponseWriter, r *http.Request, _ call) {
-	resp, err := s.cfg.Lifecycle.Stream(r.Context(), "/v1/bundles/"+url.PathEscape(r.PathValue("prefix"))+"/download")
+	path := "/v1/bundles/" + url.PathEscape(r.PathValue("prefix")) + "/download"
+	if q := ownTenant(r); q != nil {
+		path += "?" + q.Encode()
+	}
+	resp, err := s.cfg.Lifecycle.Stream(r.Context(), path)
 	if err != nil {
 		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")

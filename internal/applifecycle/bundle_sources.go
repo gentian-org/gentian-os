@@ -317,13 +317,25 @@ func (s *Service) SourceBundles(ctx context.Context, tenantName, name string) ([
 	return out, nil
 }
 
+// errNotTenants is a bundle a tenant's administrator may not fetch: its
+// header does not name their tenant.
+var errNotTenants = errors.New("not a bundle of this tenant")
+
 // StartFetch copies a bundle at a source into the import bucket of the
 // cluster's own storage, by a Job in the object store's namespace.
+//
+// forTenant is the tenant whose administrator asks, empty for the cluster's.
+// Theirs is a fetch from the tenant's own sources only, of a bundle whose
+// header names the tenant, and the copy counts towards the tenant's limits
+// in the import bucket, by the bundle's size at the source.
 //
 // The Job is made suspended, its way out is made and given to it, and only
 // then is it let run: a pod of that namespace is otherwise free to go
 // anywhere, and the policy is what confines it to the source.
-func (s *Service) StartFetch(ctx context.Context, ref SourceRef, actor string) (*FetchStatus, error) {
+func (s *Service) StartFetch(ctx context.Context, ref SourceRef, actor, forTenant string) (*FetchStatus, error) {
+	if forTenant != "" && ref.Tenant != forTenant {
+		return nil, fmt.Errorf("%w: a tenant's administrator fetches from the tenant's own sources", errNoSuchSource)
+	}
 	from, err := s.ResolveSource(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -332,6 +344,22 @@ func (s *Service) StartFetch(ctx context.Context, ref SourceRef, actor string) (
 	suffix := uuid.NewString()[:8]
 	name := "bundle-fetch-" + now.Format("20060102-150405") + "-" + suffix
 	target := now.Format("20060102-150405") + "-" + suffix
+	record := bundlestore.Record{Tenant: forTenant, Kind: "fetch", At: now}
+	if forTenant != "" {
+		if record.Size, err = s.checkTenantFetch(ctx, from, forTenant); err != nil {
+			return nil, err
+		}
+	}
+	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
+	if err != nil {
+		return nil, err
+	}
+	if err := bundlestore.EnsureBucket(ctx, mc); err != nil {
+		return nil, err
+	}
+	if err := bundlestore.ImportsOf(mc).PutRecord(ctx, target, record); err != nil {
+		return nil, err
+	}
 	ns := layout.System("s3")
 	labels := map[string]string{}
 	if ref.Tenant != "" {
@@ -350,6 +378,7 @@ func (s *Service) StartFetch(ctx context.Context, ref SourceRef, actor string) (
 		"gentianos.io/source-prefix":  ref.Prefix,
 		"gentianos.io/import-prefix":  target,
 		"gentianos.io/source-address": from.Endpoint,
+		"gentianos.io/import-tenant":  forTenant,
 	}
 	suspend := true
 	job.Spec.Suspend = &suspend
@@ -377,8 +406,48 @@ func (s *Service) StartFetch(ctx context.Context, ref SourceRef, actor string) (
 	return fetchStatus(job), nil
 }
 
-// Fetch reports one fetch.
-func (s *Service) Fetch(ctx context.Context, name string) (*FetchStatus, error) {
+// checkTenantFetch reads, at the source, whether a bundle is the tenant's by
+// its header and whether it fits in what the tenant may still put into the
+// import bucket, and answers its size there.
+func (s *Service) checkTenantFetch(ctx context.Context, from gentianov1alpha1.BundleRef, tenant string) (int64, error) {
+	src, err := s.bundleClient(ctx, &from)
+	if err != nil {
+		return 0, err
+	}
+	raw, err := bundlestore.ReadObject(ctx, src, from.Bucket, bundlestore.ObjectPrefix(from)+"bundle-info.json", 1<<20)
+	var info backup.BundleInfo
+	if err != nil || json.Unmarshal(raw, &info) != nil {
+		return 0, fmt.Errorf("%w: the bundle's header could not be read, and a tenant's administrator fetches only a bundle whose header names the tenant", errNotTenants)
+	}
+	if info.Tenant != tenant {
+		return 0, fmt.Errorf("%w: the bundle's header names tenant %q, and a tenant's administrator fetches only bundles of the tenant", errNotTenants, info.Tenant)
+	}
+	var size int64
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for obj := range src.ListObjects(listCtx, from.Bucket, minio.ListObjectsOptions{Prefix: bundlestore.ObjectPrefix(from), Recursive: true}) {
+		if obj.Err != nil {
+			return 0, fmt.Errorf("the source could not be listed: %w", obj.Err)
+		}
+		size += obj.Size
+	}
+	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
+	if err != nil {
+		return 0, err
+	}
+	allowance, err := bundlestore.ImportsOf(mc).TenantAllowance(ctx, tenant)
+	if err != nil {
+		return 0, err
+	}
+	if size > allowance {
+		return 0, bundlestore.TooLarge(size, allowance)
+	}
+	return size, nil
+}
+
+// Fetch reports one fetch. tenant, when set, is the tenant whose
+// administrator asks: only a fetch made for that tenant is theirs to see.
+func (s *Service) Fetch(ctx context.Context, name, tenant string) (*FetchStatus, error) {
 	var job batchv1.Job
 	if err := s.client.Get(ctx, types.NamespacedName{Name: name, Namespace: layout.System("s3")}, &job); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -386,7 +455,7 @@ func (s *Service) Fetch(ctx context.Context, name string) (*FetchStatus, error) 
 		}
 		return nil, err
 	}
-	if job.Labels[backup.FetchLabel] != name {
+	if job.Labels[backup.FetchLabel] != name || (tenant != "" && job.Annotations["gentianos.io/import-tenant"] != tenant) {
 		return nil, fmt.Errorf("no fetch %q", name)
 	}
 	return fetchStatus(&job), nil
@@ -423,7 +492,9 @@ func fetchStatus(job *batchv1.Job) *FetchStatus {
 var errNoImported = errors.New("no such bundle in the cluster's import storage")
 
 // importedRef is a bundle of the import bucket, when it holds one there.
-func (s *Service) importedRef(ctx context.Context, prefix string) (*gentianov1alpha1.BundleRef, error) {
+// tenant, when set, is the tenant whose administrator asks: only a bundle
+// recorded as that tenant's is theirs.
+func (s *Service) importedRef(ctx context.Context, prefix, tenant string) (*gentianov1alpha1.BundleRef, error) {
 	if !importPrefix.MatchString(prefix) {
 		return nil, errNoImported
 	}
@@ -431,6 +502,15 @@ func (s *Service) importedRef(ctx context.Context, prefix string) (*gentianov1al
 	mc, err := s.bundleClient(ctx, ref)
 	if err != nil {
 		return nil, err
+	}
+	if tenant != "" {
+		rec, err := bundlestore.ImportsOf(mc).Record(ctx, prefix)
+		if err != nil {
+			return nil, err
+		}
+		if rec == nil || rec.Tenant != tenant {
+			return nil, errNoImported
+		}
 	}
 	listCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -511,15 +591,24 @@ func (h *HTTPServer) handleSourceBundles(w http.ResponseWriter, r *http.Request)
 func (h *HTTPServer) handleStartFetch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Source SourceRef `json:"source"`
+		// Tenant is the tenant whose administrator asks, which the director
+		// sets from its route; empty for the cluster's administrator.
+		Tenant string `json:"tenant,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
-	st, err := h.Service.StartFetch(r.Context(), body.Source, actorOf(r))
+	st, err := h.Service.StartFetch(r.Context(), body.Source, actorOf(r), body.Tenant)
 	switch {
 	case errors.Is(err, errNoSuchSource):
 		writeErr(w, http.StatusNotFound, err)
+		return
+	case errors.Is(err, bundlestore.ErrImportLimit):
+		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	case errors.Is(err, errNotTenants):
+		writeErr(w, http.StatusUnprocessableEntity, err)
 		return
 	case err != nil:
 		writeErr(w, http.StatusBadRequest, err)
@@ -529,7 +618,7 @@ func (h *HTTPServer) handleStartFetch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleFetch(w http.ResponseWriter, r *http.Request) {
-	st, err := h.Service.Fetch(r.Context(), r.PathValue("name"))
+	st, err := h.Service.Fetch(r.Context(), r.PathValue("name"), r.URL.Query().Get("tenant"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -539,7 +628,7 @@ func (h *HTTPServer) handleFetch(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) handleImportedDownload(w http.ResponseWriter, r *http.Request) {
 	prefix := r.PathValue("prefix")
-	ref, err := h.Service.importedRef(r.Context(), prefix)
+	ref, err := h.Service.importedRef(r.Context(), prefix, r.URL.Query().Get("tenant"))
 	switch {
 	case errors.Is(err, errNoImported):
 		writeErr(w, http.StatusNotFound, fmt.Errorf("%w: %q", err, prefix))
