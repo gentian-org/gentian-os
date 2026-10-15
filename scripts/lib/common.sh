@@ -806,8 +806,9 @@ load_operator_config() {
 # Prompt for the gentian-deployments repo URL/branch, cluster id and stage.
 # The repository's address has no default: it is this cluster's own, and an
 # invented one is an install that runs until the first thing reads it.
-# Persist results to ~/.gentian/config (bash-sourceable) so the kubectl-gentian
-# plugin can locate the deployments repo when running `kubectl gentian apps install/uninstall`.
+# The answers reach ~/.gentian/config, where the kubectl-gentian plugin finds
+# the deployments repository, through save_kubectl_gentian_config -- once the
+# run has confirmed they describe the cluster it reaches.
 # =============================================================================
 prompt_app_repos() {
     local default_deploy_branch="main"
@@ -887,7 +888,24 @@ prompt_app_repos() {
     export ENV
     info "Environment: ENV=${ENV} (from GENTIAN_DEPLOYMENTS_STAGE)"
 
-    # Persist to ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
+    # GENTIAN_DEPLOYMENTS_GIT_USERNAME is deliberately given no default here.
+    # This runs before the credentials are collected, and both the local cache
+    # and the recovery from OpenBao leave alone any variable that already has
+    # a value: a default set this early would be kept in place of the username
+    # the cluster really uses. Where the username is used, x-access-token is
+    # the fallback, and by then recovery has had its turn.
+}
+
+# save_kubectl_gentian_config — persist the deployments settings to
+# ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
+#
+# Its own function, called once the run has established that the checkout,
+# the settings and the cluster are one cluster (cluster-identity.sh). It used
+# to be written by prompt_app_repos, before anything had been compared: a
+# shell exporting a second cluster's deployments path repointed the plugin at
+# that cluster's repository on the way to a run that should never have
+# started. The file is shared by every cluster this machine runs.
+save_kubectl_gentian_config() {
     # The plugin sources this file directly; keep variable names aligned with the
     # plugin's expectations (GENTIAN_DEPLOYMENTS_PATH / GENTIAN_DEPLOYMENTS_REPO).
     local cfg_dir="${HOME}/.gentian"
@@ -897,6 +915,10 @@ prompt_app_repos() {
     # cluster's install repointed kubectl-gentian at that cluster.
     if gentian_read_only; then
         gentian_would "save the deployments repository's address to ${cfg_file}, for kubectl gentian"
+        return 0
+    fi
+    if ! gentian_one_cluster_confirmed; then
+        warn "${cfg_file} not written: this run has not confirmed which cluster it is for."
         return 0
     fi
     mkdir -p "$cfg_dir"
@@ -911,13 +933,6 @@ GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"
 EOF
     chmod 0600 "$cfg_file"
     success "App repo configuration saved to ${cfg_file}"
-
-    # GENTIAN_DEPLOYMENTS_GIT_USERNAME is deliberately given no default here.
-    # This runs before the credentials are collected, and both the local cache
-    # and the recovery from OpenBao leave alone any variable that already has
-    # a value: a default set this early would be kept in place of the username
-    # the cluster really uses. Where the username is used, x-access-token is
-    # the fallback, and by then recovery has had its turn.
 }
 
 

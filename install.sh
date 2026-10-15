@@ -387,6 +387,10 @@ prepare_run() {
     fi
 
     load_operator_config
+    # One run, one cluster (scripts/lib/cluster-identity.sh). First: the
+    # checkout is the repository and branch the settings name -- before it is
+    # synced, so the wrong repository is not even fetched into.
+    gentian_check_deployments_checkout || exit 1
     # Before the claim is read: a checkout behind its remote would answer
     # "this cluster has a definition" for one that was deleted on origin.
     if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" || "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
@@ -394,6 +398,11 @@ prepare_run() {
     else
         gentian_sync_deployments_checkout || exit 1
     fi
+    # Then: a repository that defines other clusters is not handed a new one
+    # by accident, and the cluster kubectl reaches is the one the definition
+    # describes. Before anything is read for the cluster -- its vault, its
+    # salt, the credential cache -- and before anything is written.
+    gentian_check_one_cluster scaffold || exit 1
     load_deployments_cluster_settings
 
     # The key this cluster's definition is signed with has to be on this
@@ -415,6 +424,9 @@ prepare_run() {
     if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]; then
         validate_config || exit 1
         GENTIAN_NONINTERACTIVE=1 prompt_app_repos
+        gentian_check_deployments_checkout || exit 1
+        gentian_check_one_cluster scaffold || exit 1
+        save_kubectl_gentian_config
         local _undefined
         _undefined="$(cluster_deployment_missing | tr '\n' ' ')"
         if [[ -n "${_undefined}" ]]; then
@@ -429,6 +441,11 @@ prepare_run() {
     fi
 
     prompt_app_repos
+    # Again, for whatever was only now asked for; each returns at once for
+    # settings it has already compared.
+    gentian_check_deployments_checkout || exit 1
+    gentian_check_one_cluster scaffold || exit 1
+    save_kubectl_gentian_config
 
     # Step 0. The claims and values this cluster is built from have to exist
     # before any credential is collected -- and when they do not, the install
@@ -611,6 +628,11 @@ main() {
         exit 0
     fi
 
+    # Before anything is loaded: which of the settings that pick a cluster
+    # this shell exports over install.env. A terminal still carrying another
+    # cluster's is the commonest way to reach the wrong one.
+    gentian_report_identity_exports
+
     if [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]]; then
         verify_argocd_apps || true
         print_summary_cp
@@ -633,6 +655,10 @@ main() {
             # activation link from the installer's own Keycloak credential,
             # for when nobody can sign in to ask the director for one.
             load_operator_config
+            # It acts on the cluster kubectl reaches, as that cluster's
+            # administrator: only if it is the one the definition describes.
+            gentian_check_deployments_checkout || exit 1
+            gentian_check_one_cluster || exit 1
             load_deployments_cluster_settings
             resolve_kernel_domain_from_claim
             # shellcheck source=scripts/lib/portal-login-bootstrap.sh
@@ -641,8 +667,11 @@ main() {
             exit $?
             ;;
         export-kit)
-            # Reads the cluster and OpenBao; changes neither.
+            # Reads the cluster and OpenBao; changes neither. The kit names
+            # the cluster it is for, so the cluster it reads has to be that one.
             load_operator_config
+            gentian_check_deployments_checkout || exit 1
+            gentian_check_one_cluster || exit 1
             load_deployments_cluster_settings
             # Get a token the way every other OpenBao caller does, rather than
             # requiring one to be exported already.

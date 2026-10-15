@@ -246,14 +246,59 @@ _env_var_for() {
 #
 # Set GENTIAN_NO_CREDENTIAL_CACHE=1 to keep credentials in the process only.
 # =============================================================================
+#
+# Which cluster a cache belongs to is written into it, as its first line:
+#
+#   # cluster: <cluster id> <kernel domain>
+#
+# The path alone does not say: it is GENTIAN_CREDENTIAL_CACHE, which a shell
+# can carry from one cluster's terminal to another's. A run whose salt came
+# from the cluster it reached once wrote that salt into the cache of the
+# cluster its checkout described -- a different one -- and the next install
+# of that cluster derived every credential with it. So a cache that names
+# another cluster is neither read nor written, and one that names none (made
+# before this line existed) is not overwritten once its salt has been shown
+# to be wrong. The loader below skips the line: it is not a variable.
 _credential_cache_file() {
     echo "${GENTIAN_CREDENTIAL_CACHE:-${HOME}/.gentian/bootstrap-credentials.env}"
 }
+
+# _credential_cache_tag — the cluster this run is for, as the cache names it.
+_credential_cache_tag() {
+    printf '%s %s' "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" "${KERNEL_DOMAIN:-}"
+}
+
+# _credential_cache_owner <file> — the cluster a cache names, or nothing.
+_credential_cache_owner() {
+    sed -n 's/^# cluster: //p' "$1" 2>/dev/null | head -1
+}
+
+# Whether the salt now in the shell came from the cache, and whether the
+# cluster then showed it to be wrong. Set by the loader and by
+# _settle_derivation_salt; read by the writer.
+_GENTIAN_SALT_FROM_CACHE=0
+_GENTIAN_CACHE_SALT_WRONG=0
 
 _load_credential_cache() {
     [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
     local f; f="$(_credential_cache_file)"
     [[ -r "${f}" ]] || return 0
+
+    local owner tag
+    owner="$(_credential_cache_owner "${f}")"
+    tag="$(_credential_cache_tag)"
+    if [[ -n "${owner}" && "${owner}" != "${tag}" ]]; then
+        echo "" >&2
+        error "The credential cache ${f} belongs to another cluster."
+        error "  it names:   ${owner}"
+        error "  this run:   ${tag}   (GENTIAN_DEPLOYMENTS_CLUSTER_ID and KERNEL_DOMAIN)"
+        error "  The path is GENTIAN_CREDENTIAL_CACHE, $(_gentian_setting_source GENTIAN_CREDENTIAL_CACHE)."
+        error "Stopped: the cache was not read and will not be written; nothing was applied."
+        error "What to do:"
+        _gentian_unset_hint
+        error "  - run ./install.sh from the gentian-os checkout, and the terminal, of the cluster that cache belongs to."
+        return 1
+    fi
 
     # Same precedence as every other source: what is already set wins, so an
     # explicit export or a corrected value is never overwritten by the cache.
@@ -263,6 +308,7 @@ _load_credential_cache() {
         [[ -n "${!var:-}" ]] && continue
         printf -v "${var}" '%s' "$(printf '%b' "${val}")"
         export "${var?}"
+        if [[ "${var}" == "DERIVATION_SALT" ]]; then _GENTIAN_SALT_FROM_CACHE=1; fi
     done < "${f}"
     info "Reusing credentials cached at ${f} (removed once OpenBao holds them)."
 }
@@ -270,14 +316,36 @@ _load_credential_cache() {
 _save_credential_cache() {
     [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
     gentian_read_only && return 0
-    local f dir var
+    local f dir var owner tag
     f="$(_credential_cache_file)"
+    tag="$(_credential_cache_tag)"
+    # Only once the run has established which cluster it is for; prepare_run
+    # stops before this point otherwise, and this is for the caller that one
+    # day does not.
+    if ! gentian_one_cluster_confirmed; then
+        warn "${f} not written: this run has not confirmed which cluster it is for."
+        return 0
+    fi
+    if [[ -r "${f}" ]]; then
+        owner="$(_credential_cache_owner "${f}")"
+        if [[ -n "${owner}" && "${owner}" != "${tag}" ]]; then
+            warn "${f} not written: it belongs to ${owner}, and this run is for ${tag}."
+            return 0
+        fi
+        if [[ -z "${owner}" && "${_GENTIAN_CACHE_SALT_WRONG}" == "1" ]]; then
+            warn "${f} not written: its derivation salt is not this cluster's, and it does not"
+            warn "  say which cluster it was written for -- it may be another cluster's."
+            warn "  Remove it if it is this cluster's; the next run then writes a fresh one."
+            return 0
+        fi
+    fi
     dir="$(dirname "${f}")"
     mkdir -p "${dir}" || return 0
     chmod 0700 "${dir}" 2>/dev/null || true
 
     local tmp="${f}.tmp.$$"
     : >"${tmp}" && chmod 0600 "${tmp}" || return 0
+    printf '# cluster: %s\n' "${tag}" >>"${tmp}"
     for var in "${_GENTIAN_CACHED_CREDENTIAL_VARS[@]}"; do
         [[ -n "${!var:-}" ]] || continue
         # printf %q would quote for the shell; this file is read by the loader
@@ -688,8 +756,8 @@ collect_bootstrap_credentials() {
     info "From ${GENTIAN_CATALOGUE_FILE##*/} — phase: bootstrap only."
 
     # Before prompting: a previous attempt's answers, if this bootstrap has not
-    # reached OpenBao yet.
-    _load_credential_cache
+    # reached OpenBao yet -- and only if the cache is this cluster's.
+    _load_credential_cache || return 1
 
     # Iterate over command substitution rather than `while read … done < <(…)`.
     # That form redirects the loop body's stdin to the catalogue stream, so the
@@ -786,13 +854,55 @@ collect_bootstrap_credentials() {
     # loads that file, finds the variable set, and never asks the cluster. The
     # cluster is the only party that knows which salt its secrets were built
     # with, and disagreeing with it cannot produce a working credential.
+    _settle_derivation_salt || return 1
+
+    # After the salt, so a resumed run derives the same values it started with.
+    _save_credential_cache
+
+    echo ""
+    success "Credentials collected and validated."
+}
+
+# _settle_derivation_salt — the salt this run derives with: the cluster's
+# when it has one, the one already here otherwise, a new one on a first
+# install. See collect_bootstrap_credentials for why the cluster's wins.
+#
+# The cluster's wins only over a salt from a cluster that has been shown to be
+# this one. A different salt on a cluster that is installed but whose identity
+# could not be confirmed (it holds no Cluster object to compare with the
+# definition yet) is the strongest sign there is that kubectl reaches the
+# wrong cluster, and adopting its salt is how one cluster's salt reached
+# another's cache. That stops the run instead.
+_settle_derivation_salt() {
     local cluster_salt
     cluster_salt="$(gentian_cluster_derivation_salt || true)"
     if [[ -n "${cluster_salt}" ]]; then
         if [[ -n "${DERIVATION_SALT:-}" && "${DERIVATION_SALT}" != "${cluster_salt}" ]]; then
+            if ! gentian_cluster_identity_verified; then
+                local from
+                from="DERIVATION_SALT, $(_gentian_setting_source DERIVATION_SALT)"
+                [[ -n "${GENTIAN_RECOVER_FROM:-}" ]] && from="the recovery kit ${GENTIAN_RECOVER_FROM}"
+                [[ "${_GENTIAN_SALT_FROM_CACHE}" == "1" ]] && from="the credential cache $(_credential_cache_file)"
+                echo "" >&2
+                error "The cluster kubectl reaches derives with a different salt from the one this run brought,"
+                error "  and it cannot be confirmed to be the cluster clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-?} describes:"
+                error "  it holds no Cluster object to compare with the definition yet."
+                error "  kube context:   $(_gentian_kube_context)"
+                error "  API server:     $(_gentian_kube_server)"
+                error "  salt from:      ${from}"
+                error "Stopped: nothing was cached, written or applied, and the salt was not changed."
+                error "What to do:"
+                _gentian_unset_hint
+                error "  - check which cluster this is: kubectl config current-context; switch with"
+                error "      kubectl config use-context <the cluster's context>"
+                error "  - if it is this cluster and the salt here is stale, unset DERIVATION_SALT and"
+                error "    remove $(_credential_cache_file), then run again: the cluster's salt is used."
+                return 1
+            fi
             warn "The derivation salt in this shell is not this cluster's; using the cluster's."
             warn "  Anything derived from the other one — including the portal password a"
             warn "  previous run may have printed — was never valid here."
+            if [[ "${_GENTIAN_SALT_FROM_CACHE}" == "1" ]]; then _GENTIAN_CACHE_SALT_WRONG=1; fi
         fi
         DERIVATION_SALT="${cluster_salt}"
     fi
@@ -801,10 +911,4 @@ collect_bootstrap_credentials() {
         info "Generated a new derivation salt."
     fi
     export DERIVATION_SALT
-
-    # After the salt, so a resumed run derives the same values it started with.
-    _save_credential_cache
-
-    echo ""
-    success "Credentials collected and validated."
 }

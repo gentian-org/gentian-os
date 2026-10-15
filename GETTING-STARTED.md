@@ -1095,6 +1095,44 @@ Put it in `install.env` to make that permanent for the machine. That file is
 read before any credential is collected, so anything set there applies to the
 whole run.
 
+The cache's first line names the cluster it belongs to. A run for another
+cluster neither reads it nor writes it.
+
+### Running the installer for more than one cluster from one machine
+
+Keep one checkout of gentian-os, with its own `install.env`, and one terminal
+per cluster. Put each cluster's paths in its own `install.env`
+(`GENTIAN_DEPLOYMENTS_PATH`, `GENTIAN_CREDENTIAL_CACHE`, `GENTIAN_GPG_HOME`)
+and point `kubectl` at the cluster with `kubectl config use-context`. A
+variable exported in a shell beats `install.env` for every run started from
+that shell, so a terminal that sourced a second cluster's settings carries
+them into the first cluster's run.
+
+Before it reads, caches, writes or applies anything for a cluster, the
+installer checks that its settings, its deployments checkout and the cluster
+`kubectl` reaches are one cluster, and stops otherwise:
+
+- the checkout's `origin` and branch have to be `GENTIAN_DEPLOYMENTS_REPO` and
+  `GENTIAN_DEPLOYMENTS_BRANCH`;
+- a repository that already defines other clusters gets no new
+  `clusters/<id>` unless you answer yes to a question that names it, or set
+  `GENTIAN_ADD_CLUSTER=<id>` for an unattended run;
+- on a cluster that is already installed, its Cluster object has to have the
+  name and kernel domain of the claim in `clusters/<id>`;
+- a derivation salt that differs from the cluster's stops the run when the
+  cluster's identity cannot be confirmed, and a credential cache that belongs
+  to another cluster is never read or written.
+
+The run starts by listing the settings the shell exports over `install.env`,
+by name. The message it stops with names the kube context, the API server,
+the cluster the definition describes, the cluster that answered and the
+settings it loaded, and says what to do: usually open a new terminal, or
+`unset` what it lists, or `kubectl config use-context <context>`.
+`--dry-run`, `--validate` and `--status` report the same and exit 1.
+`--force` does not get past any of it. The checks and the two confirmations
+are in [install-reference.md §4](docs/install-reference.md), *One run, one
+cluster*.
+
 ### Exporting a recovery kit from a job
 
 `age -p` prompts on the terminal, so an unattended export needs a public key

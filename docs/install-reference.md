@@ -206,6 +206,66 @@ template lists them at its end: `TENANCY_MODE`, `SECRET_MODE`, `NETWORK_MODE`,
 unattended first run exports them for that run
 ([GETTING-STARTED.md](../GETTING-STARTED.md), *Installing unattended*).
 
+### One run, one cluster
+
+A run gets three things that each name a cluster: its settings (`install.env`
+and the shell's exports), the deployments checkout, and the cluster `kubectl`
+reaches. Before it reads anything that belongs to a cluster, caches it,
+writes it, commits it or applies it, the installer checks that the three
+name the same cluster (`scripts/lib/cluster-identity.sh`), in this order:
+
+1. **The shell's exports.** At the start of every run it lists, by name only,
+   the settings it takes from the environment and not from `install.env`:
+   `KUBECONFIG`, `GENTIAN_DEPLOYMENTS_PATH`, `_REPO`, `_BRANCH`,
+   `_CLUSTER_ID`, `_STAGE`, `GENTIAN_CREDENTIAL_CACHE`, `KERNEL_DOMAIN`,
+   `DERIVATION_SALT`, `MASTER_PASSWORD`. This is a warning. The precedence
+   does not change.
+2. **The checkout**, before it is synced. Its `origin` has to be
+   `GENTIAN_DEPLOYMENTS_REPO`. The comparison ignores a `.git` suffix, a
+   trailing slash, the case of the host, a port, and `user:token@`. The scp,
+   `ssh://` and `https://` forms of one address compare equal. No address is
+   printed with its credential. Its branch has to be
+   `GENTIAN_DEPLOYMENTS_BRANCH`.
+3. **The definition**, after the sync. When the checkout already defines
+   other clusters and not `clusters/<GENTIAN_DEPLOYMENTS_CLUSTER_ID>`, step 0
+   does not scaffold one into it unless a person says so. At a terminal the
+   question names the repository, the path and the cluster id, and defaults
+   to No. An unattended run needs `GENTIAN_ADD_CLUSTER=<cluster id>`. A
+   repository with no `clusters/` yet is new, and step 0 writes into it as
+   before.
+4. **The cluster.** When `clusters/<id>/kernel/claims/cluster.yaml` exists,
+   the claim's `metadata.name` and `spec.kernelDomain` are compared with the
+   Cluster objects (`cluster.gentianos.io`) in the provisioning namespace.
+   That is one read-only `kubectl get`. A cluster with no Cluster object (not
+   installed yet, or not answering) has nothing to compare and passes.
+5. **The salt and the cache**, when credentials are collected. A derivation
+   salt in the shell or the cache that differs from the cluster's is
+   replaced by the cluster's, as before, but only when step 4 found the
+   definition's Cluster object. On a cluster that holds a salt and no Cluster
+   object to compare, the run stops. The credential cache names its cluster
+   (`# cluster: <id> <kernel domain>` on its first line). A cache that names
+   another cluster is neither read nor written. A cache that names none and
+   whose salt turned out wrong is left alone. The cache and `~/.gentian/config`
+   are written only after steps 2 to 4 have passed.
+
+A mismatch stops the run before any credential is read, with exit 1. The
+message names the kube context, the API server, the cluster the definition
+describes, the cluster that answered, and the `install.env` and gentian-os
+checkout the run loaded. It also says what to do: open a new terminal, or
+`unset` the exports it lists, or `kubectl config use-context <context>`, or
+run from the other checkout. `--dry-run`, `--validate` and `--status` report
+the same errors and exit 1, and they write nothing. `--uninstall`, `--purge`,
+`--activate-admin` and `--export-recovery-kit` run the same checks.
+
+`--force` does not get past these checks: it re-applies steps whose `check()`
+is satisfied. Two confirmations each name what they confirm, so a value left
+exported cannot let a different cluster or repository through:
+
+| | |
+|---|---|
+| `GENTIAN_ADD_CLUSTER=<cluster id>` | Write a new `clusters/<cluster id>` into a repository that defines other clusters. For an unattended run. At a terminal the installer asks. |
+| `GENTIAN_ACCEPT_CLUSTER=<claim name>` | The cluster that answered, named by its Cluster object, is the one the definition describes, although their names or domains differ. An example is a cluster whose domain was changed in git. |
+
 ### What `install.env` holds
 
 The template carries one line per setting; the reasoning is here.

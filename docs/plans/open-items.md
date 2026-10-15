@@ -277,6 +277,10 @@ been seen working on a cluster. Until it has, it is not done.
   accepts the repository again once `B-01` and `B-10` have run with the new
   id.
 - The director's clean stop and its write retry bounded by time.
+- The installer stopping when its settings, its deployments checkout and the
+  cluster `kubectl` reaches describe different clusters
+  ([install-reference.md §4](../install-reference.md), *One run, one
+  cluster*). This is shown against stand-ins only (`test-one-cluster`).
 
 - The Models tab of the administration console and `kubectl gentian models`:
   the director's `GET` and `PUT /v1/clusters/{c}/models`, the commit of the
