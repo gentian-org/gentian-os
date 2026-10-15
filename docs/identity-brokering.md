@@ -46,28 +46,32 @@ account in the target for anybody they make.
 |---|---|
 | Client type | OpenID Connect |
 | Client ID | `broker-<target>`, e.g. `broker-customers` |
-| Client authentication | On |
+| Client authentication | On — without it the client is public and has no secret, and the *Credentials* tab does not appear |
 | Authentication flow | Standard flow only |
 | Valid redirect URIs | `https://id.<kernel-domain>/auth/realms/<target>/broker/<alias>/endpoint` — `<alias>` is the name step 2 gives the provider |
 
-Then *Credentials*: copy the client secret.
+Save. A tab *Credentials* appears at the top: copy the *Client Secret*
+there. (A client already made with *Client authentication* off: switch it on
+under *Settings* → *Capability config*, and save.)
 
 For a source realm on another cluster, its administrator does this step
 there, with that cluster's domain in the URL above replaced by this one's.
 
 ## 2. In the target realm: the source as an identity provider
 
-*Identity providers* → *Keycloak OpenID Connect*:
+*Identity providers* → *Keycloak OpenID Connect*. The form shows the
+provider's *Redirect URI* at the top: it is the one step 1 needs, once the
+alias below is filled in.
 
 | Field | Value |
 |---|---|
 | Alias | short and stable, e.g. `team`; it is part of the redirect URI of step 1 |
 | Display name | what the sign-in page's button says, e.g. "Aluvian team account" |
-| Discovery endpoint | `https://id.<source-domain>/auth/realms/<source>/.well-known/openid-configuration` |
+| Discovery endpoint | `https://id.<source-domain>/auth/realms/<source>/.well-known/openid-configuration` — the page every realm publishes with its addresses; Keycloak fills in the rest from it |
 | Client authentication | Client secret sent as post |
 | Client ID / Client secret | from step 1 |
 | Trust email | On — the source has confirmed it; otherwise the target asks again |
-| Sync mode | Force — name, e-mail and the mapped groups (step 3) follow the source at every sign-in |
+| Sync mode (under *Advanced settings*) | Force — name, e-mail and the mapped groups (step 3) follow the source at every sign-in |
 | Hide on login page | Off — the button appears under the sign-in form |
 
 A person whose e-mail address already has an account in the target is asked,
@@ -95,7 +99,8 @@ Then, on the identity provider, *Mappers* → *Add mapper*:
 Whatever is to recognise these people is configured with the target group:
 an app that edits for a group, a role in the tenant's Admin Console given to
 the group. Try it with a person of the source: the target's sign-in page
-shows the button; after signing in at the source, they are back in the
+shows the button (or, to go straight to the source, add
+`&kc_idp_hint=<alias>` to a sign-in URL of the target); after signing in at the source, they are back in the
 target, in the group.
 
 ## Removing it
