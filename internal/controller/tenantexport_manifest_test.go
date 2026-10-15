@@ -126,3 +126,22 @@ func TestAnExportCapturesWhatAPurgeDestroysAndTheManifestNamesIt(t *testing.T) {
 		}
 	}
 }
+
+// A bundle says by what and where it was written: the platform's version
+// line, the tenant's domain -- the custom one where a TenantDomain bound it
+// -- and the cluster's id. None of it is secret, and a restore compares it
+// with where it restores to.
+func TestAManifestRecordsTheVersionLineTheDomainAndTheCluster(t *testing.T) {
+	tenant := planTenant("demo", "wiki")
+	export := &gentianov1alpha1.TenantExport{ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "tenant-demo"}}
+	r := &TenantExportReconciler{Reconciler: &TenantReconciler{KernelDomain: "example.org", TenancyMode: "multi", ClusterID: "zrh-1"}}
+
+	m := r.buildManifest(export, tenant)
+	if m.OperatorVersion != backup.PlatformVersionLine || m.Domain != "demo.example.org" || m.Cluster != "zrh-1" {
+		t.Errorf("operatorVersion %q, domain %q, cluster %q", m.OperatorVersion, m.Domain, m.Cluster)
+	}
+	tenant.Status.Domain = "acme.ch"
+	if m := r.buildManifest(export, tenant); m.Domain != "acme.ch" {
+		t.Errorf("domain %q, want the bound custom domain", m.Domain)
+	}
+}

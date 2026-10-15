@@ -43,9 +43,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
-	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 	"github.com/gentian-org/gentian-os/internal/webhook"
@@ -256,13 +256,17 @@ func main() {
 		Client:      mgr.GetClient(),
 		// Needed by the deletion path, which has to tell "gone" apart from "not
 		// in the cache yet" before it acts on a Tenant being deleted.
-		APIReader:                mgr.GetAPIReader(),
-		Exec:                     appExecer,
-		Scheme:                   mgr.GetScheme(),
-		Seeder:                   buildSeeder(),
-		WithoutVault:             withoutVault(),
-		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:              tenancyMode,
+		APIReader:    mgr.GetAPIReader(),
+		Exec:         appExecer,
+		Scheme:       mgr.GetScheme(),
+		Seeder:       buildSeeder(),
+		WithoutVault: withoutVault(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  tenancyMode,
+		// The id the cluster has in its deployments repository: what a
+		// bundle records as the cluster it was taken on, and what the
+		// rights store names the cluster by.
+		ClusterID:                os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
 		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
@@ -530,7 +534,6 @@ func main() {
 		// carries and a restore puts back: read and written by the operator,
 		// which is the store's one writer.
 		tenantReconciler.Rights = graph
-		tenantReconciler.ClusterID = os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 		if err := (&controller.AuthzProjectionReconciler{
 			Client:  mgr.GetClient(),
 			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),

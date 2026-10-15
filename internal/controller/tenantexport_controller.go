@@ -1198,6 +1198,9 @@ func (r *TenantExportReconciler) buildManifest(
 		TenantSpec:    spec,
 		Export:        export.Name,
 		CreatedAt:     timeOrNow(export.Status.StartedAt),
+		// Where and by what the bundle was written, for a restore to compare
+		// with where it restores to.
+		OperatorVersion: backup.PlatformVersionLine,
 		Identity: &backup.ManifestIdentity{
 			Realm: keycloakRealmName(tenant),
 			Path:  backup.IdentityArtefact,
@@ -1206,6 +1209,10 @@ func (r *TenantExportReconciler) buildManifest(
 			PasswordsIncluded: false,
 		},
 		NotIncluded: export.Status.NotIncluded,
+	}
+	if r.Reconciler != nil {
+		m.Domain = r.Reconciler.tenantEffectiveDomain(tenant)
+		m.Cluster = r.Reconciler.ClusterID
 	}
 	// What is the tenant's own, from what the status says was captured: the
 	// desktop's database and, where the cluster keeps them, the mailboxes.

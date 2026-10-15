@@ -230,7 +230,8 @@ type TenantReconciler struct {
 	Definitions *crdcheck.Holder
 	// Rights is the rights store, for the entries of it a backup carries
 	// and a restore puts back (tenant_rights.go). Nil on a cluster that runs
-	// none. ClusterID is the id the cluster has in it.
+	// none. ClusterID is the id the cluster has in it and in its deployments
+	// repository, which a bundle records as the cluster it was taken on.
 	Rights    RightsStore
 	ClusterID string
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and

@@ -605,8 +605,12 @@ secrets, a JSON document of `secrets` (name to value), `extensions`
 under `secrets.derived`, key to value), with no path in it. `derived` was
 added within format 4; a document without it reads as before. A format 3 bundle has
 none and restores as before, changing no stored secret
-([security.md §6.4](security.md)). A manifest of a format newer than the
-platform reads is refused. A `postgresOwned` artefact is
+([security.md §6.4](security.md)). Also within format 4, and optional, the
+manifest says by what and where it was written: `operatorVersion`, the
+platform's version line (`0.5`); `domain`, the tenant's domain, its custom one
+where a `TenantDomain` bound it; and `cluster`, the cluster's id in its
+deployments repository. A bundle without them reads as before. A manifest of a
+format newer than the platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`
 artefact is a tar.gz holding `INDEX`, the mailboxes one per line by the part

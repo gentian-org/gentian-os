@@ -202,8 +202,22 @@ type Manifest struct {
 	// CreatedAt is when the export started, RFC3339.
 	CreatedAt string `json:"createdAt"`
 
-	// OperatorVersion records the gentian-os build that wrote the bundle.
+	// OperatorVersion is the version line of the platform that wrote the
+	// bundle: its major and minor version, "0.5". A restore reads a bundle
+	// of its own line as the one it is written for, an older line's as well
+	// as it can and says so, and refuses a newer line's. Optional within
+	// version 4: a bundle written before it was recorded has none, and is
+	// read as one of an older line.
 	OperatorVersion string `json:"operatorVersion,omitempty"`
+
+	// Domain is the tenant's domain when the bundle was taken: the custom
+	// domain a TenantDomain bound it to, or the one it had on the cluster.
+	// Cluster is the id of the cluster the bundle was taken on, as its
+	// deployments repository knows it. Both optional within version 4, and
+	// neither secret: a restore compares them with where it restores to and
+	// says what differs.
+	Domain  string `json:"domain,omitempty"`
+	Cluster string `json:"cluster,omitempty"`
 
 	// Apps records what was captured per app, including the pause window. The
 	// windows are published rather than smoothed over: an export is consistent
