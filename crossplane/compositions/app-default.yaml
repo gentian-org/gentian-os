@@ -1874,6 +1874,9 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # The tenant's namespace exists, and the account the release
+                # is installed as may not create one.
+                skipCreateNamespace: true
                 # Not optional: a release that could not read the rule would be
                 # installed without it, and uninstalling it would delete files.
                 patchesFrom:
@@ -1890,8 +1893,10 @@ spec:
                 set:
                   {{ toYaml $relSet | nindent 18 }}
                 {{- end }}
+              # A tenant's chart is installed as the narrow account, not as the
+              # kernel's cluster-admin one (provider-configs.yaml).
               providerConfigRef:
-                name: kubernetes
+                name: tenant-apps
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
             {{- /* The chart creates services named <app>-release-<component>.      */}}
@@ -2404,6 +2409,9 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # The tenant's namespace exists, and the account the release
+                # is installed as may not create one.
+                skipCreateNamespace: true
                 # The app's rule, for the sidecar's release as well: its files
                 # are the app's and are kept on uninstall like the rest.
                 patchesFrom:
@@ -2420,8 +2428,10 @@ spec:
                 set:
                   {{ toYaml $scRelSet | nindent 18 }}
                 {{- end }}
+              # A tenant's chart is installed as the narrow account, not as the
+              # kernel's cluster-admin one (provider-configs.yaml).
               providerConfigRef:
-                name: kubernetes
+                name: tenant-apps
 
             {{- if $sc.stableServiceName }}
             {{- $scSvcPort := default 80 ($sc.stableServicePort | int) }}

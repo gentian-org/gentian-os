@@ -454,6 +454,7 @@ func TestEveryReconcilerThatWritesIsBehindTheCheck(t *testing.T) {
 		"keycloak_platform_reconciler.go": "writes Keycloak's own resources",
 		"gateway_platform_reconciler.go":  "writes Gateway API resources",
 		"concierge_lookup.go":             "writes a ConfigMap",
+		"tenant_apps_helm.go":             "writes a RoleBinding",
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

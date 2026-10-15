@@ -429,6 +429,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The account a tenant's apps are installed as, bound in each tenant
+	// namespace (internal/controller/tenant_apps_helm.go).
+	if err := (&controller.TenantAppsHelmReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantAppsHelm")
+		os.Exit(1)
+	}
+
 	if err := (&controller.BrandingReconciler{Definitions: held, Client: mgr.GetClient(), KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM"))}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Branding")
 		os.Exit(1)

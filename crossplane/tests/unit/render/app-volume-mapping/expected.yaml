@@ -348,6 +348,7 @@ spec:
           name: demo-app-sensitive-values
           namespace: tenant-demo
     skipCRDs: true
+    skipCreateNamespace: true
     values:
       environment:
         DENO_CERT: /opt/gentian-trust-anchor/ca.crt
@@ -392,5 +393,5 @@ spec:
     wait: true
     waitTimeout: 10m
   providerConfigRef:
-    name: kubernetes
+    name: tenant-apps
   rollbackLimit: 3

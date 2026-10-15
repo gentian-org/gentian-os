@@ -426,6 +426,15 @@ Carried over from before, and still not shown:
   against an API server. *Needs a cluster:* a fresh install and a re-run
   passing with the guard in place, tenants' and DMZ namespaces still
   composed, and the live AppProject without the Argo CD namespace.
+  *Resolved on `test-cb`:* a tenant's chart is installed as
+  `provider-helm-tenant-apps` through the ProviderConfig `tenant-apps`,
+  with rights in tenant namespaces only (security.md §12.4). Shown against
+  an API server. *Open:* a profile bundle's own Composition (Element's,
+  Odoo's) still names the kernel's ProviderConfig, and nothing refuses it.
+  *Needs a cluster:* provider-helm honouring the kubeconfig's impersonation,
+  every catalogue app installing and upgrading under it, an existing
+  release taken over without a reinstall, and a tenant deleted with its
+  apps.
 
 ## 3. Known defects, open
 

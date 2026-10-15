@@ -413,6 +413,7 @@ spec:
           name: demo-app-mcp-sensitive-values
           namespace: tenant-demo
     skipCRDs: true
+    skipCreateNamespace: true
     values:
       image:
         tag: 0.1.0
@@ -423,7 +424,7 @@ spec:
     wait: true
     waitTimeout: 10m
   providerConfigRef:
-    name: kubernetes
+    name: tenant-apps
   rollbackLimit: 3
 ---
 apiVersion: kv.vault.upbound.io/v1alpha1
@@ -602,6 +603,7 @@ spec:
           name: demo-app-sensitive-values
           namespace: tenant-demo
     skipCRDs: true
+    skipCreateNamespace: true
     values:
       global:
         imagePullSecrets:
@@ -614,5 +616,5 @@ spec:
     wait: true
     waitTimeout: 10m
   providerConfigRef:
-    name: kubernetes
+    name: tenant-apps
   rollbackLimit: 3

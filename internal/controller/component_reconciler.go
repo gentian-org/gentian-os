@@ -1036,7 +1036,10 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 			"wait":        true,
 			"waitTimeout": "10m",
 			"skipCRDs":    true,
-			"values":      values,
+			// The tenant's namespace exists, and the account the release is
+			// installed as may not create one.
+			"skipCreateNamespace": true,
+			"values":              values,
 			"patchesFrom": []interface{}{map[string]interface{}{
 				"configMapKeyRef": map[string]interface{}{
 					"name":      keepVolumesName(comp),
@@ -1049,7 +1052,9 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 				},
 			}},
 		},
-		"providerConfigRef": map[string]interface{}{"name": "kubernetes"},
+		// A tenant's chart is installed as the narrow account, not as the
+		// kernel's cluster-admin one (tenant_apps_helm.go).
+		"providerConfigRef": map[string]interface{}{"name": TenantAppsProviderConfig},
 	}
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(helmReleaseGVK)

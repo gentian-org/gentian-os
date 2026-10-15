@@ -380,6 +380,7 @@ spec:
           name: demo-app-sensitive-values
           namespace: tenant-demo
     skipCRDs: true
+    skipCreateNamespace: true
     values:
       global:
         imagePullSecrets:
@@ -392,5 +393,5 @@ spec:
     wait: true
     waitTimeout: 10m
   providerConfigRef:
-    name: kubernetes
+    name: tenant-apps
   rollbackLimit: 3

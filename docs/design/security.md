@@ -788,6 +788,7 @@ the code does.
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
 | The internal CA's key | Implemented; shown against a local OpenBao, not on a cluster | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
 | Who may set a namespace's tier label | Implemented; shown against an API server, not on a cluster | The installer, provider-kubernetes, the operator and `system:masters`; not Argo CD or provider-helm (§12.4) |
+| What a tenant's chart may create | Implemented; shown against an API server, not on a cluster | Installed as `provider-helm-tenant-apps`, which holds rights in tenant namespaces only: the namespaced kinds tenant charts render, nothing at cluster scope or in another namespace. The kernel's charts, and the charts of a profile bundle's own Composition, are still installed as cluster-admin (§12.4) |
 | What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
@@ -1248,8 +1249,9 @@ Who may read what:
   - *The conditions go by the namespace an `ExternalSecret` is in.* Whoever
     can write one into a kernel or system namespace, and read the Secret it
     makes there, reaches the kernel's paths. A tenant's administrator cannot;
-    a chart can, because it is installed with the rights of the whole
-    cluster (provider-helm) and may place its objects in any namespace.
+    a tenant's chart cannot, since it is installed with rights in the
+    tenant's namespace only (§12.4); a chart of a profile bundle's own
+    Composition still can.
   - *Nothing at admission refuses a store.* Any `ClusterSecretStore` may sign
     in as `eso` with ESO's ServiceAccount, and one without conditions is
     usable from every namespace. The API server lets only a cluster
@@ -1296,7 +1298,8 @@ syncs.
 What this does not give:
 
 - **provider-helm is one process for all tenants**, and runs as
-  cluster-admin. It keeps pulled charts in a cache keyed by chart name and
+  cluster-admin, installing a tenant's chart as a narrower account (§12.4)
+  but pulling it as itself. It keeps pulled charts in a cache keyed by chart name and
   version and stays logged in to a registry host once any Release has
   presented a credential for it. A chart one tenant pulled can therefore be
   installed by another whose profile names the same chart, until the
@@ -1968,6 +1971,38 @@ platform's they apply writes the label. A write that leaves the label as it
 was passes for anyone. Built-in admission, so Kubernetes 1.30 or newer, which
 pre-flight's 1.33 covers. Shown against an API server
 (`internal/controller/namespace_tier_guard_test.go`), not on a cluster.
+
+A tenant's chart is installed as an account that holds rights in tenant
+namespaces only. provider-helm stays cluster-admin for the kernel's charts,
+some of which ship ClusterRoles. A tenant's Releases (`app-default`, and the
+operator's for a chart it installs itself) name the ProviderConfig
+`tenant-apps` instead, whose kubeconfig (written by `B-05`, no credential in
+it) makes provider-helm act as the ServiceAccount `provider-helm-tenant-apps`.
+That account is bound to `gentian-tenant-apps-helm` by a RoleBinding the
+operator keeps in each namespace of the tenant tier named `tenant-*`, and
+nowhere else (`tenant_apps_helm.go`). The role allows ConfigMaps, Secrets,
+Services, ServiceAccounts, PersistentVolumeClaims, Deployments,
+StatefulSets, Jobs, Ingresses, Roles and RoleBindings, and reads Pods and
+ReplicaSets for Helm's wait: what the catalogue's tenant charts render
+(Activepieces, Docmost, Element's Synapse, Mathesar, Nextcloud and its MCP
+server, Odoo, Open WebUI, OpenProject, XWiki). None renders anything at
+cluster scope or in another namespace. A chart's own Roles are held by
+escalation prevention to a subset of that role. So a tenant chart cannot
+create a cluster-scoped object, write or read another namespace, or touch
+the NetworkPolicies, quota, limits, routes and external secrets of its own;
+a kind beyond the list fails its install, forbidden, and is added to the
+role on review. The binding keeps a finalizer until no Release installs into
+its namespace, so a tenant's releases can be uninstalled while its namespace
+is deleted. Shown against an API server
+(`tenant_apps_helm_envtest_test.go`), not on a cluster.
+
+What this does not close: provider-helm is still one cluster-admin process,
+and which identity a Release gets is the ProviderConfig it names. A profile
+bundle's own Composition (`app-<profile>`, Element's and Odoo's in the
+catalogue) names it itself; theirs name the kernel's, so their charts are
+installed as cluster-admin, and nothing refuses that. provider-helm reads a
+Release's values, pull secret and patches as itself, from any namespace the
+Release names.
 
 ### 12.5 The vault's own TLS
 
