@@ -278,6 +278,16 @@ spec:
                             required:
                             - size
                             type: object
+                          databases:
+                            description: |-
+                              Databases are, for an archive of the databases an app made itself
+                              (postgresOwned, mariadbOwned), each database it held as
+                              "<name in the bundle>=<name here>", as the restore's Job reported
+                              them once it had put them back. Set by a restore only.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
                           kind:
                             description: |-
                               Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or

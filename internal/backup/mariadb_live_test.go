@@ -282,7 +282,7 @@ func TestMariaDBAgainstAServer(t *testing.T) {
 	m.allowed("other_crm", "CREATE DATABASE other_crm_kept")
 	m.mustScript("sh", containerByName(MariaDBRestoreJob(p, d, MariaDBArtefact("demo_crm"), "other_crm"), "mariadb-restore").Args[0])
 	out := m.mustScript("bash", containerByName(
-		MariaDBOwnedRestoreJob(p, d, MariaDBOwnedArtefact("demo_crm"), "demo_crm", "other_crm", "other_crm"), "mariadb-restore-owned").Args[0])
+		MariaDBOwnedRestoreJob(p, d, MariaDBOwnedArtefact("demo_crm"), "demo_crm", "other_crm", "other_crm"), "mariadb-restore-owned").Args[0], "TERMINATION_LOG=/tmp/reported")
 	if !strings.Contains(out, "NOTE: other_crm_kept is other_crm's and the bundle does not hold it") {
 		t.Errorf("a database the bundle does not hold was not named:\n%s", out)
 	}
@@ -296,7 +296,7 @@ func TestMariaDBAgainstAServer(t *testing.T) {
 	m.root("CREATE DATABASE held_crm; CREATE DATABASE held_crm_reports; CREATE USER 'held_crm_reports'@'%'; GRANT ALL PRIVILEGES ON `held\\_crm\\_reports`.* TO 'held_crm_reports'@'%'")
 	m.mustScript("bash", containerByName(MariaDBOwnedDumpJob(p, "demo_crm", "demo_crm"), "mariadb-dump-owned").Args[0])
 	if out, err := m.script("bash", containerByName(
-		MariaDBOwnedRestoreJob(p, d, MariaDBOwnedArtefact("demo_crm"), "demo_crm", "held_crm", "held_crm"), "mariadb-restore-owned").Args[0]); err == nil || !strings.Contains(out, "refused") {
+		MariaDBOwnedRestoreJob(p, d, MariaDBOwnedArtefact("demo_crm"), "demo_crm", "held_crm", "held_crm"), "mariadb-restore-owned").Args[0], "TERMINATION_LOG=/tmp/reported"); err == nil || !strings.Contains(out, "refused") {
 		t.Errorf("a restore wrote over another account's database: %v\n%s", err, out)
 	}
 

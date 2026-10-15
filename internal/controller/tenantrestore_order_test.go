@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
@@ -156,4 +157,33 @@ func TestAFailedOwedResumeCommandFailsTheApp(t *testing.T) {
 	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed || !strings.Contains(entry.Message, "resume command failed") {
 		t.Fatalf("app = %s %q", entry.Phase, entry.Message)
 	}
+}
+
+// The databases an app made itself are named only inside their archive, and
+// are known only once the restore's Job has put them back. What it reports
+// is kept on the artefact, for the app's post-restore commands to be told.
+func TestTheNamesOwnedDatabasesWerePutBackUnderAreKept(t *testing.T) {
+	w := newRestoreWorld(t, nil)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "tx-demo-r1-wiki-pgor-abcde", Namespace: postgresNamespace,
+			Labels: map[string]string{"job-name": "tx-demo-r1-wiki-pgor"}},
+		Status: corev1.PodStatus{Phase: corev1.PodSucceeded, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "pg-restore-owned",
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 0, Message: "old_wiki_reports=demo_wiki_reports\nmine=demo_wiki_mine\n"}},
+		}}},
+	}
+	if err := w.c.Create(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	got := w.run(t)
+	for _, a := range appStatus(&got.Status.Apps, "wiki").Artefacts {
+		if a.Kind == bundle.ArtefactPostgresOwned {
+			if !slices.Equal(a.Databases, []string{"old_wiki_reports=demo_wiki_reports", "mine=demo_wiki_mine"}) {
+				t.Errorf("databases = %v", a.Databases)
+			}
+			return
+		}
+	}
+	t.Fatal("no owned artefact in the plan")
 }

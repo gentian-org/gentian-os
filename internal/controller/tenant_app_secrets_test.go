@@ -426,7 +426,7 @@ func TestAnExportCarriesAnAppsOwnSecretsEncryptedAndNowhereElse(t *testing.T) {
 	m := w.backup(t, "demo")
 
 	entry := w.export.Status.Apps[0]
-	if got := entry.Artefacts[len(entry.Artefacts)-1]; got != (gentianov1alpha1.BundleArtefact{Kind: bundle.ArtefactSecrets, Name: "wiki", Path: "secrets/wiki.json"}) {
+	if got := entry.Artefacts[len(entry.Artefacts)-1]; !reflect.DeepEqual(got, gentianov1alpha1.BundleArtefact{Kind: bundle.ArtefactSecrets, Name: "wiki", Path: "secrets/wiki.json"}) {
 		t.Fatalf("the secrets artefact = %+v", got)
 	}
 	if !reflect.DeepEqual(entry.Secrets.Names, []string{"encryption_key", "search/index_key", "session_key"}) {
@@ -970,7 +970,7 @@ func TestAManifestThatMisfilesSecretsIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := plan.apps[0].artefacts[1]
-	if got != (gentianov1alpha1.BundleArtefact{Kind: bundle.ArtefactSecrets, Name: "wiki", Path: "secrets/wiki.json"}) {
+	if !reflect.DeepEqual(got, gentianov1alpha1.BundleArtefact{Kind: bundle.ArtefactSecrets, Name: "wiki", Path: "secrets/wiki.json"}) {
 		t.Errorf("planned %+v", got)
 	}
 	if !strings.Contains(plan.apps[0].note, "each one its profile declares here is set to the bundle's value") {

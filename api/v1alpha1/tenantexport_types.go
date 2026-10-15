@@ -448,6 +448,13 @@ type BundleArtefact struct {
 	// differently when the tenant is. Set by a restore only.
 	// +optional
 	Target string `json:"target,omitempty"`
+	// Databases are, for an archive of the databases an app made itself
+	// (postgresOwned, mariadbOwned), each database it held as
+	// "<name in the bundle>=<name here>", as the restore's Job reported
+	// them once it had put them back. Set by a restore only.
+	// +optional
+	// +listType=atomic
+	Databases []string `json:"databases,omitempty"`
 	// Claim is the volume claim a volume was captured from, as far as making
 	// it again takes. Recorded for the volumes of an app that was uninstalled
 	// with its data kept: where such an app's data is brought into a tenant

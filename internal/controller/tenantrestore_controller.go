@@ -452,6 +452,35 @@ func (r *TenantRestoreReconciler) restoreApp(
 	return ctrl.Result{Requeue: true}, nil
 }
 
+// recordOwnedNames keeps, on the artefact a Job restored databases an app
+// made itself from, the names it reported putting each one back under: they
+// are known only once it has run, and the app's post-restore commands are
+// told them. A pod that is no longer there to say leaves them unrecorded.
+func (r *TenantRestoreReconciler) recordOwnedNames(ctx context.Context, entry *gentianov1alpha1.AppExportStatus, unit captureUnit, job *batchv1.Job) {
+	if unit.Kind != bundle.ArtefactPostgresOwned && unit.Kind != bundle.ArtefactMariaDBOwned {
+		return
+	}
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(job.Namespace), client.MatchingLabels{"job-name": job.Name}); err != nil {
+		return
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodSucceeded {
+			continue
+		}
+		for _, c := range pod.Status.ContainerStatuses {
+			if t := c.State.Terminated; t != nil && t.ExitCode == 0 {
+				for i := range entry.Artefacts {
+					if a := &entry.Artefacts[i]; a.Kind == unit.Kind && a.Target == unit.Name {
+						a.Databases = backup.ParseOwnedNames(t.Message)
+					}
+				}
+				return
+			}
+		}
+	}
+}
+
 // rightsProjectionWait bounds the wait for the operator's projection to
 // attach a tenant in the rights store: longer than the interval it runs on.
 const rightsProjectionWait = 15 * time.Minute
@@ -854,6 +883,7 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 
 	if jobIsComplete(existing) {
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
+		r.recordOwnedNames(ctx, entry, unit, existing)
 		return true, nil
 	}
 	if unit.Key != nil && existing.DeletionTimestamp == nil {

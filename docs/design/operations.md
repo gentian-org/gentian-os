@@ -596,8 +596,10 @@ bundle is restored into a tenant of another name.
 A profile's `restore.post` commands run with `GENTIAN_RESTORE_*` variables
 naming both ends: tenant, domain, the cluster's own (kernel) domain, platform
 version, cluster, the app's chart
-versions and each store's name in the bundle and here
-([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
+versions, each store's name in the bundle and here -- the databases an app
+made itself too, which the restore's Job reports in its termination message
+and the restore keeps on the artefact (`databases`) -- and the app's database
+login ([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
 each app's profile rewrites what its app cached, reading credentials the
 platform made new from the app's own Secrets. An app paused by scaling down
 is resumed before them, as they need a pod, and rolled (`rollout restart`)

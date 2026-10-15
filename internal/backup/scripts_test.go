@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -590,10 +591,12 @@ exit 0
 	script = strings.ReplaceAll(script, "@TMP@/", dir+"/")
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Stdin = strings.NewReader("")
-	cmd.Env = []string{"PATH=" + filepath.Join(dir, "bin") + ":" + os.Getenv("PATH"), "STUB=" + dir}
+	cmd.Env = []string{"PATH=" + filepath.Join(dir, "bin") + ":" + os.Getenv("PATH"), "STUB=" + dir,
+		"TERMINATION_LOG=" + filepath.Join(dir, "reported")}
 	out, err := cmd.CombinedOutput()
 	log, _ := os.ReadFile(filepath.Join(dir, "log"))
-	return string(out) + "\n--- log\n" + string(log), err
+	reported, _ := os.ReadFile(filepath.Join(dir, "reported"))
+	return string(out) + "\n--- log\n" + string(log) + "\n--- reported\n" + string(reported), err
 }
 
 // One PostgreSQL server holds every tenant's databases, and a database an
@@ -618,6 +621,11 @@ func TestOwnedDatabasesAreRestoredUnderTheTargetsNamesAndNeverOverAnothers(t *te
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
+	}
+	// And says what it put back under which name, for the app's commands.
+	if _, reported, _ := strings.Cut(out, "--- reported\n"); !slices.Equal(ParseOwnedNames(reported),
+		[]string{"acme_wiki_reports=acme2_wiki_reports", "analytics=acme2_wiki_analytics"}) {
+		t.Errorf("reported %q", reported)
 	}
 	for _, not := range []string{"LOAD acme_wiki_reports", "LOAD analytics", "CREATE analytics"} {
 		if strings.Contains(out, not) {

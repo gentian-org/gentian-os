@@ -26,8 +26,8 @@ const RestoreEnvPrefix = "GENTIAN_RESTORE_"
 // restore, as NAME=value: where the bundle was written and where it is put
 // back -- tenant, domain, the cluster's own domain, platform version,
 // cluster -- and, for the app, its version that wrote the data and the one
-// installed, and each store's name
-// in the bundle and here. They are what an app's own data may have cached
+// installed, each store's name in the bundle and here, the databases it made
+// itself among them, and its database login's. They are what an app's own data may have cached
 // and has to be told of: an address on the old domain, a database's old
 // name. A credential is never among them: what the platform made new here
 // the command reads from the app's own Secrets, as the app does.
@@ -51,9 +51,25 @@ func restoreHookEnv(
 	}
 	entry := appStatus(&restore.Status.Apps, appName)
 	pairs := map[string][]string{}
+	sourceTenant := plainValue(restore.Status.SourceTenant)
 	for _, a := range entry.Artefacts {
 		var kind string
 		switch a.Kind {
+		case bundle.ArtefactPostgresOwned, bundle.ArtefactMariaDBOwned:
+			// The databases the app made itself, by the names the restore's
+			// Job reported; and its login, whose databases they are.
+			for _, p := range a.Databases {
+				from, to, _ := strings.Cut(p, "=")
+				pairs["DATABASES"] = append(pairs["DATABASES"], plainValue(from)+"="+plainValue(to))
+			}
+			from, to := "", ""
+			if a.Kind == bundle.ArtefactPostgresOwned {
+				from, to = a.Name, backup.PostgresRole(tenant.Name, appName)
+			} else if sourceTenant != "" {
+				from, to = backup.MariaDBUser(sourceTenant, appName), backup.MariaDBUser(tenant.Name, appName)
+			}
+			pairs["ROLES"] = append(pairs["ROLES"], plainValue(from)+"="+plainValue(to))
+			continue
 		case bundle.ArtefactPostgres, bundle.ArtefactMariaDB:
 			kind = "DATABASES"
 		case bundle.ArtefactS3:
@@ -67,7 +83,7 @@ func restoreHookEnv(
 	}
 	vars := [][2]string{
 		{"APP", appName},
-		{"SOURCE_TENANT", plainValue(restore.Status.SourceTenant)},
+		{"SOURCE_TENANT", sourceTenant},
 		{"TARGET_TENANT", tenant.Name},
 		{"SOURCE_DOMAIN", source.Domain},
 		{"TARGET_DOMAIN", targetDomain},
@@ -80,6 +96,7 @@ func restoreHookEnv(
 		{"SOURCE_CHART_VERSION", entry.ChartVersion},
 		{"TARGET_CHART_VERSION", plainValue(profileChartVersion(profile))},
 		{"DATABASES", strings.Join(pairs["DATABASES"], " ")},
+		{"ROLES", strings.Join(pairs["ROLES"], " ")},
 		{"BUCKETS", strings.Join(pairs["BUCKETS"], " ")},
 		{"VOLUMES", strings.Join(pairs["VOLUMES"], " ")},
 	}

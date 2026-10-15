@@ -12,6 +12,7 @@ package backup
 
 import (
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -250,6 +251,7 @@ ROLE=%[1]s
 DB=%[2]s
 SRC=%[5]s
 : > /tmp/restored
+: > /tmp/pairs
 n=0
 while IFS= read -r name; do
   [ -n "${name}" ] || continue
@@ -288,10 +290,12 @@ PSQL
   PGDATABASE="${target}" psql -v ON_ERROR_STOP=1 --single-transaction -q -f "%[3]s/owned/${n}.sql" </dev/null >/dev/null
   rm -f "%[3]s/owned/${n}.sql"
   printf '%%s\n' "${target}" >> /tmp/restored
+  printf '%%s=%%s\n' "${name}" "${target}" >> /tmp/pairs
   echo "restored ${name} as ${target}"
   n=$((n + 1))
 done < %[3]s/owned/INDEX
 echo "restored ${n} database(s) ${ROLE} owned besides ${DB}"
+%[6]s
 
 psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > /tmp/now <<'PSQL'
 %[4]s
@@ -301,7 +305,7 @@ while IFS= read -r name; do
   if ! grep -qxF -- "${name}" /tmp/restored; then
     echo "NOTE: ${ROLE} owns ${name}, which the bundle does not hold; it was left as it is"
   fi
-done < /tmp/now`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, postgresOwnedSQL, shellSingleQuote(source))},
+done < /tmp/now`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, postgresOwnedSQL, shellSingleQuote(source), reportOwnedNames)},
 		Env:          PostgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
@@ -309,6 +313,42 @@ done < /tmp/now`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database),
 		fetchAndDecrypt(d, p, artefact, "owned.tar.gz"),
 		unpack,
 	}, restore, nil)
+}
+
+// OwnedNamesMessageLimit is how much of a restore Job's termination message
+// the names of the owned databases it put back may take: Kubernetes keeps
+// 4096 bytes of it.
+const OwnedNamesMessageLimit = 4000
+
+// reportOwnedNames is the end of a restore of owned databases: each one put
+// back, as "<name in the bundle>=<name here>" on a line of its own, in the
+// Job's termination message, for the operator to tell the app's
+// post-restore commands. The names are not known before the Job runs. As
+// many whole lines as the message holds; the Job's output names every one.
+var reportOwnedNames = fmt.Sprintf(`REPORT="${TERMINATION_LOG:-/dev/termination-log}"
+: > "${REPORT}"
+size=0
+while IFS= read -r pair; do
+  len=$(printf '%%s\n' "${pair}" | wc -c)
+  if [ $((size + len)) -gt %d ]; then
+    echo "NOTE: not every name fits in what this Job reports; the output above names every one"
+    break
+  fi
+  printf '%%s\n' "${pair}" >> "${REPORT}"
+  size=$((size + len))
+done < /tmp/pairs`, OwnedNamesMessageLimit)
+
+// ParseOwnedNames reads what reportOwnedNames left: the pairs, in order. A
+// line that is not one name, "=" and another is left out: a name with "=" in
+// it cannot be told apart from the pair.
+func ParseOwnedNames(message string) []string {
+	var pairs []string
+	for _, line := range strings.Split(message, "\n") {
+		if strings.Count(line, "=") == 1 {
+			pairs = append(pairs, line)
+		}
+	}
+	return pairs
 }
 
 // MariaDBRestoreJob loads one MariaDB database back.
@@ -383,6 +423,7 @@ SRC=%[1]s
 DB=%[2]s
 MARIADB=(%[5]s)
 : > /tmp/restored
+: > /tmp/pairs
 n=0
 while IFS= read -r name; do
   [ -n "${name}" ] || continue
@@ -412,10 +453,12 @@ SQL
   "${MARIADB[@]}" "${target}" < "%[3]s/owned/${n}.sql"
   rm -f "%[3]s/owned/${n}.sql"
   printf '%%s\n' "${target}" >> /tmp/restored
+  printf '%%s=%%s\n' "${name}" "${target}" >> /tmp/pairs
   echo "restored ${name} as ${target}"
   n=$((n + 1))
 done < %[3]s/owned/INDEX
 echo "restored ${n} database(s) that were ${SRC}'s besides itself"
+%[7]s
 
 "${MARIADB[@]}" -N -s --raw > /tmp/now <<'SQL'
 %[4]s ORDER BY s.schema_name;
@@ -427,7 +470,7 @@ while IFS= read -r name; do
   fi
 done < /tmp/now`,
 			shellSingleQuote(source), shellSingleQuote(database), workDir,
-			mariadbOwnedSQL(database, user), mariadbClient, mariadbHeldByAnother("@db", user))
+			mariadbOwnedSQL(database, user), mariadbClient, mariadbHeldByAnother("@db", user), reportOwnedNames)
 	}
 	restore := corev1.Container{
 		Name:         "mariadb-restore-owned",
