@@ -116,10 +116,10 @@ echo "fetched and decrypted %[4]s"`,
 
 // Every restore Job below takes two names: artefact, the path in the bundle
 // the manifest gives for what was captured, and the database, bucket or
-// claim of the tenant being restored into. They are the same thing under two
-// names only when the tenant is called what the one the bundle was taken of
-// was; a restore used to take one name for both, and so could not find the
-// artefacts of a bundle brought in under another name.
+// claim of the tenant being restored into. A bundle is restored only into the
+// tenant of its own name, and still the two differ wherever the tenant's
+// database or bucket prefix (spec.isolation) is not the one it had where the
+// bundle was taken -- on another cluster, say.
 
 // PostgresRestoreJob loads one database back from its dump.
 func PostgresRestoreJob(p JobParams, d Decryption, artefact, database string) *batchv1.Job {
@@ -214,13 +214,13 @@ echo "restored %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(data
 // besides the provisioned one, from the archive PostgresOwnedDumpJob wrote.
 //
 // Under which name: a database's name is whatever the app chose, and one
-// server holds every tenant's. Restored into the tenant the bundle was taken
-// of -- source and database are the same name -- each keeps its name. Into
-// another tenant it cannot: the name is taken, by the original, on the
-// cluster the bundle came from. So there each is put back under the
-// provisioned database of the tenant restored into, as MariaDB's are: a name
-// that began with the source's provisioned name begins with the target's
-// instead, and any other name is prefixed with it.
+// server holds every tenant's. Where the provisioned database has the name
+// it had in the bundle -- source and database are the same -- each keeps its
+// name. Where it does not, the tenant's database prefix here is another than
+// where the bundle was taken, and each is put back under the provisioned
+// database here, as MariaDB's are: a name that began with the source's
+// provisioned name begins with the target's instead, and any other name is
+// prefixed with it.
 //
 // Each is created if it is not there, owned by the app's role, and loaded
 // the way the provisioned one is: its contents are replaced by the dump's.
@@ -390,8 +390,8 @@ echo "restored ${DB}"`, shellSingleQuote(database), workDir)},
 // the provisioned one, from the archive MariaDBOwnedDumpJob wrote.
 //
 // A database is the app's by its name, and the name begins with the
-// provisioned database's -- which is the tenant's and the app's, and so is
-// another name where the bundle is restored into another tenant. Each
+// provisioned database's -- which is the tenant's prefix and the app's, and
+// so is another name where the tenant's prefix here is another. Each
 // database in the archive is therefore put back under the provisioned name
 // here: source_reports of the bundle becomes database_reports. Under that
 // name it is the app's here, within what its user may touch and what a
@@ -579,12 +579,10 @@ echo "restored volume %s"`, workDir, claim)},
 	}, restore, []corev1.Volume{target})
 }
 
-// RealmSource is where a realm capture was taken: the tenant and its realm,
-// and, where the tenant's mail domain there is not the one it is restored
-// into, both mail domains.
+// RealmSource is where a realm capture was taken, as far as a realm import
+// needs it: where the tenant's mail domain there is not the one it is
+// restored into, both mail domains.
 type RealmSource struct {
-	Tenant string
-	Realm  string
 	// MailDomain is the tenant's mail domain where the capture was taken and
 	// TargetMailDomain the one it is put back into. Set, both, only where
 	// they differ: each person's address at MailDomain is put back at
@@ -621,19 +619,9 @@ func (s RealmSource) mailMove() (from, to string) {
 // token's subject finds the same person after a restore or an import. A
 // person who is already in the realm is left under the id they have.
 //
-// Into the tenant the bundle was taken of, groups, roles and clients are
-// brought back to what the bundle recorded. Into a tenant of another name
-// the bundle's names are the other tenant's:
-//
-//   - the platform's groups are named for their tenant
-//     (gentian:tenant:<tenant>:…), and are put back under this tenant's
-//     names, with the memberships. Left as they were, every person came back
-//     a member of groups nothing here reads, with access to nothing;
-//   - clients are not imported. They are named for the old tenant and carry
-//     its addresses; this tenant's were made when its apps were installed.
-//     With them go the client roles, and the groups' mappings to them, which
-//     provisioning made here for this tenant's own clients;
-//   - the old realm's default role is left out.
+// Groups, roles and clients are brought back to what the bundle recorded:
+// the bundle is always of the tenant restored into, so the platform's groups
+// (gentian:tenant:<tenant>:…) are named as they are here.
 //
 // Where the tenant's mail domain is another than where the bundle was taken
 // (RealmSource.MailDomain), each person's address at the old one comes back
@@ -647,26 +635,15 @@ func (s RealmSource) mailMove() (from, to string) {
 // goes on to the end so that the output names all of them, and the Job
 // fails. It used to pass over each and report the count of what worked.
 func RealmImportJob(p JobParams, d Decryption, artefact, realm string, source RealmSource) *batchv1.Job {
-	if source.Tenant == "" {
-		source.Tenant = p.Tenant
-	}
-	if source.Realm == "" {
-		source.Realm = realm
-	}
 	mailFrom, mailTo := source.mailMove()
 	restore := corev1.Container{
 		Name:    "realm-import",
 		Image:   kernel.KeycloakProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{realmScriptPrelude + fmt.Sprintf(`REALM=%[1]s
-SRC=%[3]s
-DST=%[4]s
-SRC_REALM=%[5]s
-MAIL_FROM=%[6]s
-MAIL_TO=%[7]s
+MAIL_FROM=%[3]s
+MAIL_TO=%[4]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
-OLD="gentian:tenant:${SRC}:"
-NEW="gentian:tenant:${DST}:"
 tar xzf %[2]s/realm.tar.gz -C %[2]s
 for f in realm.json users.ndjson memberships.ndjson; do
   [ -f "%[2]s/${f}" ] || { echo "ERROR: the realm archive holds no ${f}" >&2; exit 1; }
@@ -694,24 +671,8 @@ new_token
 # partialImport with OVERWRITE brings groups, roles and clients back to what the
 # bundle recorded. It is scoped to the realm's contents and never recreates the
 # realm itself, which the platform provisions.
-if [ "${SRC}" = "${DST}" ]; then
-  jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:(.roles//{}), clients:(.clients//[])}' \
-    %[2]s/realm.json > %[2]s/import.json
-else
-  jq --arg old "${OLD}" --arg new "${NEW}" --arg default "default-roles-${SRC_REALM}" '
-    def renamed:
-      if ((.name // "") | startswith($old)) then
-        .name as $was | ($new + ($was | ltrimstr($old))) as $now
-        | .name = $now
-        | (.. | objects | select(has("path")) | .path) |=
-            (if startswith("/" + $was) then "/" + $now + ltrimstr("/" + $was) else . end)
-      else . end;
-    {ifResourceExists: "OVERWRITE",
-     groups: [(.groups // [])[] | renamed | del(.. | objects | .clientRoles?)],
-     roles: {realm: [(.roles.realm // [])[] | select(.name != $default) | del(.composites.client?)]}}' \
-    %[2]s/realm.json > %[2]s/import.json
-  echo "the bundle is of tenant ${SRC}: its groups are put back under ${NEW}, its clients are not imported"
-fi
+jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:(.roles//{}), clients:(.clients//[])}' \
+  %[2]s/realm.json > %[2]s/import.json
 kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
 echo "imported realm configuration"
 
@@ -786,8 +747,7 @@ while IFS= read -r line; do
   uid_old=$(printf '%%s' "${line}" | jq -r .userId)
   username=$(jq -rs --arg id "${uid_old}" '[.[] | select(.id == $id and .serviceAccountClientId == null)][0].username // empty' %[2]s/users.ndjson)
   [ -n "${username}" ] || continue
-  printf '%%s' "${line}" | jq -r --arg old "/${OLD}" --arg new "/${NEW}" \
-    '.groups[]?.path | select(. != null and . != "") | if startswith($old) then $new + ltrimstr($old) else . end' > %[2]s/paths
+  printf '%%s' "${line}" | jq -r '.groups[]?.path | select(. != null and . != "")' > %[2]s/paths
   [ -s %[2]s/paths ] || continue
   if ! kc GET "${API}/users?exact=true&username=$(enc "${username}")" > %[2]s/found.json; then
     failed=$((failed + 1)); continue
@@ -814,8 +774,7 @@ if [ "${failed}" -ne 0 ]; then
   exit 1
 fi
 echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a password reset"`,
-			quotedRealm(realm), workDir, shellSingleQuote(source.Tenant), shellSingleQuote(p.Tenant), shellSingleQuote(source.Realm),
-			shellSingleQuote(mailFrom), shellSingleQuote(mailTo))},
+			quotedRealm(realm), workDir, shellSingleQuote(mailFrom), shellSingleQuote(mailTo))},
 		Env:          keycloakAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}

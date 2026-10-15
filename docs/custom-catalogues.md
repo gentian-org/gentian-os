@@ -377,10 +377,12 @@ could not run and the app was scaled down instead, its `quiesce.post` command is
 mode. A restore may come from another cluster or
 domain, and every credential the platform makes (database, bucket, sign-in client) is made new
 there, so each command is run with what it needs to know, and no secret: `GENTIAN_RESTORE_APP`;
-`GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT`, `DOMAIN`, `KERNEL_DOMAIN`
+`GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT` (always the same tenant: a
+restore does not rename), `DOMAIN`, `KERNEL_DOMAIN`
 (the cluster's own domain, whose sign-in issuer is `id.<kernel domain>`), `PLATFORM_VERSION`,
 `CLUSTER` and the app's `CHART_VERSION` (a source value the bundle does not record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
-`GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>` — the
+`GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>`, which
+differ where the tenant's database or bucket prefix differs between the two clusters — the
 databases include those the app made itself, as far as the 4 KiB a restore Job reports holds their
 names — and `GENTIAN_RESTORE_ROLES`, the app's database login the same way, whether or not it made
 databases of its own (left out of a bundle that records neither its tenant nor the role). A name that is not a

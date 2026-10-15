@@ -91,8 +91,8 @@ type restoreWorld struct {
 }
 
 // newRestoreWorld is tenant demo with wiki (a database, a bucket, a volume)
-// and drive installed, and an uploaded bundle of tenant "old" that holds
-// wiki and notes.
+// and drive installed, and an uploaded bundle of it, taken where its realm
+// and prefixes were "old", that holds wiki and notes.
 func newRestoreWorld(t *testing.T, mutate func(*gentianov1alpha1.TenantRestore)) *restoreWorld {
 	t.Helper()
 	scheme := deleteGapsScheme()
@@ -266,11 +266,9 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 			t.Errorf("the database is not restored into demo_wiki:\n%s", script)
 		}
 	}
-	// The bundle is of tenant "old": what is named for a tenant comes back
-	// under this one's names. The databases wiki made for itself are told
-	// from the old provisioned name and put under the new; the realm's
-	// groups are renamed from the old tenant's to this one's; and the
-	// result says so.
+	// The bundle was taken where the tenant's database prefix was another:
+	// the databases wiki made for itself are told from the old provisioned
+	// name and put under the one here.
 	if owned := jobs["tx-demo-r1-wiki-pgor"]; owned != nil {
 		script := owned.Spec.Template.Spec.Containers[0].Args[0]
 		if !strings.Contains(script, "SRC='old_wiki'") || !strings.Contains(script, "DB='demo_wiki'") {
@@ -279,15 +277,15 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 	}
 	if realm := jobs["tx-demo-r1-gentian-tenant-realmr"]; realm != nil {
 		script := realm.Spec.Template.Spec.Containers[0].Args[0]
-		if !strings.Contains(script, "SRC='old'") || !strings.Contains(script, "DST='demo'") || !strings.Contains(script, "REALM='demo'") {
-			t.Errorf("the realm import is not told it renames from old to demo:\n%s", script[:400])
+		if !strings.Contains(script, "REALM='demo'") || strings.Contains(script, "gentian:tenant:${") {
+			t.Errorf("the realm import is not into the realm here, or renames groups:\n%s", script[:400])
 		}
 		if realm.Namespace != identityNamespace {
 			t.Errorf("the realm import runs in %s", realm.Namespace)
 		}
 	}
-	if got.Status.SourceTenant != "old" || !strings.Contains(notes, "The bundle is of tenant old, not of this one") {
-		t.Errorf("sourceTenant = %q; the notes do not say the bundle is another tenant's", got.Status.SourceTenant)
+	if got.Status.SourceTenant != "demo" {
+		t.Errorf("sourceTenant = %q", got.Status.SourceTenant)
 	}
 
 	// The bucket and its identity are made before its objects are written.
@@ -378,6 +376,30 @@ func TestARestoreAskedForAnAppItCannotRestoreIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(said, "CannotRestoreAsAsked") || !strings.Contains(said, "notes is not installed") {
 		t.Errorf("conditions = %s", said)
+	}
+}
+
+// A bundle of another tenant is refused before anything is changed, as an
+// import of it is: a restore does not rename, and says what to do instead.
+func TestARestoreOfAnotherTenantsBundleIsRefused(t *testing.T) {
+	for _, intoNew := range []bool{false, true} {
+		w := newRestoreWorld(t, func(r *gentianov1alpha1.TenantRestore) { r.Spec.IntoNewTenant = intoNew })
+		w.bundles.manifest.Tenant = "acme"
+		if _, err := w.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: w.key}); err != nil {
+			t.Fatal(err)
+		}
+		got := w.restore(t)
+		if got.Status.Phase != gentianov1alpha1.TenantExportPhaseFailed || got.Status.StartedAt != nil || len(w.jobs(t)) != 0 {
+			t.Fatalf("intoNewTenant %v: phase = %s, started %v, jobs = %d", intoNew, got.Status.Phase, got.Status.StartedAt, len(w.jobs(t)))
+		}
+		said := ""
+		for _, c := range got.Status.Conditions {
+			said += c.Reason + ": " + c.Message + "\n"
+		}
+		if !strings.Contains(said, "OtherTenant: the bundle is of tenant acme and this is tenant demo: a restore does not rename; "+
+			"rename the bundle with a tool that rewrites it first") {
+			t.Errorf("intoNewTenant %v: conditions = %s", intoNew, said)
+		}
 	}
 }
 

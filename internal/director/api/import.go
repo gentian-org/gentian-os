@@ -182,7 +182,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	name := insp.Manifest.Tenant
 	if req.Name != "" && req.Name != name {
 		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
-			"the bundle is of tenant %s, and an import makes the tenant under the name its bundle carries; it does not rename. Nothing was changed", name))
+			"the bundle is of tenant %s, and an import makes the tenant under the name its bundle carries and does not rename: rename the bundle with a tool that rewrites it first. Nothing was changed", name))
 		return
 	}
 	if !gitops.ValidName(name) {

@@ -37,6 +37,11 @@ type TenantRestoreSpec struct {
 
 	// Bundle locates a bundle directly, for restoring one this cluster did not
 	// produce — a migration, or a rebuild where the original export is gone.
+	//
+	// Whichever names it, the bundle must be of this tenant: one whose
+	// manifest names another tenant is refused before anything is changed. A
+	// restore does not rename; a bundle meant for another name is rewritten
+	// into it, by a tool that does so, first.
 	// +optional
 	Bundle *BundleRef `json:"bundle,omitempty"`
 
@@ -92,8 +97,8 @@ type TenantRestoreSpec struct {
 	// into another by a file. The restore names each in its result. What the
 	// bundle records as withdrawn is withdrawn here too.
 	//
-	// The same holds, whatever this says, when the bundle was taken of a
-	// tenant of another name or on another cluster.
+	// The rights are not granted either, whatever this says, when the
+	// bundle was taken on another cluster.
 	// +optional
 	IntoNewTenant bool `json:"intoNewTenant,omitempty"`
 }
@@ -139,7 +144,7 @@ type RestoreRights struct {
 	// decides whether what was granted in its tenant comes back: Proven
 	// (signed with this cluster's key, taken on this cluster), or why not
 	// -- NoSigningKey, Unsigned, SignedByAnotherKey, BadSignature,
-	// NoClusterID, AnotherCluster, AnotherTenant.
+	// NoClusterID, AnotherCluster.
 	// +optional
 	Provenance string `json:"provenance,omitempty"`
 	// ProvenanceMessage says the same in a sentence.
@@ -190,8 +195,8 @@ type TenantRestoreStatus struct {
 
 	// Conditions carry Accepted (admitted, and preflight passed) and Complete,
 	// and OutsideGuarantee when the restore is not the round trip the
-	// platform guarantees -- a bundle of its own version line, restored into
-	// the tenant it was taken of, on the same domain -- with what differs.
+	// platform guarantees -- a bundle of its own version line, on the same
+	// domain -- with what differs.
 	// Such a restore goes ahead as far as it can.
 	// +optional
 	// +listType=map
@@ -218,10 +223,8 @@ type TenantRestoreStatus struct {
 	BundleSchemaVersion int `json:"bundleSchemaVersion,omitempty"`
 
 	// SourceTenant is the tenant the bundle was taken of, as its manifest
-	// records it. When it is not the tenant restored into, the bundle's names
-	// are another tenant's: databases an app made for itself and the
-	// platform's groups are put back under this tenant's names, and the
-	// bundle's sign-in clients are not imported.
+	// records it: the tenant restored into, as a bundle of any other is
+	// refused. Empty where the manifest does not say.
 	// +optional
 	SourceTenant string `json:"sourceTenant,omitempty"`
 

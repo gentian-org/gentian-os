@@ -86,19 +86,19 @@ func (r *TenantExportReconciler) storeOnlyRights(ctx context.Context, tenant *ge
 
 // rightsPlan is what a restore does with the entries a bundle holds.
 //
-// Every entry is first put under the names of the tenant restored into
-// (authz.Rebase): the tenant, its apps, its groups and the cluster.
+// Every entry is first put under the name of the cluster restored on
+// (authz.Rebase). The tenant is the bundle's own: a restore renames none.
 //
 // What the bundle records as withdrawn is withdrawn: taking a right away
 // widens nothing.
 //
 // What it records as granted is granted only where the bundle provably
 // comes from this tenant on this cluster: signed with this cluster's key,
-// taken on a cluster of this cluster's id, and of a tenant of the name it
-// is restored into (backup.CheckProvenance). Into a tenant made new -- an import --
-// as into the tenant it was taken of. From any other bundle -- unsigned,
-// written before bundles were signed, of another cluster or another name,
-// or with a signature that does not hold -- none of it is: a right somebody
+// taken on a cluster of this cluster's id (backup.CheckProvenance); a bundle
+// of another tenant is refused before this. Into a tenant made new -- an
+// import -- as into the tenant it was taken of. From any other bundle --
+// unsigned, written before bundles were signed, of another cluster, or with
+// a signature that does not hold -- none of it is: a right somebody
 // granted in one tenant is not carried into another by a file, and whoever
 // may grant it there grants it again. Each such entry is named, and the
 // reason is recorded once (Provenance).
@@ -115,17 +115,12 @@ func rightsPlan(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, cluster str
 		return nil
 	}
 	ours := ""
-	switch {
-	case !provenance.Proven():
-		ours = provenance.Message
-	case m.Tenant != tenant.Name:
-		provenance = backup.Provenance{Reason: backup.ProvenanceOtherTenant, Message: fmt.Sprintf(
-			"the bundle is this cluster's and of tenant %s, and it is restored into %s: a right granted in one tenant is not carried into another", m.Tenant, tenant.Name)}
+	if !provenance.Proven() {
 		ours = provenance.Message
 	}
 	out := &gentianov1alpha1.RestoreRights{Provenance: provenance.Reason, ProvenanceMessage: provenance.Message}
 	usable := func(raw bundle.RightsTuple) (authz.Tuple, string) {
-		t := authz.Rebase(authz.Tuple{User: raw.User, Relation: raw.Relation, Object: raw.Object}, m.Tenant, tenant.Name, m.Rights.Cluster, cluster)
+		t := authz.Rebase(authz.Tuple{User: raw.User, Relation: raw.Relation, Object: raw.Object}, m.Rights.Cluster, cluster)
 		switch {
 		case !haveStore:
 			return t, "this cluster's operator has no rights store to write it to"

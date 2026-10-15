@@ -276,7 +276,7 @@ func TestMariaDBAgainstAServer(t *testing.T) {
 	}
 	m.mustScript("sh", "rm -f "+workDir+"/dump.sql")
 
-	// --- restore, into another tenant: the same app, named for that tenant
+	// --- restore, under another database prefix: the same app, under the names here
 	must(m.setup("other_crm", "other_crm", true))
 	m.allowed("other_crm", "CREATE DATABASE other_crm_reports; CREATE TABLE other_crm_reports.stale (i INT)")
 	m.allowed("other_crm", "CREATE DATABASE other_crm_kept")

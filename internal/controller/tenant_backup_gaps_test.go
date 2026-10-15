@@ -533,7 +533,7 @@ func TestAnImportBringsRetainedDataWithoutInstallingTheApp(t *testing.T) {
 	w := newRestoreWorld(t, func(r *gentianov1alpha1.TenantRestore) { r.Spec.IntoNewTenant = true })
 	ctx := context.Background()
 	m := retainedManifest()
-	m.Tenant = "old"
+	m.Tenant = "demo"
 	m.Apps = []backup.ManifestApp{m.Apps[0], m.Apps[2], m.Apps[3]}
 	m.Apps[1].Stores[0].Name, m.Apps[1].Stores[0].Path = "old_files", "postgres/old_files.pgc"
 	m.Apps[1].Stores[1].Claim.Annotations["meta.helm.sh/release-namespace"] = "tenant-old"
@@ -888,8 +888,10 @@ func TestATenantsMailboxesAreCapturedRestoredAndDestroyed(t *testing.T) {
 		t.Fatalf("the manifest's mailboxes: %+v", m.Mailboxes)
 	}
 
-	// --- restored into the mailboxes of the tenant restored into, whatever
-	// its domain: here a tenant of another name.
+	// --- restored into the mailboxes the tenant has where it is restored,
+	// whatever the bundle's domain: here the tenant other, whose mail
+	// domain here is not the bundle's.
+	m.Tenant = "other"
 	m.Apps = []backup.ManifestApp{{Name: "wiki", Stores: []backup.ManifestStore{{Kind: bundle.ArtefactPostgres, Name: "x", Path: "postgres/x.pgc"}}}}
 	other := planTenant("other", "wiki")
 	rr := &TenantRestoreReconciler{Client: w.c, Tenant: w.tr, Reconciler: w.er}
@@ -1262,17 +1264,6 @@ func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 		}
 	}
 
-	// --- proven, and restored under another name: nothing granted.
-	acme := planTenant("acme", "wiki")
-	plan, err := planRestore(withPerson(), acme, nil, true, target(acme, "c1", true, proven), installed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := plan.rights; len(r.Grant) != 0 || len(r.Withdraw) != 1 || r.Withdraw[0] != "cluster:c1 operated_by tenant:acme" ||
-		len(r.NotBrought) != 3 || r.Provenance != backup.ProvenanceOtherTenant || !strings.Contains(r.ProvenanceMessage, "of tenant demo") {
-		t.Errorf("another name: %+v", r)
-	}
-
 	// --- not proven, each way: what was withdrawn is withdrawn, nothing
 	// granted, the person's entry named, and the reason said once.
 	for reason, p := range unproven {
@@ -1310,7 +1301,7 @@ func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 	// --- a person's entry withdrawn in the bundle is a person's too.
 	m := rightsManifest("demo", "c1")
 	m.Rights.Withdrawn = append(m.Rights.Withdrawn, bundle.RightsTuple{User: "user:5f1c", Relation: "viewer", Object: "tenant:demo"})
-	plan, err = planRestore(m, demo, nil, true, target(demo, "c1", true, unproven[backup.ProvenanceUnsigned]), installed)
+	plan, err := planRestore(m, demo, nil, true, target(demo, "c1", true, unproven[backup.ProvenanceUnsigned]), installed)
 	if err != nil {
 		t.Fatal(err)
 	}

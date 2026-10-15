@@ -72,15 +72,15 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | **What an app owns** | | | | | | | | |
 | The running app (workloads) | made | not copied; the build is noted | —; the installed build is checked | made new | removed | — | removed | removed, first |
 | Files on volumes | made by the app | copied | put back on top of what is there | made new, then filled | kept | destroyed | kept | destroyed |
-| PostgreSQL database and login, with any further database the app made itself | made | copied | put back | made new, then filled; a further database comes back under the new tenant's database name | kept | destroyed | kept | destroyed |
+| PostgreSQL database and login, with any further database the app made itself | made | copied | put back | made new, then filled; a further database comes back under the tenant's database name here | kept | destroyed | kept | destroyed |
 | MariaDB database and user, with any further database named `<database>_…` | made | copied | put back | made new, then filled | kept | destroyed | kept | destroyed |
 | Bucket, with its user and access rule | made | objects copied | bucket made if missing, objects put back | made new, then filled | kept | destroyed | kept | destroyed |
 | Cache user | made | not copied | — | made new | kept | removed; its keys stay | kept | removed; its keys stay |
 | The app's own secrets (in the vault): what its profile has the platform generate, and its data is written with | generated | copied, encrypted by the operator | set to the bundle's values; the app is handed them and restarted | set to the bundle's values, at the new tenant's own paths | kept | destroyed | kept | destroyed |
 | Its other stored credentials (in the vault): a database's, a bucket's, a cache's, a sign-in client's, a model key | generated | never copied | — | generated new | kept | destroyed | kept | destroyed |
-| Access group and who is in it | made | copied, inside the realm | put back | put back under the new tenant's names | kept | destroyed | kept | destroyed |
+| Access group and who is in it | made | copied, inside the realm | put back | put back | kept | destroyed | kept | destroyed |
 | Sign-in scope | made | not copied | — | made new | kept | destroyed | kept | destroyed |
-| Sign-in client | made | copied, inside the realm | put back | made new; the bundle's are not imported under another name | removed | — | removed, with the running app | destroyed |
+| Sign-in client | made | copied, inside the realm | put back | made new, then put back as the bundle recorded it | removed | — | removed, with the running app | destroyed |
 | Model key (an app that declared the model gateway, on a cluster that serves models) | made | not copied | — | made new | kept | removed | kept | removed |
 | Provisioning records | written | not copied | — | written new | kept | destroyed, last | kept | destroyed, last |
 | **What the cluster owns** | | | | | | | | |
@@ -221,13 +221,14 @@ the mailbox put back under that name; other addresses are left, and so is
 every address of a bundle that does not record its domain. An app whose
 profile binds its data to its domain (`spec.backup.restore.domainBound`) is
 not restored onto another: it stays as installed, and the restore names it.
-The domain compared is the tenant's when the restore runs. A `TenantRestore` written by hand can still put a bundle into a tenant of
-another name; it says that it is outside what the platform guarantees
-(`OutsideGuarantee`), and what the bundle names after the
-old tenant comes back under the new one's names: databases an app made for
-itself, the platform's groups with their members, mailboxes (by the part of
-each address before the @, in the new tenant's mail domain) and entries of
-the rights store. The old tenant's sign-in clients are not imported.
+The domain compared is the tenant's when the restore runs. A `TenantRestore`
+is held to the same rule: one whose bundle is of another tenant is refused
+before anything is changed (reason `OtherTenant`). A bundle meant for
+another name is rewritten into it, by a tool that does so, before it is
+restored. Where the tenant's database or bucket prefix here is not the one
+it had where the bundle was taken, each store still comes back into the
+tenant's own: an app's database, bucket and any database it made itself
+under the names here.
 
 One thing is different from a restore, because the tenant is new, and
 follows from `intoNewTenant`: the data of apps the bundle holds as
@@ -239,9 +240,9 @@ Access rights follow one rule for an import and a restore alike. A right
 *withdrawn* in the old tenant is withdrawn in the new one. A right *granted*
 there, a person's among them, is granted only when the bundle provably comes
 from this cluster: its manifest signed with this cluster's key, taken on a
-cluster of this cluster's id, and of a tenant of the same name
-([security.md §6.4](security.md)). From any other bundle — unsigned as every
-bundle written before signing is, another cluster's, another name's — each
+cluster of this cluster's id ([security.md §6.4](security.md)). From any
+other bundle — unsigned as every bundle written before signing is, or
+another cluster's — each
 is named in the result, for whoever may grant it here, and
 `status.rights.provenance` says why.
 
@@ -309,7 +310,7 @@ After an **import**, also:
       of the old ones. An app that asks for one (`secrets.supplied`) waits
       for it before the restore begins, and the import's status names it.
 - [ ] Data an app encrypted with a secret the platform generated came with
-      that secret, also on another cluster and under another name. Two
+      that secret, also on another cluster. Two
       cases are left to check: a bundle older than format 4 holds no
       secrets, and the result says so; and an app whose definition on this
       cluster does not declare a secret the bundle holds does not get it,
@@ -318,9 +319,9 @@ After an **import**, also:
 - [ ] The cache did not come. Mailboxes came only if both clusters run their
       own mail server; the result says when they did not.
 - [ ] Grant again each access right the result names as not brought.
-- [ ] Under another name or on another domain (`OutsideGuarantee`): check
-      each app's own settings for the old tenant's names and addresses, as
-      far as its profile's post-restore commands did not rewrite them.
+- [ ] On another domain (`OutsideGuarantee`): check each app's own
+      settings for the old addresses, as far as its profile's post-restore
+      commands did not rewrite them.
 - [ ] On another domain: declare the custom domain again, if the tenant had
       one and the import did not keep it (`kubectl gentian tenants domain`).
       The apps the result names as bound to their domain start empty.
@@ -374,15 +375,12 @@ much it matters.
    mail to the address is accepted again and makes a new mailbox directory,
    which somebody given the address later finds
    ([mail.md §5c](mail.md)).
-7. **The desktop's rows name the tenant they were written in.** A bundle
-   restored into a tenant of another name fills its desktop database with
-   rows the desktop does not look for.
-8. **An import that is interrupted before its restore starts needs the
+7. **An import that is interrupted before its restore starts needs the
    bundle's key again.** The status says `awaiting-key`.
-9. **A tenant placed in a namespace of another name is not supported** by
+8. **A tenant placed in a namespace of another name is not supported** by
    backup and restore; both refuse it.
-10. **At a tenant's deletion the web addresses are removed after the stores,**
-    not before them.
+9. **At a tenant's deletion the web addresses are removed after the stores,**
+   not before them.
 
 Accepted, not a gap: **a restore creates every missing person enabled,** also
 one who was disabled when the backup was taken. They have no password; a

@@ -36,8 +36,7 @@ import (
 // the platform make (spec.secrets.generated, an extension's appSecrets, and
 // the keys under spec.secrets.derived). The data is in the bundle; without the secrets it was written
 // with it is unreadable wherever those are not the ones in the vault: after
-// a purge and a new install, in a tenant of another name, on another
-// cluster. So an export puts them into the bundle, as one more artefact of
+// a purge and a new install, or on another cluster. So an export puts them into the bundle, as one more artefact of
 // the app, and a restore sets them before it puts the data back.
 //
 // Three rules hold throughout.

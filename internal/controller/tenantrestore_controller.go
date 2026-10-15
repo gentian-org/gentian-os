@@ -675,7 +675,7 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 			// The people's addresses follow the tenant's mail domain, from
 			// the one the bundle was taken on to this tenant's; where the
 			// bundle does not say its own, they are left as they are.
-			source := backup.RealmSource{Tenant: restore.Status.SourceTenant, Realm: a.Name}
+			source := backup.RealmSource{}
 			if r.Tenant != nil {
 				if was, now := bundleDomain(restore.Status.Source, restore.Status.SourceTenant), r.Tenant.tenantEffectiveDomain(tenant); domainMoved(was, now) {
 					source.MailDomain, source.TargetMailDomain = was, now
@@ -1217,11 +1217,6 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	if reason, message, ok := outsideGuaranteeCondition(plan.outside); ok {
 		setRestoreCondition(restore, conditionOutsideGuarantee, metav1.ConditionTrue, reason, message)
 		restore.Status.Notes = append(restore.Status.Notes, message)
-	}
-	if plan.sourceTenant != "" && plan.sourceTenant != tenantNameFromNamespace(restore.Namespace) {
-		restore.Status.Notes = append(restore.Status.Notes, "The bundle is of tenant "+plan.sourceTenant+
-			", not of this one. Every store is restored under this tenant's own names: a database an app made for itself is put back under this tenant's database name, "+
-			"the platform's groups under this tenant's, with their members. The bundle's sign-in clients are not imported; this tenant's own were made when its apps were installed.")
 	}
 }
 

@@ -106,8 +106,8 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 		t.Errorf("the export does not ask which databases are the app's:\n%s", dump)
 	}
 
-	// Restore, into a tenant of another name.
-	manifest := &backup.Manifest{SchemaVersion: 2, Tenant: "old", Apps: []backup.ManifestApp{
+	// Restore, of a bundle taken where the tenant's database prefix was old_.
+	manifest := &backup.Manifest{SchemaVersion: 2, Tenant: "demo", Apps: []backup.ManifestApp{
 		{Name: "shop", ChartVersion: "2.0.0", DatabaseEngine: "mariadb", Stores: []backup.ManifestStore{
 			{Kind: bundle.ArtefactMariaDB, Name: "old_shop", Path: "mariadb/old_shop.sql.gz"},
 			{Kind: bundle.ArtefactMariaDBOwned, Name: "old_shop", Path: "mariadb/old_shop.owned.tar.gz"},

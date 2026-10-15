@@ -31,6 +31,7 @@ import (
 // both sides, and for the app its versions and each store's two names.
 func TestPostRestoreCommandsAreToldWhereTheDataCameFromAndWhereItIs(t *testing.T) {
 	m := wikiManifest()
+	m.Tenant = "old"
 	m.OperatorVersion, m.Domain, m.Cluster, m.KernelDomain = "0.4", "old.example.org", "zrh-1", "example.org"
 	m.Apps[0].Stores = append(m.Apps[0].Stores, backup.ManifestStore{Kind: "s3", Name: "bad name;rm", Path: "s3/x.tar.gz"})
 	tenant := planTenant("old", "wiki", "notes")
@@ -111,11 +112,13 @@ func TestPostRestoreCommandsAreToldWhereTheDataCameFromAndWhereItIs(t *testing.T
 	}
 }
 
-// Restored into a tenant of another name, the login an app's data names is
-// the old tenant's: each engine's, by the name the platform gives it.
+// The login an app's data names is told beside the one it has here: each
+// engine's, by the name the platform gives it, and the PostgreSQL one as the
+// archive of the databases the app made itself names it. The databases go
+// by the prefixes the tenant had where the bundle was taken and has here.
 func TestPostRestoreCommandsAreToldTheOldAndNewDatabaseLogin(t *testing.T) {
 	restore := &gentianov1alpha1.TenantRestore{Status: gentianov1alpha1.TenantRestoreStatus{
-		SourceTenant: "old-co",
+		SourceTenant: "co",
 		Apps: []gentianov1alpha1.AppExportStatus{
 			{Name: "shop-app", Artefacts: []gentianov1alpha1.BundleArtefact{
 				{Kind: bundle.ArtefactMariaDB, Name: "old_co_shop_app", Target: "new_shop_app"},
@@ -124,11 +127,11 @@ func TestPostRestoreCommandsAreToldTheOldAndNewDatabaseLogin(t *testing.T) {
 			}},
 			{Name: "wiki", Artefacts: []gentianov1alpha1.BundleArtefact{
 				{Kind: bundle.ArtefactPostgres, Name: "old_co_wiki", Target: "new_wiki"},
-				{Kind: bundle.ArtefactPostgresOwned, Name: "old-co_wiki", Target: "new_wiki"},
+				{Kind: bundle.ArtefactPostgresOwned, Name: "co_wiki", Target: "new_wiki"},
 			}},
 		},
 	}}
-	tenant := planTenant("new")
+	tenant := planTenant("co")
 	value := func(env []string, name string) string {
 		for _, kv := range env {
 			if v, ok := strings.CutPrefix(kv, RestoreEnvPrefix+name+"="); ok {
@@ -142,10 +145,10 @@ func TestPostRestoreCommandsAreToldTheOldAndNewDatabaseLogin(t *testing.T) {
 	if got := value(maria, "DATABASES"); got != "old_co_shop_app=new_shop_app old_co_shop_app_reports=new_shop_app_reports" {
 		t.Errorf("DATABASES = %q", got)
 	}
-	if got := value(maria, "ROLES"); got != "old_co_shop_app=new_shop_app" {
+	if got := value(maria, "ROLES"); got != "co_shop_app=co_shop_app" {
 		t.Errorf("ROLES = %q", got)
 	}
-	if got := value(restoreHookEnv(restore, tenant, "wiki", nil, nil), "ROLES"); got != "old-co_wiki=new_wiki" {
+	if got := value(restoreHookEnv(restore, tenant, "wiki", nil, nil), "ROLES"); got != "co_wiki=co_wiki" {
 		t.Errorf("ROLES = %q", got)
 	}
 }
@@ -156,20 +159,20 @@ func TestPostRestoreCommandsAreToldTheOldAndNewDatabaseLogin(t *testing.T) {
 func TestPostRestoreCommandsAreToldTheLoginOfAnAppWithNoDatabasesOfItsOwn(t *testing.T) {
 	apps := []gentianov1alpha1.AppExportStatus{
 		{Name: "wiki", Artefacts: []gentianov1alpha1.BundleArtefact{
-			{Kind: bundle.ArtefactPostgres, Name: "old-co_wiki", Target: "new_wiki"},
+			{Kind: bundle.ArtefactPostgres, Name: "old_wiki", Target: "new_wiki"},
 		}},
 		{Name: "shop-app", Artefacts: []gentianov1alpha1.BundleArtefact{
-			{Kind: bundle.ArtefactMariaDB, Name: "old_co_shop_app", Target: "new_shop_app"},
+			{Kind: bundle.ArtefactMariaDB, Name: "old_shop_app", Target: "new_shop_app"},
 		}},
 		{Name: "notes", Artefacts: []gentianov1alpha1.BundleArtefact{
 			{Kind: bundle.ArtefactPostgres, Name: "old_notes", Target: "new_notes"},
-			{Kind: bundle.ArtefactPostgresOwned, Name: "old_notes_role", Target: "new_notes"},
+			{Kind: bundle.ArtefactPostgresOwned, Name: "co_notes_role", Target: "new_notes"},
 		}},
 		{Name: "files", Artefacts: []gentianov1alpha1.BundleArtefact{
 			{Kind: bundle.ArtefactVolume, Name: "files-data", Target: "files-data"},
 		}},
 	}
-	tenant := planTenant("new")
+	tenant := planTenant("co")
 	roles := func(sourceTenant, app string) string {
 		restore := &gentianov1alpha1.TenantRestore{Status: gentianov1alpha1.TenantRestoreStatus{SourceTenant: sourceTenant, Apps: apps}}
 		for _, kv := range restoreHookEnv(restore, tenant, app, nil, nil) {
@@ -181,16 +184,16 @@ func TestPostRestoreCommandsAreToldTheLoginOfAnAppWithNoDatabasesOfItsOwn(t *tes
 		return ""
 	}
 	for _, c := range []struct{ source, app, want string }{
-		{"old-co", "wiki", "old-co_wiki=new_wiki"},
-		{"old-co", "shop-app", "old_co_shop_app=new_shop_app"},
+		{"co", "wiki", "co_wiki=co_wiki"},
+		{"co", "shop-app", "co_shop_app=co_shop_app"},
 		// The archive's role, and only once.
-		{"old-co", "notes", "old_notes_role=new_notes"},
-		{"", "notes", "old_notes_role=new_notes"},
+		{"co", "notes", "co_notes_role=co_notes"},
+		{"", "notes", "co_notes_role=co_notes"},
 		// No tenant recorded and no archive naming the role.
 		{"", "wiki", ""},
 		{"", "shop-app", ""},
 		// No database at all.
-		{"old-co", "files", ""},
+		{"co", "files", ""},
 	} {
 		if got := roles(c.source, c.app); got != c.want {
 			t.Errorf("source %q, %s: ROLES = %q, want %q", c.source, c.app, got, c.want)

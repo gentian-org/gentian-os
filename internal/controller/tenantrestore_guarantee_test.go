@@ -23,18 +23,20 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
-// guaranteePlan plans the wiki bundle of tenant "old", written by line
-// version, into tenant.
-func guaranteePlan(t *testing.T, version string, tenant *gentianov1alpha1.Tenant) *restorePlan {
+// guaranteePlan plans the wiki bundle of tenant "demo", written by line
+// version on domain, into tenant on old.example.org.
+func guaranteePlan(t *testing.T, version, domain string, tenant *gentianov1alpha1.Tenant) *restorePlan {
 	t.Helper()
 	m := wikiManifest()
-	m.OperatorVersion = version
+	m.OperatorVersion, m.Domain = version, domain
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{
 		"wiki":  chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
 		"notes": chartProfile("notes", "1.0.0", "", false),
 	}
 	claims := map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}}
-	plan, err := planRestore(m, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, claims))
+	target := targetOf(tenant)
+	target.domain = "old.example.org"
+	plan, err := planRestore(m, tenant, nil, false, target, liveFrom(tenant, profiles, claims))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,29 +44,28 @@ func guaranteePlan(t *testing.T, version string, tenant *gentianov1alpha1.Tenant
 }
 
 // The round trip the platform guarantees is a bundle of its own version line
-// restored into the tenant it was taken of. Anything else goes ahead, and
-// says what differs on a condition of its own and among the notes.
+// restored into the tenant it was taken of, on its domain. Anything else
+// goes ahead, and says what differs on a condition of its own and among the
+// notes.
 func TestARestoreOutsideTheRoundTripSaysWhatDiffers(t *testing.T) {
-	same := planTenant("old", "wiki", "notes")
-	other := planTenant("demo", "wiki", "notes")
+	tenant := planTenant("demo", "wiki", "notes")
+	here := "old.example.org"
 
 	cases := []struct {
-		name, version string
-		tenant        *gentianov1alpha1.Tenant
-		reason        string
-		says          []string
+		name, version, domain string
+		reason                string
+		says                  []string
 	}{
-		{"the round trip", backup.PlatformVersionLine, same, "", nil},
-		{"a build of the same line", backup.PlatformVersionLine + ".3+abc", same, "", nil},
-		{"no version recorded", "", same, outsideGuaranteeVersion, []string{"does not say which platform version wrote it"}},
-		{"an older line", "0.4", same, outsideGuaranteeVersion, []string{"written by platform version 0.4", "is not converted"}},
-		{"another name", backup.PlatformVersionLine, other, outsideGuaranteeName, []string{"of tenant old and is restored into demo"}},
-		{"both", "0.4", other, outsideGuaranteeSeveral, []string{"version 0.4", "tenant old"}},
+		{"the round trip", backup.PlatformVersionLine, here, "", nil},
+		{"a build of the same line", backup.PlatformVersionLine + ".3+abc", here, "", nil},
+		{"no version recorded", "", here, outsideGuaranteeVersion, []string{"does not say which platform version wrote it"}},
+		{"an older line", "0.4", here, outsideGuaranteeVersion, []string{"written by platform version 0.4", "is not converted"}},
+		{"both", "0.4", "old.example.net", outsideGuaranteeSeveral, []string{"version 0.4", "taken on the domain old.example.net"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "tenant-" + tc.tenant.Name}}
-			recordPlan(restore, guaranteePlan(t, tc.version, tc.tenant))
+			restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "tenant-" + tenant.Name}}
+			recordPlan(restore, guaranteePlan(t, tc.version, tc.domain, tenant))
 			cond := meta.FindStatusCondition(restore.Status.Conditions, conditionOutsideGuarantee)
 			if tc.reason == "" {
 				if cond != nil {

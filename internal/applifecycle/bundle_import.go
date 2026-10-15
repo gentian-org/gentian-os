@@ -199,8 +199,8 @@ type RestoreStatus struct {
 	// NameDerivation is "manifest", or "derived" for a bundle of format 1.
 	NameDerivation string `json:"nameDerivation,omitempty"`
 	// OutsideGuarantee says what makes this restore other than the round
-	// trip the platform guarantees -- another version line, another tenant
-	// name, another domain -- when something does: the message of the
+	// trip the platform guarantees -- another version line, another domain
+	// -- when something does: the message of the
 	// restore's OutsideGuarantee condition.
 	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
 }

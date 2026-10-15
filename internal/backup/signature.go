@@ -111,10 +111,6 @@ const (
 	ProvenanceBadSignature = "BadSignature"
 	ProvenanceNoClusterID  = "NoClusterID"
 	ProvenanceOtherCluster = "AnotherCluster"
-	// ProvenanceOtherTenant is a bundle of this cluster's restored into a
-	// tenant of another name; the restore decides it, the signature does
-	// not.
-	ProvenanceOtherTenant = "AnotherTenant"
 )
 
 // Provenance is what a restore can tell of where a bundle comes from.

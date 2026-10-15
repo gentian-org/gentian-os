@@ -1185,7 +1185,7 @@ with its data kept is brought with stores made for it; without it such data
 is put back only where the tenant still holds it, so an app purged since
 stays purged. The access rights the bundle records as granted, a person's
 among them, are granted with or without the field only from a bundle this
-cluster signed, taken on it, of a tenant of the name restored into; from any
+cluster signed and taken on it; from any
 other they are named in the result, and `status.rights.provenance` says why
 ([security.md §6.4](design/security.md)).
 
@@ -1222,7 +1222,9 @@ a console compares a bundle's with, is in `GET /v1/tenants/{t}/me`
    bundle exists and is `Ready`, decryption key present. Nothing is touched
    until all of these pass.
 2. **Plan** — the operator opens the bundle's manifest with the key and
-   decides, against the tenant as it stands, what it puts back. Only apps the
+   decides, against the tenant as it stands, what it puts back. A bundle of
+   another tenant is refused (`OtherTenant`): a restore does not rename;
+   rename the bundle with a tool that rewrites it first. Only apps the
    manifest lists are touched. An app is restored whole or not at all; one
    that is not installed, runs an older build than wrote the data (unless
    `spec.skipVersionCheck`), or has a store the bundle's does not match, is
@@ -1297,7 +1299,8 @@ import and prints each phase: `declared`, `provisioning`, `restoring`,
 `ready`.
 
 The tenant is made under the name the bundle carries; an import does not
-rename, and a request that names another is refused with `422`. Its realm,
+rename, and a request that names another is refused with `422`. A bundle
+meant for another name is rewritten into it, by a tool that does so, first. Its realm,
 database prefix and bucket prefix follow from that name, whatever the bundle
 states. A tenant whose realm or prefixes are already another tenant's is
 refused with `409`, on import and on create.

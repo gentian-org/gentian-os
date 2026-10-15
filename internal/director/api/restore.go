@@ -43,8 +43,9 @@ import (
 //
 // The bundle has to be of this tenant. Its manifest is opened with the key the
 // person gives before anything is started, and a bundle of another tenant is
-// refused: restoring a bundle into the tenant of another name is an import,
-// which is the cluster's administrator's. An uploaded bundle is no way round
+// refused: a restore does not rename, and bringing another tenant's bundle
+// here is an import under the name it carries, which is the cluster's
+// administrator's. An uploaded bundle is no way round
 // that -- whoever made it, it is restored only into the tenant its manifest
 // names, which the caller has to administer.
 //

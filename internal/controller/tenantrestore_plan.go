@@ -73,7 +73,8 @@ import (
 // Where an artefact is, and what it was captured from, is the manifest's to
 // say (format 2). Where it goes is the tenant's: the database, bucket or
 // claim of that kind the installed app has, by the inventory's names -- which
-// differ from the bundle's whenever the tenant's name or prefixes do.
+// differ from the bundle's wherever the tenant's database or bucket prefix
+// here is not the one it had where the bundle was taken.
 
 // restorePlan is what one restore will do.
 type restorePlan struct {
@@ -120,7 +121,6 @@ type guaranteeGap struct {
 const (
 	conditionOutsideGuarantee = "OutsideGuarantee"
 	outsideGuaranteeVersion   = "OtherVersion"
-	outsideGuaranteeName      = "OtherName"
 	outsideGuaranteeDomain    = "OtherDomain"
 	outsideGuaranteeSeveral   = "SeveralDifferences"
 )
@@ -146,11 +146,6 @@ func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, domain s
 		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
 			"the bundle was written by platform version %s and this platform is version %s; it is restored as far as this platform reads it, "+
 				"and what the newer version keeps differently is not converted", line, this)})
-	}
-	if m.Tenant != "" && m.Tenant != tenant.Name {
-		gaps = append(gaps, guaranteeGap{outsideGuaranteeName, fmt.Sprintf(
-			"the bundle is of tenant %s and is restored into %s: what the apps' data itself says of the old name -- addresses, paths, settings -- is not changed",
-			plainValue(m.Tenant), tenant.Name)})
 	}
 	// Another domain is a move the platform supports, and still not the
 	// round trip: the apps' data names the old one.
@@ -342,6 +337,21 @@ func refuseRestore(reason, format string, args ...any) error {
 	return &errRestoreRefused{reason: reason, message: fmt.Sprintf(format, args...)}
 }
 
+// otherTenantRefusal refuses a bundle taken of another tenant. A restore
+// puts a tenant's bundle back into the tenant of that name and renames
+// nothing: a bundle meant for another name is rewritten into it, by a tool
+// that does so, before it is restored. The bundle's name is said only where
+// it is a plain one.
+func otherTenantRefusal(was, tenant string) error {
+	of := "another tenant"
+	if plain := plainValue(was); plain != "" {
+		of = "tenant " + plain
+	}
+	return refuseRestore("OtherTenant",
+		"the bundle is of %s and this is tenant %s: a restore does not rename; rename the bundle with a tool that rewrites it first. Nothing was changed",
+		of, tenant)
+}
+
 // planRestore decides what a restore does, and changes nothing.
 func planRestore(
 	m *backup.Manifest,
@@ -351,15 +361,19 @@ func planRestore(
 	target planTarget,
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
+	if m.Tenant != tenant.Name && m.Tenant != "" {
+		return nil, otherTenantRefusal(m.Tenant, tenant.Name)
+	}
 	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
 		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant, target.domain), source: restoreSource(m)}
 	if !m.NamesArtefacts() {
 		plan.derivation = gentianov1alpha1.RestoreNamesDerived
 	}
-	// The tenant the bundle was taken of, for the names a format 1 manifest
-	// does not give: its artefacts are filed under that tenant's names.
+	// The tenant the bundle was taken of -- this one, under the names it
+	// had there -- for the names a format 1 manifest does not give: its
+	// artefacts are filed under those names.
 	source := &gentianov1alpha1.Tenant{}
-	source.Name = m.Tenant
+	source.Name = tenant.Name
 	if m.TenantSpec != nil {
 		source.Spec = *m.TenantSpec
 	}

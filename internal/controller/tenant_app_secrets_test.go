@@ -612,23 +612,22 @@ func TestRandomSecretsBackUpPurgeInstallRestoreAndTheDataIsReadable(t *testing.T
 	}
 }
 
-// An import: the bundle is of a tenant of another name, and the tenant it is
-// restored into was made for it, with secrets of its own. The bundle's
-// values go to the new tenant's paths for that app and to no other path:
-// nothing is written under the old tenant's name, and nothing of another
-// app's is touched.
-func TestAnImportUnderANewNameSetsTheSecretsAtTheNewTenantsOwnPaths(t *testing.T) {
+// An import: the bundle was taken of the tenant on another cluster, and the
+// tenant it is restored into was made for it here, with secrets of its own.
+// The bundle's values go to the tenant's paths for that app and to no other
+// path: nothing of another app's or another tenant's is touched.
+func TestAnImportSetsTheSecretsAtTheTenantsOwnPaths(t *testing.T) {
 	w := newSecretsWorld(t, func(r *gentianov1alpha1.TenantRestore) { r.Spec.IntoNewTenant = true })
 	ctx := context.Background()
 
 	// The tenant the bundle was taken of, on its own cluster.
 	source := newSecretVault()
 	old := secrets.NewSeeder(source, nil).WithMode(randomMode)
-	oldTenant := planTenant("old", "wiki")
+	oldTenant := planTenant("demo", "wiki")
 	if err := (&TenantReconciler{Seeder: old}).seedAppSecrets(ctx, oldTenant, "wiki", secretsProfile()); err != nil {
 		t.Fatal(err)
 	}
-	was := source.value("gentian-os/tenants/old/apps/wiki/internal/encryption_key")
+	was := source.value("gentian-os/tenants/demo/apps/wiki/internal/encryption_key")
 	data := appEncrypt(t, was, "what the wiki stored")
 	exporter := &TenantExportReconciler{Client: w.c, Reconciler: &TenantReconciler{Client: w.c, Seeder: old}, Bundles: w.bundles}
 	entry := gentianov1alpha1.AppExportStatus{Name: "wiki", ChartVersion: "2.0.0",
@@ -659,11 +658,6 @@ func TestAnImportUnderANewNameSetsTheSecretsAtTheNewTenantsOwnPaths(t *testing.T
 	for p, v := range untouched {
 		if w.vault.value(p) != v {
 			t.Errorf("%s was changed", p)
-		}
-	}
-	for p := range w.vault.snapshot() {
-		if strings.HasPrefix(p, "gentian-os/tenants/old/") {
-			t.Errorf("%s was written: the bundle's tenant has no place in this vault", p)
 		}
 	}
 	sort.Strings(w.vault.puts)

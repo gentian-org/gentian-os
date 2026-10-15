@@ -208,7 +208,7 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 		t.Errorf("a second restore over a mailbox with new mail left:\n%s\n%s", after, out)
 	}
 
-	// --- into another domain: an import under another name.
+	// --- into another domain: an import on another cluster.
 	m.mustRun(DovecotImage, "1000:1000", "/bin/bash", containerByName(restore, "mailbox-restore").Args[0], "DOMAIN=renamed.example")
 	if got := m.contents("renamed.example", "bob"); got != before["bob@demo.example"] {
 		t.Errorf("bob's mail in the renamed tenant's domain:\n%s\nwant:\n%s", got, before["bob@demo.example"])

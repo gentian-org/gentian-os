@@ -67,7 +67,6 @@ func unitJobs(t *testing.T) map[string]*batchv1.Job {
 				"bucket restore":         S3RestoreJob(p, d, S3Artefact("old-wiki"), "demo-wiki", ObjectStorageProvisionContainer("provision-bucket", "demo-wiki", "key-secret")),
 				"volume restore":         VolumeRestoreJob(p, d, VolumeArtefact("data"), "data"),
 				"realm import":           RealmImportJob(p, d, IdentityArtefact, "demo", RealmSource{}),
-				"realm import, renamed":  RealmImportJob(p, d, IdentityArtefact, "demo", RealmSource{Tenant: "old", Realm: "old"}),
 			} {
 				out[fmt.Sprintf("%s (external=%v, %s)", name, external, mode)] = job
 			}
@@ -310,62 +309,8 @@ const (
 `
 )
 
-// A bundle imported under another name beside the tenant it was taken of:
-// the platform's groups come back under the new tenant's names with their
-// members, and nothing named for the old tenant is planted in the new realm
-// -- no client, no client role, no mapping to one.
-func TestARealmImportedUnderAnotherNameIsRenamed(t *testing.T) {
-	w := newRealmWorld(t)
-	w.archive(bundleRealm, bundleUsers, bundleMemberships)
-	w.answer("POST", "acme2/partialImport", 200, `{}`)
-	w.answer("GET", "acme2", 200, `{"realm":"acme2","defaultRole":{"name":"default-roles-acme2"}}`)
-	w.answer("GET", "acme2/users?exact=true&username=ada", 200, `[]`)
-	w.answer("GET", "acme2/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
-	w.answer("GET", "acme2/group-by-path/gentian%3Atenant%3Aacme2%3Amembers", 200, `{"id":"g-members"}`)
-	w.answer("GET", "acme2/group-by-path/staff/board", 200, `{"id":"g-board"}`)
-	w.answer("PUT", "acme2/users/n3/groups/g-members", 204, ``)
-
-	// ada does not exist yet: she is created, and then has to be found.
-	out, err := w.run(importScript("acme2", RealmSource{Tenant: "acme", Realm: "acme"}))
-	log := w.log()
-	// She was created and the lookup still answers "nobody": that is a
-	// membership that cannot be put back, and the import must say so.
-	if err == nil || !strings.Contains(out, "ada is not in the realm") {
-		t.Fatalf("a person the realm does not have after the import is not an error:\n%s", out)
-	}
-
-	// The first partial import is the realm's configuration; the ones after
-	// it are people.
-	var imported string
-	for _, line := range strings.Split(log, "\n") {
-		if strings.HasPrefix(line, "BODY POST acme2/partialImport ") {
-			imported = compactJSON(line)
-			break
-		}
-	}
-	for _, want := range []string{`"name":"gentian:tenant:acme2:members"`, `"path":"/gentian:tenant:acme2:members"`, `"name":"staff"`, `"auditor"`} {
-		if !strings.Contains(imported, want) {
-			t.Errorf("the import does not carry %s:\n%s", want, imported)
-		}
-	}
-	for _, not := range []string{"gentian:tenant:acme:", "acme-wiki", "clientRoles", `"clients"`, "default-roles-acme", "wiki.acme.example"} {
-		if strings.Contains(imported, not) {
-			t.Errorf("the import carries %q, which is the old tenant's:\n%s", not, imported)
-		}
-	}
-	if strings.Contains(log, "service-account") {
-		t.Errorf("a client's service account was looked up or created as a person:\n%s", log)
-	}
-	if !strings.Contains(log, "PUT acme2/users/n3/groups/g-members") {
-		t.Errorf("bob was not put back into the renamed group:\n%s", log)
-	}
-	if strings.Contains(log, "acme/") || strings.Contains(log, "acme%3Amembers") {
-		t.Errorf("the original tenant's realm or groups were addressed:\n%s", log)
-	}
-}
-
-// The same bundle into the tenant it was taken of: names as they were,
-// clients and all, and everyone back in their groups.
+// A bundle into the tenant it was taken of: names as they were, clients and
+// all, and everyone back in their groups.
 func TestARealmRestoredIntoItsOwnTenantKeepsItsNames(t *testing.T) {
 	w := newRealmWorld(t)
 	w.archive(bundleRealm, bundleUsers, bundleMemberships)
@@ -379,7 +324,7 @@ func TestARealmRestoredIntoItsOwnTenantKeepsItsNames(t *testing.T) {
 	w.answer("PUT", "acme/users/n1/groups/g-board", 204, ``)
 	w.answer("PUT", "acme/users/n3/groups/g-members", 204, ``)
 
-	out, err := w.run(importScript("acme", RealmSource{Tenant: "acme", Realm: "acme"}))
+	out, err := w.run(importScript("acme", RealmSource{}))
 	if err != nil {
 		t.Fatalf("the import failed: %v\n%s\n%s", err, out, w.log())
 	}
@@ -494,7 +439,7 @@ func TestARealmImportMovesAddressesToTheNewMailDomain(t *testing.T) {
 	w.answer("GET", "acme/group-by-path/staff/board", 200, `{"id":"g-board"}`)
 	w.answer("PUT", "acme/users/n2/groups/g-board", 204, ``)
 
-	out, err := w.run(importScript("acme", RealmSource{Tenant: "acme", Realm: "acme", MailDomain: "acme.example.org", TargetMailDomain: "Acme.Example.NET"}))
+	out, err := w.run(importScript("acme", RealmSource{MailDomain: "acme.example.org", TargetMailDomain: "Acme.Example.NET"}))
 	if err != nil {
 		t.Fatalf("the import failed: %v\n%s\n%s", err, out, w.log())
 	}
@@ -680,14 +625,13 @@ exit 0
 }
 
 // One PostgreSQL server holds every tenant's databases, and a database an
-// app made for itself is named whatever the app chose. A bundle imported
-// under another name beside the tenant it was taken of used to put each back
-// under its old name: the original's database, created if missing and
-// otherwise REPLACED. Now each lands under the new tenant's own database
-// name; and whatever the naming does, a database another role owns is never
-// replaced.
+// app made for itself is named whatever the app chose. Where the tenant's
+// database prefix here is not the one it had where the bundle was taken, each
+// lands under the provisioned database name here, and nothing under the old
+// prefix is addressed; and whatever the naming does, a database another role
+// owns is never replaced.
 func TestOwnedDatabasesAreRestoredUnderTheTargetsNamesAndNeverOverAnothers(t *testing.T) {
-	// Under another name: nothing of the original is addressed.
+	// Under another prefix: nothing under the old one is addressed.
 	out, err := runOwnedRestore(t, "acme_wiki", "acme2_wiki",
 		[]string{"acme_wiki_reports", "analytics"},
 		map[string]string{"acme_wiki_reports": "acme_wiki", "analytics": "acme_wiki"})
@@ -713,10 +657,10 @@ func TestOwnedDatabasesAreRestoredUnderTheTargetsNamesAndNeverOverAnothers(t *te
 		}
 	}
 
-	// Into its own tenant: each under its own name.
+	// Under the same provisioned name: each under its own name.
 	out, err = runOwnedRestore(t, "acme_wiki", "acme_wiki", []string{"analytics"}, map[string]string{"analytics": "acme2_wiki"})
 	if err != nil || !strings.Contains(out, "restored analytics as analytics") {
-		t.Errorf("a restore into the same tenant renamed a database: %v\n%s", err, out)
+		t.Errorf("a restore under the same prefix renamed a database: %v\n%s", err, out)
 	}
 
 	// A name another role holds is refused, and nothing is loaded into it.

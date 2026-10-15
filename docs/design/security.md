@@ -1517,8 +1517,8 @@ Properties:
   person, and those of connected tool servers, with this key unless given
   another) is no longer readable: people sign in again and connect such
   servers again. A bundle carries these keys with the generated secrets
-  (§6.4), so a restore after a purge, under another name or on another
-  cluster sets the key the data was written with.
+  (§6.4), so a restore after a purge or on another cluster sets the key the
+  data was written with.
 
 **An app's own secrets** (`spec.secrets.generated` of its profile and an
 extension's `appSecrets`, stored at `…/apps/<app>/internal/<name>`) follow
@@ -1608,8 +1608,8 @@ is one the app's profile declares on this cluster. The path is
 built by the operator; the bundle supplies names and values and no path.
 Nothing is written for an app the restore does not restore, under a name the
 profile does not declare, or outside the tenant restored into; what the
-bundle holds besides is named in the result and not written. This holds for
-a restore into a tenant of another name as well.
+bundle holds besides is named in the result and not written. A bundle of
+another tenant is not restored at all.
 
 A value that differs from the stored one **replaces it**: the one exception
 to §7. The app's ExternalSecrets are then told to read again, a declared key

@@ -465,7 +465,7 @@ In provisioning order.
 | Stored credentials | the tenant reconciler's seeder before each store; the app Composition for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
 | Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
 | Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own. |
-| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name of the tenant restored into when that is not the tenant the bundle was taken of (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
+| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name here when that is not the one in the bundle -- the tenant's database prefix differs between where the bundle was taken and here (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
 | Object storage | the bucket Job | A restore makes the bucket, its user and its policy with the code install uses, then writes the objects, removing objects the bundle does not hold. |
 | Cache user | the ACL Job | A restored cache is stale, so none is carried. |
 | Model key | the tenant reconciler, at the model gateway, where the cluster serves models | A credential, registered again at install. A tenant's deletion removes the keys, then the tenant's team. |
@@ -583,6 +583,11 @@ What a restore puts back is what the bundle says it holds. The operator reads
 the bundle's manifest with the restore's own key and makes a plan once, before
 anything is changed; the plan is in the restore's status.
 
+0. A bundle is restored only into the tenant of its own name. One whose
+   manifest names another tenant is refused before anything is changed
+   (reason `OtherTenant`): a restore does not rename, and a bundle meant for
+   another name is rewritten into it, by a tool that does so, first.
+
 1. Only an app the manifest lists is touched. An app the tenant has and the
    bundle does not is left exactly as it is.
 2. An app is restored whole or not at all. It is not restored when it is not
@@ -602,21 +607,21 @@ anything is changed; the plan is in the restore's status.
 restored by a platform of the version line that wrote it (`operatorVersion`),
 into the tenant it was taken of, on the same domain. A bundle of an older
 line, or one that records none (written before the field was), is restored as
-far as this platform reads it and nothing in it is converted; one of another
-tenant is restored under this tenant's names; one taken on another domain is
+far as this platform reads it and nothing in it is converted; one taken on
+another domain is
 restored, and the apps' data still names the old domain where their
 `restore.post` commands do not rewrite it. A custom domain is not declared by
 a restore or an import: the message names it and the command that declares
 it again. Each way the restore carries the condition `OutsideGuarantee`
-(reason `OtherVersion`, `OtherName`, `OtherDomain` or `SeveralDifferences`),
+(reason `OtherVersion`, `OtherDomain` or `SeveralDifferences`),
 whose message says what differs and is
 repeated in `status.notes`. A bundle of a newer line is refused, as a newer
 format is, by the restore and by the import's inspection alike.
 
 Each artefact is fetched from the path the manifest gives and loaded into the
 store of that kind the installed app has, by the inventory's names — which
-differ from the bundle's whenever the tenant's name or prefixes do, as when a
-bundle is restored into a tenant of another name.
+differ from the bundle's wherever the tenant's database or bucket prefix
+(`spec.isolation`) here is not the one it had where the bundle was taken.
 A profile's `restore.post` commands run with `GENTIAN_RESTORE_*` variables
 naming both ends: tenant, domain, the cluster's own (kernel) domain, platform
 version, cluster, the app's chart
@@ -642,7 +647,7 @@ from), `path` (where in the bundle), and for a volume the Helm `release` it
 recorded — and the app's `digest`, `databaseEngine` and `releases`; the
 tenant-wide captures are no longer listed among the apps. Fields were added
 and none renamed. A format 1 bundle still restores: the names are derived from
-the tenant the manifest records and the volume claims are the ones the apps
+the tenant's prefixes the manifest records and the volume claims are the ones the apps
 have now, and the result says `nameDerivation: derived`. **Format 3** adds
 what a format 2 bundle did not hold, and again renames nothing: `retained` on
 an app that was uninstalled with its data kept when the bundle was taken, and
@@ -721,14 +726,13 @@ mailboxes, and then the tenant's records.
 writes into the manifest the ones its projection would not write, and the
 defaults the store no longer holds; no Job reads the store. A restore writes
 them after the realm is back and after the projection has attached the
-tenant. The withdrawn ones are withdrawn, under the restored tenant's names.
-The granted ones, and any entry naming a person, are written only from a
-bundle this cluster signed, taken on a cluster of this cluster's id, of a
-tenant of the name restored into ([security.md §6.4](security.md)); from any
-other they are named in `status.rights.notBrought` and in the notes, and
-`status.rights.provenance` says why: `NoSigningKey`, `Unsigned`,
-`SignedByAnotherKey`, `BadSignature`, `NoClusterID`, `AnotherCluster` or
-`AnotherTenant`.
+tenant. The withdrawn ones are withdrawn, under this cluster's name. The
+granted ones, and any entry naming a person, are written only from a bundle
+this cluster signed, taken on a cluster of this cluster's id
+([security.md §6.4](security.md)); from any other they are named in
+`status.rights.notBrought` and in the notes, and `status.rights.provenance`
+says why: `NoSigningKey`, `Unsigned`, `SignedByAnotherKey`, `BadSignature`,
+`NoClusterID` or `AnotherCluster`.
 
 **Replacing the bundle signing key.** The key is never replaced by the
 installer. To replace it, delete `gentian-os/kernel/backup/signing` in the
@@ -844,10 +848,7 @@ The gaps that matter to a person running the platform are in
 - **Files at a tenant's deletion** go with the namespace, after the stores,
   not before them.
 - **Renamed databases.** A database an app made for itself is restored under
-  another name when the bundle is of another tenant (§9.1). The app's own
-  settings may still name the old one.
-- **The realm of a bundle of another tenant.** Groups named
-  `gentian:tenant:<old>:…` are renamed to the new tenant's, with their
-  members; the bundle's clients, client roles and the old realm's default
-  role are not imported.
+  another name where the tenant's database prefix here is not the one it had
+  where the bundle was taken (§9.1). The app's own settings may still name
+  the old one, as far as its `restore.post` commands do not rewrite it.
 
