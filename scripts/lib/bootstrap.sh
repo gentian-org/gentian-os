@@ -48,7 +48,7 @@ bootstrap_openbao_for_crossplane() {
     # everything after it. Keeping both in sync removes the shell's freedom
     # to disagree with what was just resolved.
     export BAO_ADDR="${VAULT_ADDR}"
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
     if ! _resolve_bao_token; then
         error "Cannot configure the vault without an OpenBao token."
@@ -135,7 +135,7 @@ POLICY
             | jq -r '.token // empty' 2>/dev/null || true)
         if [[ -n "${existing_token}" ]]; then
             local http_code
-            http_code=$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            http_code=$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                 -H "X-Vault-Token: ${existing_token}" \
                 "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
             if [[ "${http_code}" == "200" ]]; then

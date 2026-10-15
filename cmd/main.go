@@ -12,11 +12,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -477,12 +479,9 @@ func main() {
 		// An app's own secrets go into a bundle from the operator's memory,
 		// encrypted there: this is how it writes them.
 		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
-		// The cluster's bundle signing key, a file its Secret is mounted
-		// as: read each time, so that it is found without a restart once
-		// the Secret exists. A restore checks bundles with it too.
-		SigningKey: func() (*backup.SigningKey, error) {
-			return backup.SigningKeyFromFile(envOrDefault("BUNDLE_SIGNING_KEY_FILE", "/etc/gentian/bundle-signing/signing_seed"))
-		},
+		// The cluster's bundle signing key, read from the vault with the
+		// operator's own identity. A restore checks bundles with it too.
+		SigningKey: bundleSigningKey(),
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")
@@ -802,6 +801,38 @@ func buildSeeder() *secrets.Seeder {
 	setupLog.Info("secret seeder enabled",
 		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil, "secretMode", configured)
 	return secrets.NewSeeder(kv, deriver).WithMode(mode)
+}
+
+// bundleSigningKey reads the cluster's bundle signing key from the vault
+// with the operator's own identity, each time a manifest is written or
+// checked, so that a key written after the operator started is found. The
+// key last read is kept: a vault that does not answer for a moment does not
+// make a bundle unsigned.
+func bundleSigningKey() func() (*backup.SigningKey, error) {
+	baoAddr := os.Getenv("BAO_ADDR")
+	if baoAddr == "" {
+		return func() (*backup.SigningKey, error) { return nil, backup.ErrNoSigningKey }
+	}
+	kv := secrets.NewKVClient(baoAddr, envOrDefault("BAO_ROLE", "gentian-os-operator"), "")
+	absent := func(err error) bool { return errors.Is(err, secrets.ErrNotFound) }
+	var (
+		mu   sync.Mutex
+		last *backup.SigningKey
+	)
+	return func() (*backup.SigningKey, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		key, err := backup.SigningKeyFromVault(ctx, kv.Get, absent)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case err == nil:
+			last = key
+		case last != nil && !errors.Is(err, backup.ErrNoSigningKey):
+			return last, nil
+		}
+		return key, err
+	}
 }
 
 // withoutVault is the operator's statement that it runs without a vault:

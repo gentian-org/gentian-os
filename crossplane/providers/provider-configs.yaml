@@ -49,7 +49,9 @@ metadata:
 spec:
   # Address of the OpenBao server reachable from within the cluster.
   address: https://openbao.kernel-secrets.svc.cluster.local:8200
-  skip_tls_verify: true
+  # Verified: the provider's pod trusts the vault's CA openbao-ca through
+  # VAULT_CACERT (vault-config in providers.yaml).
+  skip_tls_verify: false
   credentials:
     source: Secret
     secretRef:

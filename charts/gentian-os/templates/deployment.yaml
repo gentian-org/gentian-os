@@ -99,20 +99,13 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
-            {{- /* Only when there is nothing to verify against.
-
-                 This used to be an unconditional "true", which meant the
-                 trust anchor above could never take effect for OpenBao:
-                 NewKVClient installs an InsecureSkipVerify transport whenever
-                 this is set, overriding SSL_CERT_FILE. So configuring
-                 trustAnchorSecret bought TLS verification everywhere except the
-                 one connection that carries the master password.
-
-                 Left true when no anchor is configured, because OpenBao serves
-                 a self-signed certificate and the operator could not reach it
-                 at all otherwise — this is the honest default for that case,
-                 not a hidden one. */}}
-            {{- if not .Values.trustAnchorSecret }}
+            {{- if .Values.openbao.caSecret }}
+            # The vault is verified against its CA openbao-ca, whose
+            # certificate the installer copies into this namespace (B-01).
+            - name: BAO_CACERT
+              value: /etc/gentian/openbao-ca/ca.crt
+            {{- else if not .Values.trustAnchorSecret }}
+            # Development only: no CA to verify the vault against.
             - name: VAULT_SKIP_VERIFY
               value: "true"
             {{- end }}
@@ -320,10 +313,6 @@ spec:
             - name: USAGE_STATISTICS_KEY_FILE
               value: /etc/gentian/usage-statistics/{{ .Values.usageStatistics.signingKey.property }}
             {{- end }}
-            # The bundle signing key, a file like the one above, read when a
-            # manifest is written or checked.
-            - name: BUNDLE_SIGNING_KEY_FILE
-              value: /etc/gentian/bundle-signing/{{ .Values.bundleSigning.signingKey.property }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}
@@ -430,9 +419,11 @@ spec:
             {}
             {{- end }}
           volumeMounts:
-            - name: bundle-signing-key
-              mountPath: /etc/gentian/bundle-signing
+            {{- if .Values.openbao.caSecret }}
+            - name: openbao-ca
+              mountPath: /etc/gentian/openbao-ca
               readOnly: true
+            {{- end }}
             {{- if $usageStatisticsEnabled }}
             - name: usage-statistics-key
               mountPath: /etc/gentian/usage-statistics
@@ -461,13 +452,15 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
-        # Optional, like the usage statistics key: until the vault path and
-        # the Secret exist the operator writes bundles unsigned and says so.
-        - name: bundle-signing-key
+        {{- with .Values.openbao.caSecret }}
+        # The vault's CA certificate, nothing else. Optional, so the pod
+        # starts without it; the vault is then verified against no CA and
+        # every request to it fails until the copy is there.
+        - name: openbao-ca
           secret:
-            secretName: {{ .Values.bundleSigning.signingKey.secretName | quote }}
+            secretName: {{ . | quote }}
             optional: true
-            defaultMode: 0440
+        {{- end }}
         {{- if $usageStatisticsEnabled }}
         # Optional: the pod starts while the vault path or the Secret is still
         # missing, and the operator then records that it has no key instead

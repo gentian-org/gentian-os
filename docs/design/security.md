@@ -1673,12 +1673,12 @@ known.
 installer writes once to `gentian-os/kernel/backup/signing` (`signing_seed`,
 on stdin, never replaced). It is not the director's git signing key: that
 one signs commits to the deployments repository, and a key that signs two
-kinds of thing lets a signature on one pass for the other. It is read by
-`eso-read`, as every kernel path is, which materialises it as the Secret
-`gentian-os-bundle-signing-key` in the operator's namespace, mounted into
-the operator alone; by whoever can read Secrets there, the operator among
-them; by the `operator-write` and `cluster-admin` vault policies; and by the
-holder of the recovery kit, which carries it (`BUNDLE_SIGNING_SEED`) so that
+kinds of thing lets a signature on one pass for the other. The operator
+reads it from the vault itself, with its own identity (`operator-write`),
+when it writes or checks a manifest; it is never a Secret, because
+`eso-read` denies the path as it does `backup/identity`. It is otherwise
+read by the `cluster-admin` vault policy and by the holder of the recovery
+kit, which carries it (`BUNDLE_SIGNING_SEED`) so that
 a cluster rebuilt from the kit signs as before and its bundles still hold.
 Whoever holds it can make a bundle that brings rights into a tenant of that
 name on this cluster, which a platform administrator can grant there anyway.
@@ -2022,16 +2022,26 @@ serving certificate renews every 60 days with a new key without any client
 noticing. Before, it was self-signed itself, so what clients trusted changed
 at each renewal.
 
+The operator and
+provider-vault verify the vault against the same certificate, through
+copies `B-01` writes to their namespaces as well (`openbao-ca-bundle`,
+mounted as `BAO_CACERT` and `VAULT_CACERT`). The installer reads `ca.crt`
+from the cluster before it calls the vault and verifies its `bao` and `curl`
+calls against it under the certificate's name `openbao.<secrets>.svc`
+(`openbao_cli_trust`, `bao_curl`), since it reaches the vault at a ClusterIP
+or a port-forward. Only before `B-01` has made the CA, when nothing answers
+on the vault's address, does it not verify.
+
 The vault reads its certificate files only when it starts or on `SIGHUP`, and
-its StatefulSet updates `OnDelete`. `B-01` signals it after a new certificate
-has reached the pod, and records which certificate it was told about; a
-restart would seal it until the seal unseals it. The custodian reads the CA
-once, at start, and `B-01` restarts it when the CA has changed. The operator,
-provider-vault and the installer do not verify the vault's certificate
-(`VAULT_SKIP_VERIFY`, `skip_tls_verify`), as before. Between the serving
-certificate's renewal and the next signal the vault serves the previous one,
-still valid for about 30 days; nothing on the cluster sends the signal by
-itself (**open**, [open-items](../plans/open-items.md)).
+its StatefulSet updates `OnDelete`. A sidecar in the vault's pod,
+`tls-reload`, watches the mounted `tls.crt` and sends `SIGHUP` to `bao` when
+it changes: it shares the pod's process namespace, runs as the vault's uid
+with no capabilities, a read-only root and no service-account token, and so
+can also read the vault process's memory and environment, as the vault's own
+container can. `B-01` still signals after a new certificate has reached the
+pod and records which certificate it was told about; it never restarts the
+vault, which would seal it until the seal unseals it. The custodian reads the
+CA once, at start, and `B-01` restarts it when the CA has changed.
 
 ## 13. Licensing & sovereignty summary
 

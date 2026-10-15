@@ -11,10 +11,9 @@ SPDX-License-Identifier: MPL-2.0
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -89,25 +88,34 @@ func TestProvenanceOfABundle(t *testing.T) {
 	}
 }
 
-// The seed is 32 bytes of hex, as the installer writes it; a file that is
-// not there is no key, and an error never quotes the seed.
-func TestSigningKeyFromFile(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := SigningKeyFromFile(filepath.Join(dir, "absent")); !errors.Is(err, ErrNoSigningKey) {
+// The seed is 32 bytes of hex at SigningKeyPath, as the installer writes it;
+// a path that holds nothing is no key, and an error never quotes the seed.
+func TestSigningKeyFromVault(t *testing.T) {
+	absent := errors.New("not found")
+	isAbsent := func(err error) bool { return errors.Is(err, absent) }
+	vault := func(seed string, err error) func(context.Context, string) (map[string]string, error) {
+		return func(_ context.Context, path string) (map[string]string, error) {
+			if path != SigningKeyPath {
+				t.Errorf("read %q, want %q", path, SigningKeyPath)
+			}
+			return map[string]string{"signing_seed": seed}, err
+		}
+	}
+	ctx := context.Background()
+	if _, err := SigningKeyFromVault(ctx, nil, isAbsent); !errors.Is(err, ErrNoSigningKey) {
+		t.Errorf("no vault: %v", err)
+	}
+	if _, err := SigningKeyFromVault(ctx, vault("", absent), isAbsent); !errors.Is(err, ErrNoSigningKey) {
 		t.Errorf("absent: %v", err)
 	}
-	bad := strings.Repeat("zz", 32)
-	path := filepath.Join(dir, "signing_seed")
-	if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
-		t.Fatal(err)
+	if _, err := SigningKeyFromVault(ctx, vault("", errors.New("HTTP 403")), isAbsent); err == nil || errors.Is(err, ErrNoSigningKey) {
+		t.Errorf("refused: %v", err)
 	}
-	if _, err := SigningKeyFromFile(path); err == nil || strings.Contains(err.Error(), bad) {
+	bad := strings.Repeat("zz", 32)
+	if _, err := SigningKeyFromVault(ctx, vault(bad, nil), isAbsent); err == nil || strings.Contains(err.Error(), bad) {
 		t.Errorf("not hex: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(strings.Repeat("ab", 32)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	k, err := SigningKeyFromFile(path)
+	k, err := SigningKeyFromVault(ctx, vault(strings.Repeat("ab", 32)+"\n", nil), isAbsent)
 	if err != nil || k.PublicKey() != signingKey(t, "ab").PublicKey() {
 		t.Errorf("a seed with a newline: %v", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,20 +55,44 @@ func NewKVClient(addr, role, saTokenPath string) *KVClient {
 	if saTokenPath == "" {
 		saTokenPath = defaultSATokenPath
 	}
-	var tr http.RoundTripper
-	if os.Getenv("BAO_SKIP_VERIFY") == "true" || os.Getenv("VAULT_SKIP_VERIFY") == "true" {
-		tr = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
 	return &KVClient{
 		addr:        strings.TrimRight(addr, "/"),
 		mount:       Mount,
 		authPath:    "kubernetes",
 		role:        role,
 		saTokenPath: saTokenPath,
-		http:        &http.Client{Timeout: 10 * time.Second, Transport: tr},
+		http:        &http.Client{Timeout: 10 * time.Second, Transport: vaultTransport()},
 	}
+}
+
+// vaultTransport is how the client verifies the vault. BAO_CACERT (or
+// VAULT_CACERT) names the vault's CA certificate, openbao-ca, which the
+// installer copies into the operator's namespace; the vault is verified
+// against it alone. A CA file that cannot be read or holds no certificate
+// verifies nothing, so every request fails rather than trusting the system
+// roots in its place. Without one, the system roots are used, which is right
+// for a vault with a publicly trusted certificate. BAO_SKIP_VERIFY (or
+// VAULT_SKIP_VERIFY) turns verification off, for development only.
+func vaultTransport() http.RoundTripper {
+	if os.Getenv("BAO_SKIP_VERIFY") == "true" || os.Getenv("VAULT_SKIP_VERIFY") == "true" {
+		return &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+	path := os.Getenv("BAO_CACERT")
+	if path == "" {
+		path = os.Getenv("VAULT_CACERT")
+	}
+	if path == "" {
+		return nil
+	}
+	pool := x509.NewCertPool()
+	if pem, err := os.ReadFile(path); err == nil {
+		pool.AppendCertsFromPEM(pem)
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return tr
 }
 
 // authToken returns a valid OpenBao token, refreshing via Kubernetes auth

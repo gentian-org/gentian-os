@@ -246,6 +246,16 @@ spec:
                   path "{{ $kvMount }}/metadata/gentian-os/kernel/backup/identity" {
                     capabilities = ["deny"]
                   }
+                  # The bundle signing key likewise: it says which bundles this
+                  # cluster wrote, and the operator reads it from the vault
+                  # itself. As a Secret it would sign for anyone able to read
+                  # one.
+                  path "{{ $kvMount }}/data/gentian-os/kernel/backup/signing" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/backup/signing" {
+                    capabilities = ["deny"]
+                  }
                   path "{{ $kvMount }}/data/gentian-os/tenants/+/apps/*" {
                     capabilities = ["read"]
                   }

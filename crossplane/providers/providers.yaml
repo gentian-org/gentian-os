@@ -157,14 +157,18 @@ spec:
           containers:
             - name: package-runtime
               env:
-                # provider-vault reaches OpenBao at its in-cluster Service name,
-                # where it serves a self-signed certificate. Unlike the operator,
-                # this container is not templated and has no trust anchor mounted,
-                # so there is nothing for it to verify against and this cannot
-                # simply be dropped.
-                #
-                # Closing it means giving the provider the same CA bundle the
-                # operator gets from trustAnchorSecret. Tracked rather than left
-                # to look deliberate.
-                - name: VAULT_SKIP_VERIFY
-                  value: "true"
+                # provider-vault verifies OpenBao against the vault's CA
+                # openbao-ca: B-01 copies its certificate, and nothing else,
+                # into this namespace as openbao-ca-bundle before B-05 installs
+                # the provider. The Terraform provider takes VAULT_CACERT as
+                # its ca_cert_file when the ProviderConfig names none.
+                - name: VAULT_CACERT
+                  value: /etc/gentian/openbao-ca/ca.crt
+              volumeMounts:
+                - name: openbao-ca
+                  mountPath: /etc/gentian/openbao-ca
+                  readOnly: true
+          volumes:
+            - name: openbao-ca
+              secret:
+                secretName: openbao-ca-bundle

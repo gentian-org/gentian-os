@@ -12,7 +12,7 @@ check() {
     local addr
     addr="$(OPENBAO_NAMESPACE="$(_vault_ns)" gentian_service_addr openbao "$(_vault_ns)" 8200 https 2>/dev/null)" || return 1
     local st
-    st="$(curl -sk --max-time 5 "${addr}/v1/sys/seal-status" 2>/dev/null)" || return 1
+    st="$(bao_curl -s --max-time 5 "${addr}/v1/sys/seal-status" 2>/dev/null)" || return 1
     [[ "$(jq -r '.initialized' <<<"${st}")" == "true" && "$(jq -r '.sealed' <<<"${st}")" == "false" ]] &&
         [[ "$(kubectl get application openbao -n "$(ns_kernel gitops)" -o jsonpath='{.status.health.status}' 2>/dev/null)" == "Healthy" ]]
 }

@@ -12,13 +12,13 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
@@ -56,18 +56,27 @@ func SigningKeyFromSeed(seed string) (*SigningKey, error) {
 	return &SigningKey{private: ed25519.NewKeyFromSeed(raw)}, nil
 }
 
-// SigningKeyFromFile reads the seed where its Secret is mounted. A file that
-// is not there is a key that is absent, which is a state and not a fault:
-// the Secret arrives after the vault path it is read from.
-func SigningKeyFromFile(path string) (*SigningKey, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+// SigningKeyPath is where the seed is in the vault, as the field
+// signing_seed. Only the operator reads it, with its own vault identity:
+// External Secrets is denied the path, so the key never becomes a Secret.
+const SigningKeyPath = "gentian-os/kernel/backup/signing"
+
+// SigningKeyFromVault reads the seed with read, the operator's vault client.
+// A path that holds nothing (absent reports it) is a key that is absent,
+// which is a state and not a fault: bundles are then written unsigned and
+// say so.
+func SigningKeyFromVault(ctx context.Context, read func(context.Context, string) (map[string]string, error), absent func(error) bool) (*SigningKey, error) {
+	if read == nil {
 		return nil, ErrNoSigningKey
 	}
+	data, err := read(ctx, SigningKeyPath)
 	if err != nil {
-		return nil, errors.New("the bundle signing key cannot be read")
+		if absent != nil && absent(err) {
+			return nil, ErrNoSigningKey
+		}
+		return nil, fmt.Errorf("the bundle signing key cannot be read from the vault: %w", err)
 	}
-	return SigningKeyFromSeed(string(data))
+	return SigningKeyFromSeed(data["signing_seed"])
 }
 
 // PublicKey is the public half, base64.

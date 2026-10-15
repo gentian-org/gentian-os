@@ -820,8 +820,8 @@ make that work, each written once and never replaced:
 - **The signing key**: 32 random bytes B-08 writes to
   `gentian-os/kernel/backup/signing` (`signing_seed`), or the recovery kit's
   under `--recover`. `--export-recovery-kit` seeds it on a cluster that has
-  none and carries it. The operator reads it through the ExternalSecret
-  `gentian-os-bundle-signing-key`; until it is there, bundles are written
+  none and carries it. The operator reads it from the vault itself (External
+  Secrets is denied the path); until it is there, bundles are written
   unsigned and the export says so.
 - **The cluster's id**: `spec.clusterUID` in
   `clusters/<cluster>/kernel/claims/cluster.yaml`, 32 random hex characters.

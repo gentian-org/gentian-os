@@ -421,16 +421,21 @@ letting Argo CD roll the operator and the bouncer. In that order:
 
 - **The serving certificate** `openbao-tls` renews every 60 days, signed by
   the vault's CA `openbao-ca`, which every client trusts; no client changes.
-  The vault reads its certificate only at start or on `SIGHUP`. `B-01`
-  (`./install.sh --only B-01`) signals it once the new certificate has reached
-  the pod; nothing does so on its own, so run `B-01` within 30 days of a
-  renewal, or signal it by hand (`kubectl exec -n kernel-secrets openbao-0 -c
-  openbao -- pkill -HUP -x bao`). Never restart the pod for it: it seals.
+  The vault reads its certificate only at start or on `SIGHUP`; the sidecar
+  `tls-reload` in its pod sends the signal within a minute of the renewed
+  file reaching the pod, and `B-01` (`./install.sh --only B-01`) does too.
+  The StatefulSet updates `OnDelete`, so a vault pod started before the
+  sidecar was added has none until it is next restarted, and nothing
+  restarts it for that: a restart seals it until the seal unseals it. Until
+  then run `B-01` within 30 days of a renewal, or signal it by hand
+  (`kubectl exec -n kernel-secrets openbao-0 -c openbao -- pkill -HUP -x
+  bao`).
 - **Replacing `openbao-ca`** (ten years; renewed by cert-manager with the
   same key): delete its Secret `openbao-ca-tls` in `kernel-secrets` and the
   Certificate is issued again with a new key; then re-run `B-01`, which
-  copies the new certificate to cert-manager's namespace, signals the vault
-  and restarts the custodian. External Secrets reads the CA on every
+  copies the new certificate to cert-manager's, the operator's and
+  Crossplane's namespaces, signals the vault and restarts the custodian;
+  restart the operator and provider-vault, which read it at start. External Secrets reads the CA on every
   connection.
 
 ## 9. Data Lifecycle: Reference

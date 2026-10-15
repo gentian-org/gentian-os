@@ -407,9 +407,9 @@ Carried over from before, and still not shown:
   its NetworkPolicy path, gentian-ca Ready after B-08 and C-01 on each issuer
   mode, the store's certificates issued, a self-signed cluster's existing CA
   imported, and an existing cluster's vault moving to `openbao-ca` with its
-  stores and the custodian following. *Open:* nothing signals the vault when
-  `openbao-tls` renews (every 60 days) until `B-01` runs; it serves the
-  previous certificate, valid 30 more days (operations.md §8.2). *Not
+  stores and the custodian following. *Resolved on `test-cb`:* the sidecar
+  `tls-reload` signals the vault when `openbao-tls` renews; a vault pod
+  started before it has none until its next restart (operations.md §8.2). *Not
   migrated:* a cluster that ran the KV-based CA (72c3807a, on no live
   cluster) keeps that KV path and gets a new CA from the engine.
   *Resolved on `test-cb`:* a Certificate or CertificateRequest naming
@@ -441,6 +441,28 @@ Carried over from before, and still not shown:
   `system:masters` (`gentian-namespace-tier`). Shown against an API server.
   *Needs a cluster:* a re-run of A-01, the system namespaces composed, and a
   waiver granted and withdrawn with the guard in place.
+
+### Added on 2026-10-16
+
+- The bundle signing key is read by the operator from the vault and denied
+  to `eso-read`; the operator, provider-vault and the installer verify the
+  vault against `openbao-ca`; the vault's pod reloads its certificate by
+  itself (`tls-reload`). Shown by unit tests and stubs. *Needs a cluster:*
+  provider-vault taking `VAULT_CACERT` as its CA (the Terraform provider's
+  fallback when the ProviderConfig names no `ca_cert_file`), `bao` honouring
+  `BAO_TLS_SERVER_NAME` over a ClusterIP and a port-forward, the operator's
+  vault login against the mounted copy, and the sidecar's signal reaching
+  `bao` in the shared process namespace.
+- An existing cluster keeps the Secret `gentian-os-bundle-signing-key`
+  after its ExternalSecret is gone (it was `deletionPolicy: Retain`); delete
+  it by hand.
+- `gentian_service_addr` still probes the vault's address with `curl -k`
+  (reachability only, no token sent).
+- The custodian still reads the vault's CA through the API from
+  `openbao-tls` in the secrets namespace rather than from the
+  `openbao-ca-bundle` copy in its own.
+- `busybox:1.36` is pinned by digest for `tls-reload` only; the image is not
+  in `lint-image-pins`' `DIGEST_REQUIRED`, since its other uses are by tag.
 
 ## 3. Known defects, open
 

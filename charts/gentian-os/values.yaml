@@ -511,6 +511,11 @@ cloudflare:
 # OpenBao / Vault integration
 openbao:
   address: "https://openbao.kernel-secrets.svc.cluster.local:8200"
+  # The Secret, in the operator's namespace, holding the vault's CA
+  # certificate (ca.crt of openbao-ca) the operator verifies the vault
+  # against. The installer keeps this copy (B-01). Empty turns verification
+  # off unless trustAnchorSecret is set: development only.
+  caSecret: openbao-ca-bundle
   authPath: "kubernetes"
   # Kubernetes auth role used by the operator to log in to OpenBao for the
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
@@ -858,19 +863,6 @@ usageStatistics:
     # from it, and the public half is in every report.
     secretName: gentian-os-usage-statistics-key
     openbaoPath: gentian-os/kernel/usage-statistics
-    property: signing_seed
-
-# The key this cluster signs its bundles' manifests with, so that a restore
-# can tell a bundle this cluster wrote from any other: only such a bundle,
-# of a tenant of the same name, brings back the rights granted in the
-# tenant (docs/design/security.md). 32 random bytes the installer writes to
-# the vault once; the recovery kit carries them. The operator reads the
-# Secret below as an optional file: until it exists, bundles are written
-# unsigned and say so.
-bundleSigning:
-  signingKey:
-    secretName: gentian-os-bundle-signing-key
-    openbaoPath: gentian-os/kernel/backup/signing
     property: signing_seed
 
 # LLM serving support. Fallback only: the operator decides from the claim's

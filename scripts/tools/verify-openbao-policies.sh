@@ -290,6 +290,11 @@ expect "${ESO_TOKEN}" "DENIED the escrowed backup identity — deny beats the ke
     "secret/data/gentian-os/kernel/backup/identity" "deny"
 expect "${ESO_TOKEN}" "DENIED its metadata — the path name is a hint on its own" \
     "secret/metadata/gentian-os/kernel/backup/identity" "deny"
+# The bundle signing key: the operator reads it from the vault itself.
+expect "${ESO_TOKEN}" "DENIED the bundle signing key — the operator reads it, not ESO" \
+    "secret/data/gentian-os/kernel/backup/signing" "deny"
+expect "${ESO_TOKEN}" "DENIED its metadata" \
+    "secret/metadata/gentian-os/kernel/backup/signing" "deny"
 # The sibling path must be unaffected: a deny that swallowed the subtree would
 # take the recipient with it, and the operator would stop being able to encrypt
 # at all.

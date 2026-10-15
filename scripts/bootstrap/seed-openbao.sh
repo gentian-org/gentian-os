@@ -43,7 +43,10 @@ EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
 EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
 EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
 SECRET_MODE="${SECRET_MODE:-derived}"
-export VAULT_SKIP_VERIFY=true
+# The installer's seed_secrets hands over the vault's CA as BAO_CACERT and
+# BAO_TLS_SERVER_NAME (openbao_cli_trust), and bao_curl verifies with them.
+# shellcheck source=scripts/lib/openbao-curl.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/openbao-curl.sh"
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -60,7 +63,7 @@ for cmd in openssl sha1sum curl jq; do
 done
 
 # Try to read existing master-password and salt from OpenBao
-existing_secret=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+existing_secret=$(bao_curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
@@ -154,7 +157,7 @@ kv_put() {
     local full_path="secret/data/gentian-os/kernel/${path}"
     echo "  Writing ${full_path}..."
     local result http_code body
-    result=$(curl -k -s -w "\n%{http_code}" \
+    result=$(bao_curl -s -w "\n%{http_code}" \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         -H "Content-Type: application/json" \
         -X POST \
@@ -184,7 +187,7 @@ kv_put_once() {
     local json_data="$2"
     local check_path="secret/data/gentian-os/kernel/${path}"
     local existing
-    existing=$(curl -k -sf \
+    existing=$(bao_curl -sf \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         "${BAO_ADDR}/v1/${check_path}" 2>/dev/null || true)
     if echo "${existing}" | grep -q '"data":{'; then
@@ -294,7 +297,7 @@ EOF
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
 # oidc_client_secret: generated on first seed when absent.
-_DOVECOT_EXISTING=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
+_DOVECOT_EXISTING=$(bao_curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
   echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"
@@ -437,7 +440,7 @@ LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
 # A path that cannot be read is not the same as a path that is not there, and
 # only the second may be filled with new values.
 if [ "${SECRET_MODE}" = "random" ]; then
-    _llm_read=$(curl -k -s -w "\n%{http_code}" -H "X-Vault-Token: ${BAO_TOKEN}" \
+    _llm_read=$(bao_curl -s -w "\n%{http_code}" -H "X-Vault-Token: ${BAO_TOKEN}" \
         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/llm" 2>/dev/null || true)
     _llm_code=$(echo "${_llm_read}" | tail -1)
     case "${_llm_code}" in

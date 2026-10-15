@@ -307,13 +307,17 @@ check "and settling waits for the CA's, then gives up rather than copy the wrong
 
 tls_state openbao-ca "${ca_b64}"
 out="$(run "" 'openbao_tls_settle; echo "rc=$?"')"
-check "the CA's certificate, and no key, is copied to cert-manager's namespace" \
-    '[[ "$(calls)" == *"apply kernel-edge - "*"name: openbao-ca-bundle"*"ca.crt: ${ca_b64}"* && "$(calls)" != *"tls.key"* ]]' "${out}"
+check "the CA's certificate, and no key, is copied to cert-manager's, the operator's and Crossplane's namespaces" \
+    '[[ "$(calls)" == *"apply kernel-edge - "*"name: openbao-ca-bundle"*"ca.crt: ${ca_b64}"* && "$(calls)" == *"apply kernel-control - "*"name: openbao-ca-bundle"* && "$(calls)" == *"apply kernel-provisioning - "*"name: openbao-ca-bundle"* && "$(calls)" != *"tls.key"* ]]' "${out}"
 check "the vault is told to load its certificate, once the file is the new one" \
     '[[ "$(calls)" == *"sighup openbao-0"*"annotate pod/openbao-0 gentianos.io/tls-crt-sha256"* ]]' "$(calls)"
 check "the custodian is restarted to trust the CA" \
     '[[ "$(calls)" == *"rollout restart deployment.apps/gentian-os-custodian"*"annotate deployment.apps/gentian-os-custodian gentianos.io/openbao-ca-sha256"* ]]' "$(calls)"
 jp secret kernel-edge openbao-ca-bundle '{.data.ca\.crt}' "${ca_b64}"
+jp secret kernel-control openbao-ca-bundle '{.data.ca\.crt}' "${ca_b64}"
+out="$(run "" 'openbao_tls_settled; echo "rc=$?"')"
+check "not settled while one copy is missing" '[[ "${out}" == *"rc=1"* ]]' "${out}"
+jp secret kernel-provisioning openbao-ca-bundle '{.data.ca\.crt}' "${ca_b64}"
 out="$(run "" 'openbao_tls_settled; echo "rc=$?"')"
 check "settled afterwards" '[[ "${out}" == *"rc=0"* ]]' "${out}"
 : > "${STATE}/calls.log"
@@ -327,6 +331,20 @@ check "a renewed serving certificate the vault was not told about is not settled
 out="$(run "" 'openbao_tls_settle')"
 check "the vault is told about it; the custodian, whose CA is the same, is left alone" \
     '[[ "$(calls)" == *"sighup openbao-0"* && "$(calls)" != *"rollout"* ]]' "$(calls)"
+
+echo ""
+echo "The installer verifies the vault against openbao-ca"
+new_state
+out="$(run "" 'openbao_cli_trust 2>&1; echo "skip=${VAULT_SKIP_VERIFY:-}/${BAO_SKIP_VERIFY:-} ca=${BAO_CACERT:-}"')"
+check "before B-01 has made the CA, and only then, the vault is not verified" \
+    '[[ "${out}" == *"skip=true/true ca="* && "${out}" == *"not verifying the vault"* ]]' "${out}"
+jp secret kernel-secrets openbao-tls '{.data.ca\.crt}' "$(printf 'the-ca' | base64)"
+out="$(run "" 'VAULT_SKIP_VERIFY=true; openbao_cli_trust; echo "skip=${VAULT_SKIP_VERIFY:-} name=${BAO_TLS_SERVER_NAME}/${VAULT_TLS_SERVER_NAME} file=$(cat "${BAO_CACERT}") same=$([[ "${BAO_CACERT}" == "${VAULT_CACERT}" ]] && echo y)"')"
+check "with the CA, bao verifies against ca.crt under the certificate's name" \
+    '[[ "${out}" == *"skip= name=openbao.kernel-secrets.svc/openbao.kernel-secrets.svc file=the-ca same=y"* ]]' "${out}"
+out="$(run "" 'curl() { echo "curl $*"; }; BAO_CACERT=/ca.crt BAO_TLS_SERVER_NAME=openbao.kernel-secrets.svc bao_curl -sf -H "X-Vault-Token: t" "https://10.43.0.9:8200/v1/sys/health"; BAO_CACERT=/ca.crt BAO_TLS_SERVER_NAME=openbao.kernel-secrets.svc bao_curl -s "https://127.0.0.1:41234/v1/x?y=1"')"
+check "bao_curl verifies, connecting the certificate's name to the address" \
+    '[[ "${out}" == *"curl --cacert /ca.crt -sf -H X-Vault-Token: t --connect-to openbao.kernel-secrets.svc:8200:10.43.0.9:8200 https://openbao.kernel-secrets.svc:8200/v1/sys/health"* && "${out}" == *"--connect-to openbao.kernel-secrets.svc:41234:127.0.0.1:41234 https://openbao.kernel-secrets.svc:41234/v1/x?y=1"* && "${out}" != *" -k "* ]]' "${out}"
 
 echo ""
 echo "The object store's signing keys (B-08)"
