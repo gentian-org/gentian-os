@@ -112,7 +112,7 @@ func TestAnOutsideRealmDoesNotClaimTheClustersDomain(t *testing.T) {
 			"clientID": "c", "domain": "` + dt.KernelDomain + `"}`,
 		"below the kernel domain": `{"displayName": "K", "issuer": "https://id.team.` + dt.KernelDomain + `/auth/realms/x",
 			"clientID": "c", "domain": "team.` + dt.KernelDomain + `"}`,
-		"not the issuer's domain": `{"displayName": "G", "issuer": "https://id.abc.example/auth/realms/x",
+		"not the issuer's cluster's": `{"displayName": "G", "issuer": "https://id.abc.example/auth/realms/x",
 			"clientID": "c", "domain": "gmail.com"}`,
 	} {
 		if code, out := h.do(t, "PUT", "/v1/tenants/demo/brokered-from/x", shopKey, body); code != http.StatusUnprocessableEntity {

@@ -133,14 +133,16 @@ written by the director as `brokered-from.yaml` beside the tenant):
 ```bash
 kubectl gentian tenants organizations customers add acme \
   --display-name "ACME AG" \
-  --issuer https://id.acme.gentian.cloud/auth/realms/acme \
-  --client-id broker-to-aluvian
+  --issuer https://id.gentian.cloud/auth/realms/acme \
+  --client-id broker-to-aluvian \
+  --domain acme.gentian.cloud
 ```
 
-- **Domain.** The organization's domain is the one the issuer is published
-  under (`id.<domain>`), and nothing else is accepted, nor this cluster's own
-  domain. Keycloak sends a person who gives an address of that domain to the
-  organization's provider.
+- **Domain.** The organization's domain is the domain of its people's
+  addresses. It has to be the issuer's cluster domain (the issuer is
+  `id.<cluster domain>`) or one below it, such as `<tenant>.<cluster
+  domain>`, and never this cluster's own. Keycloak sends a person who gives
+  an address of that domain to the organization's provider.
 - **Authentication.** The provider signs a JWT with the target realm's key
   (*JWT signed with private key*); the source's `broker-to-<name>` client
   checks it against the target's published keys. No secret.

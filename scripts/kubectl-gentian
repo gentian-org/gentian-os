@@ -36,8 +36,8 @@
 #                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
 #   kubectl gentian tenants organizations <name>               realms of other clusters whose people sign in here
-#   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<domain>/auth/realms/<realm>>
-#                                  --client-id <id>          people of <domain> sign in as the organization <text>
+#   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>>
+#                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
 #   kubectl gentian tenants organizations <name> remove <org>  they no longer do
 #
 #   kubectl gentian catalogues list [--tenant <tenant>]
@@ -1490,7 +1490,7 @@ _committed() {
 cmd_tenants_organizations() {
     local usage_text name="" action="" link="" display="" issuer="" client="" domain="" answer
     usage_text="usage: kubectl gentian tenants organizations <tenant>
-       kubectl gentian tenants organizations <tenant> add <name> --display-name <text> --issuer <https://id.<domain>/auth/realms/<realm>> --client-id <id>
+       kubectl gentian tenants organizations <tenant> add <name> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>> --client-id <id> --domain <domain>
        kubectl gentian tenants organizations <tenant> remove <name>"
     name="${1:-}"
     [[ -n "${name}" && "${name}" != -* ]] || die "${usage_text}"
@@ -1512,6 +1512,7 @@ cmd_tenants_organizations() {
             --display-name) display="${2:-}"; shift 2 || die "--display-name needs a value" ;;
             --issuer) issuer="${2:-}"; shift 2 || die "--issuer needs a value" ;;
             --client-id) client="${2:-}"; shift 2 || die "--client-id needs a value" ;;
+            --domain) domain="${2:-}"; shift 2 || die "--domain needs a value" ;;
             *) die "unexpected argument $1" ;;
         esac
     done
@@ -1527,11 +1528,8 @@ cmd_tenants_organizations() {
                 "\(.name)\t\(.displayName)\t\(.domain)\t\(.issuer)\tclient \(.clientID)\tsign-in alias org-\(.name)"'
             ;;
         add)
-            [[ -n "${display}" && -n "${issuer}" && -n "${client}" ]] || die "${usage_text}"
-            # The domain is the one the issuer is published under, id.<domain>:
-            # the director takes no other, so it is read off here.
-            domain="$(printf '%s' "${issuer}" | sed -E 's#^https://id\.([^/:]+)/.*$#\1#')"
-            [[ "${domain}" != "${issuer}" ]] || die "the issuer must be https://id.<domain>/auth/realms/<realm>"
+            [[ -n "${display}" && -n "${issuer}" && -n "${client}" && -n "${domain}" ]] || die "${usage_text}"
+            domain="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]')"
             answer="$(_call PUT "/v1/tenants/${name}/brokered-from/${link}" "$(jq -n --arg d "${display}" \
                 --arg i "${issuer}" --arg c "${client}" --arg m "${domain}" \
                 '{displayName: $d, issuer: $i, clientID: $c, domain: $m}')")" || exit 1

@@ -17,15 +17,22 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// An entry is taken as the CRD would take it, and its domain is the one its
-// issuer is published under: an outside realm cannot claim the addresses of
-// a domain it does not serve its sign-in from.
+// An entry is taken as the CRD would take it, and its domain is under the
+// cluster its issuer is published by: an outside realm cannot claim the
+// addresses of a domain its cluster does not serve.
 func TestAnOutsideRealmClaimsOnlyItsOwnDomain(t *testing.T) {
 	entry := BrokeredFrom{
 		Name: "abc", DisplayName: "ABC Zürich AG", Issuer: "https://id.abc.example/auth/realms/main",
 		ClientID: "broker-to-aluvian", Domain: "abc.example",
 	}
 	if err := ValidBrokeredFrom(entry); err != nil {
+		t.Fatal(err)
+	}
+	// A tenant of a cluster with many: its people are at <tenant>.<domain>,
+	// its realm at id.<domain>.
+	tenant := entry
+	tenant.Issuer, tenant.Domain = "https://id.gentian.example/auth/realms/abc", "abc.gentian.example"
+	if err := ValidBrokeredFrom(tenant); err != nil {
 		t.Fatal(err)
 	}
 	bad := map[string]func(b *BrokeredFrom){
@@ -42,7 +49,8 @@ func TestAnOutsideRealmClaimsOnlyItsOwnDomain(t *testing.T) {
 		"domain not a domain":   func(b *BrokeredFrom) { b.Domain = "abc" },
 		"another's domain":      func(b *BrokeredFrom) { b.Domain = "gmail.com" },
 		"a parent domain":       func(b *BrokeredFrom) { b.Domain = "example" },
-		"the issuer's own host": func(b *BrokeredFrom) { b.Domain = "id.abc.example" },
+		"a sibling":             func(b *BrokeredFrom) { b.Domain = "xabc.example" },
+		"issuer not at id.":     func(b *BrokeredFrom) { b.Issuer = "https://login.abc.example/auth/realms/main" },
 	}
 	for name, change := range bad {
 		b := entry

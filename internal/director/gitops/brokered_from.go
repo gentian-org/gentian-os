@@ -57,13 +57,15 @@ var ErrBrokeredFromHeld = errors.New("held by another outside realm of this tena
 var brokeredClientID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // ValidBrokeredFrom checks one entry as the CRD would, and one rule the CRD
-// cannot state: the domain is the one the issuer is published under.
+// cannot state: the domain is under the cluster the issuer is published by.
 //
 // An organization's domain decides where Keycloak sends a person who gives
-// an address of it. So the domain is not the commissioner's to choose: it is
-// read off the issuer, id.<domain>, the layout of a Gentian tenant's realm.
-// An outside realm cannot claim the addresses of a domain it does not serve
-// its sign-in from.
+// an address of it. So it is not the commissioner's to choose freely. A
+// Gentian cluster publishes every realm at id.<its domain>, and its tenants'
+// people have addresses of that domain (a single-tenancy cluster) or of
+// <tenant>.<that domain>: the domain must be the issuer's cluster domain or
+// one below it. An outside realm cannot claim the addresses of a domain its
+// cluster does not serve.
 func ValidBrokeredFrom(b BrokeredFrom) error {
 	if !brokeredName.MatchString(b.Name) {
 		return fmt.Errorf("%w: name %q is not a DNS label of up to 40 characters", ErrInvalidBrokeredFrom, b.Name)
@@ -84,9 +86,14 @@ func ValidBrokeredFrom(b BrokeredFrom) error {
 	if len(b.Domain) > 253 || !hostnamePattern.MatchString(b.Domain) {
 		return fmt.Errorf("%w: domain %q is not a domain", ErrInvalidBrokeredFrom, b.Domain)
 	}
-	if host := strings.ToLower(u.Hostname()); host != "id."+b.Domain {
-		return fmt.Errorf("%w: domain %s is not the issuer's: the issuer's host is %s, and the domain is the one "+
-			"it is published under (id.<domain>)", ErrInvalidBrokeredFrom, b.Domain, host)
+	host := strings.ToLower(u.Hostname())
+	cluster, ok := strings.CutPrefix(host, "id.")
+	if !ok || cluster == "" {
+		return fmt.Errorf("%w: issuer %q is not at id.<the cluster's domain>", ErrInvalidBrokeredFrom, b.Issuer)
+	}
+	if b.Domain != cluster && !strings.HasSuffix(b.Domain, "."+cluster) {
+		return fmt.Errorf("%w: domain %s is not the issuer's cluster's: the issuer is published by %s, and the "+
+			"domain is that or one below it", ErrInvalidBrokeredFrom, b.Domain, cluster)
 	}
 	return nil
 }

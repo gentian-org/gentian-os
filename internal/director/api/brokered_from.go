@@ -124,7 +124,7 @@ func (s *Server) setTenantBrokeredFrom(w http.ResponseWriter, r *http.Request, c
 	}
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"displayName": "...", "issuer": "https://id.<domain>/auth/realms/<realm>", "clientID": "...", "domain": "<domain>"}`)
+			`body must be {"displayName": "...", "issuer": "https://id.<cluster>/auth/realms/<realm>", "clientID": "...", "domain": "<domain>"}`)
 		return
 	}
 	res, err := s.cfg.Repo.SetTenantBrokeredFrom(r.Context(), r.PathValue("t"), gitops.BrokeredFrom{

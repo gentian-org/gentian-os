@@ -124,7 +124,9 @@ type TenantBrokeredFrom struct {
 
 	// Domain is the organization's domain: the domain of its people's
 	// addresses, which Keycloak sends to this identity provider when one of
-	// them gives their address. One organization per domain.
+	// them gives their address. One organization per domain. The director
+	// takes only the issuer's cluster domain (the issuer is at
+	// id.<cluster domain>) or one below it.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`

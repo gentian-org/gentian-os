@@ -118,12 +118,13 @@ kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://
 The other half, on the cluster whose tenant those people sign in to: each
 realm of another cluster becomes an organization of the tenant's realm, with
 an identity provider `org-<name>` (`spec.brokeredFrom`, `can_configure` on
-the cluster; the domain is read off the issuer, `id.<domain>`):
+the cluster; the domain is the one its people's addresses are of, under the
+issuer's cluster):
 
 ```bash
 kubectl gentian tenants organizations customers      # list them
 kubectl gentian tenants organizations customers add acme --display-name "ACME AG" \
-  --issuer https://id.acme.gentian.cloud/auth/realms/acme --client-id broker-to-aluvian
+  --issuer https://id.gentian.cloud/auth/realms/acme --client-id broker-to-aluvian --domain acme.gentian.cloud
 kubectl gentian tenants organizations customers remove acme
 ```
 

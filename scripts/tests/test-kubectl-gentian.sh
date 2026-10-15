@@ -355,15 +355,15 @@ refused "an outside realm without its keys' address is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 # The other half: a realm of another cluster whose people sign in here, as an
-# organization. The domain is read off the issuer, never typed.
+# organization.
 fresh; reply PUT /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://id.abc.example/auth/realms/main --client-id broker-to-aluvian
-is "organizations add sends one PUT with the issuer's domain" "$(writes | tr -d ' \n')" \
-    'PUT/v1/tenants/customers/brokered-from/abc{"displayName":"ABCAG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}'
-has "... and says who signs in" "${OUT}" "People of abc.example sign in to tenant customers as the organization ABC AG"
+gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://id.gentian.example/auth/realms/abc --client-id broker-to-aluvian --domain ABC.gentian.example
+is "organizations add sends one PUT" "$(writes | tr -d ' \n')" \
+    'PUT/v1/tenants/customers/brokered-from/abc{"displayName":"ABCAG","issuer":"https://id.gentian.example/auth/realms/abc","clientID":"broker-to-aluvian","domain":"abc.gentian.example"}'
+has "... and says who signs in" "${OUT}" "People of abc.gentian.example sign in to tenant customers as the organization ABC AG"
 fresh
-gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://login.abc.example/realms/main --client-id broker-to-aluvian
-refused "an issuer that is not id.<domain> is a usage error"
+gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://id.gentian.example/auth/realms/abc --client-id broker-to-aluvian
+refused "an organization without its domain is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 fresh; reply DELETE /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian tenants organizations customers remove abc
