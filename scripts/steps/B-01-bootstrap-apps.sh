@@ -3,7 +3,7 @@
 # phase: secrets
 # requires: A-06-argocd
 # provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
-# mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier label); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's self-signed Issuer and Certificate in the secrets namespace; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
+# mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier label); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager namespace; the vault pods' tls-crt-sha256 annotation, after signalling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp
 
 # The chart takes the namespace layout as a value and resolves every
@@ -230,6 +230,9 @@ check() {
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
     kubectl get certificate openbao-tls -n "$(ns_kernel secrets)" >/dev/null 2>&1 || return 1
+    # Signed by the vault's CA, that CA handed to cert-manager, and the vault
+    # and the custodian on the current certificates (scripts/lib/openbao.sh).
+    openbao_tls_settled || return 1
     _v5_tier_guard_ok || return 1
     # The claim's ACME environment as rendered. App pods choose their trust
     # mount from it, and a claim moved off staging otherwise kept "true" here
@@ -291,6 +294,7 @@ apply() {
         done
         success "${app} delivered"
     done
+    openbao_tls_settle
 }
 
 destroy() {

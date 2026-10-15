@@ -382,9 +382,10 @@ Carried over from before, and still not shown:
   and the per-run NetworkPolicy under Calico.
 - Two more, decided by the owner and built on `test-cb`, never run on a
   cluster. (6) The internal CA `gentian-ca` on every cluster, in every issuer
-  mode (on `private-ca` it stays the person's CA), its key generated once by
-  the installer into `gentian-os/kernel/pki/internal-ca` and materialised by
-  External Secrets; the object store's gRPC mutual TLS from it (one
+  mode (on `private-ca` it stays the person's CA), its key generated once in
+  the vault's PKI engine (`pki-internal`) and never out of it, cert-manager
+  asking the vault to sign through a role that admits the store's names
+  only (and the kernel domain on `self-signed`); the object store's gRPC mutual TLS from it (one
   certificate for the pod, one client certificate for the `weed shell`
   Jobs, accepted names set per component); the volume server and the
   filer's HTTP port taking only signed tokens, the keys random at
@@ -397,11 +398,20 @@ Carried over from before, and still not shown:
   works; a volume write without a token, or with one of another key, is
   refused and the master's is taken; volume and filer reads without a token
   are refused; a replaced CA and certificates are taken up without a
-  restart; every earlier case still passes. A-09 and the seeding by
-  `make test-internal-ca` against stubs. *Needs a cluster:* gentian-ca Ready
-  after B-08 and C-01 on each issuer mode, cert-manager issuing the store's
-  certificates, External Secrets taking over a self-signed cluster's
-  existing `gentian-root-ca-tls`, and the store starting with both.
+  restart; every earlier case still passes. A-09, B-08 and B-01 by
+  `make test-internal-ca` against stubs; the engine, the role's refusals,
+  the sign-only policy, the import of a cert-manager-made CA and seed-once
+  against a local OpenBao 2.5.0; the vault taking a CA-signed certificate on
+  `SIGHUP` without sealing, likewise. *Needs a cluster:* cert-manager's
+  Kubernetes login at the vault (token audience, the token-request Role),
+  its NetworkPolicy path, gentian-ca Ready after B-08 and C-01 on each issuer
+  mode, the store's certificates issued, a self-signed cluster's existing CA
+  imported, and an existing cluster's vault moving to `openbao-ca` with its
+  stores and the custodian following. *Open:* nothing signals the vault when
+  `openbao-tls` renews (every 60 days) until `B-01` runs; it serves the
+  previous certificate, valid 30 more days (operations.md §8.2). *Not
+  migrated:* a cluster that ran the KV-based CA (72c3807a, on no live
+  cluster) keeps that KV path and gets a new CA from the engine.
   *Resolved on `test-cb`:* a Certificate or CertificateRequest naming
   `gentian-ca`, or an Ingress asking the ingress-shim for it, is refused
   outside the kernel and system namespaces (`gentian-restrict-internal-ca`),

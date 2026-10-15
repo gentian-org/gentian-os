@@ -82,6 +82,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
     evidence:
       - charts/gentian-os/templates/custodian.yaml:1
+  cert-manager:
+    what: cert-manager's controller
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: cert-manager, app.kubernetes.io/component: controller}
+    evidence:
+      - "cert-manager chart v1.21.0 templates/deployment.yaml: app.kubernetes.io/name and app.kubernetes.io/component: controller on the controller pod"
   provisioning:
     what: every pod of the provisioning namespace (Crossplane's providers, whose pods Crossplane names and labels)
     namespace: kernel-provisioning
@@ -274,6 +280,9 @@ namespaces:
               - peer: provisioning
                 why: provider-vault configures mounts, policies and roles
                 evidence: [crossplane/providers/provider-configs.yaml:34, scripts/steps/B-05-crossplane-providers.sh:115]
+              - peer: cert-manager
+                why: the internal CA's ClusterIssuer gentian-ca asks the vault's PKI engine to sign
+                evidence: [kernel/manifests/cert-manager/internal-ca.yaml:87]
             also:
               - External Secrets, in this namespace (crossplane/compositions/cluster-default.yaml:33)
               - the installer, from the install host; by port-forward where the host does not reach the pod (scripts/lib/portforward.sh:107)

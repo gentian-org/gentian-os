@@ -223,7 +223,7 @@ spec:
                   name: external-secrets
                   namespace: kernel-secrets
             caProvider:
-              key: tls.crt
+              key: ca.crt
               name: openbao-tls
               namespace: kernel-secrets
               type: Secret

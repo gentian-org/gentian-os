@@ -428,7 +428,7 @@ spec:
                           type: Secret
                           name: openbao-tls
                           namespace: {{ $openbaoNs }}
-                          key: tls.crt
+                          key: ca.crt  # the vault's CA, openbao-ca: stable across renewals
                         {{- end }}
                         auth:
                           kubernetes:

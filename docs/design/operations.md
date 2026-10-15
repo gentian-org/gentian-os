@@ -393,21 +393,45 @@ letting Argo CD roll the operator and the bouncer. In that order:
   hours (weed's default, `WEED_TLS_CERT_REFRESH_INTERVAL`) and the Secret is
   mounted whole, so no restart is needed; a Job reads its certificate when
   it starts.
-- **Replacing the internal CA** (`gentian-os/kernel/pki/internal-ca`) is
-  writing a new certificate and key there, re-syncing the ExternalSecret
-  `gentian-root-ca-tls` in cert-manager's namespace, and having cert-manager
-  reissue every certificate of `gentian-ca` (`cmctl renew --all` in each
-  namespace that holds one; for the store, `system-s3`). Until the server's
-  next refresh, Jobs with a certificate of the new CA are refused: restart
-  the store (`kubectl rollout restart deploy/seaweedfs-all-in-one -n
-  system-s3`) to take the new CA at once. On a self-signed cluster every
-  client that trusts the old CA has to be given the new one.
+- **While the vault is sealed** nothing of `gentian-ca` is issued or
+  renewed. A certificate's renewal starts with about 30 days left, so that is
+  how long the vault may stay sealed before the store's certificates expire.
+- **Replacing the internal CA** is a new issuer in the vault's PKI engine:
+  generate one at `pki-internal` (`bao write pki-internal/root/generate/internal
+  common_name=gentian-root-ca key_type=ec key_bits=256 ttl=87600h
+  max_path_length=0`) and make it the default (`bao write
+  pki-internal/config/issuers default=<its id>`), as the root token or an
+  administrator; then have cert-manager reissue every certificate of
+  `gentian-ca` (`cmctl renew --all` in each namespace that holds one; for the
+  store, `system-s3`). Until the server's next refresh, Jobs with a
+  certificate of the new CA are refused: restart the store (`kubectl rollout
+  restart deploy/seaweedfs-all-in-one -n system-s3`) to take the new CA at
+  once. Re-run `B-08` to write the new certificate to `gentian-root-ca-tls`;
+  on a self-signed cluster every client that trusts the old CA has to be
+  given the new one. The installer never does this itself: an existing CA is
+  left as it is.
 - **Rotating a signing key** (`gentian-os/kernel/storage/s3/jwt`) is writing
   a new value there, re-syncing the ExternalSecret `seaweedfs-jwt` in
   `system-s3`, and restarting the store, which reads the keys from its
   environment at start. A token is valid for seconds, so only requests in
   flight fail. The keys are never generated again by the installer: an
   existing path is left as it is.
+
+### 8.2 The vault's own certificate
+
+- **The serving certificate** `openbao-tls` renews every 60 days, signed by
+  the vault's CA `openbao-ca`, which every client trusts; no client changes.
+  The vault reads its certificate only at start or on `SIGHUP`. `B-01`
+  (`./install.sh --only B-01`) signals it once the new certificate has reached
+  the pod; nothing does so on its own, so run `B-01` within 30 days of a
+  renewal, or signal it by hand (`kubectl exec -n kernel-secrets openbao-0 -c
+  openbao -- pkill -HUP -x bao`). Never restart the pod for it: it seals.
+- **Replacing `openbao-ca`** (ten years; renewed by cert-manager with the
+  same key): delete its Secret `openbao-ca-tls` in `kernel-secrets` and the
+  Certificate is issued again with a new key; then re-run `B-01`, which
+  copies the new certificate to cert-manager's namespace, signals the vault
+  and restarts the custodian. External Secrets reads the CA on every
+  connection.
 
 ## 9. Data Lifecycle: Reference
 

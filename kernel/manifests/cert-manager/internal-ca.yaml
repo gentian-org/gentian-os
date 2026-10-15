@@ -7,56 +7,72 @@
 # wildcard and every public host stay with Let's Encrypt, and gentian-ca
 # issues only what the platform asks of it in-cluster. On a self-signed
 # cluster, which has no public issuer, it is also the anchor the public names
-# are signed by, as before.
+# are signed by.
 #
-# Its key is not cert-manager's. The installer generates the CA once, at
-# random, into the vault (gentian-os/kernel/pki/internal-ca; scripts/lib/
-# bootstrap.sh seed_internal_ca) and never again, and External Secrets
-# materialises it here as the CA issuer's Secret. So it survives a reinstall
-# of cert-manager, and the recovery kit, which opens the vault, reaches it.
+# Its key is the vault's and never leaves it. The CA is OpenBao's PKI engine
+# at pki-internal (made once by B-08, scripts/lib/bootstrap.sh
+# seed_internal_ca), and cert-manager asks it to sign: pki-internal/sign/
+# gentian-ca, a role that admits only the names the platform uses. cert-
+# manager logs in with the Kubernetes method as the ServiceAccount below,
+# whose OpenBao role and sign-only policy the Cluster claim composes
+# (cert-manager-gentian-ca). It verifies the vault against
+# openbao-ca-bundle, the vault's CA certificate, which B-01 copies here.
+#
+# Until all of that exists -- the CA after B-08, the role and policy after
+# C-01 -- the issuer is not Ready and issues nothing. While the vault is
+# sealed it signs nothing either; certificates already issued stay valid.
 #
 # Not applied on a private-ca cluster: there gentian-ca is the person's own
 # CA, from a Secret they supply (A-09).
 #
-# No namespace on either object that has one: cert-manager does not always
-# live in a namespace called cert-manager -- v5 puts it in the edge namespace
-# -- so the applying step passes -n with the namespace it actually resolved.
-# The ExternalSecret needs the openbao ClusterSecretStore, which the Cluster
-# claim composes later in the install; until then, and until the CA is
-# seeded, the issuer is not Ready and issues nothing.
+# No namespace on the objects that have one: cert-manager does not always
+# live in a namespace called cert-manager -- v5 puts it in the edge
+# namespace -- so the applying step passes -n with the namespace it actually
+# resolved, and puts that namespace and the vault's address in for
+# @CERT_MANAGER_NAMESPACE@ and @OPENBAO_SERVER@.
 ---
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
+apiVersion: v1
+kind: ServiceAccount
 metadata:
-  name: gentian-root-ca-tls
+  name: gentian-ca-issuer
   labels:
     app.kubernetes.io/managed-by: gentian-install
     app.kubernetes.io/part-of: gentian-os
     gentianos.io/issuer-role: internal-ca
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    kind: ClusterSecretStore
-    name: openbao
-  target:
-    name: gentian-root-ca-tls
-    creationPolicy: Owner
-    template:
-      type: kubernetes.io/tls
-      engineVersion: v2
-      data:
-        tls.crt: '{{ .certificate }}'
-        tls.key: '{{ .private_key }}'
-        ca.crt: '{{ .certificate }}'
-  data:
-    - secretKey: certificate
-      remoteRef:
-        key: gentian-os/kernel/pki/internal-ca
-        property: certificate
-    - secretKey: private_key
-      remoteRef:
-        key: gentian-os/kernel/pki/internal-ca
-        property: private_key
+# Not mounted anywhere: cert-manager requests a short-lived token for it and
+# presents that to the vault.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gentian-ca-issuer-token
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-role: internal-ca
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["gentian-ca-issuer"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gentian-ca-issuer-token
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-role: internal-ca
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gentian-ca-issuer-token
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: "@CERT_MANAGER_NAMESPACE@"
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -67,5 +83,17 @@ metadata:
     app.kubernetes.io/part-of: gentian-os
     gentianos.io/issuer-role: internal-ca
 spec:
-  ca:
-    secretName: gentian-root-ca-tls
+  vault:
+    server: "@OPENBAO_SERVER@"
+    path: pki-internal/sign/gentian-ca
+    caBundleSecretRef:
+      name: openbao-ca-bundle
+      key: ca.crt
+    auth:
+      kubernetes:
+        mountPath: /v1/auth/kubernetes
+        role: cert-manager-gentian-ca
+        # The token's audience is vault://gentian-ca, cert-manager's default
+        # for a ClusterIssuer of this name; the vault's role requires it.
+        serviceAccountRef:
+          name: gentian-ca-issuer

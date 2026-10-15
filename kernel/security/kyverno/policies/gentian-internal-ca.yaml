@@ -1,9 +1,9 @@
 # Only the platform asks the internal CA for a certificate.
 #
 # gentian-ca (kernel/manifests/cert-manager/internal-ca.yaml) signs whatever
-# a Certificate or CertificateRequest asks of it, under any common name, and
-# the object store accepts the client whose common name is seaweedfs-shell as
-# its administrator. So a request naming it is allowed only where the
+# a Certificate or CertificateRequest asks of it within its role's names, and
+# the object store accepts the client whose common name is seaweedfs-shell,
+# one of those names, as its administrator. So a request naming it is allowed only where the
 # platform's own components run: the kernel and system namespaces. Today the
 # object store's two certificates, in system-s3, are its only users;
 # cert-manager's CertificateRequests for them are made in the same namespace.

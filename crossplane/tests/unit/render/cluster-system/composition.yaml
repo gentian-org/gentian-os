@@ -960,6 +960,59 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── cert-manager's identity at the vault: the internal CA ──────
+                 gentian-ca is the vault's PKI engine (pki-internal, made by
+                 the installer's B-08), and cert-manager asks it to sign
+                 (kernel/manifests/cert-manager/internal-ca.yaml). This is
+                 all it may do: sign on the one role, whose names B-08 sets.
+                 Not issue -- that would have the vault make the key and hand
+                 it over -- nor read, change or replace the CA.
+
+                 Bound to the ServiceAccount gentian-ca-issuer in the edge
+                 namespace, which nothing runs as: cert-manager requests a
+                 token for it, whose audience is vault://gentian-ca.
+
+                 Not on a private-ca cluster, where gentian-ca is the
+                 person's own CA and the vault has no part in it. */}}
+            {{- if ne (dig "certificates" "issuerMode" "acme-dns01" $spec) "private-ca" }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-cert-manager-gentian-ca
+              name: {{ $name }}-policy-cert-manager-gentian-ca
+            spec:
+              forProvider:
+                name: cert-manager-gentian-ca
+                policy: |
+                  path "pki-internal/sign/gentian-ca" { capabilities = ["update"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-cert-manager-gentian-ca
+              name: {{ $name }}-auth-role-cert-manager-gentian-ca
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: cert-manager-gentian-ca
+                boundServiceAccountNames:
+                  - gentian-ca-issuer
+                boundServiceAccountNamespaces:
+                  - kernel-edge
+                audience: vault://gentian-ca
+                tokenPolicies:
+                  - cert-manager-gentian-ca
+                tokenTtl: 600
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
             kind: AuthBackendRole
@@ -1297,7 +1350,7 @@ spec:
                           type: Secret
                           name: openbao-tls
                           namespace: {{ $secretsNs }}
-                          key: tls.crt
+                          key: ca.crt  # the vault's CA, openbao-ca: stable across renewals
                         {{- end }}
                         auth:
                           kubernetes:

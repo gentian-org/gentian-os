@@ -686,3 +686,156 @@ gentian_handed_over() {
     [[ "$(kubectl get configmap gentian-handover -n "$(ns_kernel control)" \
         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]
 }
+
+# =============================================================================
+# The vault's TLS anchor (kernel/bootstrap/chart/templates/vault-tls.yaml)
+# =============================================================================
+# The serving certificate openbao-tls is signed by the CA openbao-ca, and
+# every client of the vault trusts that CA's certificate rather than the
+# serving one. Three things follow from it that a manifest cannot do, and
+# B-01 does them once the serving certificate is the CA's:
+#
+#   1. the CA's certificate, and nothing else, is copied to cert-manager's
+#      namespace as openbao-ca-bundle: the internal CA's ClusterIssuer can
+#      read a Secret only there;
+#   2. the vault is told to load its files again (SIGHUP; it reads them only
+#      at start or on that signal). Its StatefulSet updates OnDelete, and a
+#      restart would seal it until the seal unseals it again, so a signal is
+#      what is sent. Each pod records which certificate it was told about;
+#   3. the custodian is restarted when the CA it trusts has changed: it reads
+#      ca.crt once, at start (internal/custodian/http.go loadBaoCA).
+#
+# External Secrets' stores read ca.crt on every connection and need nothing.
+#
+# On a cluster whose serving certificate was self-signed, (1)-(3) are the
+# switch: before it, ca.crt held that self-signed certificate, so the stores
+# trusted it under either key; between cert-manager re-issuing openbao-tls
+# and (2) a store's connection fails and is retried, and no Secret it made
+# is touched.
+# =============================================================================
+
+# _openbao_tls_field <secret> <key> — a field of a Secret in the secrets
+# namespace, base64 as the API server holds it.
+_openbao_tls_field() {
+    kubectl get secret "$1" -n "$(ns_kernel secrets)" \
+        -o jsonpath="{.data.${2//./\\.}}" 2>/dev/null || true
+}
+
+_openbao_tls_sha() { printf '%s' "$1" | sha256_of /dev/stdin; }
+
+# openbao_tls_from_ca — is the serving certificate the CA's, and current?
+openbao_tls_from_ca() {
+    local ns ca
+    ns="$(ns_kernel secrets)"
+    [[ "$(kubectl get certificate openbao-tls -n "${ns}" -o jsonpath='{.spec.issuerRef.name}' 2>/dev/null)" == "openbao-ca" ]] ||
+        return 1
+    [[ "$(kubectl get certificate openbao-tls -n "${ns}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return 1
+    ca="$(_openbao_tls_field openbao-ca-tls tls.crt)"
+    [[ -n "${ca}" && "${ca}" == "$(_openbao_tls_field openbao-tls ca.crt)" ]]
+}
+
+_openbao_running_pods() {
+    kubectl get pods -n "$(ns_kernel secrets)" \
+        -l app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao \
+        --field-selector=status.phase=Running -o name 2>/dev/null || true
+}
+
+_openbao_custodian() {
+    kubectl get deploy -n "$(ns_kernel control)" -l app.kubernetes.io/component=custodian \
+        -o name 2>/dev/null | head -1 || true
+}
+
+# openbao_tls_settled — (1)-(3) above are done for the certificates there now.
+openbao_tls_settled() {
+    openbao_tls_from_ca || return 1
+    local ca crt pod dep
+    ca="$(_openbao_tls_field openbao-tls ca.crt)"
+    crt="$(_openbao_tls_field openbao-tls tls.crt)"
+    [[ "$(kubectl get secret openbao-ca-bundle -n "$(gentian_cert_manager_namespace)" \
+        -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" == "${ca}" ]] || return 1
+    for pod in $(_openbao_running_pods); do
+        [[ "$(kubectl get "${pod}" -n "$(ns_kernel secrets)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/tls-crt-sha256}' 2>/dev/null)" == \
+            "$(_openbao_tls_sha "${crt}")" ]] || return 1
+    done
+    dep="$(_openbao_custodian)"
+    if [[ -n "${dep}" ]]; then
+        [[ "$(kubectl get "${dep}" -n "$(ns_kernel control)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-ca-sha256}' 2>/dev/null)" == \
+            "$(_openbao_tls_sha "${ca}")" ]] || return 1
+    fi
+    return 0
+}
+
+# openbao_tls_settle — wait for the serving certificate to be the CA's, then
+# do (1)-(3).
+openbao_tls_settle() {
+    local t=$((SECONDS + ${OPENBAO_TLS_TIMEOUT:-180})) ca crt sha pod dep
+    info "Waiting for the vault's serving certificate to be signed by its CA openbao-ca..."
+    until openbao_tls_from_ca; do
+        if (( SECONDS > t )); then
+            error "openbao-tls in $(ns_kernel secrets) is not signed by openbao-ca yet:"
+            error "  kubectl describe certificate openbao-tls openbao-ca -n $(ns_kernel secrets)"
+            return 1
+        fi
+        sleep 3
+    done
+    ca="$(_openbao_tls_field openbao-tls ca.crt)"
+    crt="$(_openbao_tls_field openbao-tls tls.crt)"
+
+    # The certificate only; on stdin, as every Secret this installer writes.
+    kubectl apply -n "$(gentian_cert_manager_namespace)" -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openbao-ca-bundle
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+type: Opaque
+data:
+  ca.crt: ${ca}
+YAML
+
+    # A vault whose pod is not up yet reads the files when it starts; one
+    # that is up is told to read them. On a first install the pod is
+    # usually still being scheduled when this runs.
+    t=$((SECONDS + ${OPENBAO_POD_WAIT:-120}))
+    while [[ -z "$(_openbao_running_pods)" ]] && (( SECONDS < t )); do sleep 4; done
+
+    sha="$(_openbao_tls_sha "${crt}")"
+    for pod in $(_openbao_running_pods); do
+        [[ "$(kubectl get "${pod}" -n "$(ns_kernel secrets)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/tls-crt-sha256}' 2>/dev/null)" == "${sha}" ]] &&
+            continue
+        # The kubelet updates a mounted Secret within about a minute of the
+        # Secret changing; until the file is the new one, a signal reloads
+        # the old.
+        local i
+        for i in $(seq 1 30); do
+            [[ "$(kubectl exec -n "$(ns_kernel secrets)" "${pod}" -c openbao -- \
+                cat /openbao/tls/tls.crt 2>/dev/null | base64 | tr -d '\n')" == "${crt}" ]] && break
+            sleep 4
+        done
+        if kubectl exec -n "$(ns_kernel secrets)" "${pod}" -c openbao -- pkill -HUP -x bao >/dev/null 2>&1; then
+            kubectl annotate "${pod}" -n "$(ns_kernel secrets)" --overwrite \
+                "gentianos.io/tls-crt-sha256=${sha}" >/dev/null
+            info "${pod#pod/} loaded the vault's current serving certificate."
+        else
+            warn "Could not signal ${pod#pod/} to load its serving certificate; it serves the"
+            warn "  previous one until it restarts."
+        fi
+    done
+
+    dep="$(_openbao_custodian)"
+    sha="$(_openbao_tls_sha "${ca}")"
+    if [[ -n "${dep}" && "$(kubectl get "${dep}" -n "$(ns_kernel control)" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-ca-sha256}' 2>/dev/null)" != "${sha}" ]]; then
+        kubectl rollout restart "${dep}" -n "$(ns_kernel control)" >/dev/null &&
+            kubectl annotate "${dep}" -n "$(ns_kernel control)" --overwrite \
+                "gentianos.io/openbao-ca-sha256=${sha}" >/dev/null &&
+            info "The custodian restarted to trust the vault's CA."
+    fi
+    success "The vault's TLS is signed by openbao-ca, and its clients trust that CA."
+}

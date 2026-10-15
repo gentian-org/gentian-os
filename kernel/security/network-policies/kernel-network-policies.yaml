@@ -64,6 +64,13 @@ spec:
   - from:
     - namespaceSelector:
         matchLabels:
+          kubernetes.io/metadata.name: kernel-edge
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: controller
+          app.kubernetes.io/name: cert-manager
+    - namespaceSelector:
+        matchLabels:
           kubernetes.io/metadata.name: kernel-control
       podSelector:
         matchLabels:

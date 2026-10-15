@@ -741,64 +741,160 @@ _seed_once() {
 }
 
 # =============================================================================
-# seed_internal_ca — the cluster's internal CA, gentian-ca, into the vault
+# seed_internal_ca — the cluster's internal CA, gentian-ca, in the vault
 # =============================================================================
-# A CA certificate and its key, generated here once at random and never
-# again: every certificate the cluster issues in-cluster chains to it, and a
-# new one would be a new anchor that nothing trusts yet. External Secrets
-# materialises it as the ClusterIssuer's Secret
-# (kernel/manifests/cert-manager/internal-ca.yaml), so a reinstall of
-# cert-manager finds the same CA, and the recovery kit, which opens the
-# vault, reaches it. Read by eso-read, as every kernel path is, and by no
-# program besides.
+# OpenBao's PKI engine at pki-internal holds the CA, and its key never leaves
+# it: the root is generated inside the vault (root/generate/internal), and
+# cert-manager asks the vault to sign (kernel/manifests/cert-manager/
+# internal-ca.yaml). Made once and never replaced: every certificate the
+# cluster issues in-cluster chains to it, and a new one would be an anchor
+# nothing trusts yet. The recovery kit, which opens the vault, reaches it with
+# everything else the vault holds.
+#
+# The role gentian-ca says what may be signed: the object store's names, and
+# on a self-signed cluster, where gentian-ca is the anchor of the public
+# names too, the kernel domain and the names under it. Rewritten on every
+# run, so it follows the issuer mode. Certificates live at most 90 days,
+# cert-manager's default; cert-manager renews them at two thirds of that, so
+# a sealed vault leaves about 30 days before the first one expires.
 #
 # A self-signed cluster that predates this had its CA made by cert-manager,
-# and clients may have been told to trust it. That CA is what is seeded
-# then, from the Secret cert-manager wrote -- recognised by the Certificate
-# that wrote it, so that a Secret somebody supplied for private-ca is never
-# read. A private-ca cluster seeds nothing: gentian-ca is the person's own CA.
+# and clients may have been told to trust it. That CA is imported instead of
+# generating one, from the Secret cert-manager wrote -- recognised by the
+# Certificate that wrote it, so a Secret somebody supplied for private-ca is
+# never read -- and the Secret is then written again without its key.
+#
+# The CA's certificate is written to gentian-root-ca-tls in cert-manager's
+# namespace, ca.crt and tls.crt and no key: the anchor a self-signed cluster
+# hands to its clients (certificates.trustAnchorSecret).
+#
+# A private-ca cluster seeds nothing: gentian-ca is the person's own CA.
 # =============================================================================
+INTERNAL_CA_MOUNT="pki-internal"
+
+# _internal_ca_role — write the role gentian-ca for this cluster's issuer mode.
+_internal_ca_role() {
+    local s3; s3="$(ns_system s3)"
+    local svc="seaweedfs-all-in-one"
+    local names="seaweedfs-server,seaweedfs-shell,${svc},${svc}.${s3},${svc}.${s3}.svc,${svc}.${s3}.svc.cluster.local"
+    local subdomains=false wildcard=false
+    if [[ "$(gentian_issuer_mode)" == "self-signed" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        names="${names},${KERNEL_DOMAIN}"
+        subdomains=true
+        wildcard=true
+    fi
+    bao write "${INTERNAL_CA_MOUNT}/roles/gentian-ca" \
+        allowed_domains="${names}" allow_bare_domains=true \
+        allow_subdomains="${subdomains}" allow_wildcard_certificates="${wildcard}" \
+        allow_glob_domains=false allow_localhost=false allow_any_name=false \
+        allow_ip_sans=false allowed_uri_sans="" allowed_other_sans="" \
+        enforce_hostnames=true server_flag=true client_flag=true \
+        key_type=ec key_bits=256 ttl=2160h max_ttl=2160h \
+        no_store=true require_cn=false >/dev/null
+}
+
+# _internal_ca_legacy <dir> — the CA cert-manager made on this cluster, as
+# <dir>/ca.crt and <dir>/ca.key, when there is one.
+_internal_ca_legacy() {
+    local dir="$1" ns="$2"
+    kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null |
+        jq -e 'select(.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca")
+               | select(.data["tls.key"] != null)' > "${dir}/secret.json" 2>/dev/null || return 1
+    (umask 077
+     jq -r '.data["tls.crt"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.crt"
+     jq -r '.data["tls.key"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.key")
+    rm -f "${dir}/secret.json"
+    openssl x509 -noout -in "${dir}/ca.crt" >/dev/null 2>&1 && [[ -s "${dir}/ca.key" ]]
+}
+
+# _internal_ca_publish <ns> — the CA's certificate, without a key, as
+# gentian-root-ca-tls. Only over a Secret that is this one's, or the one
+# cert-manager's CA wrote; a Secret of that name somebody else made is left.
+_internal_ca_publish() {
+    local ns="$1" cur crt
+    crt="$(bao read -field=certificate "${INTERNAL_CA_MOUNT}/cert/ca" 2>/dev/null)" || return 1
+    [[ -n "${crt}" ]] || return 1
+    cur="$(kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null || true)"
+    if [[ -n "${cur}" ]]; then
+        if jq -e '.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca"' \
+            <<< "${cur}" >/dev/null 2>&1; then
+            # Its type says it holds a key, and a type cannot be changed.
+            kubectl delete secret gentian-root-ca-tls -n "${ns}" >/dev/null || return 1
+        elif ! jq -e '.metadata.labels["gentianos.io/issuer-role"] == "internal-ca"' \
+            <<< "${cur}" >/dev/null 2>&1; then
+            warn "${ns}/gentian-root-ca-tls is not the internal CA's; left as it is."
+            return 0
+        fi
+    fi
+    jq -n --arg c "${crt}" --arg ns "${ns}" '{
+        apiVersion: "v1", kind: "Secret", type: "Opaque",
+        metadata: {name: "gentian-root-ca-tls", namespace: $ns,
+                   labels: {"app.kubernetes.io/managed-by": "gentian-install",
+                            "app.kubernetes.io/part-of": "gentian-os",
+                            "gentianos.io/issuer-role": "internal-ca"}},
+        stringData: {"ca.crt": ($c + "\n"), "tls.crt": ($c + "\n")}}' |
+        kubectl apply -f - >/dev/null
+}
+
 seed_internal_ca() {
-    local path="gentian-os/kernel/pki/internal-ca" dir ns adopted=""
+    local mount="${INTERNAL_CA_MOUNT}" default dir ns made
     if [[ "$(gentian_issuer_mode)" == "private-ca" ]]; then
-        info "issuerMode is private-ca: gentian-ca is your own CA, and none is seeded."
+        info "issuerMode is private-ca: gentian-ca is your own CA, and the vault holds none."
         return 0
     fi
-    if [[ -n "$(bao kv get -mount=secret -field=certificate "${path}" 2>/dev/null || true)" ]]; then
-        info "Internal CA already in the vault; left as it is."
-        return 0
+    if ! bao secrets list -format=json 2>/dev/null | jq -e --arg m "${mount}/" '.[$m]' >/dev/null 2>&1; then
+        if ! bao secrets enable -path="${mount}" -max-lease-ttl=87600h \
+            -description="gentian-ca, the cluster's internal CA" pki >/dev/null; then
+            error "The vault's PKI engine could not be enabled at ${mount}/."
+            return 1
+        fi
     fi
-    dir="$(mktemp -d)" || return 1
-    chmod 700 "${dir}"
+    bao secrets tune -max-lease-ttl=87600h "${mount}" >/dev/null || return 1
+
+    # Only an answer that there is no CA is a reason to make one: a vault
+    # that is sealed, unreachable or refuses fails here instead.
+    if ! default="$(bao read -format=json "${mount}/config/issuers" 2>/dev/null | jq -er '.data.default')"; then
+        error "Could not read the internal CA from the vault at ${mount}/; nothing was changed."
+        return 1
+    fi
     ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}")"
-    if kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null |
-        jq -e 'select(.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca")' \
-            > "${dir}/secret.json" 2>/dev/null; then
-        (umask 077
-         jq -r '.data["tls.crt"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.crt"
-         jq -r '.data["tls.key"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.key")
-        adopted="the CA cert-manager made on this cluster before"
+    if [[ -n "${default}" ]]; then
+        info "Internal CA already in the vault; left as it is."
     else
-        (umask 077
-         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
-             -subj "/O=gentian-os/CN=gentian-root-ca" \
-             -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
-             -addext "keyUsage=critical,keyCertSign,cRLSign" \
-             -keyout "${dir}/ca.key" -out "${dir}/ca.crt" >/dev/null 2>&1)
+        dir="$(mktemp -d)" || return 1
+        chmod 700 "${dir}"
+        if _internal_ca_legacy "${dir}" "${ns}"; then
+            # Certificate and key on stdin, never in an argument.
+            local imported
+            imported="$(cat "${dir}/ca.crt" "${dir}/ca.key" |
+                bao write -format=json "${mount}/issuers/import/bundle" pem_bundle=- 2>/dev/null |
+                jq -r '.data.imported_issuers[0] // empty')"
+            rm -rf "${dir}"
+            if [[ -z "${imported}" ]] ||
+                ! bao write "${mount}/config/issuers" default="${imported}" >/dev/null; then
+                error "The CA cert-manager made on this cluster could not be imported into ${mount}/."
+                return 1
+            fi
+            made="imported the CA cert-manager made on this cluster before"
+        else
+            rm -rf "${dir}"
+            if ! bao write "${mount}/root/generate/internal" \
+                common_name=gentian-root-ca organization=gentian-os \
+                key_type=ec key_bits=256 ttl=87600h max_path_length=0 \
+                issuer_name=gentian-root-ca key_name=gentian-root-ca >/dev/null; then
+                error "The vault could not generate the internal CA at ${mount}/."
+                return 1
+            fi
+            made="generated in the vault"
+        fi
+        success "Internal CA ${made}, at ${mount}/."
     fi
-    if ! openssl x509 -noout -in "${dir}/ca.crt" >/dev/null 2>&1 || [[ ! -s "${dir}/ca.key" ]]; then
-        rm -rf "${dir}"
-        error "The internal CA could not be made; gentian-ca cannot issue without it."
+    if ! _internal_ca_role; then
+        error "The internal CA's role ${mount}/roles/gentian-ca could not be written."
         return 1
     fi
-    if ! jq -n --rawfile c "${dir}/ca.crt" --rawfile k "${dir}/ca.key" \
-        '{certificate: $c, private_key: $k}' | _seed_once "${path}"; then
-        rm -rf "${dir}"
-        error "The internal CA could not be written to the vault at ${path}."
-        return 1
-    fi
-    rm -rf "${dir}"
-    success "Internal CA stored at ${path}${adopted:+ (${adopted})}."
+    _internal_ca_publish "${ns}" ||
+        warn "The internal CA's certificate could not be written to ${ns}/gentian-root-ca-tls."
 }
 
 # =============================================================================

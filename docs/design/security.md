@@ -786,6 +786,7 @@ the code does.
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today For an app the app Composition installs, the granted rules are a policy of their own, `granted-egress-<app>`, selecting the app's release; the Composition's own policies carry none. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
+| The internal CA's key | Implemented; shown against a local OpenBao, not on a cluster | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
 | Who may set a namespace's tier label | Implemented; shown against an API server, not on a cluster | The installer, provider-kubernetes, the operator and `system:masters`; not Argo CD or provider-helm (§12.4) |
 | What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
@@ -1160,7 +1161,6 @@ gentian-os/
 │   ├── database/                     #   postgresql, mariadb, cnpg, portal-shell
 │   ├── cache/redis
 │   ├── storage/                      #   s3, s3/jwt (the store's signing keys), registry
-│   ├── pki/internal-ca               #   the internal CA gentian-ca: certificate, private_key (§12.4)
 │   ├── identity/keycloak-bootstrap   #   Keycloak's bootstrap administrator
 │   ├── authz/openfga                 #   the rights store's preshared key
 │   ├── oidc/openbao                  #   OpenBao's own sign-in client
@@ -1469,10 +1469,11 @@ Properties:
   held it as a property of `kernel/database/postgresql` keeps that value at
   the new path where the installer can read the vault; where it cannot, the
   value is made again by the mode and the role is set to it.
-- **Keys no mode applies to** — the internal CA (`kernel/pki/internal-ca`)
-  and the object store's signing keys (`kernel/storage/s3/jwt`) are random
-  in either mode, generated once by the installer (B-08) and never
-  overwritten: nothing else the cluster holds may reproduce them.
+- **Keys no mode applies to** — the object store's signing keys
+  (`kernel/storage/s3/jwt`) are random in either mode, generated once by the
+  installer (B-08) and never overwritten: nothing else the cluster holds may
+  reproduce them. The internal CA's key is not a KV path at all: the vault's
+  PKI engine generated it and keeps it (§12.4).
 - **Per-app credentials** — created by the operator when a tenant installs an
   app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and likewise derived or
   random as the mode says: the database password, the bucket's key pair, the
@@ -1899,17 +1900,50 @@ cluster it is also the anchor of the public names, as it was; on a
 `private-ca` cluster `gentian-ca` is the person's own CA, from the Secret they
 supply, and nothing below applies.
 
-Its key is the vault's, not cert-manager's: the installer generates the CA
-once, at random (ECDSA P-256, ten years, path length 0), into
-`gentian-os/kernel/pki/internal-ca` (step `B-08`), and External Secrets
-materialises it as `gentian-root-ca-tls` in cert-manager's namespace (step
-`A-09` applies the ClusterIssuer and the ExternalSecret). A reinstall of
-cert-manager finds the same CA, and the recovery kit, which opens the vault,
-reaches it. The path is read by `eso-read`, as every kernel path is; no new
-right was added for it. A self-signed cluster whose CA cert-manager made
-before keeps that CA: it is what is seeded.
+Its key is the vault's and never leaves it. The CA is OpenBao's PKI engine
+at `pki-internal`: step `B-08` generates the root there once
+(`root/generate/internal`, ECDSA P-256, ten years, path length 0; the mount's
+maximum lease is ten years) and never replaces it. No KV path, no Secret and
+no file holds the key. cert-manager does not sign: the ClusterIssuer (`A-09`,
+`kernel/manifests/cert-manager/internal-ca.yaml`) is a Vault issuer that
+sends each request's CSR to `pki-internal/sign/gentian-ca`. It logs in with
+the Kubernetes method as the ServiceAccount `gentian-ca-issuer` in
+cert-manager's namespace, which nothing runs as; cert-manager asks the API
+server for a token for it, with the audience `vault://gentian-ca`. The
+OpenBao role `cert-manager-gentian-ca` is bound to that account and audience,
+and its policy of the same name allows `update` on that one sign path and
+nothing else: not `issue` (the vault would make and hand out the key), not
+`sign-verbatim`, not the role, the CA or its keys. The role and policy are
+composed by the Cluster claim, as the other kernel identities at the vault
+are. cert-manager reaches the vault on 8200 from its controller pods
+(`kernel-network-policies.yaml`) and verifies it against the vault's own CA
+(§12.5).
 
-It signs any common name it is asked for, so only the platform may ask:
+The role `gentian-ca` decides what may be signed, whatever the CSR asks: the
+names `seaweedfs-server`, `seaweedfs-shell` and the object store's four
+Service names, exactly, and on a `self-signed` cluster also the kernel
+domain, the names under it and its wildcard. No other domain, IP address,
+URI, `localhost`, subdomain of an allowed name (on `acme-*`) or RSA key;
+server and client use both, since one issuer is one role. Certificates live
+at most 90 days, cert-manager's default; `B-08` rewrites the role on every
+run, so it follows the issuer mode.
+
+The CA's certificate alone is written to `gentian-root-ca-tls` in
+cert-manager's namespace (`ca.crt`, `tls.crt`; no key): the anchor a
+self-signed cluster hands to clients. A self-signed cluster whose CA
+cert-manager made before keeps it: `B-08` imports it into the engine once
+(certificate and key on stdin, never as an argument), and the Secret is
+written again without the key. A reinstall of cert-manager or of the whole
+cluster on the same vault finds the same CA; the recovery kit, which opens
+the vault, reaches it.
+
+**A sealed vault signs nothing.** While OpenBao is sealed, no `gentian-ca`
+certificate is issued or renewed; those already issued stay valid. cert-manager
+renews at two thirds of the lifetime, so a certificate has about 30 days left
+when its renewal starts: a vault sealed for longer than that lets the object
+store's certificates expire, and its gRPC stops.
+
+Within the role's names it signs whatever it is asked for -- `seaweedfs-shell` is the object store's administrator -- so only the platform may ask:
 the Kyverno policy `gentian-restrict-internal-ca`
 (`kernel/security/kyverno/policies/gentian-internal-ca.yaml`) refuses a
 `Certificate` or `CertificateRequest` naming the ClusterIssuer `gentian-ca`,
@@ -1934,6 +1968,30 @@ platform's they apply writes the label. A write that leaves the label as it
 was passes for anyone. Built-in admission, so Kubernetes 1.30 or newer, which
 pre-flight's 1.33 covers. Shown against an API server
 (`internal/controller/namespace_tier_guard_test.go`), not on a cluster.
+
+### 12.5 The vault's own TLS
+
+OpenBao serves TLS from a certificate, `openbao-tls`, that a CA of its own
+signs: `openbao-ca` in the secrets namespace, self-signed, ten years, its key
+kept on renewal (`kernel/bootstrap/chart/templates/vault-tls.yaml`). Every
+client verifies the vault against that CA's certificate, `ca.crt`: External
+Secrets' stores, the custodian, and cert-manager's internal-CA issuer through
+`openbao-ca-bundle`, a copy of the certificate alone that `B-01` writes to
+cert-manager's namespace (a ClusterIssuer reads Secrets only there). The
+serving certificate renews every 60 days with a new key without any client
+noticing. Before, it was self-signed itself, so what clients trusted changed
+at each renewal.
+
+The vault reads its certificate files only when it starts or on `SIGHUP`, and
+its StatefulSet updates `OnDelete`. `B-01` signals it after a new certificate
+has reached the pod, and records which certificate it was told about; a
+restart would seal it until the seal unseals it. The custodian reads the CA
+once, at start, and `B-01` restarts it when the CA has changed. The operator,
+provider-vault and the installer do not verify the vault's certificate
+(`VAULT_SKIP_VERIFY`, `skip_tls_verify`), as before. Between the serving
+certificate's renewal and the next signal the vault serves the previous one,
+still valid for about 30 days; nothing on the cluster sends the signal by
+itself (**open**, [open-items](../plans/open-items.md)).
 
 ## 13. Licensing & sovereignty summary
 
