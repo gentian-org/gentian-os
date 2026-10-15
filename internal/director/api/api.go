@@ -513,6 +513,12 @@ func (s *Server) routes() {
 			s.action("POST /v1/clusters/{c}/actions/remove-catalogue-residue", "can_configure", s.clusterObject, s.removeCatalogueResidue)
 			s.guarded("POST /v1/clusters/{c}/tenants/import", "can_configure", s.clusterObject, s.importTenant)
 			s.guarded("GET /v1/clusters/{c}/tenants/{t}/import", "can_configure", s.clusterObject, s.importStatus)
+			// A restore into an existing tenant, for the cluster's
+			// administrator: the right an import needs, because a restore
+			// replaces a tenant's data as an import makes it. The tenant's
+			// own administrators restore under /v1/tenants (restore.go).
+			s.guarded("POST /v1/clusters/{c}/tenants/{t}/bundles/inspect", "can_configure", s.clusterObject, s.inspectTenantBundle)
+			s.action("POST /v1/clusters/{c}/tenants/{t}/actions/restore", "can_configure", s.clusterObject, s.restoreTenant)
 		}
 		// Who the caller is at cluster scope: which of the cluster's verbs
 		// they hold. Identified, not guarded: a person with no cluster
@@ -719,6 +725,19 @@ func (s *Server) routes() {
 		// writes a bundle somebody can restore from.
 		s.action("POST /v1/tenants/{t}/actions/backup", "can_administer", tenantObject, s.startBackup)
 		s.action("POST /v1/tenants/{t}/actions/delete-backup", "can_administer", tenantObject, s.deleteBackup)
+
+		// Putting one of the tenant's bundles back into it: one of its own
+		// backups, or a bundle of it uploaded here (restore.go). The data a
+		// restore replaces is what a backup policy exists to keep, so it is
+		// can_set_policy, the relation the tenant's backup policy is written
+		// under: the tenant's administrators, and the cluster's while the
+		// tenant consents to being operated. The cluster's administrator
+		// restores under /v1/clusters as well, under the right an import
+		// needs. Uploading is the first half of restoring a bundle that is
+		// not a backup here, under the same relation.
+		s.guarded("POST /v1/tenants/{t}/bundles", "can_set_policy", tenantObject, s.uploadBundle)
+		s.guarded("POST /v1/tenants/{t}/bundles/inspect", "can_set_policy", tenantObject, s.inspectTenantBundle)
+		s.action("POST /v1/tenants/{t}/actions/restore", "can_set_policy", tenantObject, s.restoreTenant)
 	}
 
 	// No people, groups or realm settings here. They are the registrar's
@@ -783,6 +802,10 @@ func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 		"tenant":    r.PathValue("t"),
 		"subject":   c.meta.Subject,
 		"relations": relations,
+		// The platform's version line, which is no secret and which a
+		// tenant's administrator restoring a bundle of an older one needs to
+		// know: the cluster's settings carry it too, under can_audit.
+		"platformVersionLine": backup.PlatformVersionLine,
 	})
 }
 

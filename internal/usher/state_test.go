@@ -87,6 +87,7 @@ func TestEachReadAsksItsRelationOnItsObject(t *testing.T) {
 		{"/v1/tenants/acme/perimeter/traffic", "can_expose", "tenant:acme", "/v1/tenants/acme/perimeter/traffic"},
 		{"/v1/tenants/acme/backups", "can_view", "tenant:acme", "/v1/tenants/acme/backups"},
 		{"/v1/tenants/acme/backups/nightly-1", "can_view", "tenant:acme", "/v1/tenants/acme/backups/nightly-1"},
+		{"/v1/tenants/acme/restores/restore-1", "can_view", "tenant:acme", "/v1/tenants/acme/restores/restore-1"},
 		{"/v1/tenants/acme/backup-policy", "can_view", "tenant:acme", "/v1/tenants/acme/backup-policy"},
 		{"/v1/tenants/acme/backup-schedules", "can_view", "tenant:acme", "/v1/tenants/acme/backup-schedules"},
 		{"/v1/tenants/acme/integrations", "can_view", "tenant:acme", "/v1/tenants/acme/integrations"},

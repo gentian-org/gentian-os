@@ -172,6 +172,15 @@ refused. A backup and a restore say what they did not do: the result of a
 backup names what the bundle does not hold, and a step that fails fails the
 whole act with its reason.
 
+A restore into a tenant that exists is asked of the director by the tenant's
+administrator (`can_set_policy`, the right its backup policy is written
+under) or the cluster's (`can_configure`, the right an import needs), and the
+operator starts it, as it starts a backup; nothing is committed. The bundle
+is one of the tenant's own backups, named by its name, or one uploaded to
+the cluster, and its manifest has to name the tenant restored into: a bundle
+of another tenant is refused before anything starts, whoever uploaded it
+([commands.md §12](../commands.md)).
+
 A bundle states its format in its manifest (`schemaVersion`), now 4. Format 3
 added what a bundle did not hold before: the data of apps uninstalled with
 their data kept, the mailboxes, and the access rights that follow from

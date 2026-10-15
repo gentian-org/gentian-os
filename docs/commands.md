@@ -1189,6 +1189,33 @@ cluster signed, taken on it, of a tenant of the name restored into; from any
 other they are named in the result, and `status.rights.provenance` says why
 ([security.md §6.4](design/security.md)).
 
+### From a console, or directly against the director
+
+A console restores through the director, as the
+person signed in. The tenant's administrators restore their own tenant; the
+cluster's administrator any tenant:
+
+```
+POST /v1/tenants/{t}/bundles                        body: the .gentian bytes -> {bundle}
+POST /v1/tenants/{t}/bundles/inspect                {backup | bundle, decryption} -> manifest
+POST /v1/tenants/{t}/actions/restore                {backup | bundle, decryption, apps?} -> 202 {name, ...}
+POST /v1/clusters/{c}/tenants/{t}/bundles/inspect   the same, as the cluster's administrator
+POST /v1/clusters/{c}/tenants/{t}/actions/restore   the same, as the cluster's administrator
+GET  /v1/tenants/{t}/restores/{name}                the status (the usher)
+```
+
+The tenant routes ask `can_set_policy` on the tenant, the cluster routes
+`can_configure` on the cluster; the cluster's administrator uploads at
+`POST /v1/clusters/{c}/bundles`. `backup` is the name of one of the tenant's
+backups, wherever its policy wrote it; `bundle` is what an upload answered,
+and nothing else: a reference with an endpoint or a credential of its own is
+refused. The director opens the manifest with the key first and refuses a
+bundle of another tenant with `422` (bringing one here is an import, §12a).
+The key goes to the operator in the request and into a Secret the restore
+owns; it is never committed or logged. The platform's version line, which
+a console compares a bundle's with, is in `GET /v1/tenants/{t}/me`
+(`platformVersionLine`) for whoever may enter the tenant.
+
 ### What it does, in order
 
 1. **Preflight** — confirmation matches, no export or restore already running,

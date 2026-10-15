@@ -78,6 +78,9 @@ func (s *Server) stateRoutes() {
 	s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
 	s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.relay("/backup-policy"))
 	s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.relay("/backup-schedules"))
+	// Where one restore stands. The director starts it and answers with its
+	// name; what it did is read here, like a backup's.
+	s.guarded("GET /v1/tenants/{t}/restores/{name}", "can_view", tenantObject, s.tenantRestore)
 
 	// What one tenant's apps consume from each other, and the notices
 	// published to its people.
@@ -129,6 +132,10 @@ func (s *Server) relayCluster(path string) func(http.ResponseWriter, *http.Reque
 
 func (s *Server) appResidue(w http.ResponseWriter, r *http.Request, c call) {
 	s.relayed(w, r, tenantPath(c, "/apps/"+url.PathEscape(r.PathValue("p"))+"/residue"))
+}
+
+func (s *Server) tenantRestore(w http.ResponseWriter, r *http.Request, c call) {
+	s.relayed(w, r, tenantPath(c, "/restores/"+url.PathEscape(r.PathValue("name"))))
 }
 
 func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, c call) {
