@@ -205,7 +205,7 @@ const ShellDatabaseSecret = "desktop-database"
 // the one the sampler is filling.
 func StoreForTenant(
 	ctx context.Context,
-	c client.Client,
+	c client.Reader,
 	kernelNamespace, tenantName string,
 ) (*Store, error) {
 	secretName := ShellDatabaseSecret

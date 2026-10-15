@@ -64,6 +64,9 @@ func (s *Server) stateRoutes() {
 	s.guarded("GET /v1/tenants/{t}/resources", "can_view", tenantObject, s.relay("/resources"))
 	s.guarded("GET /v1/tenants/{t}/resources/plans", "can_view", tenantObject, s.resourcePlans)
 	s.guarded("GET /v1/tenants/{t}/resources/usage", "can_view", tenantObject, s.relay("/resources/usage", "from", "to", "stepSeconds"))
+	// What the tenant's public entries carried, for those who answer for the
+	// perimeter: can_expose, the relation that publishes them.
+	s.guarded("GET /v1/tenants/{t}/perimeter/traffic", "can_expose", tenantObject, s.relay("/perimeter/traffic", "from", "to", "stepSeconds"))
 	s.guarded("GET /v1/tenants/{t}/resources/report", "can_view", tenantObject, s.relay("/resources/report", "from", "to"))
 
 	// A tenant's backups: what exists, what each run did, the policy in

@@ -45,6 +45,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
+	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 	"github.com/gentian-org/gentian-os/internal/webhook"
@@ -329,6 +330,24 @@ func main() {
 		setupLog.Info("usage sampler enabled",
 			"interval", sampler.Interval, "retention", sampler.Retention,
 			"actualSource", sampler.Actual != nil)
+	}
+
+	// Perimeter traffic: what each tenant's public entries carry, per path and
+	// by response class, from the counters the edge's Envoy keeps anyway.
+	// Kept in each tenant's own database beside its usage, so it needs the
+	// same; off with the usage sampler, or on its own.
+	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" && os.Getenv("PERIMETER_TRAFFIC_ENABLED") != "false" {
+		traffic := &perimetertraffic.Sampler{
+			Client:    mgr.GetAPIReader(),
+			Interval:  envDuration("PERIMETER_TRAFFIC_INTERVAL", 5*time.Minute),
+			Retention: envDuration("PERIMETER_TRAFFIC_RETENTION", 90*24*time.Hour),
+		}
+		if err := mgr.Add(traffic); err != nil {
+			setupLog.Error(err, "unable to add the perimeter traffic sampler to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("perimeter traffic sampler enabled",
+			"interval", traffic.Interval, "retention", traffic.Retention)
 	}
 
 	if err := (&controller.KeycloakPlatformReconciler{

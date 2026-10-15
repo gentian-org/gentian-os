@@ -156,6 +156,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	guarded.HandleFunc("GET /v1/tenants/{tenant}/apps", h.handleList)
 	h.registerAppRoutes(guarded)
 	h.registerResourceRoutes(guarded)
+	h.registerPerimeterRoutes(guarded)
 	h.registerBackupRoutes(guarded)
 	h.registerPlatformRoutes(guarded)
 	h.registerNotificationRoutes(guarded)
