@@ -787,7 +787,7 @@ the code does.
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
 | The internal CA's key | Implemented; shown against a local OpenBao, not on a cluster | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
-| Who may set a namespace's tier label | Implemented; shown against an API server, not on a cluster | The installer, provider-kubernetes, the operator and `system:masters`; not Argo CD or provider-helm (§12.4) |
+| Who may set a namespace's tier, function and mac-waiver labels | Implemented; shown against an API server, not on a cluster | Tier: the installer, provider-kubernetes, the operator. Function: the installer, provider-kubernetes. Mac-waiver: the operator. And `system:masters`; never Argo CD or provider-helm (§12.4) |
 | What a tenant's chart may create | Implemented; shown against an API server, not on a cluster | Installed as `provider-helm-tenant-apps`, which holds rights in tenant namespaces only: the namespaced kinds tenant charts render, nothing at cluster scope or in another namespace. The kernel's charts, and the charts of a profile bundle's own Composition, are still installed as cluster-admin (§12.4) |
 | What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
@@ -1958,17 +1958,22 @@ ClusterIssuers, so a tenant's apps cannot replace `gentian-ca` either, and
 its only destinations are `tenant-*`: the Argo CD namespace, a kernel
 namespace and outside the policy, is no longer one.
 
-A tenant's apps may still write Namespace objects, so the tier label has a
-guard of its own that is not Kyverno, since the kernel tier is what Kyverno
-skips: the ValidatingAdmissionPolicy `gentian-namespace-tier`
+A tenant's apps may still write Namespace objects, so the namespace labels
+the platform's policies trust have a guard of their own that is not Kyverno,
+since the kernel tier is what Kyverno skips: the ValidatingAdmissionPolicy
+`gentian-namespace-tier`
 (`kernel/bootstrap/chart/templates/namespace-tier-guard.yaml`, applied by
-`B-01`). A namespace's `gentianos.io/tier` may be set, changed or removed only
-by the installer's own user (`kubectl auth whoami`, passed in at render),
-provider-kubernetes (system and tenant namespaces), the operator (a tenant's
-DMZ) and `system:masters`. Argo CD's application controller and
-provider-helm are refused: they apply what tenants supply, and nothing of the
-platform's they apply writes the label. A write that leaves the label as it
-was passes for anyone. Built-in admission, so Kubernetes 1.30 or newer, which
+`B-01`). Each label set has its own writers. `gentianos.io/tier`: the
+installer's own user (`kubectl auth whoami`, passed in at render),
+provider-kubernetes (system and tenant namespaces) and the operator (a
+tenant's DMZ). `gentianos.io/function`, which policies select a function's
+namespace by: the installer and provider-kubernetes. The
+`mac-waiver.gentianos.io/*` labels, the namespace half of a pod-security
+waiver: the operator alone. `system:masters` may write all three. Argo CD's
+application controller and provider-helm, under either of its identities,
+are refused: they apply what tenants supply, and nothing of the platform's
+they apply writes these labels. A write that leaves a set as it was passes
+for anyone. Built-in admission, so Kubernetes 1.30 or newer, which
 pre-flight's 1.33 covers. Shown against an API server
 (`internal/controller/namespace_tier_guard_test.go`), not on a cluster.
 

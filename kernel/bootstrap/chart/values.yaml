@@ -112,8 +112,9 @@ operator:
   # itself.
   tag: ""
 
-# Who may set or change a namespace's gentianos.io/tier label
-# (templates/namespace-tier-guard.yaml), beside system:masters.
+# Who may set or change a namespace's gentianos.io/tier, gentianos.io/function
+# and mac-waiver.gentianos.io labels (templates/namespace-tier-guard.yaml),
+# beside system:masters.
 installer:
   # The user the installer signs in to the cluster as, which the installer
   # passes in (`kubectl auth whoami`). Empty leaves only system:masters for it.

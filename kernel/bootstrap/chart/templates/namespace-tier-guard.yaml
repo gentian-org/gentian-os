@@ -1,35 +1,56 @@
 ---
-# Who may set, change or remove a namespace's gentianos.io/tier label.
+# Who may set, change or remove the namespace labels the platform's policies
+# trust. The name is the tier label's, which it guarded first.
 #
-# The tier is what the platform's policies select on: Kyverno's webhook skips
-# the kernel tier, the kernel's secret store and the internal CA serve the
-# kernel and system tiers, and the stores admit the tenant tier. A namespace
-# that could relabel itself `kernel` would leave every one of them. A tenant's
-# apps may write Namespace objects (their AppProject allows the kind), so the
-# label needs a guard that is not Kyverno: Kyverno is what the label switches
-# off. This is the API server's own admission, which nothing can label itself
-# out of.
+# gentianos.io/tier is what the platform's policies select on: Kyverno's
+# webhook skips the kernel tier, the kernel's secret store and the internal CA
+# serve the kernel and system tiers, and the stores admit the tenant tier. A
+# namespace that could relabel itself `kernel` would leave every one of them.
 #
-# The writers are the ones that create the layout, and only they:
-#   - the installer, as whoever it signs in as (A-01 labels the kernel
-#     namespaces and the platform's own; it passes its own user name here);
-#   - provider-kubernetes, which composes the system tier from the Cluster
-#     claim and each tenant's namespace from its Tenant;
-#   - the operator, which makes a tenant's DMZ namespace;
-#   - system:masters, which can remove this policy anyway.
-# Argo CD's application controller is not one of them. No kernel Application
-# writes the label (none creates its namespace), and the same controller
-# syncs whatever a tenant's AppProject lets through. provider-helm is not
-# one either: it installs charts, and no chart of the platform's writes it.
+# gentianos.io/function names what a kernel or system namespace is for, and is
+# the label policies select a function's namespace by (AD-7), never its name.
+# A namespace that could call itself `secrets` or `postgresql` would be let in
+# where that function is.
 #
-# A request that leaves the label as it was is not looked at, so re-applying
+# mac-waiver.gentianos.io/<policy> on a namespace is half of a pod-security
+# waiver: Kyverno exempts a pod only when the pod and its namespace both carry
+# it, and the namespace half is the operator's, granted from the
+# PlatformSecurityPolicy allowlist and the grant on the install. A namespace
+# that could label itself would waive what it liked.
+#
+# A tenant's apps may write Namespace objects (their AppProject allows the
+# kind), so these labels need a guard that is not Kyverno: Kyverno is what the
+# tier label switches off. This is the API server's own admission, which
+# nothing can label itself out of.
+#
+# Each label set has exactly the writers that create it:
+#   tier:       the installer, as whoever it signs in as (A-01 labels the
+#               kernel namespaces and the platform's own; it passes its own
+#               user name here); provider-kubernetes, which composes the
+#               system tier from the Cluster claim and each tenant's namespace
+#               from its Tenant; the operator, which makes a tenant's DMZ.
+#   function:   the installer (A-01) and provider-kubernetes (the system
+#               namespaces). The operator writes no function.
+#   mac-waiver: the operator alone (mac_waiver_reconciler.go).
+#   and system:masters for all three, which can remove this policy anyway.
+# Argo CD's application controller is no writer. No kernel Application writes
+# these labels (none creates its namespace), and the same controller syncs
+# whatever a tenant's AppProject lets through. provider-helm is none either,
+# under either of its identities: it installs charts, and no chart of the
+# platform's writes them; a tenant's charts are installed as
+# provider-helm-tenant-apps, which may not write a namespace at all.
+#
+# A request that leaves a label set as it was is not looked at, so re-applying
 # a namespace with the same labels, or changing any other label, passes for
 # everyone. Deleting a namespace is not a CREATE or an UPDATE and passes too.
-{{- $writers := list
-      (printf "system:serviceaccount:%s:%s" (include "ns" (list . "control")) .Values.namespaceTier.operatorServiceAccount)
-      (printf "system:serviceaccount:%s:%s" (include "ns" (list . "provisioning")) .Values.namespaceTier.providerKubernetesServiceAccount) }}
+{{- $operator := printf "system:serviceaccount:%s:%s" (include "ns" (list . "control")) .Values.namespaceTier.operatorServiceAccount }}
+{{- $providerKubernetes := printf "system:serviceaccount:%s:%s" (include "ns" (list . "provisioning")) .Values.namespaceTier.providerKubernetesServiceAccount }}
+{{- $tierWriters := list $operator $providerKubernetes }}
+{{- $functionWriters := list $providerKubernetes }}
+{{- $macWaiverWriters := list $operator }}
 {{- with .Values.installer.username }}
-{{- $writers = append $writers . }}
+{{- $tierWriters = append $tierWriters . }}
+{{- $functionWriters = append $functionWriters . }}
 {{- end }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -50,28 +71,65 @@ spec:
       operations: ["CREATE", "UPDATE"]
       resources: ["namespaces"]
   variables:
-  # "-" is no label value Kubernetes accepts, so it stands for no label.
-  - name: before
+  - name: oldLabels
     expression: >-
       oldObject == null || !has(oldObject.metadata.labels)
-      || !('gentianos.io/tier' in oldObject.metadata.labels)
-      ? '-' : oldObject.metadata.labels['gentianos.io/tier']
-  - name: after
+      ? {} : oldObject.metadata.labels
+  - name: newLabels
     expression: >-
-      !has(object.metadata.labels)
-      || !('gentianos.io/tier' in object.metadata.labels)
-      ? '-' : object.metadata.labels['gentianos.io/tier']
-  - name: writer
+      !has(object.metadata.labels) ? {} : object.metadata.labels
+  # "-" is no label value Kubernetes accepts, so it stands for no label.
+  - name: tierBefore
     expression: >-
-      request.userInfo.username in {{ $writers | toJson }}
-      || (has(request.userInfo.groups) && 'system:masters' in request.userInfo.groups)
+      'gentianos.io/tier' in variables.oldLabels ? variables.oldLabels['gentianos.io/tier'] : '-'
+  - name: tierAfter
+    expression: >-
+      'gentianos.io/tier' in variables.newLabels ? variables.newLabels['gentianos.io/tier'] : '-'
+  - name: functionBefore
+    expression: >-
+      'gentianos.io/function' in variables.oldLabels ? variables.oldLabels['gentianos.io/function'] : '-'
+  - name: functionAfter
+    expression: >-
+      'gentianos.io/function' in variables.newLabels ? variables.newLabels['gentianos.io/function'] : '-'
+  # Every mac-waiver label as key=value, before and after.
+  - name: waiversBefore
+    expression: >-
+      variables.oldLabels.filter(k, k.startsWith('mac-waiver.gentianos.io/'))
+      .map(k, k + '=' + variables.oldLabels[k])
+  - name: waiversAfter
+    expression: >-
+      variables.newLabels.filter(k, k.startsWith('mac-waiver.gentianos.io/'))
+      .map(k, k + '=' + variables.newLabels[k])
+  - name: masters
+    expression: >-
+      has(request.userInfo.groups) && 'system:masters' in request.userInfo.groups
   validations:
-  - expression: variables.before == variables.after || variables.writer
+  - expression: >-
+      variables.tierBefore == variables.tierAfter || variables.masters
+      || request.userInfo.username in {{ $tierWriters | toJson }}
     reason: Forbidden
     messageExpression: >-
       'the gentianos.io/tier label of namespace ' + object.metadata.name
-      + ' is set by the platform alone (' + variables.before + ' -> ' + variables.after
+      + ' is set by the platform alone (' + variables.tierBefore + ' -> ' + variables.tierAfter
       + '); ' + request.userInfo.username + ' may not change it'
+  - expression: >-
+      variables.functionBefore == variables.functionAfter || variables.masters
+      || request.userInfo.username in {{ $functionWriters | toJson }}
+    reason: Forbidden
+    messageExpression: >-
+      'the gentianos.io/function label of namespace ' + object.metadata.name
+      + ' is set by the platform alone (' + variables.functionBefore + ' -> ' + variables.functionAfter
+      + '); ' + request.userInfo.username + ' may not change it'
+  - expression: >-
+      (variables.waiversBefore.size() == variables.waiversAfter.size()
+       && variables.waiversBefore.all(w, w in variables.waiversAfter))
+      || variables.masters
+      || request.userInfo.username in {{ $macWaiverWriters | toJson }}
+    reason: Forbidden
+    messageExpression: >-
+      'the mac-waiver.gentianos.io labels of namespace ' + object.metadata.name
+      + ' are set by the platform alone, granted by the operator; '
+      + request.userInfo.username + ' may not change them'
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

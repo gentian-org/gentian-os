@@ -435,6 +435,12 @@ Carried over from before, and still not shown:
   every catalogue app installing and upgrading under it, an existing
   release taken over without a reinstall, and a tenant deleted with its
   apps.
+  *Resolved on `test-cb`:* a namespace's `gentianos.io/function` is set only
+  by the installer, provider-kubernetes and `system:masters`, and its
+  `mac-waiver.gentianos.io/*` labels only by the operator and
+  `system:masters` (`gentian-namespace-tier`). Shown against an API server.
+  *Needs a cluster:* a re-run of A-01, the system namespaces composed, and a
+  waiver granted and withdrawn with the guard in place.
 
 ## 3. Known defects, open
 

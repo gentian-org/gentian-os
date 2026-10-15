@@ -160,10 +160,20 @@ func TestTheTierGuardNamesTheWritersServiceAccounts(t *testing.T) {
 	}
 }
 
+// guardedLabel is one label set the guard keeps, with an example of it and
+// those who may write it.
+type guardedLabel struct {
+	what         string
+	key          string
+	value, other string
+	writers      []string
+}
+
 // Against a real API server: a tenant's apps, synced by Argo CD or installed
-// by provider-helm, cannot set, change or remove a namespace's tier label;
-// the installer, provider-kubernetes, the operator and system:masters can;
-// and a write that leaves the label as it was passes for anyone.
+// by provider-helm under either of its identities, cannot set, change or
+// remove a namespace's tier, function or mac-waiver labels; each set's own
+// writers can, and no one else; and a write that leaves a set as it was
+// passes for anyone.
 func TestOnlyThePlatformSetsANamespacesTier(t *testing.T) {
 	policy, binding := renderTierGuard(t)
 
@@ -197,16 +207,24 @@ func TestOnlyThePlatformSetsANamespacesTier(t *testing.T) {
 		}
 		return kubernetes.NewForConfigOrDie(u.Config())
 	}
-	writers := map[string]*kubernetes.Clientset{
+	who := map[string]*kubernetes.Clientset{
 		"the installer":       as(tierGuardInstaller),
 		"provider-kubernetes": as("system:serviceaccount:kernel-provisioning:provider-kubernetes"),
 		"the operator":        as("system:serviceaccount:kernel-control:gentian-os"),
 		"system:masters":      as("break-glass", "system:masters"),
+		// Never a writer of any set.
+		"Argo CD's application controller":  as("system:serviceaccount:kernel-gitops:argocd-application-controller"),
+		"provider-helm":                     as("system:serviceaccount:kernel-provisioning:provider-helm"),
+		"provider-helm for a tenant's apps": as("system:serviceaccount:kernel-provisioning:" + tenantAppsHelmServiceAccount),
+		"a tenant's own ServiceAccount":     as("system:serviceaccount:tenant-acme:default"),
 	}
-	others := map[string]*kubernetes.Clientset{
-		"Argo CD's application controller": as("system:serviceaccount:kernel-gitops:argocd-application-controller"),
-		"provider-helm":                    as("system:serviceaccount:kernel-provisioning:provider-helm"),
-		"a tenant's own ServiceAccount":    as("system:serviceaccount:tenant-acme:default"),
+	sets := []guardedLabel{
+		{what: "tier", key: tierLabel, value: "kernel", other: "system",
+			writers: []string{"the installer", "provider-kubernetes", "the operator", "system:masters"}},
+		{what: "function", key: "gentianos.io/function", value: "secrets", other: "postgresql",
+			writers: []string{"the installer", "provider-kubernetes", "system:masters"}},
+		{what: "mac waiver", key: "mac-waiver.gentianos.io/gentian-require-non-root", value: "approved", other: "denied",
+			writers: []string{"the operator", "system:masters"}},
 	}
 
 	if _, err := admin.AdmissionregistrationV1().ValidatingAdmissionPolicies().Create(ctx, policy, metav1.CreateOptions{}); err != nil {
@@ -236,20 +254,11 @@ func TestOnlyThePlatformSetsANamespacesTier(t *testing.T) {
 		_, err = c.CoreV1().Namespaces().Update(ctx, got, metav1.UpdateOptions{})
 		return err
 	}
-	// A tenant-tier namespace, as provider-kubernetes composes one.
-	tenantNamespace := func() string {
-		t.Helper()
-		ns := name()
-		if err := create(writers["provider-kubernetes"], ns, map[string]string{tierLabel: "tenant"}); err != nil {
-			t.Fatalf("provider-kubernetes cannot compose a tenant namespace: %v", err)
-		}
-		return ns
-	}
 
 	// The policy takes effect a moment after it is written.
 	deadline := time.Now().Add(time.Minute)
 	for {
-		err := create(others["a tenant's own ServiceAccount"], name(), map[string]string{tierLabel: "kernel"})
+		err := create(who["a tenant's own ServiceAccount"], name(), map[string]string{tierLabel: "kernel"})
 		if apierrors.IsForbidden(err) || apierrors.IsInvalid(err) {
 			break
 		}
@@ -279,27 +288,51 @@ func TestOnlyThePlatformSetsANamespacesTier(t *testing.T) {
 		}
 	}
 
-	for who, c := range others {
-		refused(who, "create a namespace in the kernel tier", create(c, name(), map[string]string{tierLabel: "kernel"}))
-		refused(who, "create a namespace in the tenant tier", create(c, name(), map[string]string{tierLabel: "tenant"}))
+	for _, set := range sets {
+		isWriter := map[string]bool{}
+		for _, w := range set.writers {
+			isWriter[w] = true
+		}
+		// A namespace carrying the set, as its first writer labels one.
+		labelled := func() string {
+			t.Helper()
+			ns := name()
+			if err := create(who[set.writers[0]], ns, map[string]string{set.key: set.value, tierLabel: "tenant"}); err != nil {
+				t.Fatalf("%s cannot label a namespace with its %s: %v", set.writers[0], set.what, err)
+			}
+			return ns
+		}
+		for id, c := range who {
+			if id == set.writers[0] {
+				continue
+			}
+			if isWriter[id] {
+				ns := name()
+				allowed(id, "create a namespace with a "+set.what, create(c, ns, map[string]string{set.key: set.value}))
+				allowed(id, "change a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.other }))
+				allowed(id, "remove a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { delete(l, set.key) }))
+				allowed(id, "give an unlabelled namespace a "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
+				ns = labelled()
+				allowed(id, "change a "+set.what+" another writer set", relabel(c, ns, func(l map[string]string) { l[set.key] = set.other }))
+				continue
+			}
+			refused(id, "create a namespace with a "+set.what, create(c, name(), map[string]string{set.key: set.value}))
 
-		ns := name()
-		allowed(who, "create a namespace with no tier", create(c, ns, map[string]string{"app": "x"}))
-		refused(who, "give an unlabelled namespace a tier", relabel(c, ns, func(l map[string]string) { l[tierLabel] = "kernel" }))
+			ns := name()
+			allowed(id, "create a namespace with no "+set.what, create(c, ns, map[string]string{"app": "x"}))
+			refused(id, "give an unlabelled namespace a "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
 
-		ns = tenantNamespace()
-		refused(who, "move a tenant namespace to the kernel tier", relabel(c, ns, func(l map[string]string) { l[tierLabel] = "kernel" }))
-		refused(who, "remove a tenant namespace's tier", relabel(c, ns, func(l map[string]string) { delete(l, tierLabel) }))
-		refused(who, "set a tenant namespace's tier to empty", relabel(c, ns, func(l map[string]string) { l[tierLabel] = "" }))
-		allowed(who, "write a tenant namespace with its tier as it was", relabel(c, ns, func(l map[string]string) { l[tierLabel] = "tenant" }))
-		allowed(who, "change another label of a tenant namespace", relabel(c, ns, func(l map[string]string) { l["app"] = "y" }))
-	}
-
-	for who, c := range writers {
-		ns := name()
-		allowed(who, "create a namespace with a tier", create(c, ns, map[string]string{tierLabel: "system"}))
-		allowed(who, "change a namespace's tier", relabel(c, ns, func(l map[string]string) { l[tierLabel] = "system-dmz" }))
-		allowed(who, "remove a namespace's tier", relabel(c, ns, func(l map[string]string) { delete(l, tierLabel) }))
-		allowed(who, "give an unlabelled namespace a tier", relabel(c, ns, func(l map[string]string) { l[tierLabel] = "kernel" }))
+			ns = labelled()
+			refused(id, "change a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.other }))
+			refused(id, "remove a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { delete(l, set.key) }))
+			refused(id, "set a namespace's "+set.what+" to empty", relabel(c, ns, func(l map[string]string) { l[set.key] = "" }))
+			allowed(id, "write a namespace with its "+set.what+" as it was", relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
+			allowed(id, "change another label of a namespace with a "+set.what, relabel(c, ns, func(l map[string]string) { l["app"] = "y" }))
+			if strings.HasPrefix(set.key, "mac-waiver.gentianos.io/") {
+				refused(id, "add a waiver beside the granted one", relabel(c, ns, func(l map[string]string) {
+					l["mac-waiver.gentianos.io/gentian-disallow-host-path"] = "approved"
+				}))
+			}
+		}
 	}
 }
