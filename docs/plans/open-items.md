@@ -380,6 +380,31 @@ Carried over from before, and still not shown:
   styles. *Needs a cluster:* the bucket Job's pod waiting for its Secret and
   starting once the operator has made it, the Secret collected with the Job,
   and the per-run NetworkPolicy under Calico.
+- Two more, decided by the owner and built on `test-cb`, never run on a
+  cluster. (6) The internal CA `gentian-ca` on every cluster, in every issuer
+  mode (on `private-ca` it stays the person's CA), its key generated once by
+  the installer into `gentian-os/kernel/pki/internal-ca` and materialised by
+  External Secrets; the object store's gRPC mutual TLS from it (one
+  certificate for the pod, one client certificate for the `weed shell`
+  Jobs, accepted names set per component); the volume server and the
+  filer's HTTP port taking only signed tokens, the keys random at
+  `gentian-os/kernel/storage/s3/jwt`. (7) An app's PostgreSQL, MariaDB and
+  cache passwords reach their provisioning Jobs in Secrets the Jobs own.
+  Proven in local containers (`make test-object-storage-lab`): a weed client
+  without a certificate, with one of another CA, or with one of the CA under
+  another name, is refused by the master and the filer; the Jobs' certificate
+  works; a volume write without a token, or with one of another key, is
+  refused and the master's is taken; volume and filer reads without a token
+  are refused; a replaced CA and certificates are taken up without a
+  restart; every earlier case still passes. A-09 and the seeding by
+  `make test-internal-ca` against stubs. *Needs a cluster:* gentian-ca Ready
+  after B-08 and C-01 on each issuer mode, cert-manager issuing the store's
+  certificates, External Secrets taking over a self-signed cluster's
+  existing `gentian-root-ca-tls`, and the store starting with both.
+  *Open question:* any namespace that may create a cert-manager
+  `Certificate` can have `gentian-ca` issue any common name, and the tenant
+  AppProject lets a tenant's apps create Certificates and even ClusterIssuers;
+  only the store's NetworkPolicy keeps such a certificate from its ports.
 
 ## 3. Known defects, open
 

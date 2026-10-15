@@ -131,7 +131,7 @@ Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on it
 | Redis, `system-cache` | 6379 | tenant namespaces; pods of `system-cache` itself (the ACL and destroy Jobs) |
 | SeaweedFS, `system-s3` | 9000 (S3) | tenant namespaces (apps, and the volume capture and restore pods, which run where the claim is); pods of `system-s3` itself (the bucket and destroy Jobs, the capture and restore of a bucket, a bundle's manifest); pods labelled `gentianos.io/component=tenant-export` in `system-postgresql`, `system-mariadb`, the identity namespace, `system-mail` (the copy of a tenant's mailboxes, beside the mail server's volume) and `kernel-data` (the desktop database of the tenant that adopts the kernel realm, beside the kernel's PostgreSQL), which are the steps of a backup and a restore that run beside their own service and write to or read from the bundle; the operator's pods in `kernel-control` (a bundle's manifest, download and import) |
 
-SeaweedFS's master and filer gRPC ports (19333, 18888) check no key: whoever reaches them can make and delete buckets and identities and read every object. They are admitted only from pods of `system-s3` labelled `gentianos.io/object-store-shell=true`, the platform's bucket Job, destroy Job and a bucket's restore, which administer the store with `weed shell`. An app's isolation from another app's bucket is its key: one identity per bucket, named after it, allowed Read, Write, List and Tagging on that bucket alone, never Admin. The key pair reaches the Job that makes the identity (the bucket Job, and a bucket's restore) in a Secret of the Job's name beside it in `system-s3`, owned by the Job and collected with it; the Job reads it with `secretKeyRef`, and it is in no Job spec, no provisioning ConfigMap and no composed Object. The object store's administrator is `s3-admin`, its key derived under `s3` (new installs).
+SeaweedFS's master and filer gRPC ports (19333, 18888) are mutual TLS: they accept a connection only with a certificate of the internal CA (§12.4) whose common name is the server's own (`seaweedfs-server`) or the administering Jobs' (`seaweedfs-shell`); the volume server's and the S3 gateway's gRPC accept only the server's. Whoever holds the Jobs' certificate can make and delete buckets and identities and read every object. The ports are admitted only from pods of `system-s3` labelled `gentianos.io/object-store-shell=true`, the platform's bucket Job, destroy Job and a bucket's restore, which administer the store with `weed shell`; those pods alone mount the client certificate (`seaweedfs-shell-tls`) and read the filer's signing key, which the filer requires a token of on its identity API. A volume server refuses a write or a read without a token the master signed, and the filer's HTTP port one the filer or the S3 gateway signed; the keys are random, in the vault at `gentian-os/kernel/storage/s3/jwt`, and reach the server only by `secretKeyRef` from an ExternalSecret in `system-s3`. The master's HTTP port has no check of its own (weed's all-in-one server binds it on every address, which `weed shell` needs); the NetworkPolicy is its only guard. An app's isolation from another app's bucket is its key: one identity per bucket, named after it, allowed Read, Write, List and Tagging on that bucket alone, never Admin. The key pair reaches the Job that makes the identity (the bucket Job, and a bucket's restore) in a Secret of the Job's name beside it in `system-s3`, owned by the Job and collected with it; the Job reads it with `secretKeyRef`, and it is in no Job spec, no provisioning ConfigMap and no composed Object. An app's PostgreSQL role, MariaDB user and cache user passwords reach the Jobs that provision them the same way, each in a Secret of its Job's name, in its Job's namespace, owned by the Job. The object store's administrator is `s3-admin`, its key derived under `s3` (new installs).
 
 Closed, deliberately: PostgreSQL's metrics port (9187), and SeaweedFS's master and filer HTTP ports and its volume server's ports (reached inside the pod only; the kubelet's probes come from the node). Nothing the platform runs uses them; a cluster that brings a Prometheus adds a policy of its own selecting the same pods, since policies add up.
 
@@ -1157,7 +1157,8 @@ gentian-os/
 │   ├── internal/master-password      #   value, salt (§6)
 │   ├── database/                     #   postgresql, mariadb, cnpg, portal-shell
 │   ├── cache/redis
-│   ├── storage/                      #   s3, registry
+│   ├── storage/                      #   s3, s3/jwt (the store's signing keys), registry
+│   ├── pki/internal-ca               #   the internal CA gentian-ca: certificate, private_key (§12.4)
 │   ├── identity/keycloak-bootstrap   #   Keycloak's bootstrap administrator
 │   ├── authz/openfga                 #   the rights store's preshared key
 │   ├── oidc/openbao                  #   OpenBao's own sign-in client
@@ -1466,6 +1467,10 @@ Properties:
   held it as a property of `kernel/database/postgresql` keeps that value at
   the new path where the installer can read the vault; where it cannot, the
   value is made again by the mode and the role is set to it.
+- **Keys no mode applies to** — the internal CA (`kernel/pki/internal-ca`)
+  and the object store's signing keys (`kernel/storage/s3/jwt`) are random
+  in either mode, generated once by the installer (B-08) and never
+  overwritten: nothing else the cluster holds may reproduce them.
 - **Per-app credentials** — created by the operator when a tenant installs an
   app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and likewise derived or
   random as the mode says: the database password, the bucket's key pair, the
@@ -1842,6 +1847,32 @@ and direct-origin callers. Enable **Total TLS**
 (`chat.demo.<cluster domain>`) receive edge certificates — the kernel wildcard alone is
 not sufficient. See [multi-tenancy.md](multi-tenancy.md) §3.
 
+
+### 12.4 The internal CA
+
+Every cluster has the ClusterIssuer `gentian-ca`, in every issuer mode. It is
+for TLS between the platform's own components, where nothing public has to
+trust the certificate -- the object store's gRPC (§2.7) is the first user. It
+does not change which issuer serves public names: on an `acme-*` cluster the
+wildcard and every public host stay with Let's Encrypt. On a `self-signed`
+cluster it is also the anchor of the public names, as it was; on a
+`private-ca` cluster `gentian-ca` is the person's own CA, from the Secret they
+supply, and nothing below applies.
+
+Its key is the vault's, not cert-manager's: the installer generates the CA
+once, at random (ECDSA P-256, ten years, path length 0), into
+`gentian-os/kernel/pki/internal-ca` (step `B-08`), and External Secrets
+materialises it as `gentian-root-ca-tls` in cert-manager's namespace (step
+`A-09` applies the ClusterIssuer and the ExternalSecret). A reinstall of
+cert-manager finds the same CA, and the recovery kit, which opens the vault,
+reaches it. The path is read by `eso-read`, as every kernel path is; no new
+right was added for it. A self-signed cluster whose CA cert-manager made
+before keeps that CA: it is what is seeded.
+
+Anybody who may create a cert-manager `Certificate` naming `gentian-ca` can
+have it issue a certificate with any common name; the object store's
+NetworkPolicy, which admits only its own Jobs' pods to the administering
+ports, is what keeps such a certificate from being used there.
 
 ## 13. Licensing & sovereignty summary
 

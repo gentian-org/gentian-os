@@ -844,6 +844,15 @@ kubectl get secret gentian-root-ca-tls -n kernel-edge \
   -o jsonpath='{.data.tls\.crt}' | base64 -d > gentian-root-ca.crt
 ```
 
+Whatever the mode, `A-09` also gives every cluster the internal CA
+`gentian-ca`, for TLS between the platform's own components: a ClusterIssuer
+and an ExternalSecret that materialises the CA from the vault
+(`gentian-os/kernel/pki/internal-ca`, generated once by `B-08`). It issues
+nothing public on an `acme-*` cluster; on a `self-signed` one it is the CA
+above; on `private-ca` `gentian-ca` is your CA and nothing is generated. Until
+`B-08` has seeded the CA and `C-01` has composed the secret store, the issuer
+is not Ready. See [design/security.md](design/security.md) §12.4.
+
 The other modes are `acme-dns01` (the default; public DNS, wildcards),
 `acme-http01` (public DNS, no wildcards) and `private-ca` (you supply the CA).
 Selecting a mode the cluster cannot satisfy fails with a message naming the

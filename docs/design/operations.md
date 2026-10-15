@@ -385,6 +385,30 @@ letting Argo CD roll the operator and the bouncer. In that order:
   [commands.md](../commands.md) §15 is the restore drill. A schedule records
   its last success so that it can be watched.
 
+### 8.1 The object store's certificates and keys
+
+- **Certificates renew on their own.** cert-manager reissues
+  `seaweedfs-server-tls` and `seaweedfs-shell-tls` (90 days) at two thirds
+  of their lifetime. The server reads its certificate files again every five
+  hours (weed's default, `WEED_TLS_CERT_REFRESH_INTERVAL`) and the Secret is
+  mounted whole, so no restart is needed; a Job reads its certificate when
+  it starts.
+- **Replacing the internal CA** (`gentian-os/kernel/pki/internal-ca`) is
+  writing a new certificate and key there, re-syncing the ExternalSecret
+  `gentian-root-ca-tls` in cert-manager's namespace, and having cert-manager
+  reissue every certificate of `gentian-ca` (`cmctl renew --all` in each
+  namespace that holds one; for the store, `system-s3`). Until the server's
+  next refresh, Jobs with a certificate of the new CA are refused: restart
+  the store (`kubectl rollout restart deploy/seaweedfs-all-in-one -n
+  system-s3`) to take the new CA at once. On a self-signed cluster every
+  client that trusts the old CA has to be given the new one.
+- **Rotating a signing key** (`gentian-os/kernel/storage/s3/jwt`) is writing
+  a new value there, re-syncing the ExternalSecret `seaweedfs-jwt` in
+  `system-s3`, and restarting the store, which reads the keys from its
+  environment at start. A token is valid for seconds, so only requests in
+  flight fail. The keys are never generated again by the installer: an
+  existing path is left as it is.
+
 ## 9. Data Lifecycle: Reference
 
 What creating, backing up, restoring, importing, uninstalling, purging,
