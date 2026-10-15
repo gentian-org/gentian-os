@@ -200,6 +200,9 @@ path="${url#http://kc/admin/realms/}"
 echo "${method} ${path}" >> "${STUB}/log"
 [ -z "${data}" ] || { echo "BODY ${method} ${path} $(tr -d '\n' < "${data}")" >> "${STUB}/log"; }
 key="$(printf '%s %s' "${method}" "${path}" | tr '/?&=%:' '______')"
+seen=$(( $(cat "${STUB}/answers/${key}.count" 2>/dev/null || echo 0) + 1 ))
+echo "${seen}" > "${STUB}/answers/${key}.count"
+[ ! -f "${STUB}/answers/${key}.${seen}" ] || key="${key}.${seen}"
 if [ -f "${STUB}/answers/${key}" ]; then
   code="$(head -n 1 "${STUB}/answers/${key}")"
   tail -n +2 "${STUB}/answers/${key}" > "${out}"
@@ -225,6 +228,13 @@ func (w *realmWorld) write(rel, content string) {
 func (w *realmWorld) answer(method, path string, code int, body string) {
 	key := strings.NewReplacer("/", "_", "?", "_", "&", "_", "=", "_", "%", "_", ":", "_").Replace(method + " " + path)
 	w.write("answers/"+key, fmt.Sprintf("%d\n%s", code, body))
+}
+
+// answerNth puts an answer on file for the nth time a request is made; the
+// other times get the one answer gives.
+func (w *realmWorld) answerNth(method, path string, nth, code int, body string) {
+	key := strings.NewReplacer("/", "_", "?", "_", "&", "_", "=", "_", "%", "_", ":", "_").Replace(method + " " + path)
+	w.write(fmt.Sprintf("answers/%s.%d", key, nth), fmt.Sprintf("%d\n%s", code, body))
 }
 
 // run runs a container's script with the stubs, its scratch mount moved to a
@@ -307,9 +317,9 @@ func TestARealmImportedUnderAnotherNameIsRenamed(t *testing.T) {
 	w := newRealmWorld(t)
 	w.archive(bundleRealm, bundleUsers, bundleMemberships)
 	w.answer("POST", "acme2/partialImport", 200, `{}`)
+	w.answer("GET", "acme2", 200, `{"realm":"acme2","defaultRole":{"name":"default-roles-acme2"}}`)
 	w.answer("GET", "acme2/users?exact=true&username=ada", 200, `[]`)
 	w.answer("GET", "acme2/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
-	w.answer("POST", "acme2/users", 201, ``)
 	w.answer("GET", "acme2/group-by-path/gentian%3Atenant%3Aacme2%3Amembers", 200, `{"id":"g-members"}`)
 	w.answer("GET", "acme2/group-by-path/staff/board", 200, `{"id":"g-board"}`)
 	w.answer("PUT", "acme2/users/n3/groups/g-members", 204, ``)
@@ -323,10 +333,13 @@ func TestARealmImportedUnderAnotherNameIsRenamed(t *testing.T) {
 		t.Fatalf("a person the realm does not have after the import is not an error:\n%s", out)
 	}
 
+	// The first partial import is the realm's configuration; the ones after
+	// it are people.
 	var imported string
 	for _, line := range strings.Split(log, "\n") {
 		if strings.HasPrefix(line, "BODY POST acme2/partialImport ") {
 			imported = compactJSON(line)
+			break
 		}
 	}
 	for _, want := range []string{`"name":"gentian:tenant:acme2:members"`, `"path":"/gentian:tenant:acme2:members"`, `"name":"staff"`, `"auditor"`} {
@@ -356,6 +369,7 @@ func TestARealmRestoredIntoItsOwnTenantKeepsItsNames(t *testing.T) {
 	w := newRealmWorld(t)
 	w.archive(bundleRealm, bundleUsers, bundleMemberships)
 	w.answer("POST", "acme/partialImport", 200, `{}`)
+	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
 	w.answer("GET", "acme/users?exact=true&username=ada", 200, `[{"id":"n1"}]`)
 	w.answer("GET", "acme/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
 	w.answer("GET", "acme/group-by-path/gentian%3Atenant%3Aacme%3Amembers", 200, `{"id":"g-members"}`)
@@ -380,6 +394,79 @@ func TestARealmRestoredIntoItsOwnTenantKeepsItsNames(t *testing.T) {
 	}
 }
 
+// People come back under the ids the bundle recorded, so an app that keys
+// an account by the token's subject finds the same person. Each is created
+// by a partial import of that one person, with the realm's own default role
+// and their links to other providers, as before; nothing else the bundle
+// might carry for them: no credential, no role or group by name (a partial
+// import would make up a role it does not find). A person who is there already keeps
+// the id they have, and the output says so. An id that is not a UUID is not
+// kept: it would become a subject the rights store knows people by.
+func TestARealmImportKeepsPeoplesIds(t *testing.T) {
+	w := newRealmWorld(t)
+	users := `{"id":"0c4f1b2e-7a3d-4e8f-9b1a-2d3c4e5f6a7b","username":"ada","email":"ada@example.org","firstName":"Ada","attributes":{"locale":["en"]},` +
+		`"createdTimestamp":1,"credentials":[{"type":"password","value":"x"}],"realmRoles":["admin"],` +
+		`"clientRoles":{"realm-management":["realm-admin"]},"groups":["/staff"],"federationLink":"ldap",` +
+		`"federatedIdentities":[{"identityProvider":"corp","userId":"9","userName":"ada"}]}
+{"id":"u3","username":"bob"}
+{"id":"f:ldap:carol","username":"carol"}
+`
+	w.archive(bundleRealm, users, `{"userId":"0c4f1b2e-7a3d-4e8f-9b1a-2d3c4e5f6a7b","groups":[]}
+{"userId":"u3","groups":[]}
+{"userId":"f:ldap:carol","groups":[]}
+`)
+	w.answer("POST", "acme/partialImport", 200, `{}`)
+	w.answer("GET", "acme/users?exact=true&username=carol", 200, `[]`)
+	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
+	w.answer("GET", "acme/users?exact=true&username=ada", 200, `[]`)
+	w.answer("GET", "acme/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
+
+	out, err := w.run(importScript("acme", RealmSource{}))
+	if err != nil {
+		t.Fatalf("the import failed: %v\n%s\n%s", err, out, w.log())
+	}
+	log := w.log()
+	if strings.Contains(log, "POST acme/users") {
+		t.Errorf("a person was created through POST /users, which gives a new id:\n%s", log)
+	}
+	var people []string
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "BODY POST acme/partialImport ") && strings.Contains(line, `"users"`) {
+			people = append(people, compactJSON(line))
+		}
+	}
+	if len(people) != 2 {
+		t.Fatalf("want two people imported (ada and carol; bob is there), got %d:\n%s", len(people), log)
+	}
+	// An id that is not a UUID Keycloak would give is not kept: carol gets a
+	// new one, and the output says so.
+	if strings.Contains(people[1], `"id"`) || !strings.Contains(people[1], `"username":"carol"`) {
+		t.Errorf("carol's import keeps an id that is not a UUID:\n%s", people[1])
+	}
+	if !strings.Contains(out, "carol had the id f:ldap:carol") {
+		t.Errorf("the output does not say carol gets a new id:\n%s", out)
+	}
+	ada := people[0]
+	for _, want := range []string{`"ifResourceExists":"FAIL"`, `"id":"0c4f1b2e-7a3d-4e8f-9b1a-2d3c4e5f6a7b"`, `"username":"ada"`, `"email":"ada@example.org"`,
+		`"firstName":"Ada"`, `"locale":["en"]`, `"enabled":true`, `"realmRoles":["default-roles-acme"]`,
+		`"federatedIdentities":[{"identityProvider":"corp","userId":"9","userName":"ada"}]`} {
+		if !strings.Contains(ada, want) {
+			t.Errorf("ada's import does not carry %s:\n%s", want, ada)
+		}
+	}
+	for _, not := range []string{"credentials", `"admin"`, "clientRoles", "realm-admin", "/staff", "federationLink", "createdTimestamp"} {
+		if strings.Contains(ada, not) {
+			t.Errorf("ada's import carries %s:\n%s", not, ada)
+		}
+	}
+	if !strings.Contains(out, "bob is already in the realm under id n3, not u3") {
+		t.Errorf("the output does not say bob keeps another id:\n%s", out)
+	}
+	if !strings.Contains(out, "restored 2 user(s) WITHOUT credentials") {
+		t.Errorf("the output does not count ada and carol or warn about credentials:\n%s", out)
+	}
+}
+
 // What the import used to pass over in silence now fails it, with the name:
 // a person the provider refuses, a group that is not there, a membership
 // that is refused -- and it still goes to the end, so the output names all.
@@ -387,8 +474,10 @@ func TestARealmImportFailsForWhatItCouldNotPutBack(t *testing.T) {
 	w := newRealmWorld(t)
 	w.archive(bundleRealm, bundleUsers, bundleMemberships)
 	w.answer("POST", "acme/partialImport", 200, `{}`)
+	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
 	w.answer("GET", "acme/users?exact=true&username=ada", 200, `[]`)
-	w.answer("POST", "acme/users", 409, `{"errorMessage":"User exists with same email"}`)
+	// The first partial import is the realm's configuration, the second ada.
+	w.answerNth("POST", "acme/partialImport", 2, 409, `{"errorMessage":"User exists with same email"}`)
 	w.answer("GET", "acme/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
 	// The members group is not there; nothing answers for it.
 

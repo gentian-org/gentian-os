@@ -351,6 +351,9 @@ much it matters.
 Accepted, not a gap: **a restore creates every missing person enabled,** also
 one who was disabled when the backup was taken. They have no password; a
 sign-in through another provider that the bundle recorded for them works.
+Each comes back under the id they had, so an app that keys an account by the
+sign-in's subject finds the same person; one already in the realm keeps the
+id they have there, and the restore's output says so.
 
 Closed: the data of uninstalled apps, the platform tenant's desktop database
 and mailboxes are in a backup; mailboxes are destroyed with the tenant; the

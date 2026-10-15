@@ -548,6 +548,11 @@ type RealmSource struct {
 // a reset. The import is written to say so rather than leave an operator to
 // discover it from members who cannot sign in.
 //
+// People keep the ids they had (Keycloak's partialImport keeps an id it is
+// given, POST /users does not), so an app that keys an account by the
+// token's subject finds the same person after a restore or an import. A
+// person who is already in the realm is left under the id they have.
+//
 // Into the tenant the bundle was taken of, groups, roles and clients are
 // brought back to what the bundle recorded. Into a tenant of another name
 // the bundle's names are the other tenant's:
@@ -617,9 +622,23 @@ echo "imported realm configuration"
 enc() { printf '%%s' "$1" | jq -sRr @uri; }
 failed=0
 
-# Users come back one at a time: partialImport does not carry them, and a user
-# that already exists must not be duplicated. A client's service account is
-# the client's, made with it, and is not a person to create.
+# The realm's default role, which POST /users would grant and a partial
+# import does not. It is read from this realm, so the import names no role
+# that is not there: a partial import would make one up.
+kc GET "${API}" > %[2]s/realm-now.json
+default_role=$(jq -r '.defaultRole.name // empty' %[2]s/realm-now.json)
+
+# People come back one at a time, each by a partial import of that one person
+# under the id the bundle recorded: an app that keys an account by the token's
+# subject finds its own person again, not a stranger. One at a time, so that a
+# person the provider refuses is named and the others still come back. A
+# person who is there already is left as they are, under the id they have;
+# FAIL rather than SKIP, so that a clash on the e-mail address is said, not
+# passed over. What describes the person is carried, with their links to
+# other providers as before; no credential, role mapping or group the bundle
+# might hold (a partial import would make up a role it does not find).
+# A client's service account is the client's, made with it, and is not a
+# person to create.
 restored=0
 n=0
 while IFS= read -r line; do
@@ -633,11 +652,30 @@ while IFS= read -r line; do
   if ! kc GET "${API}/users?exact=true&username=$(enc "${username}")" > %[2]s/found.json; then
     failed=$((failed + 1)); continue
   fi
-  [ -z "$(jq -r '.[0].id // empty' %[2]s/found.json)" ] || continue
+  have=$(jq -r '.[0].id // empty' %[2]s/found.json)
+  was=$(printf '%%s' "${line}" | jq -r '.id // empty')
+  if [ -n "${have}" ]; then
+    if [ -n "${was}" ] && [ "${have}" != "${was}" ]; then
+      echo "NOTE: ${username} is already in the realm under id ${have}, not ${was} as in the bundle, and is left as they are"
+    fi
+    continue
+  fi
+  # An id is kept only in the form Keycloak gives a person of its own (a
+  # UUID): the id becomes the person's subject, which the rights store keys
+  # people by, and a bundle is not signed. Any other id (a federated
+  # person's f:<provider>:<id>) is left out, and the person gets a new one.
+  if [ -n "${was}" ] && ! printf '%%s' "${was}" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+    echo "NOTE: ${username} had the id ${was}, which is not one Keycloak gives a person of its own; they come back under a new id"
+  fi
   printf '%%s' "${line}" \
-    | jq 'del(.id, .createdTimestamp, .federationLink, .serviceAccountClientId) + {enabled:true}' \
+    | jq --arg role "${default_role}" '{ifResourceExists: "FAIL",
+        users: [{id, username, email, emailVerified, firstName, lastName, attributes, requiredActions, federatedIdentities}
+                | if ((.id // "") | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) then . else del(.id) end
+                | with_entries(select(.value != null))
+                + {enabled: true}
+                + (if $role == "" then {} else {realmRoles: [$role]} end)]}' \
     > %[2]s/user.json
-  if kc POST "${API}/users" %[2]s/user.json >/dev/null; then
+  if kc POST "${API}/partialImport" %[2]s/user.json >/dev/null; then
     restored=$((restored + 1))
   else
     echo "ERROR: ${username} could not be created" >&2; failed=$((failed + 1))
