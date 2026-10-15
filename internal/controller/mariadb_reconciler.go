@@ -23,6 +23,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
@@ -77,14 +78,19 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // The script, with the grants it issues, is the inventory's
 // (backup.MariaDBSetupScript): what the user may touch and what an export, a
 // restore and a purge take to be the app's are one rule there.
-func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string, allowDynamic bool) *batchv1.Job {
+//
+// When withPassword is set the pod reads the user's password from the Secret
+// of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
+// no ConfigMap and no composed Object.
+func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword, allowDynamic bool) *batchv1.Job {
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
+	jobName := mariadbSetupJobName(tenant.Name, appName)
 	c := mariadbContainer("provision-db", backup.MariaDBSetupScript(dbName, dbUser, allowDynamic))
-	if dbPassword != "" {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "DB_PASS", Value: dbPassword})
+	if withPassword {
+		c.Env = append(c.Env, meta.SecretEnv("DB_PASS", jobName, jobSecretPasswordKey))
 	}
-	return newKernelProvisioningJob(mariadbSetupJobName(tenant.Name, appName), mariadbNamespace, tenant, appName, c)
+	return newKernelProvisioningJob(jobName, mariadbNamespace, tenant, appName, c)
 }
 
 // makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job: the

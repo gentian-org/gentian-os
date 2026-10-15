@@ -54,11 +54,17 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		job  *batchv1.Job
 		want string
 	}{
+		// The postgres role, the MariaDB user and the cache user moved
+		// once, deliberately, when the app's password left the spec:
+		// ROLE_PW, DB_PASS and REDIS_USER_PASSWORD are read from the
+		// Secret of the Job's name, which the Job owns
+		// (ensureProvisioningJobSecrets), and are written into no Job.
+		// Nothing else in these Jobs changed.
 		"postgres role": {
-			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", "pw", gentianov1alpha1.SchemaPreferenceAppSchema, true),
-			"bb0e4ee798d4956cf3fe7481f70f3ac5a4dd5f396618563d9829873937718b8d",
+			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true),
+			"0385a66d6bb2310c243039afe72b40ea776f876c4ff3be016aa13e9c56c48fdc",
 		},
-		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
+		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", true, true), "14691be0177479f93914a328cb59573120d722f67ee2d773388b791be7b10d5e"},
 		// Both bucket digests moved once when the Jobs' image became the
 		// S3 server's own, and again, deliberately, when the server became
 		// SeaweedFS: the bucket and the app's identity are made with weed
@@ -68,10 +74,10 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// The keyed one moved once more, deliberately, when the app's key
 		// pair left the spec: APP_ACCESS_KEY and APP_SECRET_KEY are read
 		// from the Secret of the Job's name, which the Job owns
-		// (ensureBucketKeySecrets), and are written into no Job.
+		// (ensureProvisioningJobSecrets), and are written into no Job.
 		"bucket":         {makeS3BucketJob(tenant, "wiki", true), "09420de1d58d46a42c70b0c6dd7acf7e6d9c9ef89980fa3f9d66f339d7543131"},
 		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false), "9ed306136ae01d209c6f12054064db4733ab99a3d140b375c6987cb24240a969"},
-		"cache user":     {makeRedisACLJob(tenant, "wiki", "pw"), "980aa4ecd34b77778b2225cbe86860dfe74dd7bd6ee0e79493bc0cfd1235d57a"},
+		"cache user":     {makeRedisACLJob(tenant, "wiki", true), "e69e2958d1a57f59a3e92f20f07af87036ada08858c580d218ec13c358caabeb"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {
 			t.Errorf("%s: the Job provisioning creates has changed (digest %s, pinned %s)", name, got, c.want)

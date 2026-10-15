@@ -178,18 +178,22 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 
 // makeRedisACLJob creates a redis-cli Job that provisions a per-app Redis ACL user.
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
-func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword string) *batchv1.Job {
+// When withPassword is set the pod reads the user's password from the Secret
+// of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
+// no ConfigMap and no composed Object.
+func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
+	jobName := redisACLJobName(tenant.Name, appName)
 	c := redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix))
-	if userPassword != "" {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "REDIS_USER_PASSWORD", Value: userPassword})
+	if withPassword {
+		c.Env = append(c.Env, meta.SecretEnv("REDIS_USER_PASSWORD", jobName, jobSecretPasswordKey))
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      redisACLJobName(tenant.Name, appName),
+			Name:      jobName,
 			Namespace: cacheNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,

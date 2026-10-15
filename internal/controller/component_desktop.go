@@ -325,8 +325,11 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 		return false, "", "", err
 	}
 
-	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, appName, creds.Password,
+	// The role's password reaches the Job in a Secret the Job owns, handed
+	// over once the Job is there.
+	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, appName, true,
 		schemaPref, allowCreateDB)
+	password := passwordSecretData(creds.Password)
 	// What was asked for, as a hash on the Job. The live Job cannot be
 	// compared with the desired one field by field: the API server fills in
 	// defaults, so the two never match, and a comparison that never matches
@@ -342,6 +345,13 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 	case errors.IsNotFound(err):
 		if err := c.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
 			return false, "", "", err
+		}
+		// The Job as made, with the UID its Secret is owned by; a Job made
+		// by an earlier pass is handed its Secret below on the next.
+		if desired.UID != "" {
+			if err := ensureJobSecret(ctx, c, desired, jobSecret(desired, password)); err != nil {
+				return false, "", "", err
+			}
 		}
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	case err != nil:
@@ -363,6 +373,11 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 		}
 		return false, "DatabaseProvisioning", "the database role Job failed and is retried", nil
 	case !jobIsComplete(job):
+		if job.DeletionTimestamp == nil {
+			if err := ensureJobSecret(ctx, c, job, jobSecret(job, password)); err != nil {
+				return false, "", "", err
+			}
+		}
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	}
 

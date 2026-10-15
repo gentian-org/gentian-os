@@ -238,24 +238,24 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // makeRoleJob creates a psql Job that creates the per-app PostgreSQL role
 // and grants full privileges on the provisioned database.
 //
-// When rolePassword is non-empty (Inc 21a — Seeder enabled) the Job applies
-// that exact password to the role via CREATE/ALTER ROLE, so the live
-// PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
+// When withPassword is set (Seeder enabled) the Job applies the password
+// the vault holds for the app to the role via CREATE/ALTER ROLE, so the live
+// PostgreSQL password equals the OpenBao-seeded value. The pod reads it from
+// the Secret of the Job's name, which the Job owns (jobSecret); it is in no
+// Job spec, no ConfigMap and no composed Object. Without it the Job
 // generates a random password locally (legacy behaviour).
-func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
+func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string, withPassword bool, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	roleName := roleUserName(tenant.Name, appName)
+	jobName := roleJobName(tenant.Name, appName)
 	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB), nsName)
-	if rolePassword != "" {
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "ROLE_PW",
-			Value: rolePassword,
-		})
+	if withPassword {
+		container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", jobName, jobSecretPasswordKey))
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      roleJobName(tenant.Name, appName),
+			Name:      jobName,
 			Namespace: postgresNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,

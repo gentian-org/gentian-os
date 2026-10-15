@@ -47,9 +47,9 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
 	}
-	// The key pairs the bucket Jobs make the apps' identities with, each in
-	// a Secret its Job owns: never in the manifests below.
-	if err := r.ensureBucketKeySecrets(ctx, keys); err != nil {
+	// The passwords and key pairs the Jobs provision the apps' stores with,
+	// each in a Secret its Job owns: never in the manifests below.
+	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
 		return err
 	}
 	// On record before anything is made: see recordProvisionedStores.
@@ -146,7 +146,7 @@ func sanitizeJobForJSON(job *batchv1.Job) batchv1.Job {
 	return *out
 }
 
-func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, map[string]objectStoreKey, error) {
+func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, provisioningJobSecrets, error) {
 	var jobs []batchv1.Job
 	realmName := keycloakRealmName(tenant)
 

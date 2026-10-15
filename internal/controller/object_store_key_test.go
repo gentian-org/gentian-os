@@ -88,7 +88,7 @@ func TestTheBucketJobReadsTheAppsKeyFromASecretItOwns(t *testing.T) {
 	}
 
 	// Before Crossplane has made the Job there is nothing to own the Secret.
-	if err := r.ensureBucketKeySecrets(ctx, keys); err != nil {
+	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
 		t.Fatal(err)
 	}
 	sec := &corev1.Secret{}
@@ -103,7 +103,7 @@ func TestTheBucketJobReadsTheAppsKeyFromASecretItOwns(t *testing.T) {
 	if err := c.Create(ctx, made); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureBucketKeySecrets(ctx, keys); err != nil {
+	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, key, sec); err != nil {
@@ -126,7 +126,7 @@ func TestTheBucketJobReadsTheAppsKeyFromASecretItOwns(t *testing.T) {
 	if err := c.Create(ctx, again); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureBucketKeySecrets(ctx, keys); err != nil {
+	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, key, sec); err != nil || sec.OwnerReferences[0].UID != "job-uid-2" {
@@ -141,7 +141,7 @@ func TestTheBucketJobReadsTheAppsKeyFromASecretItOwns(t *testing.T) {
 	if err := c.Status().Update(ctx, again); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureBucketKeySecrets(ctx, keys); err != nil {
+	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, key, sec); !apierrors.IsNotFound(err) {

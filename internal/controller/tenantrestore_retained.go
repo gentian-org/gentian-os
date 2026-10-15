@@ -242,30 +242,29 @@ func (r *TenantRestoreReconciler) ensureRetainedStores(
 // the database, the user with the password the vault holds, the grants.
 // start says to make the Job when there is none; a Job that is there is
 // waited for either way, which is how a later pass finds the one an earlier
-// pass started.
+// pass started. The password reaches the Job in a Secret the Job owns,
+// handed over once the Job is there.
 func (r *TenantRestoreReconciler) ensureRetainedMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, start, allowDynamic bool) (bool, error) {
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: mariadbSetupJobName(tenant.Name, appName), Namespace: mariadbNamespace}, job)
-	if apierrors.IsNotFound(err) && !start {
-		return true, nil
-	}
-	password := ""
-	if apierrors.IsNotFound(err) && r.Tenant.Seeder != nil {
-		creds, err := r.Tenant.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-			Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", mariadbNamespace),
-			Port: fmt.Sprint(provisioner.MariaDBPort),
-			Name: databaseName(tenant, appName),
-			User: mariadbUserName(tenant.Name, appName),
-		})
-		if err != nil {
-			return false, fmt.Errorf("seed mariadb for %s: %w", appName, err)
-		}
-		password = creds.Password
-	}
 	switch {
+	case apierrors.IsNotFound(err) && !start:
+		return true, nil
 	case apierrors.IsNotFound(err):
-		if err := r.Create(ctx, makeMariaDBSetupJob(tenant, appName, password, allowDynamic)); err != nil && !apierrors.IsAlreadyExists(err) {
+		password, err := r.retainedMariaDBPassword(ctx, tenant, appName)
+		if err != nil {
 			return false, err
+		}
+		desired := makeMariaDBSetupJob(tenant, appName, password != "", allowDynamic)
+		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
+			return false, err
+		}
+		// The Job as made, with the UID its Secret is owned by; a Job made
+		// by an earlier pass is handed its Secret below on the next.
+		if password != "" && desired.UID != "" {
+			if err := ensureJobSecret(ctx, r.Client, desired, jobSecret(desired, passwordSecretData(password))); err != nil {
+				return false, err
+			}
 		}
 		return false, nil
 	case err != nil:
@@ -276,8 +275,39 @@ func (r *TenantRestoreReconciler) ensureRetainedMariaDB(ctx context.Context, ten
 			return false, err
 		}
 		return false, fmt.Errorf("the MariaDB setup Job %s failed", job.Name)
+	case jobIsComplete(job):
+		return true, nil
 	}
-	return jobIsComplete(job), nil
+	if job.DeletionTimestamp == nil {
+		password, err := r.retainedMariaDBPassword(ctx, tenant, appName)
+		if err != nil {
+			return false, err
+		}
+		if password != "" {
+			if err := ensureJobSecret(ctx, r.Client, job, jobSecret(job, passwordSecretData(password))); err != nil {
+				return false, err
+			}
+		}
+	}
+	return false, nil
+}
+
+// retainedMariaDBPassword is the password the vault holds for a MariaDB
+// app's user, seeded if it holds none; empty on a cluster with no vault.
+func (r *TenantRestoreReconciler) retainedMariaDBPassword(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (string, error) {
+	if r.Tenant.Seeder == nil {
+		return "", nil
+	}
+	creds, err := r.Tenant.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
+		Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", mariadbNamespace),
+		Port: fmt.Sprint(provisioner.MariaDBPort),
+		Name: databaseName(tenant, appName),
+		User: mariadbUserName(tenant.Name, appName),
+	})
+	if err != nil {
+		return "", fmt.Errorf("seed mariadb for %s: %w", appName, err)
+	}
+	return creds.Password, nil
 }
 
 // ensureRetainedClaim makes a volume claim the bundle recorded, where the

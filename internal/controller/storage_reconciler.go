@@ -13,12 +13,10 @@ package controller
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -112,7 +110,7 @@ const backupBucketUnit = "gentian-backup"
 // makeS3BucketJob builds a kernel-namespace Job that creates the per-app bucket
 // and, when withKey is set (Seeder enabled), an identity for the app scoped
 // to that bucket. The operator seeds the credential into OpenBao and hands
-// the exact key pair over in a Secret the Job owns (ensureBucketKeySecrets),
+// the exact key pair over in a Secret the Job owns (ensureProvisioningJobSecrets),
 // so tenant workloads never need OpenBao access to provision storage (SEC-1)
 // and the key is in no Job spec, no ConfigMap and no composed Object.
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bool) *batchv1.Job {
@@ -225,56 +223,7 @@ type objectStoreKey struct {
 
 // ensureObjectStoreKeySecret hands a key pair to the Job that provisions a
 // bucket: the Secret of the Job's name, owned by the Job as the cluster has
-// it. It is written again when the Job is a new one (a retired Job's Secret
-// went with it) or the key pair changed, and left alone otherwise.
+// it (ensureJobSecret).
 func ensureObjectStoreKeySecret(ctx context.Context, c client.Client, job *batchv1.Job, key objectStoreKey) error {
-	desired := backup.ObjectStorageKeySecret(job, key.accessKey, key.secretKey)
-	existing := &corev1.Secret{}
-	err := c.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if apierrors.IsNotFound(err) {
-		if err := c.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("hand the key pair to Job %s/%s: %w", job.Namespace, job.Name, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if reflect.DeepEqual(existing.OwnerReferences, desired.OwnerReferences) &&
-		reflect.DeepEqual(existing.Data, desired.Data) {
-		return nil
-	}
-	existing.OwnerReferences = desired.OwnerReferences
-	existing.Labels = desired.Labels
-	existing.Data = desired.Data
-	if err := c.Update(ctx, existing); err != nil {
-		return fmt.Errorf("hand the key pair to Job %s/%s: %w", job.Namespace, job.Name, err)
-	}
-	return nil
-}
-
-// ensureBucketKeySecrets hands each bucket Job Crossplane has made from the
-// provisioning manifests the key pair it makes the app's identity with. A
-// Job not made yet is passed over: the operator watches the Jobs in the
-// store's namespace, and the one Crossplane makes brings the tenant back
-// here. Until its Secret is there the Job's pod waits, which kubelet
-// retries; a finished Job needs none.
-func (r *TenantReconciler) ensureBucketKeySecrets(ctx context.Context, keys map[string]objectStoreKey) error {
-	for name, key := range keys {
-		job := &batchv1.Job{}
-		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: s3Namespace}, job)
-		if apierrors.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if job.DeletionTimestamp != nil || jobIsComplete(job) {
-			continue
-		}
-		if err := ensureObjectStoreKeySecret(ctx, r.Client, job, key); err != nil {
-			return err
-		}
-	}
-	return nil
+	return ensureJobSecret(ctx, c, job, backup.ObjectStorageKeySecret(job, key.accessKey, key.secretKey))
 }

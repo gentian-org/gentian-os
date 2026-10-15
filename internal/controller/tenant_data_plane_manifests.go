@@ -18,19 +18,21 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // buildDataPlaneJobs builds the Jobs that provision a tenant's stores, and
-// the key pairs the bucket Jobs among them are to be handed, by Job name
-// (ensureBucketKeySecrets): those are not in the Jobs.
-func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, map[string]objectStoreKey, error) {
+// the passwords and key pairs those Jobs are to be handed, by Job
+// (ensureProvisioningJobSecrets): those are not in the Jobs.
+func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, provisioningJobSecrets, error) {
 	var jobs []batchv1.Job
-	keys := map[string]objectStoreKey{}
+	keys := provisioningJobSecrets{}
 	nsName := tenantNamespaceName(tenant)
 
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
@@ -57,7 +59,10 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			}
 			rolePassword = creds.Password
 		}
-		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword,
+		if rolePassword != "" {
+			keys[types.NamespacedName{Namespace: postgresNamespace, Name: roleJobName(tenant.Name, appName)}] = passwordSecretData(rolePassword)
+		}
+		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword != "",
 			schemaPreferenceFor(profile), allowsDynamicDatabaseCreation(profile)))
 	}
 
@@ -87,7 +92,10 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			}
 			dbPassword = creds.Password
 		}
-		jobs = append(jobs, *makeMariaDBSetupJob(tenant, appName, dbPassword, allowDynamic))
+		if dbPassword != "" {
+			keys[types.NamespacedName{Namespace: mariadbNamespace, Name: mariadbSetupJobName(tenant.Name, appName)}] = passwordSecretData(dbPassword)
+		}
+		jobs = append(jobs, *makeMariaDBSetupJob(tenant, appName, dbPassword != "", allowDynamic))
 	}
 
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
@@ -101,7 +109,10 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		}
 		withKey := accessKey != "" && secretKey != ""
 		if withKey {
-			keys[s3BucketJobName(tenant.Name, appName)] = objectStoreKey{accessKey: accessKey, secretKey: secretKey}
+			keys[types.NamespacedName{Namespace: s3Namespace, Name: s3BucketJobName(tenant.Name, appName)}] = map[string][]byte{
+				backup.ObjectStorageKeyAccessKey: []byte(accessKey),
+				backup.ObjectStorageKeySecretKey: []byte(secretKey),
+			}
 		}
 		jobs = append(jobs, *makeS3BucketJob(tenant, appName, withKey))
 	}
@@ -127,7 +138,10 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			}
 			userPassword = creds.Password
 		}
-		jobs = append(jobs, *makeRedisACLJob(tenant, appName, userPassword))
+		if userPassword != "" {
+			keys[types.NamespacedName{Namespace: cacheNamespace, Name: redisACLJobName(tenant.Name, appName)}] = passwordSecretData(userPassword)
+		}
+		jobs = append(jobs, *makeRedisACLJob(tenant, appName, userPassword != ""))
 	}
 	_ = memcachedApps // memcached workload is emitted via buildDataPlaneObjects
 
