@@ -806,6 +806,47 @@ gentian tenants retire ghost --yes
 has "a tenant git lacks but the cluster runs is removed, and the command says so" "${OUT}" "the cluster still ran it"
 
 echo ""
+echo ""
+echo "kubectl gentian: an installed copy says when it is out of date"
+echo ""
+
+# An installed copy, stamped as install-plugin stamps it, and the checkout it
+# names: the same body, then a changed one.
+CHECKOUT="${SANDBOX}/checkout"
+mkdir -p "${CHECKOUT}/scripts"
+cp "${REPO}/scripts/kubectl-gentian" "${CHECKOUT}/scripts/kubectl-gentian"
+sed -e "s|^GENTIAN_PLUGIN_SOURCE=.*|GENTIAN_PLUGIN_SOURCE=\"${CHECKOUT}\"|" \
+    -e 's|^GENTIAN_PLUGIN_COMMIT=.*|GENTIAN_PLUGIN_COMMIT="0123456789abcdef0123456789abcdef01234567"|' \
+    "${REPO}/scripts/kubectl-gentian" > "${SANDBOX}/installed-kubectl-gentian"
+installed() {
+    OUT="$(env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" \
+        STUB_CALLS="${CALLS}" STUB_REPLIES="${SANDBOX}/replies" \
+        bash "${SANDBOX}/installed-kubectl-gentian" "$@" 2>&1 </dev/null)"
+    RC=$?
+}
+TENANTS='{"tenants":[]}'
+
+fresh; rm -f "${SANDBOX}/home/.gentian/cli-check-c1"; reply GET /v1/tenants 200 "${TENANTS}"
+installed tenants list
+lacks "a copy the same as its checkout's says nothing" "${OUT}" "Update it"
+
+printf '\n# changed\n' >> "${CHECKOUT}/scripts/kubectl-gentian"
+fresh; rm -f "${SANDBOX}/home/.gentian/cli-check-c1"; reply GET /v1/tenants 200 "${TENANTS}"
+installed tenants list
+has "a copy older than its checkout's says so" "${OUT}" "kubectl gentian is not the copy in ${CHECKOUT} any more"
+has "... and gives the command that updates it" "${OUT}" "make -C ${CHECKOUT} install-plugin"
+
+fresh; reply GET /v1/tenants 200 "${TENANTS}"
+installed tenants list
+lacks "... once an hour, not on every command" "${OUT}" "Update it"
+
+fresh; rm -f "${SANDBOX}/home/.gentian/cli-check-c1"; reply GET /v1/tenants 200 "${TENANTS}"
+gentian tenants list
+lacks "a copy run from a checkout is never told" "${OUT}" "Update it"
+
+installed version
+has "version names where the copy came from" "${OUT}" "installed   : from ${CHECKOUT} at 0123456789abcdef"
+
 if [[ "${fail}" -gt 0 ]]; then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
     exit 1

@@ -89,6 +89,11 @@
 set -euo pipefail
 
 GENTIAN_PLUGIN_VERSION="0.5.0"
+# Written into the installed copy by `make install-plugin`: the checkout it was
+# installed from, and that checkout's commit. Empty in the checkout itself,
+# which is then never told it is out of date.
+GENTIAN_PLUGIN_SOURCE=""
+GENTIAN_PLUGIN_COMMIT=""
 
 die() {
     echo "error: $*" >&2
@@ -121,6 +126,8 @@ cmd_version() {
     echo "kubectl-gentian ${GENTIAN_PLUGIN_VERSION}"
     echo "  fingerprint : $(gentian_plugin_fingerprint)"
     echo "  path        : ${BASH_SOURCE[0]}"
+    [[ -z "${GENTIAN_PLUGIN_SOURCE}" ]] ||
+        echo "  installed   : from ${GENTIAN_PLUGIN_SOURCE} at ${GENTIAN_PLUGIN_COMMIT:-an unknown commit}"
 }
 
 # ---------------------------------------------------------------------------
@@ -148,6 +155,49 @@ _discover() {
     [[ -n "${base}" && -n "${_CLUSTER}" ]] || die "the director in ${_DIR_NS} does not say which issuer or cluster it serves"
     # The platform's administrators sign in through the kernel realm.
     _ISSUER="${base%/}/realms/${GENTIAN_REALM:-kernel}"
+    _check_freshness "$(printf '%s' "${env}" | jq -r '.spec.template.spec.containers[0].image // ""')"
+}
+
+# gentian_plugin_body <file> — a copy of this plugin without the two lines
+# install-plugin writes, so an installed copy and its checkout's compare equal
+# when nothing else differs.
+gentian_plugin_body() {
+    grep -v '^GENTIAN_PLUGIN_\(SOURCE\|COMMIT\)=' "$1" 2>/dev/null
+}
+
+# _check_freshness <image> — say, once an hour per cluster and on stderr,
+# when this copy is out of date, and the command that updates it:
+#   - its checkout has a different copy now (it was pulled, or switched);
+#   - the cluster runs a build whose commit the checkout has and that is
+#     newer than the one this copy came from.
+# Says nothing for a copy run from a checkout, and nothing it cannot tell.
+# GENTIAN_SKIP_UPDATE_CHECK=1 turns it off.
+_check_freshness() {
+    local image="$1" src="${GENTIAN_PLUGIN_SOURCE}" stamp tag sha
+    [[ -n "${src}" && "${GENTIAN_SKIP_UPDATE_CHECK:-}" != "1" ]] || return 0
+    stamp="${HOME}/.gentian/cli-check-${_CLUSTER:-default}"
+    if [[ -f "${stamp}" ]] && [[ -n "$(find "${stamp}" -mmin -60 2>/dev/null)" ]]; then
+        return 0
+    fi
+    mkdir -p "${HOME}/.gentian" 2>/dev/null && touch "${stamp}" 2>/dev/null
+    if [[ -r "${src}/scripts/kubectl-gentian" ]] &&
+        ! cmp -s <(gentian_plugin_body "${src}/scripts/kubectl-gentian") <(gentian_plugin_body "${BASH_SOURCE[0]}"); then
+        echo "note: kubectl gentian is not the copy in ${src} any more. Update it:" >&2
+        echo "  make -C ${src} install-plugin" >&2
+        return 0
+    fi
+    tag="${image##*:}"
+    sha="${tag##*-}"
+    [[ "${sha}" =~ ^[0-9a-f]{7,40}$ && -n "${GENTIAN_PLUGIN_COMMIT}" ]] || return 0
+    [[ "${GENTIAN_PLUGIN_COMMIT}" == "${sha}"* ]] && return 0
+    command -v git >/dev/null 2>&1 || return 0
+    if ! git -C "${src}" cat-file -e "${sha}^{commit}" 2>/dev/null; then
+        echo "note: the cluster runs build ${tag}, which ${src} does not have; kubectl gentian may be older. Update it:" >&2
+        echo "  git -C ${src} fetch && git -C ${src} checkout --detach ${sha} && make -C ${src} install-plugin" >&2
+    elif git -C "${src}" merge-base --is-ancestor "${GENTIAN_PLUGIN_COMMIT}" "${sha}" 2>/dev/null; then
+        echo "note: kubectl gentian (${GENTIAN_PLUGIN_COMMIT:0:7}) is older than the cluster's build (${tag}). Update it:" >&2
+        echo "  git -C ${src} checkout --detach ${sha} && make -C ${src} install-plugin" >&2
+    fi
 }
 
 _TOKEN_FILE=""

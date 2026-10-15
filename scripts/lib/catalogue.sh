@@ -31,7 +31,10 @@ report_gentian_cli_state() {
     fi
 
     [[ -r "${repo}" ]] || return 0
-    if cmp -s "${repo}" "${installed}"; then
+    # Without the two lines install-plugin writes into the copy (where it came
+    # from, and at which commit): those differ by design.
+    if cmp -s <(grep -v '^GENTIAN_PLUGIN_\(SOURCE\|COMMIT\)=' "${repo}") \
+              <(grep -v '^GENTIAN_PLUGIN_\(SOURCE\|COMMIT\)=' "${installed}"); then
         return 0
     fi
 

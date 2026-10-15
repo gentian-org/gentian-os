@@ -33,7 +33,12 @@ build:
 ## Install the kubectl-gentian plugin and gtnctl symlink to ~/.local/bin
 install-plugin:
 	install -d $(HOME)/.local/bin
-	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
+	@# The copy says where it came from, so it can tell when it is out of date.
+	sed -e 's|^GENTIAN_PLUGIN_SOURCE=.*|GENTIAN_PLUGIN_SOURCE="$(CURDIR)"|' \
+	    -e "s|^GENTIAN_PLUGIN_COMMIT=.*|GENTIAN_PLUGIN_COMMIT=\"$$(git -C $(CURDIR) rev-parse HEAD 2>/dev/null)\"|" \
+	    scripts/kubectl-gentian > $(HOME)/.local/bin/kubectl-gentian.new
+	install -m 0755 $(HOME)/.local/bin/kubectl-gentian.new $(HOME)/.local/bin/kubectl-gentian
+	rm -f $(HOME)/.local/bin/kubectl-gentian.new
 	ln -sf kubectl-gentian $(HOME)/.local/bin/gtnctl
 	@echo "Installed kubectl-gentian and gtnctl (-> kubectl-gentian) to $(HOME)/.local/bin"
 	@command -v kubectl-gentian >/dev/null 2>&1 || \
