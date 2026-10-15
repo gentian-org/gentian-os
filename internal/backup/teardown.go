@@ -515,9 +515,11 @@ func DeclaresModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 // with no vault.
 //
 // It runs weed shell, in the server's own image, against the master: the
-// store is administered through the master and the filer, which check no
-// key -- the NetworkPolicy beside the server admits this pod to them by its
-// ObjectStorageShellLabel and nothing else.
+// store is administered through the master and the filer, which accept a
+// connection only with the client certificate of the store's own Jobs
+// (ObjectStoreShellPod) and only from a pod the NetworkPolicy beside the
+// server admits by its ObjectStorageShellLabel. A pod running it must be
+// made with ObjectStoreShellPod.
 func ObjectStorageProvisionContainer(name, bucket, keySecret string) corev1.Container {
 	no := false
 	yes := true
@@ -533,7 +535,8 @@ func ObjectStorageProvisionContainer(name, bucket, keySecret string) corev1.Cont
 			RunAsNonRoot:             &yes,
 			RunAsUser:                &user,
 		},
-		Env: []corev1.EnvVar{objectStoreMasterEnv(), {Name: "BUCKET_NAME", Value: bucket}},
+		Env:          append(objectStoreShellEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
+		VolumeMounts: []corev1.VolumeMount{objectStoreClientTLSMount()},
 	}
 	if keySecret != "" {
 		c.Env = append(c.Env,
@@ -590,6 +593,67 @@ const objectStoreUser int64 = 1000
 // Secret carries beside the S3 endpoint and the keys.
 func objectStoreMasterEnv() corev1.EnvVar {
 	return meta.SecretEnv("S3_MASTER", StorageAdminSecret, "master")
+}
+
+// The object store's administration is mutual TLS: the master and the filer
+// accept a gRPC connection only with a certificate of the cluster's internal
+// CA whose common name is the server's own or this one
+// (kernel/services/infra-seaweedfs, which issues both).
+const (
+	// ObjectStoreClientTLSSecret is the client certificate of the Jobs that
+	// administer the store, kept current by cert-manager in the store's
+	// namespace: tls.crt, tls.key and the CA's ca.crt.
+	ObjectStoreClientTLSSecret = "seaweedfs-shell-tls"
+	// ObjectStoreSigningSecret holds the keys the store signs its tokens
+	// with, materialised from the vault in the store's namespace.
+	ObjectStoreSigningSecret = "seaweedfs-jwt"
+
+	objectStoreClientTLSVolume = "object-store-client-tls"
+	objectStoreClientTLSDir    = "/etc/sw/tls"
+)
+
+// objectStoreShellEnv is what weed shell needs to administer the store: the
+// master's address; the client certificate and the CA, as weed reads its
+// [grpc.client] settings from the environment (WEED_GRPC_*); and the filer's
+// signing key. The filer requires a token signed with that key on its
+// identity API, which s3.configure uses, and weed shell mints one from it.
+func objectStoreShellEnv() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		objectStoreMasterEnv(),
+		{Name: "WEED_GRPC_CA", Value: objectStoreClientTLSDir + "/ca.crt"},
+		{Name: "WEED_GRPC_CLIENT_CERT", Value: objectStoreClientTLSDir + "/tls.crt"},
+		{Name: "WEED_GRPC_CLIENT_KEY", Value: objectStoreClientTLSDir + "/tls.key"},
+		meta.SecretEnv("WEED_JWT_FILER_SIGNING_KEY", ObjectStoreSigningSecret, "filer_signing_key"),
+	}
+}
+
+func objectStoreClientTLSMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: objectStoreClientTLSVolume, MountPath: objectStoreClientTLSDir, ReadOnly: true}
+}
+
+// ObjectStoreShellPod makes a pod one that administers the object store with
+// weed shell: the label its NetworkPolicy admits to the master and the filer
+// by, and the client certificate, as a volume that only the containers
+// running weed shell mount. The whole Secret is mounted, never a subPath of
+// it, so a certificate cert-manager renews reaches a running pod.
+func ObjectStoreShellPod(template *corev1.PodTemplateSpec) {
+	if template.Labels == nil {
+		template.Labels = map[string]string{}
+	}
+	template.Labels[ObjectStorageShellLabel] = "true"
+	for _, v := range template.Spec.Volumes {
+		if v.Name == objectStoreClientTLSVolume {
+			return
+		}
+	}
+	mode := int32(0o444)
+	template.Spec.Volumes = append(template.Spec.Volumes, corev1.Volume{
+		Name: objectStoreClientTLSVolume,
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName:  ObjectStoreClientTLSSecret,
+			DefaultMode: &mode,
+		}},
+	})
 }
 
 // objectStoreShell is how the scripts below run one weed shell command: one
@@ -818,16 +882,17 @@ func MariaDBDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline Des
 func ObjectStorageDestroyJob(tenant *gentianov1alpha1.Tenant, unit string, deadline DestroyDeadline) *batchv1.Job {
 	job := destroyJob(layout.System("s3"), ObjectStorageDestroyJobName(tenant.Name, unit), tenant.Name, unit, deadline,
 		corev1.Container{
-			Name:    "delete-bucket",
-			Image:   kernel.SeaweedFSImage(),
-			Command: []string{"/bin/sh", "-c", objectStorageDestroyScript(S3Bucket(tenant, unit))},
-			Env:     []corev1.EnvVar{objectStoreMasterEnv()},
+			Name:         "delete-bucket",
+			Image:        kernel.SeaweedFSImage(),
+			Command:      []string{"/bin/sh", "-c", objectStorageDestroyScript(S3Bucket(tenant, unit))},
+			Env:          objectStoreShellEnv(),
+			VolumeMounts: []corev1.VolumeMount{objectStoreClientTLSMount()},
 		})
 	yes := true
 	user := objectStoreUser
 	sc := job.Spec.Template.Spec.Containers[0].SecurityContext
 	sc.RunAsNonRoot, sc.RunAsUser = &yes, &user
-	job.Spec.Template.Labels = map[string]string{ObjectStorageShellLabel: "true"}
+	ObjectStoreShellPod(&job.Spec.Template)
 	return job
 }
 

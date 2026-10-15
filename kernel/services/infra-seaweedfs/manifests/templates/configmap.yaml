@@ -41,6 +41,12 @@ data:
         createClusterRole: false
         # The server does not call the API server.
         automountServiceAccountToken: false
+        # Off, and still secured: this switch makes the chart's own CA, its
+        # certificates and a security.toml with signing keys in a ConfigMap.
+        # The certificates are the internal CA's here
+        # (templates/certificates.yaml), the keys the vault's
+        # (templates/externalsecret.yaml), and weed reads both from the
+        # environment below, where a setting overrides the file.
         enableSecurity: false
     # One pod running the master, a volume server, the filer and the S3
     # gateway: weed server, on one claim. The chart's separate components
@@ -114,6 +120,58 @@ data:
         - -s3.iam=false
       data:
         type: persistentVolumeClaim
+      # Mutual TLS on every gRPC port, and signed tokens on every write and
+      # read of a volume and of the filer's HTTP port. The certificate is the
+      # pod's one identity (seaweedfs-server-tls) for the master, the volume
+      # server, the filer and the S3 gateway, as server and as client. The
+      # master and the filer accept the pod itself and the Jobs that
+      # administer the store (seaweedfs-shell); the volume server and the S3
+      # gateway's gRPC only the pod. Without an allowed name a component
+      # accepts any certificate the CA issued.
+      extraEnvironmentVars:
+        WEED_GRPC_CA: /etc/sw/tls/ca.crt
+        WEED_GRPC_MASTER_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_MASTER_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_MASTER_ALLOWED_COMMONNAMES: seaweedfs-server,seaweedfs-shell
+        WEED_GRPC_VOLUME_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_VOLUME_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES: seaweedfs-server
+        WEED_GRPC_FILER_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_FILER_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_FILER_ALLOWED_COMMONNAMES: seaweedfs-server,seaweedfs-shell
+        WEED_GRPC_S3_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_S3_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_S3_ALLOWED_COMMONNAMES: seaweedfs-server
+        WEED_GRPC_CLIENT_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_CLIENT_KEY: /etc/sw/tls/tls.key
+      secretExtraEnvironmentVars:
+        WEED_JWT_SIGNING_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: signing_key
+        WEED_JWT_SIGNING_READ_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: signing_read_key
+        WEED_JWT_FILER_SIGNING_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: filer_signing_key
+        WEED_JWT_FILER_SIGNING_READ_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: filer_signing_read_key
+      # The whole Secret, never a subPath of it: a subPath mount is not
+      # updated when cert-manager renews the certificate.
+      extraVolumes: |
+        - name: grpc-tls
+          secret:
+            secretName: seaweedfs-server-tls
+            defaultMode: 0440
+      extraVolumeMounts: |
+        - name: grpc-tls
+          mountPath: /etc/sw/tls
+          readOnly: true
       # Kyverno's baseline (kernel/security/kyverno/policies) applies to
       # system namespaces: no privilege escalation, RuntimeDefault seccomp,
       # every capability dropped, and non-root. The image's own user is

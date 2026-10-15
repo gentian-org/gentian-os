@@ -497,9 +497,8 @@ echo "restored bucket %[2]s"`, workDir, bucket, platformRemote), PlatformStorage
 		unpack,
 		provision,
 	}, restore, nil)
-	// The provision step administers the store with weed shell, which its
-	// NetworkPolicy admits by this label.
-	job.Spec.Template.Labels[ObjectStorageShellLabel] = "true"
+	// The provision step administers the store with weed shell.
+	ObjectStoreShellPod(&job.Spec.Template)
 	return job
 }
 

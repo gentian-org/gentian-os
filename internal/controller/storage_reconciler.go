@@ -124,7 +124,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bo
 	// inventory's: a restore runs the same one before it writes a bucket's
 	// objects back.
 	container := backup.ObjectStorageProvisionContainer("create-bucket", s3BucketName(tenant, appName), keySecret)
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketJobName(tenant.Name, appName),
 			Namespace: s3Namespace,
@@ -138,10 +138,6 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bo
 			TTLSecondsAfterFinished: &ttl,
 			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
-				// The object store's NetworkPolicy admits this pod to the
-				// master and the filer, which the container administers the
-				// store through, by this label.
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{backup.ObjectStorageShellLabel: "true"}},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{container},
@@ -149,6 +145,10 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bo
 			},
 		},
 	}
+	// The container administers the store through the master and the
+	// filer, which admit this pod by its label and its client certificate.
+	backup.ObjectStoreShellPod(&job.Spec.Template)
+	return job
 }
 
 // storageEndpoint returns the object store's S3 endpoint from its

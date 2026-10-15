@@ -75,8 +75,14 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// pair left the spec: APP_ACCESS_KEY and APP_SECRET_KEY are read
 		// from the Secret of the Job's name, which the Job owns
 		// (ensureProvisioningJobSecrets), and are written into no Job.
-		"bucket":         {makeS3BucketJob(tenant, "wiki", true), "09420de1d58d46a42c70b0c6dd7acf7e6d9c9ef89980fa3f9d66f339d7543131"},
-		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false), "9ed306136ae01d209c6f12054064db4733ab99a3d140b375c6987cb24240a969"},
+		// Both moved again, deliberately, when the store's administration
+		// became mutual TLS: the pod mounts the client certificate
+		// (backup.ObjectStoreClientTLSSecret), weed shell reads its
+		// [grpc.client] settings from WEED_GRPC_*, and the filer's signing
+		// key, which s3.configure needs a token of, is read from the
+		// store's signing Secret.
+		"bucket":         {makeS3BucketJob(tenant, "wiki", true), "b8b6bda18925bf9da9324ce60f1e574280306f454068d0a337d44573311c28b2"},
+		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false), "56ebf6847888baa1559a5429f977c4c1bb81c6fbd8267282480dcd42419cda2a"},
 		"cache user":     {makeRedisACLJob(tenant, "wiki", true), "e69e2958d1a57f59a3e92f20f07af87036ada08858c580d218ec13c358caabeb"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {
