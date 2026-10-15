@@ -414,3 +414,81 @@ func TestComponentRules(t *testing.T) {
 		expect(t, c.name, v.check(t, c.obj, c.old), c.want)
 	}
 }
+
+// An adapter is a class of its own, reached by nothing but the component that
+// speaks as a person. These are the rules the class carries at admission.
+func TestAdapterProfileRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	adapter := `
+  adapter:
+    adapts: {profile: openproject, versions: ["15.4.0"]}
+    speaksAs: token
+    tools:
+    - name: create-task
+      version: v1
+      description: {en: "Create a task in a project", de: "Eine Aufgabe in einem Projekt anlegen"}
+      class: change
+      input: {type: object, properties: {title: {type: string}}, required: [title]}
+      output: {type: object, properties: {id: {type: integer}}}
+      identifiers: [/id]
+      reverse: {name: delete-task, version: v1}
+    - name: delete-task
+      version: v1
+      description: {en: "Delete a task"}
+      class: change
+    - name: list-tasks
+      version: v1
+      description: {en: "List the tasks of a project"}
+      class: read
+`
+	head := "  classes: [adapter]\n  launch: none\n  trustTier: certified"
+	cases := []struct{ name, spec, want string }{
+		{"an adapter", head + adapter, ""},
+
+		{"an adapter that is also an app", "  classes: [adapter, app]\n  launch: none\n  trustTier: certified" + adapter, "adapter is exclusive"},
+		{"an adapter with no tools", head + "\n  adapter: {adapts: {profile: openproject}, speaksAs: token, tools: []}\n", "tools"},
+		{"an adapter without its block", head + "\n", "spec.adapter is for class adapter"},
+		{"an app with a tool list", "  classes: [app]\n  launch: none\n  trustTier: certified" + adapter, "spec.adapter is for class adapter"},
+		{"an adapter someone opens", "  classes: [adapter]\n  launch: from\n  launchFrom: tasks\n  trustTier: certified" + adapter, "an adapter has launch none"},
+		{"an adapter on the gateway", head + adapter + "  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", "an adapter exposes nothing"},
+		{"an adapter that provides a contract", head + adapter + "  provides:\n  - {name: tools}\n", "an adapter provides no contract"},
+		{"an adapter that integrates", head + adapter + "  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n", "an adapter declares no integrations"},
+		{"an adapter that vouches", "  classes: [adapter]\n  launch: none\n  trustTier: platform" + adapter + "  requires:\n    services:\n      vouching: {}\n", "an adapter does not vouch for people"},
+		{"an adapter placed on every tenant", head + adapter + "  defaultForTenants: true\n", "never placed by default"},
+		{"an adapter that adapts nothing", head + "\n  adapter: {speaksAs: token, tools: [{name: t, version: v1, description: {en: x}}]}\n", "spec.adapter.adapts names the app"},
+		{"a reverse that is not one of its tools", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: token\n    tools:\n    - {name: create-task, version: v1, description: {en: x}, reverse: {name: delete-task, version: v1}}\n", "a tool's reverse names a tool of this adapter"},
+		{"a tool with no description", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: token\n    tools:\n    - {name: t, version: v1, description: {}}\n", "description"},
+		{"an unknown way to speak as the person", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: service-account\n    tools:\n    - {name: t, version: v1, description: {en: x}}\n", "Unsupported value"},
+		{"an unknown tool class", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: token\n    tools:\n    - {name: t, version: v1, description: {en: x}, class: write}\n", "Unsupported value"},
+	}
+	for _, c := range cases {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+
+	// An adapter can be an API: a tool server outside the cluster, which it
+	// reaches for agents as an API entry does for people. It adapts no app of
+	// the tenant, and it is still never an addon.
+	apiHead := `
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata: {name: x}
+spec:
+  version: "1.0.0"
+  classes: [adapter]
+  launch: none
+  trustTier: certified
+  adapter: {speaksAs: token, tools: [{name: search, version: v1, description: {en: "Search the web"}, class: read}]}
+`
+	for _, c := range []struct{ name, spec, want string }{
+		{"an adapter that is an API", "  package: {api: {baseUrl: \"https://tools.example\"}}\n", ""},
+		{"an adapter that is an addon", "  package: {addon: {id: tools, of: nextcloud-base-ce}}\n", "an adapter is deployed or reached"},
+	} {
+		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
+	}
+
+	// A Component of the class: the class is the profile's, and is immutable.
+	cv := loadCRD(t, "gentianos.io_components.yaml")
+	comp := "apiVersion: gentianos.io/v1alpha1\nkind: Component\nmetadata: {name: x, namespace: tenant-a}\nspec:\n  profileRef: {name: x}\n  class: %s\n"
+	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "")
+	expect(t, "an adapter instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "adapter")), "class is immutable")
+}

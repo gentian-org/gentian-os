@@ -13,7 +13,7 @@ OS kernel does the same for cloud-native applications.
 | OS Function | Traditional OS | Gentian OS Equivalent | Scope |
 |---|---|---|---|
 | Identity & permissions | UID/GID, PAM | **Suze** — Keycloak (OIDC/SSO) + OpenFGA (ReBAC) | v1 |
-| Filesystem | VFS, ext4 | S3 object storage (MinIO); hierarchical files via installable apps (e.g. Nextcloud WebDAV) | v1 |
+| Filesystem | VFS, ext4 | S3 object storage (SeaweedFS); hierarchical files via installable apps (e.g. Nextcloud WebDAV) | v1 |
 | Networking | TCP/IP stack | K8s CNI + Gateway API edge + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) | v1 |
 | Process execution | Scheduler, init | K8s scheduling + GitOps deployment | v1 |
 | Secrets keyring | Keychain | Centralised secret store with tenant-scoped policies | v1 |
@@ -75,7 +75,7 @@ apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 | Kernel function | Default-install component | Desktop OS analogue | Standard contract exposed to apps |
 |---|---|---|---|
 | Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM | OIDC issuer, groups that give access to apps, ReBAC graph |
-| Object storage | **MinIO** (S3) | Page cache, `/tmp`, `/var` | S3 endpoint + per-app bucket via kernel requirement |
+| Object storage | **SeaweedFS** (S3) | Page cache, `/tmp`, `/var` | S3 endpoint + per-app bucket via kernel requirement |
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Redis / Memcached** | Page cache, `tmpfs` | `cache` requirement |
 | Edge routing | **Gateway API** (Envoy Gateway) | Network stack + firewall | TLS termination, HTTPRoute, tenant wildcards |
@@ -98,7 +98,7 @@ reach Ready. They are the **kernel devices** the syscall layer assumes
 are present — formatted, mounted, addressable — at boot.
 
 A tenant can later swap implementations (e.g. external S3 instead of
-MinIO) without breaking apps that program against the contract,
+SeaweedFS) without breaking apps that program against the contract,
 the way a desktop user can replace `C:` without breaking
 `CreateFile()`.
 

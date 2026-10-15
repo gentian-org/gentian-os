@@ -32,7 +32,7 @@ import (
 // description -- serves contracts to other components, serves no human -- is
 // the definition of a service.
 //
-// +kubebuilder:validation:Enum=service;app;shared-app
+// +kubebuilder:validation:Enum=service;app;shared-app;adapter
 type ComponentClass string
 
 const (
@@ -46,6 +46,11 @@ const (
 	// ComponentClassSharedApp is one backend in shared-<app> serving several
 	// tenants, each of which still installs the app for itself.
 	ComponentClassSharedApp ComponentClass = "shared-app"
+	// ComponentClassAdapter turns one app's abilities into tools for a
+	// program that acts for a person. It runs in tenant-<t> beside the app,
+	// nobody opens it, and only a component of the tenant that may speak as
+	// a person reaches it (adapter_types.go).
+	ComponentClassAdapter ComponentClass = "adapter"
 )
 
 // ComponentLaunch is how a person reaches a component. It exists because the
@@ -132,6 +137,20 @@ const (
 // reserved word, so the API server names the field __package__.
 // +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile))) || (has(self.__package__.api) && has(self.__package__.api.tile))",message="launch tile needs a tile on an exposure or on package.api: an app nobody can open is installed and lost"
 // +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e, has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))",message="a tile means launch tile: say how a person reaches this"
+// An adapter is reached by the platform's component that speaks as a person,
+// and by nothing else: no person opens it, nothing is exposed, no other app is
+// handed a contract to call it, and it holds no credential of an app of its
+// own -- vouching would be one for every app, a contract key one for its app.
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('adapter' in self.classes) || self.classes.size() == 1",message="adapter is exclusive: an adapter is a component of its own, never also the app it adapts"
+// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'adapter' in self.classes) == has(self.adapter)",message="spec.adapter is for class adapter, and class adapter needs it: the reviewed list of its tools"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || self.launch == 'none'",message="an adapter has launch none: nobody opens it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.expose) || self.expose.size() == 0",message="an adapter exposes nothing: only the component that speaks as a person reaches it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.provides) || self.provides.size() == 0",message="an adapter provides no contract: another app reaching it through one would call a tool past the component that checks every call"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.integrations) || self.integrations.size() == 0",message="an adapter declares no integrations: it reaches the app it adapts (spec.adapter.adapts), and a contract key would be a credential of its own at that app"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)",message="an adapter does not vouch for people: it speaks as the person with the credential it is handed for one call"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.__package__.addon)",message="an adapter is deployed or reached: a chart, a composition, or an api -- not an addon inside another component"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, adapts none"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
 type ComponentProfileSpec struct {
 	// Classes lists the modes this component may be deployed under. It is a
 	// certification claim, not a choice: whether a component *can* serve
@@ -185,6 +204,11 @@ type ComponentProfileSpec struct {
 	// tenant otherwise.
 	// +optional
 	Provides []ContractRef `json:"provides,omitempty"`
+
+	// Adapter is what an adapter adapts and the reviewed list of its tools.
+	// Present exactly when the class is adapter.
+	// +optional
+	Adapter *AdapterSpec `json:"adapter,omitempty"`
 
 	// Secrets are values the platform generates and holds that have no external
 	// counterparty. Credentials that arrive with a granted requirement are not
@@ -246,7 +270,7 @@ type ComponentProfileSpec struct {
 
 	// DefaultWhereStoreOffered means every tenant except the platform tenant
 	// gets a Component of this profile for as long as the cluster offers an
-	// App Store: licence reporting is on and the Cluster claim names a store
+	// App Store: usage statistics are on and the Cluster claim names a store
 	// (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
 	// creates its own.
 	//

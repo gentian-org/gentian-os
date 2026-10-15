@@ -29,7 +29,7 @@ The current target. The sections below give the detail and the reasons.
 | --- | --- | --- | --- | --- |
 | **Desktop** (§1) | on the cluster, per tenant | everyone | the tiles the signed-in person may open | opens them. Nothing else: no install, uninstall, add-on, access, repository or store logic |
 | **Admin console** (§2) | on the cluster, per tenant | administrators | people and groups, policies, resources, credentials, and under **Apps** every installed app: its state, who has access and whether it is for everyone, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalogue |
-| **App Store app** (§3) | on the cluster, per tenant; absent when the licence report is off or no store is named | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. After a sign-in to the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
+| **App Store app** (§3) | on the cluster, per tenant; absent when the usage statistics report is off or no store is named | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. After a sign-in to the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
 | **The store** | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalogue to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
 | **Operations Console** | on the cluster, where installed | whoever looks after the cluster | an add-on's own screens ([sovereignty-concept.md](sovereignty-concept.md) §5) | what the add-on does; it is not part of the OS and not changed by this document |
 | **Command line** | the administrator's machine | administrators | — | `kubectl gentian apps install …` through the director. With no store it is the only way to install an app |
@@ -267,8 +267,8 @@ repository beside the desktop and the admin console.
   the platform tenant; its tile is shown only to people who hold
   `can_install_app` there, and its address asks the same of whoever opens
   it.
-- **Absent without licence reporting.** The store depends on the cluster's
-  licence report ([operations.md §6.2](../design/operations.md)). A cluster
+- **Absent without usage statistics.** The store depends on the cluster's
+  usage statistics report ([operations.md §6.2](../design/operations.md)). A cluster
   with reporting off, or one that names no store, has no App Store app.
 - **Placed by the operator.** Built: the operator chart ships its profile,
   and the operator places and removes the component by those two conditions
@@ -297,7 +297,7 @@ repository beside the desktop and the admin console.
   is learned at that sign-in, not before; the catalogue is readable either
   way.
 - **Not an entitlement issuer, and neither is the store.** The store decides
-  nothing for the cluster and the cluster does no licence gating (AD-3).
+  nothing for the cluster and the cluster does no license gating (AD-3).
   There is no signed grant, no store key on the Cluster claim, and no tuple
   for a tenant's right to an app. Whether something has been paid for is the
   business of whoever sells it, and it is enforced where the thing sold is
@@ -325,8 +325,8 @@ artefact of this plan, written so that a store can be built against it:
 [artefacts/store-api.md](artefacts/store-api.md) in prose and
 [artefacts/store-api.openapi.yaml](artefacts/store-api.openapi.yaml)
 machine-readable, the second being the one that counts where they differ.
-The licence report the store depends on is
-[artefacts/licence-report.openapi.yaml](artefacts/licence-report.openapi.yaml).
+The usage statistics report the store depends on is
+[artefacts/usage-statistics.openapi.yaml](artefacts/usage-statistics.openapi.yaml).
 
 **The flow.**
 

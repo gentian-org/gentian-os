@@ -58,7 +58,7 @@ func buildOIDCPackScript(
 	scopeLookupBlock := keycloak.ShellLookupClientScopeID()
 	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
 
-	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
@@ -79,15 +79,15 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 %s
 
 # --- OIDC client ---
-EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
 if echo "${EXISTING}" | grep -q '"id"'; then
   echo "client ${CLIENT_ID} already exists"
 else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
     -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
-  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+  EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
   echo "client ${CLIENT_ID} created"
 fi
@@ -114,7 +114,7 @@ fi
 # Still READ, because the group-to-role mapping below needs the role's id and
 # that mapping has no declarative form yet: it needs the entitlement group's
 # id, and the group is still made by the gentian-groups Job.
-ROLE_JSON=$(curl -sf -H "${AUTH_HEADER}" \
+ROLE_JSON=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles/${CLIENT_ROLE}")
 if [ -z "${ROLE_JSON}" ]; then
   echo "ERROR: client role ${CLIENT_ROLE} not found; the Composition has not created it yet" >&2
@@ -172,7 +172,7 @@ func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) st
 		`\"serviceAccountsEnabled\":false,\"redirectUris\":[],\"webOrigins\":[],` +
 		`\"fullScopeAllowed\":` + fullScope + `,\"secret\":\"${OIDC_CLIENT_SECRET}\"}`
 
-	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 
@@ -184,20 +184,20 @@ fi
 `+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
-EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
 if echo "${EXISTING}" | grep -q '"id"'; then
   echo "service client ${CLIENT_ID} already exists in realm ${REALM}"
 else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
     -d "%s"
-  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+  EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
   echo "service client ${CLIENT_ID} created in realm ${REALM}"
 fi
 %s
-curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+kc_curl -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
   -d "%s"
 

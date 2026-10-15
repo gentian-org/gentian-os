@@ -127,7 +127,7 @@ and AD-14 were corrected on 2026-10-11.
 | --- | --- | --- |
 | AD-1 | Nine security principles normative; every request passes one named enforcement point | **Holds as amended on 2026-10-09; the amendment is not confirmed as written (§10.4).** The publishing proxy is a named enforcement point that checks no caller: it filters and limits. On an entry of `authMode: app` it passes the caller's credential to the app, which checks it; the platform does not know that caller, and a removed person's app credential lives until the app revokes it (roadmap 1.34). **Departs:** a route with no policy is served with no check at all (§7.3), and the sign-in sidecar's `/sso/acs` passes no enforcement point (§7.4). The entry names five enforcement points; the registrar and the usher decide requests and are not among them (§8.13) |
 | AD-2 | The director is the only writer of the deployment repository | **Holds for who writes git; three things stand beside it.** Commits are signed, the operator holds no git credential, and the director is the only program on the cluster that writes the repository. For a private repository the installer gives Argo CD the repository's credential directly until the vault's copy takes over (`A-06`, `C-05-repository-handoff`). Beside it: Argo CD's rule that only signed commits sync is rendered only when the repository and the key ids are known at install (§8.9); Argo CD and the director share one credential that can push (defect 16); and the director has the operator do things that leave no commit, some of which destroy data (decision 35) |
-| AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licences and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
+| AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licenses and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
 | AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** The design documents name the kind as the code does since 2026-10-09 |
 | AD-5 | Privileges are requests with one approval path | **Does not hold for network paths.** Egress a profile declares reaches the network policy without an approval. So do a path to the whole control namespace for a profile that names the director's, custodian's, registrar's or usher's address, and any namespace a profile's annotation names (decision 34). Holds for integrations, pod-security waivers and cluster roles since 2026-10-10 (decisions 22 and 23) |
 | AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Holds as amended on 2026-10-09, not yet shown on a cluster; parts of the amendment are not the owner's (decision 2, §10.5).** Publishing works as the entry now reads: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the limit AD-1 states), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. Who approves is as the entry says since it was changed on 2026-10-09: the group `gentian:tenant:<t>:perimeter` is created with the tenant, the cluster's administrator holds `can_expose` in every tenant its cluster operates, and a tenant's admins hold it only where the cluster's administrator switched it on (§2). **Departs:** the entry says nothing is published by default, and the install publishes the page on the bare domain itself, with no approver (§7.10) |
@@ -246,7 +246,7 @@ been seen working on a cluster. Until it has, it is not done.
   set again by a restore and by an import at the app's own paths, the app
   handed them and restarted; and an app's own secrets drawn at random under
   `secretMode: random`. The operator's part is proven in local containers,
-  against MinIO and OpenBao. That External Secrets fills the app's Secret
+  against the object store and OpenBao (SeaweedFS since 2026-10-15). That External Secrets fills the app's Secret
   again when told to, and that the Helm provider upgrades a release whose
   value changed, is played by the tests and has not been seen.
 - A tenant's deletion removing its mailboxes, and failing loudly.
@@ -277,6 +277,10 @@ been seen working on a cluster. Until it has, it is not done.
   accepts the repository again once `B-01` and `B-10` have run with the new
   id.
 - The director's clean stop and its write retry bounded by time.
+- The installer stopping when its settings, its deployments checkout and the
+  cluster `kubectl` reaches describe different clusters
+  ([install-reference.md §4](../install-reference.md), *One run, one
+  cluster*). This is shown against stand-ins only (`test-one-cluster`).
 
 - The Models tab of the administration console and `kubectl gentian models`:
   the director's `GET` and `PUT /v1/clusters/{c}/models`, the commit of the
@@ -339,6 +343,27 @@ Carried over from before, and still not shown:
 - The registrar keeping a tenant administrator's invitation until the
   tenant is ready and mailing it itself (iam.md §1.4).
 
+### Added on 2026-10-15
+
+- SeaweedFS 4.48 as the platform's object store, in place of MinIO: one pod
+  (master, volume server, filer, S3 gateway) from its own chart, vendored in
+  `charts/infra/seaweedfs` and served from the platform's chart index; the
+  administrator's credential at `gentian-os/kernel/storage/s3`; `s3-admin`
+  in place of `minio-admin`; the master's and the filer's ports admitted only
+  to the Jobs that run `weed shell`. An app's bucket and the identity it
+  reads it with (one per bucket, named after it, never Admin) made and
+  destroyed with `weed shell`. Every Job that moves a tenant's objects on
+  rclone, in the platform's storage tools image. New installs only; nothing
+  migrates. Proven in local containers against the pinned server
+  (`make test-object-storage-lab`): the bucket and destroy Jobs, a capture
+  and a restore of a bucket and of a volume, the upload and its checksum,
+  the manifest, a bundle's deletion, and that one app's key cannot read,
+  write or list another app's bucket, cannot delete its own, and is refused
+  once its bucket is purged. *Needs a cluster:* the Release under
+  provider-helm, the pod under the Kyverno baseline, the NetworkPolicy under
+  Calico (the master's address names a Service, the filer is reached at the
+  pod), and an app writing to its bucket.
+
 ## 3. Known defects, open
 
 Defects 1 to 28 are carried from the list as it stood on 2026-10-10.
@@ -348,7 +373,8 @@ day. What the two checks of 2026-10-11 found is in sections 7, 8 and 9
 and is not repeated in this table. Defects 29 and 30 were added on 2026-10-11
 from the repair of the catalogue's sign-in test and were read in the code
 at `be3cbea3` of `develop`. Defect 31 was added on 2026-10-13 from a mail
-fault on an installed cluster and reproduced in local containers.
+fault on an installed cluster and reproduced in local containers. Defect 32
+was added on 2026-10-15.
 
 | | Defect | Where it is described |
 | --- | --- | --- |
@@ -382,7 +408,8 @@ fault on an installed cluster and reproduced in local containers.
 | 28 | **Closed in the code on 2026-10-10, not yet shown on a cluster: an `ExternalSecret` in the platform tenant's namespace could read any kernel path.** The kernel's store admitted `tenant-platform` by name for the desktop's database password. That password is now at `gentian-os/tenants/platform/apps/shell/database`, read through `openbao-tenant-platform`, and the kernel's store admits no tenant's namespace. The role was already the desktop's own, owning only its database. On a cluster installed before, the path appears with the installer's next run; until then both `ExternalSecret`s report an error and keep the Secret they made. Decision 27 | [security.md §5](../design/security.md) |
 | 29 | **The sign-in sidecar names a person to its app by Keycloak's email field, which holds the recovery address.** The sidecar's SAML client is composed with `forceNameIdFormat: true` and `nameIdFormat: email` (`crossplane/compositions/app-default.yaml`), and the comment there says the address is the one thing the sidecar reads. The registrar creates a person with the workspace address as the username and, when the invitation gave a different address, that other address in the email field (`internal/registrar/identity/people.go`, `Invite`): the field is the private address a password reset is mailed to. For such a person the app beside a sidecar (Docmost, Activepieces, OpenProject) is told the recovery address as who they are, or the sidecar refuses the sign-in because the address differs from the person the front door admitted. A person whose two addresses are the same is not affected, and the sidecar's own test has only such people. The realm's shared `email` scope and the OIDC packs of Nextcloud, XWiki and Element were pointed at the username for this reason; the SAML path was not. *Confirmed in code* for the two settings; what an app then shows, or whether the sign-in is refused, *needs a cluster* | [iam.md §1.11](../design/iam.md), [security.md §2.12](../design/security.md) |
 | 30 | **Nothing found sets the `uid` attribute that two packs read as the account name.** The OIDC packs of Nextcloud (both editions) and XWiki in the catalogue repository (`develop`, `03fcda7`) carry a mapper that writes the claim `gentian_username` (`opendesk_username` in one edition) from the user attribute `uid`. The registrar's invitation writes the username, the email field, the names, the groups and, where the addresses differ, the invitation address (`internal/registrar/identity/people.go`, `Invite`); it writes no `uid`. The tenant's Composition declares the attribute in the realm's user profile and writes no value; the only mappers in this repository that carry `uid` belong to the kernel identity provider in tenant realms, which is switched off. If nothing fills it, a person invited on the platform reaches these apps with an empty account-name claim: the app then falls back to another claim, or refuses the sign-in. *Confirmed in code* that the registrar does not set it; that nothing else does is *reasoned, not confirmed* (no writer was found); the effect in Nextcloud and XWiki *needs a cluster* | the catalogue repository's `profiles/nextcloud/base/*/oidc-catalog.yaml`, `profiles/xwiki/xwiki-ce/oidc-catalog.yaml` |
-| 31 | **A realm on a cluster with its own mail had a mail server without its password. Closed in the code on 2026-10-13 and shown in local containers, not yet on a cluster.** Keycloak answered an invitation with `failed to connect, no password specified?`. Two causes, both reproduced against Keycloak 26.8.0 with provider-keycloak v2.19.0. (a) The mail mode was renamed from `kernel` to `system` and two comparisons kept the old word: the installer gave the kernel realm no mail server and wrote no `keycloak-smtp-credentials`, so the operator built no mail-server Job for any tenant, and the Job's script would have handed a tenant realm the kernel realm's login. (b) That left the tenant's Composition as the only writer, and it names the password by reference to a Secret the operator wrote only after the realm existed: the provider wrote authentication on, the login and no password, and reported `Synced`. It puts that right at its next poll only if it has not restarted since; after a restart it never does, because it cannot read a password back. Now: both comparisons say `system`, the Job runs again over existing realms (version 5), the login is minted before the realm is declared, and step `D-03` reports work to do on a `system` cluster without the Secret. **An installed cluster needs** the operator's new image and `./install.sh --only D-03`. **Open beside it, not built:** with a relay, the Composition declares no mail server, the provider copies the live one into the resource without a password reference, and its next update of the realm writes the block without the password, seen two seconds after the Job in the local containers — the mail is gone until the Job's version changes; a tenant whose `spec.mail.mode` is not `selfhosted` on a `system` cluster is declared a login nobody mints; and a realm the realm Job creates before the provider does is copied `loginWithEmailAllowed: true`, which the provider then refuses beside `duplicateEmailsAllowed` on every update. Not established on the cluster: what the kernel realm's mail server held when it failed the same way. | [mail.md §5d](../design/mail.md), `scripts/lib/portal-login-bootstrap.sh`, `internal/controller/keycloak_tenant_smtp.go`, `internal/controller/mail_apppassword.go`, `make test-realm-smtp-lab` |
+| 31 | **A realm on a cluster with its own mail had a mail server without its password. Closed in the code on 2026-10-13 and shown in local containers, not yet on a cluster.** Keycloak answered an invitation with `failed to connect, no password specified?`. Two causes, both reproduced against Keycloak 26.8.0 with provider-keycloak v2.19.0. (a) The mail mode was renamed from `kernel` to `system` and two comparisons kept the old word: the installer gave the kernel realm no mail server and wrote no `keycloak-smtp-credentials`, so the operator built no mail-server Job for any tenant, and the Job's script would have handed a tenant realm the kernel realm's login. (b) That left the tenant's Composition as the only writer, and it names the password by reference to a Secret the operator wrote only after the realm existed: the provider wrote authentication on, the login and no password, and reported `Synced`. It puts that right at its next poll only if it has not restarted since; after a restart it never does, because it cannot read a password back. Now: both comparisons say `system`, the Job runs again over existing realms (version 5), the login is minted before the realm is declared, and step `D-03` reports work to do on a `system` cluster without the Secret. **An installed cluster needs** the operator's new image, the definitions (`./install.sh --only B-06`) and, with its own mail, `./install.sh --only D-03`. **Closed in the code on 2026-10-13 beside it, shown with the provider in local containers:** with a relay the Composition declared no mail server, the provider copied the live one into the resource without a password reference and wrote it back without the password two seconds after the Job; the Composition now declares the block in both modes from `spec.realmMail`, which the operator states once the password's Secret exists (Job version 6). A tenant the cluster's own mail mints no login for is declared no mail server and gets no Job. `loginWithEmailAllowed` is declared, so a realm the realm Job creates first is no longer refused its updates. The operator's image and the definitions of step `B-06` go together: the new Composition under an operator that states no `realmMail` declares no mail server. **Not established:** what the kernel realm's mail server held on the cluster when it failed the same way; by the code it had none, which fails with another message, and this is accepted as unexplained for now. **Not built:** a realm that had a mail server and is no longer stated one keeps the block the provider copied. | [mail.md §5d](../design/mail.md), `scripts/lib/portal-login-bootstrap.sh`, `internal/controller/keycloak_tenant_smtp.go`, `internal/controller/mail_apppassword.go`, `make test-realm-smtp-lab` |
+| 32 | **Every restore failed on its first step. Closed in the code on 2026-10-15, shown in local containers, not yet on a cluster.** Each restore Job's fetch step downloaded MinIO's client from `dl.min.io` when it ran; the address stopped answering when MinIO withdrew the client, and every restore of every kind -- database, bucket, volume, realm, mailboxes, desktop -- failed before it read a byte. Now the fetch, like every Job that moves a tenant's objects, runs rclone and age from the platform's storage tools image, at the operator's own tag, and downloads nothing. A bundle written before keeps restoring: the checksum beside an artefact has the format it had | `internal/backup/restore_jobs.go`, `kernel/images/storage-tools`, `make test-object-storage-lab` |
 
 
 ## 4. Decisions waiting for the owner
@@ -976,14 +1003,14 @@ the code or its commit, the entry says so.
       touch each other's rollout. It changes how profiles are named and
       found everywhere; it is not a small change.
 
-38. **The licence report: its signing key, and how people are counted.**
+38. **The usage statistics report: its signing key, and how people are counted.**
     **Built, not decided.** Both were proposed while the owner was away
     and built without an answer (`d4ef4369`, 2026-10-06).
     - *In the code, confirmed:* the report is signed with a key the
-      install puts into the vault (`internal/licencereport/reporter.go`).
+      install puts into the vault (`internal/usagestatistics/reporter.go`).
       The operator sends it, and counts people with Keycloak's master
       administrator credential: accounts per realm and members per app
-      group (`internal/controller/licence_report_counts.go`). The owner
+      group (`internal/controller/usage_statistics_counts.go`). The owner
       had been told the counts could come from the rights store and would
       need no access to Keycloak.
       [operator-split-plan.md](operator-split-plan.md) describes the
@@ -991,7 +1018,7 @@ the code or its commit, the entry says so.
       report carries head-counts, with no names.
     - *Also open:* the owner said that all apps count, not only installs
       from a store. Built: every entry of `spec.apps` that carries a
-      digest (`internal/licencereport/report.go`). An app without a digest
+      digest (`internal/usagestatistics/report.go`). An app without a digest
       is not reported. Whether "all" meant that is not known. The chart's
       comment still says "the apps installed through the App Store"
       (`kernel/bootstrap/chart/values.yaml`).
@@ -1131,7 +1158,7 @@ the code or its commit, the entry says so.
       user of its app and is handed the app's full database login; nobody
       administers a new OpenProject until somebody holds the platform's
       App Admin role; the handler reaches what the vendor sells as a
-      feature of its paid edition, which is a licence question.
+      feature of its paid edition, which is a license question.
     - *Option A:* confirm what is built, and bring sign-in-procedure.md's
       decisions 3 and 7 in line with it.
     - *Option B:* the plan's recommendation. OpenProject goes back to a
@@ -1156,7 +1183,7 @@ the code or its commit, the entry says so.
       volume claims (`charts/gentian-os/templates/clusterrole.yaml`,
       commit `fe3d387a`, 2026-10-09). The object store's network rule
       admits backup pods from those namespaces
-      (`kernel/services/infra-minio/manifests/templates/networkpolicy.yaml`).
+      (`kernel/services/infra-seaweedfs/manifests/templates/networkpolicy.yaml`).
       *That the backup key is staged into `kernel-data` and `system-mail`
       is reasoned, not confirmed.*
     - *Option A:* confirm it.
@@ -1715,7 +1742,7 @@ the master realm. The operator has no git credential.
      `internal/controller/identity_reconciler.go`). Defect 15. The same
      password is put into backup, restore and provisioning Jobs
      (`internal/backup/jobs.go`), and is used to count people for the
-     licence report (decision 38).
+     usage statistics report (decision 38).
    - The only code that writes the rights store. On 2026-10-05 the plan
      gave that to the director (§10.1).
    To bring it in line with the plan's own rule: the store's write and

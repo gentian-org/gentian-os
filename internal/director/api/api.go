@@ -71,6 +71,7 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
 	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
@@ -107,6 +108,7 @@ type Repository interface {
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
 	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
+	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
@@ -462,6 +464,13 @@ func (s *Server) routes() {
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// A second address for one published surface, directly under the
+		// cluster's own domain. can_configure, and not the tenant's
+		// approver: a name under the cluster's domain is the cluster's to
+		// give. The approver publishes the surface first; this adds nothing
+		// to what is public, only where it answers.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias", "can_configure", s.clusterObject, s.setExposureAlias)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias", "can_configure", s.clusterObject, s.clearExposureAlias)
 		// Where software may enter the cluster: its catalogues. Reading is
 		// can_audit, like the settings; every change is can_configure -- a
 		// catalogue for every tenant, a catalogue for one tenant, and
@@ -548,6 +557,12 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/exposures", "can_view", tenantObject, s.tenantExposures)
 	s.guarded("PUT /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.publishExposure)
 	s.guarded("DELETE /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.withdrawExposure)
+
+	// The perimeter as those who answer for it see it: the same registry, and
+	// its history. can_expose, so an approver who is not otherwise a member
+	// of the tenant sees what they approve -- and nothing else of the tenant's.
+	s.guarded("GET /v1/tenants/{t}/perimeter/exposures", "can_expose", tenantObject, s.tenantExposures)
+	s.guarded("GET /v1/tenants/{t}/perimeter/history", "can_expose", tenantObject, s.perimeterHistory)
 
 	// Where software comes from: the repositories a tenant, or the cluster,
 	// installs from. The address is configuration -- it decides what may
@@ -1377,7 +1392,7 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		// An addon is pinned only inside a pinned app. An addon takes effect
 		// in the release of its base, so a stated build of an addon inside a
-		// base at no stated build pins half of what runs; and the licence
+		// base at no stated build pins half of what runs; and the license
 		// report lists an addon under its app, which it does not list
 		// without a digest. Refused before anything is fetched.
 		if !basePinned {
@@ -1494,7 +1509,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
 		return
 	}
-	if errors.Is(err, gitops.ErrSingleTenancy) {
+	if errors.Is(err, gitops.ErrSingleTenancy) || errors.Is(err, gitops.ErrNameIsAlias) {
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	}
@@ -1572,17 +1587,86 @@ func (s *Server) writeTenantDomain(w http.ResponseWriter, r *http.Request, c cal
 	s.written(w, r, res, err)
 }
 
+// setExposureAlias gives a published surface a second address directly under
+// the cluster's domain: one commit of the alias on the surface's own entry.
+func (s *Server) setExposureAlias(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Host string `json:"host"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Host) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"host": "<name>.<the cluster's domain>"}; DELETE removes the alias`)
+		return
+	}
+	s.writeExposureAlias(w, r, c, body.Host)
+}
+
+// clearExposureAlias takes the second address away. The surface stays at its
+// own.
+func (s *Server) clearExposureAlias(w http.ResponseWriter, r *http.Request, c call) {
+	s.writeExposureAlias(w, r, c, "")
+}
+
+func (s *Server) writeExposureAlias(w http.ResponseWriter, r *http.Request, c call, host string) {
+	res, err := s.cfg.Repo.SetExposureAlias(r.Context(), r.PathValue("t"), r.PathValue("inst"), r.PathValue("name"), host, c.meta)
+	switch {
+	case errors.Is(err, gitops.ErrAliasInvalid):
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	case errors.Is(err, gitops.ErrAliasHeld), errors.Is(err, gitops.ErrNotPublished):
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
 // retireTenant stops git describing a tenant, which is what removes it.
 //
 // Whether its data goes with it is the manifest's deletionPolicy, honoured by
 // the operator, not something decided here.
 func (s *Server) retireTenant(w http.ResponseWriter, r *http.Request, c call) {
-	res, err := s.cfg.Repo.RetireTenant(r.Context(), r.PathValue("t"), c.meta)
+	tenant := r.PathValue("t")
+	res, err := s.cfg.Repo.RetireTenant(r.Context(), tenant, c.meta)
 	if errors.Is(err, gitops.ErrTenantProtected) {
 		s.fail(w, r, http.StatusForbidden, err.Error())
 		return
 	}
+	if errors.Is(err, gitops.ErrTenantNotFound) && s.cfg.Lifecycle != nil {
+		s.retireOrphan(w, r, c, tenant, err)
+		return
+	}
 	s.written(w, r, res, err)
+}
+
+// retireOrphan is a retire of a tenant git does not describe. The cluster
+// may still run it: an Argo CD sync that finished after the tenant's
+// directory was removed re-creates the Tenant with nothing owning it, and
+// "tenant not found" was then the answer to the one command that should
+// have removed it. The operator deletes exactly such an object
+// (applifecycle.RemoveOrphanTenant) and nothing else; a Tenant the cluster
+// does not hold either is the not-found it always was.
+func (s *Server) retireOrphan(w http.ResponseWriter, r *http.Request, c call, tenant string, notFound error) {
+	status, body, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/tenants/"+tenant+"/actions/remove-orphan", c.meta.ActorName(), nil)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, fmt.Sprintf("%s in git; asking the cluster whether it still runs it: %v", notFound, err))
+		return
+	}
+	switch status {
+	case http.StatusAccepted:
+		var removed struct {
+			Application     string `json:"application"`
+			AlreadyDeleting bool   `json:"alreadyDeleting"`
+		}
+		_ = json.Unmarshal(body, &removed)
+		detail := fmt.Sprintf("%s was not in git, but the cluster still ran it: its Application %s had been pruned while a sync was finishing, which re-created the Tenant with no owner. It is being deleted now, under its deletionPolicy.", tenant, removed.Application)
+		if removed.AlreadyDeleting {
+			detail = fmt.Sprintf("%s was not in git; the cluster is already deleting it.", tenant)
+		}
+		s.json(w, http.StatusAccepted, map[string]any{"status": "orphan-removed", "detail": detail})
+	case http.StatusNotFound:
+		s.fail(w, r, http.StatusNotFound, notFound.Error())
+	default:
+		s.fail(w, r, status, fmt.Sprintf("%s in git, and the cluster refused to remove it: %s", notFound, lifecycle.ErrorMessage(body)))
+	}
 }
 
 type clusterSettingsRequest struct {

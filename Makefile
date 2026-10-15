@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-build-pin
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-object-storage-lab test-build-pin test-one-cluster
 
 all: generate build test
 
@@ -33,7 +33,12 @@ build:
 ## Install the kubectl-gentian plugin and gtnctl symlink to ~/.local/bin
 install-plugin:
 	install -d $(HOME)/.local/bin
-	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
+	@# The copy says where it came from, so it can tell when it is out of date.
+	sed -e 's|^GENTIAN_PLUGIN_SOURCE=.*|GENTIAN_PLUGIN_SOURCE="$(CURDIR)"|' \
+	    -e "s|^GENTIAN_PLUGIN_COMMIT=.*|GENTIAN_PLUGIN_COMMIT=\"$$(git -C $(CURDIR) rev-parse HEAD 2>/dev/null)\"|" \
+	    scripts/kubectl-gentian > $(HOME)/.local/bin/kubectl-gentian.new
+	install -m 0755 $(HOME)/.local/bin/kubectl-gentian.new $(HOME)/.local/bin/kubectl-gentian
+	rm -f $(HOME)/.local/bin/kubectl-gentian.new
 	ln -sf kubectl-gentian $(HOME)/.local/bin/gtnctl
 	@echo "Installed kubectl-gentian and gtnctl (-> kubectl-gentian) to $(HOME)/.local/bin"
 	@command -v kubectl-gentian >/dev/null 2>&1 || \
@@ -161,7 +166,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-activation-token test-realm-smtp-settings test-provider-activation test-default-profile-digest test-build-pin
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-one-cluster test-install-settings test-mail-egress test-activation-token test-realm-smtp-settings test-provider-activation test-default-profile-digest test-build-pin
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -222,7 +227,7 @@ test-bootstrap-switches:
 test-operator-network-policy:
 	@bash scripts/tests/test-operator-network-policy.sh
 
-## The NetworkPolicy on each shared store -- PostgreSQL, MariaDB, Redis, MinIO --
+## The NetworkPolicy on each shared store -- PostgreSQL, MariaDB, Redis, SeaweedFS --
 ## selects that server's pods, lists or records as closed every port they
 ## declare, and admits every client of scripts/tests/store-clients.yaml and
 ## nobody it says to refuse. Needs helm, no cluster.
@@ -264,6 +269,13 @@ test-mail-edge-lab:
 test-realm-smtp-lab:
 	@bash scripts/tests/test-realm-smtp-lab.sh
 
+## The Jobs that move a tenant's objects -- bucket, capture, upload, manifest,
+## restore, bundle deletion, purge -- run container by container against the
+## object store the platform deploys, with the storage tools image built here.
+## Needs docker and go, so it is its own target and not part of verify.
+test-object-storage-lab:
+	@bash scripts/tests/test-object-storage-lab.sh
+
 test-wildcard-cache:
 	@bash scripts/tests/test-wildcard-cache.sh
 
@@ -281,10 +293,18 @@ test-argocd-repo-credentials:
 ## --dry-run and --validate change nothing. Runs install.sh in both modes in a
 ## sandbox: stand-ins for git, gpg, kubectl, helm, curl and bao that fail the
 ## test on anything that would change something, and a HOME -- deployments
-## checkout included -- that must be byte-identical afterwards. The only way a
-## test ever executes install.sh. No cluster, no network; about a minute.
+## checkout included -- that must be byte-identical afterwards. One of the two
+## tests that execute install.sh. No cluster, no network; about a minute.
 test-dry-run-changes-nothing:
 	@bash scripts/tests/test-dry-run-changes-nothing.sh
+
+## One run, one cluster: a run whose settings, deployments checkout and
+## kubectl cluster describe different clusters stops before it reads, caches,
+## writes or applies anything. Reproduces the three ways a second cluster's
+## settings reached the first, with install.sh against stand-ins in a sandbox
+## HOME; the other test that executes it. No cluster, no network.
+test-one-cluster:
+	@bash scripts/tests/test-one-cluster.sh
 
 ## test-install-settings: where a setting comes from when more than one place
 ## could say -- the environment before install.env before the claim, the issuer

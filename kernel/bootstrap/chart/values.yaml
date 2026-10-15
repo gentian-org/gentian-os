@@ -97,7 +97,7 @@ concierge:
   chartVersion: ""
 # The App Store app's chart, from the same repository and branch, pinned the
 # same way. The profile is always shipped; whether a tenant gets the component
-# is the operator's to decide (licence reporting on, and a store named).
+# is the operator's to decide (usage statistics on, and a store named).
 appStore:
   chartBranch: develop
   chartVersion: ""
@@ -112,21 +112,21 @@ operator:
   # itself.
   tag: ""
 
-# The licence report (docs/design/operations.md): once a day the operator
+# The usage statistics report (docs/design/operations.md): once a day the operator
 # tells an address what this cluster runs -- its tenants, counts of accounts,
 # and the apps installed through the App Store. No personal data, and nothing
 # on the cluster depends on the answer.
-licenceReport:
-  # On unless the installer is told otherwise (--no-licence-report, or
-  # GENTIAN_NO_LICENCE_REPORT=1 in install.env). Off, nothing is sent and the
+usageStatistics:
+  # On unless the installer is told otherwise (--no-usage-statistics, or
+  # GENTIAN_NO_USAGE_STATISTICS=1 in install.env). Off, nothing is sent and the
   # App Store is not offered.
   enabled: "true"
   # The default report address. This is the one place it is written: the
   # operator and its chart name no address of their own, and a cluster
   # installed any other way reports nowhere. It can be changed
-  # (GENTIAN_LICENCE_REPORT_URL in install.env, which arrives as `url` below)
+  # (GENTIAN_USAGE_STATISTICS_URL in install.env, which arrives as `url` below)
   # or turned off (above).
-  defaultUrl: https://licence.aluvian.io/api/v1/licence-reports
+  defaultUrl: https://statistics.aluvian.io/api/v1/usage-statistics
   # Another address for this cluster, from the installer. Empty is the default.
   url: ""
 
@@ -144,7 +144,7 @@ mailServiceMode: external
 mailEgressHost: ""
 
 # Whether the shared stores of the system tier -- PostgreSQL, MariaDB, Redis,
-# MinIO -- each get the NetworkPolicy that says who may connect to them. On by
+# SeaweedFS -- each get the NetworkPolicy that says who may connect to them. On by
 # default. "false" removes all four, and a connection is then checked by its
 # credentials alone. The installer passes STORE_NETWORK_POLICIES.
 # The same switch covers the policies on the kernel's own PostgreSQL

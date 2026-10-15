@@ -452,6 +452,50 @@ gentian exposures withdraw shop api --tenant acme
 refused "a withdrawal the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 403: publishing and withdrawing is the perimeter approver's"
 
+# A second address for a published entry, directly under the cluster's domain.
+ALIAS_ROUTE="/v1/clusters/c1/tenants/acme/exposures/shop/api/alias"
+
+fresh
+gentian exposures alias shop api --tenant acme
+refused "alias with neither --host nor --remove is a usage error"
+gentian exposures alias shop api --tenant acme --host shop.k.example --remove
+refused "alias with both is refused"
+gentian exposures alias shop --tenant acme --host shop.k.example
+refused "alias without an entry is a usage error"
+gentian exposures alias shop api --host shop.k.example
+refused "alias without --tenant is refused"
+gentian exposures alias shop 'api?x=1' --tenant acme --host shop.k.example
+refused "an entry that is not a name is refused"
+is "... and none of them changes anything" "$(writes)" ""
+
+fresh; reply PUT "${ALIAS_ROUTE}" 202 '{"status":"updated","commit":"1111222233334444"}'
+gentian exposures alias shop api --tenant acme --host shop.k.example
+is "alias succeeds" "${RC}" "0"
+is "... as one PUT to the cluster, naming the host" "$(writes | tr -d ' \n')" "PUT${ALIAS_ROUTE}{\"host\":\"shop.k.example\"}"
+has "... says where it answers as well, and names the commit" "${OUT}" "also answers at shop.k.example: committed (11112222)"
+
+fresh; reply PUT "${ALIAS_ROUTE}" 200 '{"status":"unchanged"}'
+gentian exposures alias shop api --tenant acme --host shop.k.example
+has "an alias it already has commits nothing" "${OUT}" "already answers at shop.k.example; nothing was committed"
+
+fresh; reply PUT "${ALIAS_ROUTE}" 409 '{"error":"the address is already in use: shop.k.example is tenant shop'"'"'s own address"}'
+gentian exposures alias shop api --tenant acme --host shop.k.example
+refused "an alias the director refuses ends the command non-zero"
+has "... with the director's own words" "${OUT}" "the director answered 409: the address is already in use: shop.k.example is tenant shop's own address"
+
+fresh; reply DELETE "${ALIAS_ROUTE}" 202 '{"status":"updated","commit":"5555666677778888"}'
+gentian exposures alias shop api --tenant acme --remove
+is "removing the alias is one DELETE with no body" "$(writes)" "DELETE ${ALIAS_ROUTE} "
+has "... and the entry stays at its own address" "${OUT}" "has no alias any more: committed (55556666). It stays at its own address."
+
+fresh; reply DELETE "${ALIAS_ROUTE}" 200 '{"status":"unchanged"}'
+gentian exposures alias shop api --tenant acme --remove
+has "removing an alias it does not have commits nothing" "${OUT}" "has no alias; nothing was committed"
+
+fresh; reply GET /v1/tenants/acme/exposures 200 '{"tenant":"acme","live":[{"install":"shop","exposureName":"api","owner":"u-1","reviewAt":"2027-10-09T10:00:00Z","alias":"shop"}],"expired":[],"reviewDue":[]}'
+gentian exposures list --tenant acme
+has "the list names an entry's alias" "$(grep '^shop' <<<"${OUT}" | tr -s ' ')" "shop api Public address published - shop u-1"
+
 # What a tenant's apps ask to have on the internet, and approving it.
 RULE='Any script that runs in a page on the main address can set cookies for the whole domain. The rule: publish here only a site whose scripts your organisation itself controls -- no third-party scripts and no pages uploaded by users.'
 REQUESTS='{"tenant":"acme","live":[],"expired":[],"reviewDue":[],"entries":[
@@ -724,6 +768,85 @@ refused "a refusal of the director ends the command"
 has "... in the director's words" "${OUT}" "the director answered 422: invalid model settings: spec.llm.providers[0].apiBase"
 
 echo ""
+echo "kubectl gentian settings"
+echo ""
+
+fresh; reply GET /v1/clusters/c1/settings 200 '{"cluster":"c1","settings":{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"system"}}'
+gentian settings show
+is "show prints the settings and nothing else" "$(jq -c '.' <<<"${OUT}")" '{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"system"}'
+is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/settings "
+
+fresh
+gentian settings set
+refused "set without a setting is a usage error"
+gentian settings set tenancyMode
+refused "... and so is one without a value"
+is "... and neither asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply PATCH /v1/clusters/c1/settings 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian settings set tenancyMode=multi mainAddress.tenant=customers
+is "set sends every setting named, in one request" "$(writes)" 'PATCH /v1/clusters/c1/settings {"settings":{"tenancyMode":"multi","mainAddress.tenant":"customers"}}'
+has "... and names the commit" "${OUT}" "committed (01234567)"
+
+fresh; reply PATCH /v1/clusters/c1/settings 200 '{"status":"unchanged"}'
+gentian settings set tenancyMode=multi
+has "a claim that already says so commits nothing" "${OUT}" "nothing was committed"
+
+fresh; reply PATCH /v1/clusters/c1/settings 400 '{"error":"unknown setting: spec.colour is not a setting"}'
+gentian settings set colour=blue
+refused "a refusal of the director ends the command"
+has "... in the director's words" "${OUT}" "the director answered 400: unknown setting"
+
+echo ""
+echo "kubectl gentian tenants retire, an orphan"
+echo ""
+
+fresh; reply DELETE /v1/clusters/c1/tenants/ghost 202 '{"status":"orphan-removed","detail":"ghost was not in git, but the cluster still ran it: it is being deleted now."}'
+gentian tenants retire ghost --yes
+has "a tenant git lacks but the cluster runs is removed, and the command says so" "${OUT}" "the cluster still ran it"
+
+echo ""
+echo ""
+echo "kubectl gentian: an installed copy says when it is out of date"
+echo ""
+
+# An installed copy, stamped as install-plugin stamps it, and the checkout it
+# names: the same body, then a changed one.
+CHECKOUT="${SANDBOX}/checkout"
+mkdir -p "${CHECKOUT}/scripts"
+cp "${REPO}/scripts/kubectl-gentian" "${CHECKOUT}/scripts/kubectl-gentian"
+sed -e "s|^GENTIAN_PLUGIN_SOURCE=.*|GENTIAN_PLUGIN_SOURCE=\"${CHECKOUT}\"|" \
+    -e 's|^GENTIAN_PLUGIN_COMMIT=.*|GENTIAN_PLUGIN_COMMIT="0123456789abcdef0123456789abcdef01234567"|' \
+    "${REPO}/scripts/kubectl-gentian" > "${SANDBOX}/installed-kubectl-gentian"
+installed() {
+    OUT="$(env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" \
+        STUB_CALLS="${CALLS}" STUB_REPLIES="${SANDBOX}/replies" \
+        bash "${SANDBOX}/installed-kubectl-gentian" "$@" 2>&1 </dev/null)"
+    RC=$?
+}
+TENANTS='{"tenants":[]}'
+
+fresh; rm -f "${SANDBOX}/home/.gentian/cli-check-c1"; reply GET /v1/tenants 200 "${TENANTS}"
+installed tenants list
+lacks "a copy the same as its checkout's says nothing" "${OUT}" "Update it"
+
+printf '\n# changed\n' >> "${CHECKOUT}/scripts/kubectl-gentian"
+fresh; rm -f "${SANDBOX}/home/.gentian/cli-check-c1"; reply GET /v1/tenants 200 "${TENANTS}"
+installed tenants list
+has "a copy older than its checkout's says so" "${OUT}" "kubectl gentian is not the copy in ${CHECKOUT} any more"
+has "... and gives the command that updates it" "${OUT}" "make -C ${CHECKOUT} install-plugin"
+
+fresh; reply GET /v1/tenants 200 "${TENANTS}"
+installed tenants list
+lacks "... once an hour, not on every command" "${OUT}" "Update it"
+
+fresh; rm -f "${SANDBOX}/home/.gentian/cli-check-c1"; reply GET /v1/tenants 200 "${TENANTS}"
+gentian tenants list
+lacks "a copy run from a checkout is never told" "${OUT}" "Update it"
+
+installed version
+has "version names where the copy came from" "${OUT}" "installed   : from ${CHECKOUT} at 0123456789abcdef"
+
 if [[ "${fail}" -gt 0 ]]; then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
     exit 1

@@ -48,6 +48,7 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 	t.Setenv("POSTGRES_PROVISIONER_IMAGE", "")
 	t.Setenv("MARIADB_PROVISIONER_IMAGE", "")
 	t.Setenv("REDIS_PROVISIONER_IMAGE", "")
+	t.Setenv("SEAWEEDFS_IMAGE", "")
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	for name, c := range map[string]struct {
 		job  *batchv1.Job
@@ -57,11 +58,15 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", "pw", gentianov1alpha1.SchemaPreferenceAppSchema, true),
 			"bb0e4ee798d4956cf3fe7481f70f3ac5a4dd5f396618563d9829873937718b8d",
 		},
-		"mariadb setup":  {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
-		// Both bucket digests moved once, when the Jobs' image became the
-		// S3 server's own (backup.MinIOClientImage): the script is unchanged.
-		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "b8fc304152ea321c139b08b806a0ef94590934f859419e797c3ca40874cb3c45"},
-		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "ffab1b40a33efec31242354153c7d2191f11e4256ce6335c3333c69499a6225d"},
+		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
+		// Both bucket digests moved once when the Jobs' image became the
+		// S3 server's own, and again, deliberately, when the server became
+		// SeaweedFS: the bucket and the app's identity are made with weed
+		// shell in the server's image (kernel.DefaultSeaweedFSImage), the
+		// master's address is the one Secret value the pod reads, and the
+		// pod carries the label the store's NetworkPolicy admits it by.
+		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "203474f05780f15f3061c3e2fd5bf53548da4a5f3ca9b763a23c2f11178fd0ab"},
+		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "9ed306136ae01d209c6f12054064db4733ab99a3d140b375c6987cb24240a969"},
 		"cache user":     {makeRedisACLJob(tenant, "wiki", "pw"), "980aa4ecd34b77778b2225cbe86860dfe74dd7bd6ee0e79493bc0cfd1235d57a"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {

@@ -82,9 +82,9 @@ type TileProjectionReconciler struct {
 	// name is the tenant's domain.
 	KernelDomain string
 	TenancyMode  string
-	// LicenceReporting is whether this cluster reports what it runs: half of
+	// UsageStatisticsEnabled is whether this cluster reports what it runs: half of
 	// whether it offers an App Store, which is written beside the tiles.
-	LicenceReporting bool
+	UsageStatisticsEnabled bool
 	// WatchClusterClaim re-runs the projection when the Cluster claim
 	// changes, so that a store named or withdrawn there is in the catalogue
 	// without waiting out the floor. Off where the claim's kind is not
@@ -219,7 +219,7 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 	// places the App Store app on tenants (store_offer.go). A cluster with no
 	// claim kind at all has no claim naming a store; any other failure to
 	// read is retried rather than written down as "no store".
-	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
+	offer, err := readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
 	switch {
 	case err == nil:
 	case meta.IsNoMatchError(err) || errors.IsNotFound(err):

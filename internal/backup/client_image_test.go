@@ -15,28 +15,40 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
-// The Jobs that talk to object storage run the image the cluster's S3
-// server runs, and no other: the one image the cluster already pulls, with
-// the client on its PATH. The server's pin is the kernel's MinIO manifest;
-// this holds MinIOClientImage to it, so moving the server moves the Jobs in
+// The Jobs that administer the object store run the image its server runs,
+// and no other: the one image the cluster already pulls, with weed shell of
+// the server's own version. The server's pin is the kernel's SeaweedFS
+// values; this holds the Jobs' to it, so moving the server moves the Jobs in
 // the same commit or fails here.
 func TestTheObjectStorageJobsRunTheImageTheS3ServerRuns(t *testing.T) {
-	manifest := filepath.Join("..", "..", "kernel", "services", "infra-minio", "manifests", "templates", "configmap.yaml")
+	manifest := filepath.Join("..", "..", "kernel", "services", "infra-seaweedfs", "manifests", "templates", "configmap.yaml")
 	text, err := os.ReadFile(manifest)
 	if err != nil {
 		t.Fatalf("read %s: %v", manifest, err)
 	}
-	// The server's own image block, not volumePermissions' below it: the
-	// first image: at the chart's top level.
-	re := regexp.MustCompile(`(?s)\n    image:\n      registry: (\S+)\n      repository: (\S+)\n      tag: (\S+)\n`)
-	m := re.FindSubmatch(text)
+	m := regexp.MustCompile(`(?m)^      imageOverride: (\S+)$`).FindSubmatch(text)
 	if m == nil {
-		t.Fatalf("%s: no image block in the shape this test reads", manifest)
+		t.Fatalf("%s: no master.imageOverride in the shape this test reads", manifest)
 	}
-	server := string(m[1]) + "/" + string(m[2]) + ":" + string(m[3])
-	if MinIOClientImage != server {
-		t.Errorf("MinIOClientImage = %q, but the S3 server runs %q (%s): the Jobs must run the server's image", MinIOClientImage, server, manifest)
+	server := string(m[1])
+	if !regexp.MustCompile(`:[^:@/]+@sha256:[0-9a-f]{64}$`).MatchString(server) {
+		t.Errorf("the server's image %s is not named by tag and digest", server)
+	}
+	if kernel.DefaultSeaweedFSImage != server {
+		t.Errorf("kernel.DefaultSeaweedFSImage = %q, but the S3 server runs %q (%s): the Jobs must run the server's image",
+			kernel.DefaultSeaweedFSImage, server, manifest)
+	}
+	demo := tenant("demo", nil)
+	for name, image := range map[string]string{
+		"the bucket Job":  ObjectStorageProvisionContainer("create-bucket", "demo-wiki", "AK", "SK").Image,
+		"the destroy Job": ObjectStorageDestroyJob(demo, "wiki", DestroyWithinARequest).Spec.Template.Spec.Containers[0].Image,
+	} {
+		if image != server {
+			t.Errorf("%s runs %s, not the server's %s", name, image, server)
+		}
 	}
 }

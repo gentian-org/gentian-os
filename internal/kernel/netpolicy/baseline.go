@@ -25,7 +25,60 @@ const baselinePolicyName = "tenant-isolation"
 
 // BaselineNetworkPolicy is the default-deny MAC floor for a tenant namespace.
 // Kernel and cross-app access are granted by separate operator-managed policies.
-func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) *networkingv1.NetworkPolicy {
+//
+// excluded leaves pods out of it: an adapter's, which the edge, the identity
+// provider and the operator must not reach either, and which have a floor of
+// their own instead (AdapterNetworkPolicies). Network rules only ever add, so
+// a pod this policy selects could not be closed again by another.
+func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice, excluded ...metav1.LabelSelectorRequirement) *networkingv1.NetworkPolicy {
+	egress := baselineEgress(cfg, kubeAPIEndpts)
+
+	// The edge: the Gateways' data plane runs in the edge function's
+	// namespace, and it is what reaches a tenant's routed pods.
+	edge := namespaceIngress(layout.Namespace(layout.Edge))
+	if cfg.NarrowEdge {
+		// Its Envoy pods and no other pod there: they are what sets the
+		// identity headers an app trusts, so cert-manager, external-dns
+		// and the bouncer, which share the namespace, have no path to an
+		// app on which to say who a caller is.
+		edge.From[0].PodSelector = &metav1.LabelSelector{MatchLabels: EdgeProxyPodLabels()}
+	}
+	ingress := []networkingv1.NetworkPolicyIngressRule{
+		edge,
+		// Keycloak calls an app's back-channel logout endpoint, so the
+		// authentication function may reach tenant pods; nothing else kernel does.
+		namespaceIngress(layout.Namespace(layout.Authentication)),
+		// The operator itself provisions *into* running tenant apps over their
+		// own admin APIs — ComponentProfile.spec.hooks.provisioning.privilegedRole is the
+		// first such case (see app_privilege_reconciler.go). It runs in
+		// OperatorNamespace, not KernelNamespace, so without this it cannot
+		// reach the very workloads it reconciles. This grants no new authority:
+		// the operator already has API-level control over these namespaces.
+		namespaceIngress(meta.OperatorNamespace),
+	}
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      baselinePolicyName,
+			Namespace: nsName,
+			Labels:    policyLabels(tenantName, meta.NetPolicyBaseline),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchExpressions: excluded},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: ingress,
+			Egress:  egress,
+		},
+	}
+}
+
+// baselineEgress is what every pod of a tenant may reach without anybody
+// having asked: the cluster's DNS and the API server. An adapter's pods are
+// given the same, by their own policy.
+func baselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []networkingv1.NetworkPolicyEgressRule {
 	protocolTCP := corev1.ProtocolTCP
 	protocolUDP := corev1.ProtocolUDP
 	dnsPort := intstr.FromInt32(53)
@@ -69,47 +122,7 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 			}
 		}
 	}
-
-	// The edge: the Gateways' data plane runs in the edge function's
-	// namespace, and it is what reaches a tenant's routed pods.
-	edge := namespaceIngress(layout.Namespace(layout.Edge))
-	if cfg.NarrowEdge {
-		// Its Envoy pods and no other pod there: they are what sets the
-		// identity headers an app trusts, so cert-manager, external-dns
-		// and the bouncer, which share the namespace, have no path to an
-		// app on which to say who a caller is.
-		edge.From[0].PodSelector = &metav1.LabelSelector{MatchLabels: EdgeProxyPodLabels()}
-	}
-	ingress := []networkingv1.NetworkPolicyIngressRule{
-		edge,
-		// Keycloak calls an app's back-channel logout endpoint, so the
-		// authentication function may reach tenant pods; nothing else kernel does.
-		namespaceIngress(layout.Namespace(layout.Authentication)),
-		// The operator itself provisions *into* running tenant apps over their
-		// own admin APIs — ComponentProfile.spec.hooks.provisioning.privilegedRole is the
-		// first such case (see app_privilege_reconciler.go). It runs in
-		// OperatorNamespace, not KernelNamespace, so without this it cannot
-		// reach the very workloads it reconciles. This grants no new authority:
-		// the operator already has API-level control over these namespaces.
-		namespaceIngress(meta.OperatorNamespace),
-	}
-
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      baselinePolicyName,
-			Namespace: nsName,
-			Labels:    policyLabels(tenantName, meta.NetPolicyBaseline),
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-			Ingress: ingress,
-			Egress:  egress,
-		},
-	}
+	return egress
 }
 
 // EdgeProxyPodLabels select the Gateway's Envoy proxy pods in the edge

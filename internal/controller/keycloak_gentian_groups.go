@@ -118,7 +118,7 @@ func validAttrName(s string) bool {
 // buildGentianGroupsScript creates Gentian entitlement groups in a tenant realm and
 // ensures the built-in "groups" client scope is available for JWT group claims.
 func buildGentianGroupsScript(realmName string) string {
-	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 REALM=%q
 `+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
@@ -202,7 +202,7 @@ echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
   GROUP_NAME=$(echo "${group}" | jq -r '.name')
   GROUP_ATTRS=$(echo "${group}" | jq -c '.attributes')
 
-  GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
+  GROUP_LIST=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?max=1000")
   keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${GROUP_NAME}"
   
@@ -213,44 +213,44 @@ echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
     # roles by hand in the console. PUTting only the profile's own keys deleted
     # both on every tenant reconcile.
     echo "group ${GROUP_NAME} already exists (id=${_kj_id}), merging attributes"
-    EXISTING_ATTRS=$(curl -sf -H "${AUTH_HEADER}" \
+    EXISTING_ATTRS=$(kc_curl -H "${AUTH_HEADER}" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
       | jq -c '.attributes // {}')
     MERGED_ATTRS=$(jq -c -n --argjson a "${EXISTING_ATTRS}" --argjson b "${GROUP_ATTRS}" '$a * $b')
-    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    kc_curl -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
       -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${MERGED_ATTRS}}"
     continue
   fi
 
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/groups" \
     -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${GROUP_ATTRS}}"
   echo "group ${GROUP_NAME} created"
 done
 
-SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" \
+SCOPE_LIST=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
 keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "groups"
 GROUPS_SCOPE_ID="${_kj_id}"
 if [ -z "${GROUPS_SCOPE_ID}" ]; then
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
     -d "{\"name\":\"groups\",\"protocol\":\"openid-connect\",\"attributes\":{\"include.in.token.scope\":\"true\",\"display.on.consent.screen\":\"true\"}}"
-  SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" \
+  SCOPE_LIST=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
   keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "groups"
   GROUPS_SCOPE_ID="${_kj_id}"
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
     -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","consentRequired":false,"config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups","introspection.token.claim":"true","multivalued":"true"}}'
-  curl -sf -X PUT -H "${AUTH_HEADER}" \
+  kc_curl -X PUT -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/default-default-client-scopes/${GROUPS_SCOPE_ID}"
   echo "groups client scope created and configured"
 fi
 
 echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
-MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
+MAPPERS=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
 # One aggregating mapper per declared group attribute. The names come from the
 # profiles' keycloak-group-attributes annotations, so an app introducing a new
@@ -269,12 +269,12 @@ for ATTR_NAME in ${GENTIAN_GROUP_ATTR_NAMES:-}; do
   keycloak_json_id_by_attr "${MAPPERS}" "name" "${ATTR_NAME}"
   MAPPER_ID="${_kj_id}"
   if [ -n "${MAPPER_ID}" ]; then
-    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    kc_curl -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models/${MAPPER_ID}" \
       -d "{\"id\":\"${MAPPER_ID}\",${MAPPER_BODY}}"
     echo "mapper ${ATTR_NAME} updated with aggregation"
   else
-    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
       -d "{${MAPPER_BODY}}"
     echo "mapper ${ATTR_NAME} added to groups client scope"

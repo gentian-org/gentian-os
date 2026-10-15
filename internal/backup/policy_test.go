@@ -153,7 +153,7 @@ func TestTenantDestinationDerivesItsOwnCredential(t *testing.T) {
 }
 
 // Renaming the bucket within the platform's own storage needs no credential:
-// the platform already has keys for its own MinIO.
+// the platform already has keys for its own object store.
 func TestBucketOnlyChangeNeedsNoCredential(t *testing.T) {
 	eff, err := ResolveEffective(policyTenant(),
 		clusterPolicy(gentianov1alpha1.BackupPolicySpec{

@@ -227,7 +227,7 @@ apply() {
 # the tiles (appStore in the gentian-tiles ConfigMap). The operator places the
 # app by that same verdict, so this says what the cluster does rather than
 # what the installer expects of it. Never a failure and never waited for: a
-# cluster with licence reporting off, or whose claim names no store or one
+# cluster with usage statistics off, or whose claim names no store or one
 # that is the app's own address, has no App Store app and is complete without
 # one.
 _d03_report_app_store() {
@@ -237,8 +237,8 @@ _d03_report_app_store() {
     case "${verdict}" in
         *"offered: true"*)
             info "App Store app: placed on every tenant but the platform's, at store.<the tenant's domain>, for the people who may install apps." ;;
-        *"reason: licence-report-disabled"*)
-            info "App Store app: not placed -- licence reporting is off on this cluster." ;;
+        *"reason: usage-statistics-disabled"*)
+            info "App Store app: not placed -- usage statistics are off on this cluster." ;;
         *"reason: no-store-configured"*)
             info "App Store app: not placed -- claims/cluster.yaml names no App Store (spec.catalogue.storeUrl)." ;;
         *"reason: store-address-is-own-host"*)

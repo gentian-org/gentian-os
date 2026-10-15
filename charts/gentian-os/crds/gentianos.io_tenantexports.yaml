@@ -136,7 +136,7 @@ spec:
                   region:
                     description: |-
                       Region, for providers that require one — Exoscale SOS and AWS do,
-                      MinIO does not.
+                      the platform's own object store does not.
                     maxLength: 64
                     type: string
                 type: object

@@ -6,7 +6,7 @@ kind: Deployment
 {{- $imageDigest := .Values.image.digest | default "" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
 {{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
-{{- $licenceReporting := include "gentian-os.licenceReporting" . }}
+{{- $usageStatisticsEnabled := include "gentian-os.usageStatisticsEnabled" . }}
 {{- $usage := .Values.usage | default dict }}
 {{- $usageSampler := $usage.sampler | default dict }}
 {{- $metricsServer := $usage.metricsServer | default dict }}
@@ -308,17 +308,17 @@ spec:
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
               value: {{ .Values.llmSupport | default false | quote }}
-            {{- if include "gentian-os.licenceReporting" . }}
-            # The licence report: on, and where it goes. Absent, the operator
+            {{- if include "gentian-os.usageStatisticsEnabled" . }}
+            # The usage statistics report: on, and where it goes. Absent, the operator
             # sends nothing and starts no timer. The signing key is a file,
             # mounted below, so that it is found without a restart once the
             # Secret exists.
-            - name: LICENCE_REPORT_ENABLED
+            - name: USAGE_STATISTICS_ENABLED
               value: "true"
-            - name: LICENCE_REPORT_URL
-              value: {{ .Values.licenceReport.url | quote }}
-            - name: LICENCE_REPORT_KEY_FILE
-              value: /etc/gentian/licence-report/{{ .Values.licenceReport.signingKey.property }}
+            - name: USAGE_STATISTICS_URL
+              value: {{ .Values.usageStatistics.url | quote }}
+            - name: USAGE_STATISTICS_KEY_FILE
+              value: /etc/gentian/usage-statistics/{{ .Values.usageStatistics.signingKey.property }}
             {{- end }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
@@ -334,6 +334,10 @@ spec:
               value: {{ .Values.provisioners.redis | quote }}
             - name: KEYCLOAK_PROVISIONER_IMAGE
               value: {{ .Values.provisioners.keycloak | quote }}
+            # The tools the Jobs that move a tenant's objects run, from the
+            # same CI run as this operator: its own tag, unless set.
+            - name: STORAGE_TOOLS_IMAGE
+              value: {{ .Values.provisioners.storageTools | default (printf "ghcr.io/gentian-org/storage-tools:%s" $imageTag) | quote }}
             - name: CNPG_CLUSTER_NAME
               value: {{ .Values.database.clusterName | quote }}
             - name: TENANT_CROSSPLANE_ONLY
@@ -421,11 +425,11 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if or $webhookEnabled .Values.trustAnchorSecret $licenceReporting }}
+          {{- if or $webhookEnabled .Values.trustAnchorSecret $usageStatisticsEnabled }}
           volumeMounts:
-            {{- if $licenceReporting }}
-            - name: licence-report-key
-              mountPath: /etc/gentian/licence-report
+            {{- if $usageStatisticsEnabled }}
+            - name: usage-statistics-key
+              mountPath: /etc/gentian/usage-statistics
               readOnly: true
             {{- end }}
             {{- with .Values.trustAnchorSecret }}
@@ -451,15 +455,15 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or $webhookEnabled .Values.trustAnchorSecret $licenceReporting }}
+      {{- if or $webhookEnabled .Values.trustAnchorSecret $usageStatisticsEnabled }}
       volumes:
-        {{- if $licenceReporting }}
+        {{- if $usageStatisticsEnabled }}
         # Optional: the pod starts while the vault path or the Secret is still
         # missing, and the operator then records that it has no key instead
         # of sending anything unsigned.
-        - name: licence-report-key
+        - name: usage-statistics-key
           secret:
-            secretName: {{ .Values.licenceReport.signingKey.secretName | quote }}
+            secretName: {{ .Values.usageStatistics.signingKey.secretName | quote }}
             optional: true
             defaultMode: 0440
         {{- end }}

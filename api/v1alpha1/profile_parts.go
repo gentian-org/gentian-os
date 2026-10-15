@@ -648,7 +648,7 @@ const (
 
 // StorageRequirement specifies object storage and/or filesystem needs.
 type StorageRequirement struct {
-	// S3 requests a per-tenant S3 bucket via the MinIO kernel service.
+	// S3 requests a per-tenant S3 bucket from the platform's object store.
 	// +optional
 	S3 *S3Requirement `json:"s3,omitempty"`
 
@@ -994,7 +994,7 @@ type PlatformValueMapping struct {
 
 	// StoreURLKey receives the base address of the App Store API this cluster
 	// names (the Cluster claim's spec.catalogue.storeUrl), and the empty
-	// string while the cluster offers no App Store: none is named, or licence
+	// string while the cluster offers no App Store: none is named, or license
 	// reporting is off.
 	//
 	// Like the URL keys above it is more than a fact. A store is outside the

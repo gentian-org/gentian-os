@@ -540,6 +540,12 @@ drive_status() {
     # or every stage-scoped and cluster-scoped check answers about a different
     # cluster than the one in front of it.
     load_status_context
+    # And of the cluster in front of it: a report that holds one cluster's
+    # definition against another cluster is a wrong answer that looks like a
+    # right one (cluster-identity.sh). Read-only, so it reports and stops.
+    if ! gentian_check_deployments_checkout || ! gentian_check_one_cluster; then
+        exit 1
+    fi
     discover_steps || return 1
     local i id file state verdict
     echo ""

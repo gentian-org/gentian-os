@@ -93,12 +93,6 @@ var allowedQuiet = []string{
 	// failure ends in "could not install" or "<tool> unavailable".
 	"apk add --no-cache --quiet",
 	`command -v "${tool}" >/dev/null 2>&1 ||`,
-	// The step install provisions a bucket with, run before a bucket is
-	// filled: it takes away the user and the policy it is about to make
-	// again, which are not there on a first run. A store that cannot be
-	// reached fails the commands that make them, on the next lines.
-	`mc admin user remove gentian "${APP_ACCESS_KEY}" >/dev/null 2>&1 || true`,
-	`mc admin policy rm gentian "${APP_ACCESS_KEY}-policy" >/dev/null 2>&1 || true`,
 }
 
 func allowedLine(line string) bool {

@@ -91,7 +91,7 @@ nothing is promised beyond what §7 says of schema 1.
   provides.
 - **A store.** The App Store app on a cluster shows the data of a store run
   outside it. A cluster with no store installs apps by command (AD-14). A
-  cluster that has turned its licence report off has no App Store app
+  cluster that has turned its usage statistics report off has no App Store app
   ([operations.md](../design/operations.md) §6.2); nothing else changes.
 - **Software the OS installs that is not the project's.** The system services
   and the catalogue's apps keep their own licenses
@@ -419,7 +419,7 @@ surfaces the OS already has, and the OS installs and runs without them.
   platform UI on the cluster that shows the store's data and installs through
   the director (AD-3). Every tenant can install from the source; nothing the
   store says decides what a tenant may install, and the cluster does no
-  licence gating (AD-3, AD-14). The addresses are the installer's defaults
+  license gating (AD-3, AD-14). The addresses are the installer's defaults
   and can be changed or left out ([install-reference.md](../install-reference.md)).
 - **One add-on's profile.** Step 0 places the profile of the Operations
   Console, an add-on from the store's catalogue, among the cluster's

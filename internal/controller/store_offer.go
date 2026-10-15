@@ -35,7 +35,7 @@ import (
 // Whether this cluster offers an App Store is one answer, given in one place.
 //
 // Three things have to hold: the cluster reports what it runs (an app
-// installed through a store is what the licence report lists), the Cluster
+// installed through a store is what the usage statistics report lists), the Cluster
 // claim names a store (spec.catalogue.storeUrl), and that address is not a
 // host this cluster serves the App Store app on. Three readers follow from it and
 // must not disagree: the tenant reconciler, which places a Component of every
@@ -44,7 +44,7 @@ import (
 // opens its way there; and the tile projection, which writes the verdict
 // beside the tiles for the usher to hand to whoever asks.
 //
-// The first is the operator's own setting (LICENCE_REPORT_ENABLED, as the
+// The first is the operator's own setting (USAGE_STATISTICS_ENABLED, as the
 // chart renders it), the second is read from the claim itself, where the
 // director reads it from too, and the third from the tenants and the profiles
 // that ask where the store is.
@@ -82,11 +82,11 @@ func normaliseStoreAddress(raw string) string {
 // An error is an error and not "no store": a claim that could not be read
 // says nothing, and the callers that would take something away on a "no"
 // leave things as they are instead.
-func readStoreOffer(ctx context.Context, c client.Reader, licenceReporting bool, names clusterNames) (storeOffer, error) {
-	if !licenceReporting {
+func readStoreOffer(ctx context.Context, c client.Reader, usageStatisticsEnabled bool, names clusterNames) (storeOffer, error) {
+	if !usageStatisticsEnabled {
 		// Said without reading the claim: with reporting off there is no
 		// store whatever the claim names.
-		return storeOffer{reason: tilecatalogue.AppStoreReasonNoLicenceReport}, nil
+		return storeOffer{reason: tilecatalogue.AppStoreReasonNoUsageStatistics}, nil
 	}
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
@@ -223,7 +223,7 @@ func (r *ComponentReconciler) storeEgress(ctx context.Context, profile *gentiano
 	if !wantsStore(profile) {
 		return nil, nil
 	}
-	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
+	offer, err := readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +249,7 @@ func (r *ComponentReconciler) placementValues(ctx context.Context, comp *gentian
 	if m.StoreURLKey != "" {
 		url := ""
 		if wantsStore(profile) {
-			offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
+			offer, err := readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
 			if err != nil {
 				return nil, err
 			}

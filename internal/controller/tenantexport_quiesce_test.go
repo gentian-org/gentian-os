@@ -480,7 +480,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		t.Fatalf("volume Job namespace = %q, want tenant-demo", volume.Job.Namespace)
 	}
 	staged := stagedSecretName("demo", export.Name)
-	var minioFromStaged, passphraseFromStaged bool
+	var storeFromStaged, passphraseFromStaged bool
 	containers := append(append([]corev1.Container{},
 		volume.Job.Spec.Template.Spec.InitContainers...),
 		volume.Job.Spec.Template.Spec.Containers...)
@@ -490,16 +490,16 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 				continue
 			}
 			from := env.ValueFrom.SecretKeyRef.Name
-			if env.Name == "MINIO_ENDPOINT" && from == staged {
-				minioFromStaged = true
+			if env.Name == "S3_ENDPOINT" && from == staged {
+				storeFromStaged = true
 			}
 			if env.Name == backup.PassphraseEnvVar && from == staged {
 				passphraseFromStaged = true
 			}
 		}
 	}
-	if !minioFromStaged {
-		t.Error("volume Job does not read MinIO credentials from the staged copy")
+	if !storeFromStaged {
+		t.Error("volume Job does not read the object store's credentials from the staged copy")
 	}
 	if !passphraseFromStaged {
 		t.Error("volume Job does not read the passphrase from the staged copy")
@@ -1168,9 +1168,9 @@ func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
 	}
 
 	platform := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio-prod:9000"),
+			"endpoint":  []byte("http://s3.system-s3:9000"),
 			"accessKey": []byte("platform-key"),
 			"secretKey": []byte("platform-secret"),
 		},
@@ -1232,9 +1232,9 @@ func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
 		t.Fatalf("add gentian scheme: %v", err)
 	}
 	platform := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio-prod:9000"),
+			"endpoint":  []byte("http://s3.system-s3:9000"),
 			"accessKey": []byte("platform-key"),
 			"secretKey": []byte("platform-secret"),
 		},
@@ -1284,10 +1284,10 @@ func TestTheTenantWideEntryIsReadyWhenItsJobsAre(t *testing.T) {
 	}
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
-	minio := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
-		Data: map[string][]byte{"endpoint": []byte("http://minio:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}}
+	store := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
+		Data: map[string][]byte{"endpoint": []byte("http://s3:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}}
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(export, tenant, minio).WithStatusSubresource(export).Build()
+		WithObjects(export, tenant, store).WithStatusSubresource(export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
 

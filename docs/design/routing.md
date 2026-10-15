@@ -928,6 +928,53 @@ does not work: cookies pass in neither direction. `jwt`, `bearer`, `basic`
 and `signature` named a check at the edge that nothing makes; the schema
 refuses them on a perimeter entry until they are built.
 
+**An alias: a second address directly under the cluster's domain.** A
+published entry answers at `<label>.<the tenant's domain>`. The cluster's
+administrator may give it one more name, one label directly under the
+cluster's own domain: `statistics.<kernelDomain>` for an entry that answers
+at `statistics.<tenant>.<kernelDomain>`. It is for an address that other
+parties are told and that should not name the tenant behind it.
+
+| | |
+| --- | --- |
+| Set or change | `kubectl gentian exposures alias <app-instance> <entry> --tenant <t> --host <name>.<kernelDomain>` |
+| Remove | `kubectl gentian exposures alias <app-instance> <entry> --tenant <t> --remove` |
+| Routes | `PUT` and `DELETE /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias`, `can_configure` on the cluster |
+
+A name under the cluster's domain is the cluster's to give, so the tenant's
+approver cannot set one and an approval cannot carry one. It adds nothing to
+what is public: the approver publishes the entry first, and the alias is the
+same proxy, the same paths and the same limits at a second name. The app is
+passed the name it was asked for.
+
+The director refuses, before anything is committed:
+
+- a host that is not one label directly under the cluster's domain, and any
+  label of the two reserved lists above (`422`);
+- any alias on a single-tenancy cluster, where the user tenant's addresses
+  are at that level already (`422`);
+- an entry on the cluster's main address (`422`);
+- a label a tenant is named -- `<name>.<kernelDomain>` is that tenant's own
+  address -- and one another entry holds as its alias (`409`);
+- an entry the approver has not published, whose approval has expired, or
+  that is behind sign-in and has no public address (`409`).
+
+The same holds the other way: a tenant is not created under a name an alias
+holds (`409`), by the form or from a bundle.
+
+The alias is recorded on the entry's approval (`alias`, with who set it and
+when). An approver's review keeps it; withdrawing the entry takes it away.
+The operator asks the same rule again where it publishes
+(`addresses.AliasHost`), so an alias written by hand that the director would
+have refused publishes nothing, and of two entries carrying one alias only
+the one given it first answers there. An honoured alias gets a listener of
+its own on the perimeter Gateway with the cluster's certificate, which
+names every label under the cluster's domain, and is a second parent and
+hostname of the entry's route. On a tunnelled cluster it is added to the
+tunnel's rules and to the cluster's DNS record set; elsewhere the record
+follows from the route. Where the platform does not publish the cluster's
+records, the record is the administrator's to make.
+
 ---
 
 ## 8. Operations and Day-2

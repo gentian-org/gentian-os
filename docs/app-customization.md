@@ -433,7 +433,7 @@ the hour a session lasts.
 `images/gentian-sidecar-sso-saml/README.md`. In short: it is told who the person is, whether they
 administer the app and how long the session may last (an hour at most), it answers where to go
 and which cookies or browser storage carry the app's session, and the sidecar writes the
-response. It gives nobody a password and touches no licence check.
+response. It gives nobody a password and touches no license check.
 
 **Signing out is part of the handler.** A handler may export a second function:
 

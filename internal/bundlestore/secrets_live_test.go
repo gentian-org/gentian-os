@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +37,7 @@ import (
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -46,18 +46,19 @@ import (
 //
 // What the operator does with them -- reads them from the vault, encrypts
 // them, writes the artefact, reads it back, opens it, replaces the stored
-// value -- against a MinIO server and an OpenBao server, with secrets drawn
-// at random as under secretMode: random. It needs docker, for MinIO, and the
-// bao binary, and is run when asked for:
+// value -- against the platform's object store (SeaweedFS, at the image the
+// platform pins) and an OpenBao server, with secrets drawn at random as under
+// secretMode: random. It needs docker, for the object store, and the bao
+// binary, and is run when asked for:
 //
 //	GENTIAN_LIVE_BUNDLE_SECRETS=1 go test ./internal/bundlestore -run TestAppSecretsAgainstAnObjectStoreAndAVault -v
 //
-// GENTIAN_LIVE_MINIO_IMAGE names another MinIO image than the chart's.
+// GENTIAN_LIVE_S3_IMAGE names another SeaweedFS image than the platform's.
 
 const (
-	liveMinioUser = "live-access"
-	liveMinioPass = "live-secret-key"
-	liveBaoToken  = "live-root"
+	liveS3User   = "live-access"
+	liveS3Pass   = "live-secret-key"
+	liveBaoToken = "live-root"
 )
 
 func freePort(t *testing.T) int {
@@ -88,38 +89,42 @@ func waitFor(t *testing.T, what, url string) {
 	}
 }
 
-// liveMinioImage is the image of the chart the platform deploys, unless the
+// liveS3Image is the object store's image the platform pins, unless the
 // environment names another.
-func liveMinioImage(t *testing.T) string {
-	t.Helper()
-	if image := os.Getenv("GENTIAN_LIVE_MINIO_IMAGE"); image != "" {
+func liveS3Image() string {
+	if image := os.Getenv("GENTIAN_LIVE_S3_IMAGE"); image != "" {
 		return image
 	}
-	values, err := os.ReadFile(filepath.Join("..", "..", "charts", "infra", "minio", "values.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	image := regexp.MustCompile(`(?m)^  repository: (\S+/minio)\n  tag: (\S+)`).FindSubmatch(values)
-	if image == nil {
-		t.Fatal("the minio chart's values pin no image")
-	}
-	return string(image[1]) + ":" + string(image[2])
+	return kernel.DefaultSeaweedFSImage
 }
 
-func startLiveMinio(t *testing.T) string {
+// startLiveS3 starts the object store with an administrator, as the
+// platform's chart does: weed server with S3 on, its identity file mounted.
+func startLiveS3(t *testing.T) string {
 	t.Helper()
 	port := freePort(t)
-	name := fmt.Sprintf("gentian-minio-live-%d", os.Getpid())
-	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name,
+	dir := t.TempDir()
+	config := fmt.Sprintf(`{"identities":[{"name":"storage_admin","credentials":[{"accessKey":%q,"secretKey":%q}],"actions":["Admin","Read","Write","List","Tagging"]}]}`, liveS3User, liveS3Pass)
+	if err := os.WriteFile(filepath.Join(dir, "seaweedfs_s3_config"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("gentian-s3-live-%d", os.Getpid())
+	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name, "--user", "1000:1000",
 		"-p", fmt.Sprintf("127.0.0.1:%d:9000", port),
-		"-e", "MINIO_ROOT_USER="+liveMinioUser, "-e", "MINIO_ROOT_PASSWORD="+liveMinioPass,
-		liveMinioImage(t)).CombinedOutput()
+		"-v", filepath.Join(dir, "seaweedfs_s3_config")+":/etc/sw/s3/seaweedfs_s3_config:ro",
+		"--entrypoint", "/usr/bin/weed", liveS3Image(),
+		"server", "-dir=/data", "-ip.bind=0.0.0.0", "-volume.max=100", "-filer",
+		"-s3", "-s3.port=9000", "-s3.config=/etc/sw/s3/seaweedfs_s3_config", "-s3.port.iceberg=0", "-s3.port.lance=0", "-s3.iam=false",
+	).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker run: %v\n%s", err, out)
 	}
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
-	waitFor(t, "MinIO", endpoint+"/minio/health/live")
+	waitFor(t, "the object store", endpoint+"/")
 	return endpoint
 }
 
@@ -167,20 +172,20 @@ func wikiReads(secret string, data []byte) (string, error) {
 
 func TestAppSecretsAgainstAnObjectStoreAndAVault(t *testing.T) {
 	if os.Getenv("GENTIAN_LIVE_BUNDLE_SECRETS") == "" {
-		t.Skip("set GENTIAN_LIVE_BUNDLE_SECRETS=1 to run an app's secrets through a MinIO server in docker and an OpenBao server")
+		t.Skip("set GENTIAN_LIVE_BUNDLE_SECRETS=1 to run an app's secrets through the object store in docker and an OpenBao server")
 	}
 	ctx := context.Background()
 	kv := startLiveBao(t)
-	endpoint := startLiveMinio(t)
+	endpoint := startLiveS3(t)
 	random := func(context.Context) (secrets.Mode, error) { return secrets.ModeRandom, nil }
 	seeder := secrets.NewSeeder(kv, secrets.NewDeriver("a master password", "a salt")).WithMode(random)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	store := &Store{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: layout.System("s3")},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: layout.System("s3")},
 		Data: map[string][]byte{"endpoint": []byte(endpoint),
-			backup.DestinationAccessKeyField: []byte(liveMinioUser), backup.DestinationSecretKeyField: []byte(liveMinioPass)},
+			backup.DestinationAccessKeyField: []byte(liveS3User), backup.DestinationSecretKeyField: []byte(liveS3Pass)},
 	}).Build()}
 	ref := gentianov1alpha1.BundleRef{Bucket: "demo-gentian-backup", Prefix: "nightly"}
 	mc, err := store.Minio(ctx, &ref)

@@ -715,6 +715,38 @@ func TestActivationWithoutAnAddressReturnsTheLink(t *testing.T) {
 	}
 }
 
+// An account whose address is its login, in a realm that delivers nothing
+// there, is handed over by a link that is shown: mailed, it would reach
+// nobody. The address it has is not the one mailed to, and no other is given
+// to it.
+func TestAShownOnlyActivationMailsNothing(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["customers"] = []userRep{{ID: "abc123", Username: "admin@customers.k.example", Email: "admin@customers.k.example", Enabled: true}}
+	c := clientFor(t, srv, StaticSource{"customers": {Realm: "customers", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("customers")
+	ctx := WithShownOnly(context.Background())
+
+	a, err := c.ActivateAccount(ctx, r, "abc123", "", true, "gentian-edge-customers", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Mailed || a.Link == "" {
+		t.Fatalf("activation: %+v", a)
+	}
+	if len(f.callsTo(http.MethodPut, "/execute-actions-email")) != 0 {
+		t.Fatal("the link was mailed to the account's own address")
+	}
+
+	if _, err := c.ActivateAccount(ctx, r, "abc123", "owner@example.org", true, "", ""); err == nil {
+		t.Fatal("an address was accepted for an account whose link is only shown")
+	}
+	for _, put := range f.callsTo(http.MethodPut, "/users/abc123") {
+		if strings.Contains(put.body, "owner@example.org") {
+			t.Fatalf("the account was given the address: %+v", put)
+		}
+	}
+}
+
 // Given an address, it becomes the recovery address and the link is mailed
 // there; an enrolled second factor is not asked for again.
 func TestActivationWithAnAddressMailsIt(t *testing.T) {

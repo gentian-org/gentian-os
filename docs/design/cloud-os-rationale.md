@@ -79,7 +79,7 @@ Two enablers make this possible today that were not possible five
 years ago:
 
 - **Kubernetes operator ecosystem.** Identity (Keycloak), databases
-  (CloudNativePG), object storage (MinIO), secrets (External Secrets),
+  (CloudNativePG), object storage (SeaweedFS), secrets (External Secrets),
   TLS (cert-manager) all have mature, production-grade operators. The
   "drivers" exist; the kernel only needs to compose them.
 - **Crossplane.** A generic, declarative composition engine for

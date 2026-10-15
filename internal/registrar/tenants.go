@@ -66,6 +66,9 @@ type Tenant struct {
 	// AdminRequiresMFA says whether activating its administrator account
 	// includes enrolling a second factor.
 	AdminRequiresMFA bool
+	// SignUp says people make their own accounts in its realm, where the
+	// address of an account is its login.
+	SignUp bool
 	// MailboxDomain is the domain its people have mailboxes under on the
 	// cluster's own mail server, as the operator reports it on the tenant.
 	// Empty when they have none: removing a person then asks nothing about
@@ -135,6 +138,7 @@ func (c *ClusterTenants) facts(t *gentianov1alpha1.Tenant) Tenant {
 		LoginDomain:      domain,
 		AdminLogin:       adminLogin(t, realm, domain),
 		AdminRequiresMFA: t.AdminRequiresMFA(),
+		SignUp:           t.SignUpEnabled(),
 		MailboxDomain:    strings.ToLower(strings.TrimSpace(t.Status.MailboxDomain)),
 	}
 }

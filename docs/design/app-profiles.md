@@ -26,7 +26,7 @@ in a catalogue.
 | catalogue index | `digest` | sha256 of the profile's bundle as served; what an install pins |
 
 A profile has no `family`, `catalogueVersion`, `edition` or `license` field.
-Descriptions, pictures, prices and licence terms are a store's listing, outside
+Descriptions, pictures, prices and license terms are a store's listing, outside
 the cluster ([store-contract.md](store-contract.md) §5).
 
 **Editions.** `ce` is the upstream community edition; `pe` a private edition,

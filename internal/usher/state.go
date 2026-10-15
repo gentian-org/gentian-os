@@ -94,7 +94,7 @@ func (s *Server) stateRoutes() {
 		// what became of it; {"enabled":false} on a cluster that does not
 		// report. The operator's answer, like the rest: it is the one that
 		// sends.
-		s.guarded("GET /v1/clusters/{c}/licence-report", "can_audit", clusterObject, s.relayCluster("/v1/licence-report"))
+		s.guarded("GET /v1/clusters/{c}/usage-statistics", "can_audit", clusterObject, s.relayCluster("/v1/usage-statistics"))
 		// What the catalogue left behind: objects a profile's bundle once
 		// brought and no bundle owns now, and profiles nobody uses. They are
 		// the cluster's and no tenant's -- most have no namespace -- so the

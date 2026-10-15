@@ -40,7 +40,7 @@ spec:
           - app: tenant-postgres
             path: kernel/data/tenant-postgres
             namespace: sys.postgresql.placeholder
-          # The three Bitnami engines. These charts carry only the
+          # The three engines installed by a Release. These charts carry only the
           # prerequisites -- the values ConfigMaps and the credential
           # ExternalSecret -- and the Helm release itself is a provider-helm
           # Release the Cluster composition composes, reading those
@@ -53,8 +53,8 @@ spec:
           - app: infra-redis
             path: kernel/services/infra-redis/manifests
             namespace: sys.cache.placeholder
-          - app: infra-minio
-            path: kernel/services/infra-minio/manifests
+          - app: infra-seaweedfs
+            path: kernel/services/infra-seaweedfs/manifests
             namespace: sys.s3.placeholder
   template:
     metadata:

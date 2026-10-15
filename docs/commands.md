@@ -209,7 +209,12 @@ tenant's name typed out (`--yes` skips that in a script).
 
 Retire removes the tenant's directory from git; Argo CD prunes the Tenant and
 the operator tears it down under the manifest's `deletionPolicy`, `Retain`
-unless edited, so the realm, databases and files stay. Purge first commits
+unless edited, so the realm, databases and files stay. A retire of a tenant
+git does not describe asks the cluster whether it still runs it: an Argo CD
+sync that finished after the directory was removed can re-create the Tenant
+with no Application owning it, and such an orphan is deleted by the operator
+on that retire (and nothing else is — a Tenant made without Argo CD, or one
+whose Application exists, is refused with the reason). Purge first commits
 `deletionPolicy: Delete` (and the `gentianos.io/purge-requested` annotation),
 waits until the live Tenant carries it, then removes the directory; the tenant
 is listed as purging until then. A purge deletes the tenant's mailboxes
@@ -227,7 +232,7 @@ of its own.
 
 A person who may install apps in a tenant has an **App Store** tile whenever
 the Cluster claim names a store (`catalogue.storeUrl`) that is not the App
-Store app's own address on a cluster, and the cluster's licence report is on
+Store app's own address on a cluster, and the cluster's usage statistics report is on
 ([design/operations.md §6.2](design/operations.md)). The
 tile opens the App Store app, which runs on the cluster. It shows the data of
 the store outside the cluster — apps, descriptions, reviews, versions, prices
@@ -553,6 +558,22 @@ that may hold the main address: the user tenant of a single-tenancy cluster
 kubectl gentian exposures approve <app instance> <entry> --tenant user --acknowledge-main-address-rule
 ```
 
+**An alias.** A published entry answers under its tenant's domain. Whoever
+may configure the cluster can give it a second name directly under the
+cluster's own domain, and take it away again:
+
+```bash
+kubectl gentian exposures alias <app instance> <entry> --tenant <tenant> --host <name>.<kernel-domain>
+kubectl gentian exposures alias <app instance> <entry> --tenant <tenant> --remove
+```
+
+The entry has to be published first, by the tenant's approver; the alias
+publishes nothing by itself and survives the approver's reviews. The
+director refuses a name the platform keeps, a name a tenant is called, a
+name another entry holds, and any alias on a single-tenancy cluster;
+`exposures list` shows the alias in its own column. What is refused and why:
+[design/routing.md §7](design/routing.md).
+
 `list` shows each entry with who published it, when it is reviewed and when
 it ends: `published` is in force, `review due` is in force and past its
 review date, `expired` answers no longer and stays as the record. `withdraw`
@@ -672,6 +693,25 @@ every provider on the claim once it has applied the commit.
 Whether it has been supplied is shown on the console's Models tab, not here.
 A model the cluster serves itself is always `NOT SERVED`: the platform starts
 no instance for it.
+
+## 6c. Cluster settings
+
+The Cluster claim's scalar settings — `tenancyMode`, `mainAddress.tenant`,
+`mail.serviceMode`, the metrics and certificate switches — are changed the
+same way: the director commits the claim, and the cluster takes the change
+once Argo CD has synced. The same as editing the claim in the deployments
+checkout and running `./install.sh`, without the checkout.
+
+```bash
+kubectl gentian settings show                                   # the claim's settings, as JSON
+kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
+```
+
+The director holds the list of what may be set and refuses anything else, and
+refuses `tenancyMode=single` on a cluster carrying more than the one user
+tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the
+tenants' addresses ([§3](#3-create-a-tenant)); nothing else here restarts
+anything.
 
 ## 7. Administrator Accounts
 
@@ -998,10 +1038,21 @@ once you are sure:
 
 ```bash
 # What a deleted tenant left behind
-mc ls gentian/demo-gentian-backup/
+rclone lsf gentian:demo-gentian-backup/
 
 # Removing it is not reversible and no backup remains afterwards
-mc rm --recursive --force gentian/demo-gentian-backup/
+rclone purge gentian:demo-gentian-backup
+```
+
+`gentian:` is an rclone remote for the platform's own object store, set up
+from its administrator's Secret and a port-forward to its Service:
+
+```bash
+kubectl port-forward -n system-s3 svc/s3 19000:9000 &
+export RCLONE_CONFIG_GENTIAN_TYPE=s3 RCLONE_CONFIG_GENTIAN_PROVIDER=Other \
+  RCLONE_CONFIG_GENTIAN_ENDPOINT=http://localhost:19000 RCLONE_S3_NO_CHECK_BUCKET=true
+export RCLONE_CONFIG_GENTIAN_ACCESS_KEY_ID="$(kubectl get secret s3-admin -n system-s3 -o jsonpath='{.data.accessKey}' | base64 -d)"
+export RCLONE_CONFIG_GENTIAN_SECRET_ACCESS_KEY="$(kubectl get secret s3-admin -n system-s3 -o jsonpath='{.data.secretKey}' | base64 -d)"
 ```
 
 ### Reading a bundle
@@ -1011,7 +1062,7 @@ encrypted; `bundle-info.json` is deliberately not, and names the command that
 opens the rest:
 
 ```bash
-mc cat gentian/demo-gentian-backup/nightly-2026-08-18/bundle-info.json
+rclone cat gentian:demo-gentian-backup/nightly-2026-08-18/bundle-info.json
 
 # Platform key
 age -d -i /path/to/identity manifest.json.age > manifest.json
@@ -1036,10 +1087,10 @@ and still restores. Format 4 is what an export writes now.
 
 #### When the bundle is on external storage
 
-`mc` above is aliased to the platform's own MinIO. A tenant whose policy names
-an external endpoint writes there instead, with a credential the operator keeps
-in the kernel namespace rather than the tenant's — so reading such a bundle
-means aliasing that endpoint first:
+`gentian:` above is the platform's own object store. A tenant whose policy
+names an external endpoint writes there instead, with a credential the
+operator keeps in the kernel namespace rather than the tenant's — so reading
+such a bundle means a remote for that endpoint first:
 
 ```bash
 ns=system-s3                             # not the tenant namespace
@@ -1047,9 +1098,12 @@ sec=backup-destination-<tenant>          # from status.bundle.credentialSecret
 ak=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.accessKey}'  | base64 -d)
 sk=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.secretKey}' | base64 -d)
 
-mc alias set ext https://sos-ch-dk-2.exo.io "$ak" "$sk" --api S3v4
-mc ls  ext/<bucket>/<prefix>/
-mc cat ext/<bucket>/<prefix>/bundle-info.json
+export RCLONE_CONFIG_EXT_TYPE=s3 RCLONE_CONFIG_EXT_PROVIDER=Other \
+  RCLONE_CONFIG_EXT_ENDPOINT=https://sos-ch-dk-2.exo.io RCLONE_CONFIG_EXT_REGION=ch-dk-2 \
+  RCLONE_CONFIG_EXT_ACCESS_KEY_ID="$ak" RCLONE_CONFIG_EXT_SECRET_ACCESS_KEY="$sk" \
+  RCLONE_S3_NO_CHECK_BUCKET=true
+rclone lsf ext:<bucket>/<prefix>/
+rclone cat ext:<bucket>/<prefix>/bundle-info.json
 ```
 
 `kubectl get tenantexport <name> -n tenant-<t> -o jsonpath='{.status.bundle}'`
@@ -1061,7 +1115,7 @@ or — on a cluster that escrows it — straight out of OpenBao:
 
 ```bash
 bao kv get -mount=secret -field=identity gentian-os/kernel/backup/identity > id.txt
-mc cat ext/<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
+rclone cat ext:<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
 ```
 
 ## 12. Tenant Restore
@@ -1176,6 +1230,9 @@ It then makes sure of the definition of every app the bundle's tenant lists:
 on the cluster already at the build the bundle records, or fetched at that
 build from one of the cluster's catalogues and committed. If one cannot be
 had, the import is refused with `422`, names each, and has changed nothing.
+A platform component of an earlier release that this one no longer has
+(`app-store-me`) is left out instead: the command prints it as skipped, with
+the reason, and its data is not restored.
 It commits the tenant from the manifest's settings (deletionPolicy Retain,
 whatever the bundle said), waits until the operator reports the tenant Ready
 with its apps up, and starts a `TenantRestore`. The command follows the
@@ -1213,8 +1270,8 @@ The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A
 restore refused before it changed anything leaves it, so the import can be
 asked for again without uploading twice; an upload that is never restored
-stays until it is removed by hand (`mc rm --recursive --force
-gentian/gentian-imports/<prefix>/`). App grants are not in a bundle: they are
+stays until it is removed by hand (`rclone purge
+gentian:gentian-imports/<prefix>`). App grants are not in a bundle: they are
 declared in git, and a tenant imported into another cluster has them to set
 again. An import brings the data of apps that were uninstalled with their
 data kept, as uninstalled apps, when this cluster has their definitions. It
@@ -1303,12 +1360,11 @@ after a tenant moves its storage.
 ### Object Lock
 
 Full bundles suit WORM storage because no object is ever rewritten; each export
-occupies a fresh prefix. Set a default retention on the bucket and every
-uploaded object inherits it:
-
-```bash
-mc retention set --default COMPLIANCE 30d gentian/gentian-bundles
-```
+occupies a fresh prefix. Object Lock is a property a bucket is made with and
+cannot be switched on later, so this is for an external destination whose
+bucket you create with it, with a default retention every uploaded object
+inherits (e.g. `aws s3api put-object-lock-configuration` there). The
+platform's own store makes the bundle bucket itself, without a lock.
 
 Retention deletes will then fail for locked objects until they expire, which is
 the lock doing its job. Size the policy's tiers against the lock period rather

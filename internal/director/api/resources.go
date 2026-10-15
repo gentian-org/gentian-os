@@ -358,6 +358,22 @@ func (s *Server) tenantChanges(w http.ResponseWriter, r *http.Request, _ call) {
 	})
 }
 
+// perimeterHistory answers who published, reviewed or withdrew which of the
+// tenant's public entries, and when, from the commits that did it.
+func (s *Server) perimeterHistory(w http.ResponseWriter, r *http.Request, _ call) {
+	limit, since := changeWindow(r)
+	changes, err := s.cfg.Repo.TenantExposureChanges(r.Context(), r.PathValue("t"), limit, since)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":  r.PathValue("t"),
+		"changes": changes,
+		"covers":  "publications, reviews and withdrawals of this tenant's entries, from git. Requests to the published addresses are not in this list.",
+	})
+}
+
 func (s *Server) clusterChanges(w http.ResponseWriter, r *http.Request, _ call) {
 	limit, since := changeWindow(r)
 	changes, err := s.cfg.Repo.ClusterChanges(r.Context(), limit, since)

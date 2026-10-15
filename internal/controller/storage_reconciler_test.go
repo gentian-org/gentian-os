@@ -19,6 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -75,7 +77,7 @@ func TestStorage_NoStorageApps(t *testing.T) {
 }
 
 // TestStorage_CreatesS3BucketJob verifies that a Tenant with an S3-requiring app
-// creates the MinIO mc bucket Job in the kernel namespace with the correct labels
+// creates the bucket Job in the object store's namespace with the correct labels
 // and credentials.
 func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	t.Parallel()
@@ -113,21 +115,25 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		t.Fatal("expected at least one container in S3 bucket Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "docker.io/bitnamilegacy/minio:2025.4.22-debian-12-r1" {
+	if container.Image != kernel.DefaultSeaweedFSImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
+	// The object store's NetworkPolicy admits the pod to the master and the
+	// filer by this label.
+	if job.Spec.Template.Labels[backup.ObjectStorageShellLabel] != "true" {
+		t.Errorf("the bucket Job's pod lacks %s", backup.ObjectStorageShellLabel)
+	}
 
-	// Credentials must come from the minio-admin Secret.
+	// The master's address comes from the s3-admin Secret; no administrator's
+	// key is needed, and none is handed to the pod.
 	secretEnvs := make(map[string]string)
 	for _, e := range container.Env {
 		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
+			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name + "/" + e.ValueFrom.SecretKeyRef.Key
 		}
 	}
-	for _, required := range []string{"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"} {
-		if secretEnvs[required] != "minio-admin" {
-			t.Errorf("expected %s sourced from minio-admin Secret, got %q", required, secretEnvs[required])
-		}
+	if secretEnvs["S3_MASTER"] != "s3-admin/master" || len(secretEnvs) != 1 {
+		t.Errorf("the bucket Job reads %v from Secrets, want only S3_MASTER from s3-admin/master", secretEnvs)
 	}
 
 	// BUCKET_NAME must be a non-empty literal env var.

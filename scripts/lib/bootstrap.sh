@@ -370,8 +370,10 @@ create_crossplane_secrets() {
             --arg a "$(_derive redis password)" \
             '{auth_password:$a}')"
 
-    # ── storage/minio ─────────────────────────────────────────────────────────
-    _kv_secret "gentian-os-kernel-storage-minio" \
+    # ── storage/s3 (the object store's administrator) ─────────────────────────
+    # Derived under the name it was first derived under, "minio": the path
+    # moved with the server, the value did not.
+    _kv_secret "gentian-os-kernel-storage-s3" \
         "$(jq -nc \
             --arg a "minio" \
             --arg b "$(_derive minio root_password)" \
@@ -407,7 +409,7 @@ create_crossplane_secrets() {
     # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=system) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
-    # the minio secret for cross-service derivation consistency.
+    # the object store's secret for cross-service derivation consistency.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
             --arg doveadm "$(_derive dovecot doveadm_password)" \
@@ -724,14 +726,14 @@ seed_secrets_remaining() {
     # kv_put_once and writes only the paths the Cluster XR does not cover.
     seed_secrets
     seed_repository_credentials
-    seed_licence_report_key
+    seed_usage_statistics_key
 }
 
 # =============================================================================
-# seed_licence_report_key — the key this cluster signs its licence reports with
+# seed_usage_statistics_key — the key this cluster signs its usage statistics reports with
 # =============================================================================
 # 32 random bytes, as hex, under their own path. The operator derives an
-# Ed25519 key pair from them (internal/licencereport): the private half signs
+# Ed25519 key pair from them (internal/usagestatistics): the private half signs
 # each report and the public half travels in it, so the address the reports go
 # to can tell one cluster's reports from anybody else's without having been
 # given anything first.
@@ -749,15 +751,15 @@ seed_secrets_remaining() {
 # The path sits under gentian-os/kernel/ for the reason the repository
 # credentials do: it is the one prefix ESO may read.
 # =============================================================================
-seed_licence_report_key() {
-    local path="gentian-os/kernel/licence-report" have
-    if [[ "$(gentian_licence_report_enabled)" != "true" ]]; then
-        info "Licence report is off: no signing key is seeded."
+seed_usage_statistics_key() {
+    local path="gentian-os/kernel/usage-statistics" have
+    if [[ "$(gentian_usage_statistics_enabled)" != "true" ]]; then
+        info "Usage statistics report is off: no signing key is seeded."
         return 0
     fi
     have="$(bao kv get -mount=secret -field=signing_seed "${path}" 2>/dev/null || true)"
     if [[ -n "${have}" ]]; then
-        info "Licence report signing key already present; left as it is."
+        info "Usage statistics report signing key already present; left as it is."
         return 0
     fi
     # Absent, or unreadable. `kv put` with check-and-set 0 writes only when
@@ -765,11 +767,11 @@ seed_licence_report_key() {
     # read is not replaced.
     if ! bao kv put -mount=secret -cas=0 "${path}" \
         "signing_seed=$(openssl rand -hex 32)" >/dev/null 2>&1; then
-        warn "The licence report signing key could not be written to OpenBao."
+        warn "The usage statistics report signing key could not be written to OpenBao."
         warn "  No report is sent without it; the operator records that it has no key."
         return 0
     fi
-    success "Licence report signing key stored."
+    success "Usage statistics report signing key stored."
 }
 
 # =============================================================================
@@ -1005,7 +1007,7 @@ resync_credential_consumers() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_s3_ready argocd_url
 
     # Around a dozen cluster queries, and on a remote API server they add up to
     # the better part of a minute. Announce it: the last thing printed before
@@ -1056,7 +1058,7 @@ print_summary_cp() {
     infra_pg_ready=$(_release_ready postgresql)
     infra_mdb_ready=$(_release_ready mariadb)
     infra_redis_ready=$(_release_ready redis)
-    infra_minio_ready=$(_release_ready minio)
+    infra_s3_ready=$(_release_ready seaweedfs)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
@@ -1094,7 +1096,7 @@ print_summary_cp() {
     echo -e "${GREEN}  System PG      : ${xr_name}-postgresql (Ready=${infra_pg_ready})${NC}"
     echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
     echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
-    echo -e "${GREEN}  System MinIO   : ${xr_name}-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  System S3      : ${xr_name}-seaweedfs (Ready=${infra_s3_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
     if [[ -n "${_gentian_handover_done:-}" ]]; then
@@ -1762,17 +1764,17 @@ _claim_catalogue_section() {
     printf '  #\n'
     printf '  # A source named here is offered to every tenant: the cluster lists its\n'
     printf '  # entries to them as installable from here, without the App Store.\n'
-    printf '  # This is not a licence: whether an app arrives is decided by whether\n'
+    printf '  # This is not a license: whether an app arrives is decided by whether\n'
     printf '  # the tenant holds a credential for the repository it is pulled from.\n'
     printf '  catalogue:\n'
     printf '    # The base address of the App Store API: where the App Store app on\n'
     printf '    # this cluster reads what is on offer and what a tenant has acquired.\n'
-    if [[ "$(gentian_licence_report_enabled)" == "true" ]]; then
+    if [[ "$(gentian_usage_statistics_enabled)" == "true" ]]; then
         printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
     else
         printf '    #\n'
-        printf '    # Not named here: the App Store needs licence reporting, which is\n'
-        printf '    # turned off on this cluster (--no-licence-report).\n'
+        printf '    # Not named here: the App Store needs usage statistics, which is\n'
+        printf '    # turned off on this cluster (--no-usage-statistics).\n'
         printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
     fi
     printf '    sources:\n'
@@ -1811,9 +1813,9 @@ ensure_claim_catalogue_section() {
         _claim_warn_retired_catalogue_addresses "${claim}"
         # A store somebody named stays named: the claim is theirs. The desktop
         # is told the store is unavailable all the same, by the usher.
-        if [[ "$(gentian_licence_report_enabled)" != "true" ]] \
+        if [[ "$(gentian_usage_statistics_enabled)" != "true" ]] \
             && yq_get '.spec.catalogue.storeUrl' "${claim}" >/dev/null 2>&1; then
-            warn "claims/cluster.yaml names an App Store, and licence reporting is off:"
+            warn "claims/cluster.yaml names an App Store, and usage statistics are off:"
             warn "  the App Store is not offered on this cluster. Remove spec.catalogue.storeUrl"
             warn "  to say so in the claim as well."
         fi

@@ -252,7 +252,7 @@ func appStoreValues(t *testing.T, tenancyMode, tenantName string, reporting bool
 		b = b.WithObjects(claim)
 	}
 	r := &ComponentReconciler{Client: b.Build(), KernelDomain: "k.example", KernelRealm: "kernel",
-		TenancyMode: tenancyMode, Cluster: "c1", LicenceReporting: reporting}
+		TenancyMode: tenancyMode, Cluster: "c1", UsageStatisticsEnabled: reporting}
 	profile := shippedAppStoreProfile(t)
 	tenant := tileFixtureTenant(tenantName)
 	comp := tileFixtureComponent("app-store", "tenant-"+tenantName, "app-store")
@@ -496,7 +496,7 @@ func TestTheAppStoreIsPlacedWhereTheClusterOffersAStore(t *testing.T) {
 						profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
 					).Build()
 					r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example",
-						TenancyMode: mode, LicenceReporting: reporting}
+						TenancyMode: mode, UsageStatisticsEnabled: reporting}
 					if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
@@ -526,7 +526,7 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 	key := types.NamespacedName{Name: "app-store", Namespace: tenantNamespaceName(tenant)}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(), clusterClaim("https://store.example.org"), shippedAppStoreProfile(t)).Build()
-	r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", LicenceReporting: true}
+	r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: true}
 	present := func() bool { return c.Get(ctx, key, &gentianov1alpha1.Component{}) == nil }
 
 	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || !present() {
@@ -557,11 +557,11 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 	if err := c.Update(ctx, live); err != nil {
 		t.Fatal(err)
 	}
-	r.LicenceReporting = false
+	r.UsageStatisticsEnabled = false
 	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || present() {
-		t.Fatalf("placed with licence reporting off (%v)", err)
+		t.Fatalf("placed with usage statistics off (%v)", err)
 	}
-	r.LicenceReporting = true
+	r.UsageStatisticsEnabled = true
 	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || !present() {
 		t.Fatalf("not placed again (%v)", err)
 	}
@@ -581,7 +581,7 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 	if err := failing.Create(ctx, placed); err != nil {
 		t.Fatal(err)
 	}
-	rf := &TenantReconciler{Client: failing, Scheme: scheme, KernelRealm: "kernel", LicenceReporting: true}
+	rf := &TenantReconciler{Client: failing, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: true}
 	if err := rf.ensureDefaultComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 	if err := own.Create(ctx, installed); err != nil {
 		t.Fatal(err)
 	}
-	ro := &TenantReconciler{Client: own, Scheme: scheme, KernelRealm: "kernel", LicenceReporting: true}
+	ro := &TenantReconciler{Client: own, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: true}
 	if err := ro.ensureDefaultComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +623,7 @@ func TestTheAppStoresWayOutIsPublicAddressesOn443(t *testing.T) {
 
 	policy := func(reporting bool, storeURL string) *networkingv1.NetworkPolicy {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterClaim(storeURL), comp.DeepCopy()).Build()
-		r := &ComponentReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example", LicenceReporting: reporting}
+		r := &ComponentReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example", UsageStatisticsEnabled: reporting}
 		live := &gentianov1alpha1.Component{}
 		if err := c.Get(ctx, client.ObjectKeyFromObject(comp), live); err != nil {
 			t.Fatal(err)
@@ -696,7 +696,7 @@ func TestTheAppStoresWayOutIsPublicAddressesOn443(t *testing.T) {
 	other := profile.DeepCopy()
 	other.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterClaim("https://store.example.org")).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme, LicenceReporting: true}
+	r := &ComponentReconciler{Client: c, Scheme: scheme, UsageStatisticsEnabled: true}
 	if rules, err := r.storeEgress(ctx, other); err != nil || len(rules) != 0 {
 		t.Fatalf("a certified profile got %d rules out of the cluster (%v)", len(rules), err)
 	}
@@ -718,11 +718,11 @@ func TestTheStoreOfferIsWrittenBesideTheTiles(t *testing.T) {
 		"offered":        {true, []client.Object{clusterClaim("https://store.example.org")}, tilecatalogue.AppStore{Offered: true}},
 		"no store named": {true, []client.Object{clusterClaim("")}, tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoStore}},
 		"no claim":       {true, nil, tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoStore}},
-		"reporting off":  {false, []client.Object{clusterClaim("https://store.example.org")}, tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoLicenceReport}},
+		"reporting off":  {false, []client.Object{clusterClaim("https://store.example.org")}, tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoUsageStatistics}},
 	} {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(c.objs...).Build()
 		r := &TileProjectionReconciler{Client: cl, Cluster: "demo-cluster", KernelRealm: "kernel",
-			KernelDomain: "k.example", TenancyMode: "multi", LicenceReporting: c.reporting}
+			KernelDomain: "k.example", TenancyMode: "multi", UsageStatisticsEnabled: c.reporting}
 		if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -830,7 +830,7 @@ func TestAStoreAddressThatIsTheAppsOwnHostIsNoStore(t *testing.T) {
 
 		// The tenant reconciler places by that verdict, on every tenant.
 		tr := &TenantReconciler{Client: cl, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example",
-			TenancyMode: c.mode, LicenceReporting: true}
+			TenancyMode: c.mode, UsageStatisticsEnabled: true}
 		for _, tenant := range c.tenants {
 			if err := tr.ensureDefaultComponents(ctx, tenant); err != nil {
 				t.Fatalf("%s: %v", name, err)
@@ -843,7 +843,7 @@ func TestAStoreAddressThatIsTheAppsOwnHostIsNoStore(t *testing.T) {
 
 		// And the projection writes it beside the tiles, for the usher.
 		pr := &TileProjectionReconciler{Client: cl, Cluster: "demo-cluster", KernelRealm: "kernel",
-			KernelDomain: "k.example", TenancyMode: c.mode, LicenceReporting: true}
+			KernelDomain: "k.example", TenancyMode: c.mode, UsageStatisticsEnabled: true}
 		if _, err := pr.Reconcile(ctx, ctrl.Request{}); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}

@@ -366,6 +366,75 @@ func TestAnImportIsRefusedUpFrontWhenAProfileCannotBeObtained(t *testing.T) {
 	}
 }
 
+// A tenant of an earlier release lists the platform's own per-tenant App
+// Store among its apps, a profile this release no longer has. The import
+// leaves it out and says so -- in the answer and on the status route, to the
+// end -- and gives the tenant every other app.
+func TestAnImportSkipsARetiredPlatformAppAndSaysSo(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	op := &importingOperator{declared: true,
+		manifest: `{"schemaVersion":1,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd",` +
+			`"apps":[{"profile":"app-store-me"},{"profile":"element"}]},"apps":[{"name":"app-store-me","profile":"app-store-me"},{"name":"element","profile":"element"}]}`}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	saysSkipped := func(where string, st map[string]any) {
+		t.Helper()
+		skipped, _ := st["skipped"].([]any)
+		if len(skipped) != 1 {
+			t.Fatalf("%s: skipped = %v, want app-store-me alone", where, st["skipped"])
+		}
+		entry, _ := skipped[0].(map[string]any)
+		if entry["app"] != "app-store-me" || !strings.Contains(entry["reason"].(string), "no longer has") {
+			t.Errorf("%s: skipped entry = %v", where, entry)
+		}
+	}
+	saysSkipped("the answer", body)
+
+	manifest, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/imported/tenant.yaml")
+	if err != nil || !strings.Contains(manifest, "profile: element") || strings.Contains(manifest, "app-store-me") {
+		t.Fatalf("declared manifest: %v\n%s", err, manifest)
+	}
+	record, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/imported/"+gitops.ImportFile)
+	if err != nil || !strings.Contains(record, `"app": "app-store-me"`) {
+		t.Errorf("the record of the import does not keep what was skipped: %v\n%s", err, record)
+	}
+
+	st := waitImport(t, h, alice, "imported", "ready", "failed")
+	if st["phase"] != "ready" {
+		t.Fatalf("the import ended %v", st)
+	}
+	saysSkipped("the finished status", st)
+}
+
+// Only the platform's own retired components are left out. An app of the
+// tenant's whose definition cannot be had refuses the import as before, and
+// the retired one is not named among what is missing.
+func TestAnImportBesideARetiredPlatformAppStillRefusesAnUnknownApp(t *testing.T) {
+	op := &importingOperator{declared: true,
+		manifest: `{"schemaVersion":1,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd",` +
+			`"apps":[{"profile":"app-store-me"},{"profile":"crm"},{"profile":"element"}]},"apps":[]}`}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	before := h.tip(t)
+
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`)
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	raw, _ := json.Marshal(body)
+	if !strings.Contains(string(raw), "app crm (") || strings.Contains(string(raw), "app-store-me") {
+		t.Errorf("the refusal = %s", raw)
+	}
+	if h.tip(t) != before {
+		t.Error("a refused import still committed something")
+	}
+}
+
 // secondDirector is another start of the director on the same repository:
 // what a restart is.
 func secondDirector(t *testing.T, h *harness, lc api.Lifecycle) (*api.Server, *harness) {

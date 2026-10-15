@@ -248,10 +248,10 @@ type TenantReconciler struct {
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
 	Scheme         *runtime.Scheme
-	// LicenceReporting is whether this cluster reports what it runs: half of
+	// UsageStatisticsEnabled is whether this cluster reports what it runs: half of
 	// whether it offers an App Store, which decides whether a tenant gets the
 	// components that declare defaultWhereStoreOffered.
-	LicenceReporting bool
+	UsageStatisticsEnabled bool
 	// WatchClusterClaim re-runs every tenant when the Cluster claim changes,
 	// so that a store named or withdrawn there places or removes those
 	// components at once. Off where the claim's kind is not installed.
@@ -1065,6 +1065,12 @@ func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov
 		for k, v := range desiredSpec {
 			specMap[k] = v
 		}
+		// Stated or absent, and absent has to arrive too: a merge that only
+		// copies what is there would leave a mail server on the XTenant
+		// after its credential was withdrawn.
+		if _, ok := desiredSpec["realmMail"]; !ok {
+			delete(specMap, "realmMail")
+		}
 	} else {
 		xr.Object["spec"] = desiredSpec
 	}
@@ -1269,6 +1275,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 
 	if security := xtenantSecurity(tenant.Spec.Security); len(security) > 0 {
 		spec["security"] = security
+	}
+
+	// The realm's mail server, stated only once its password exists; see
+	// tenantRealmMail. Absent, the Composition declares none.
+	mail, err := r.tenantRealmMail(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("the realm's mail server: %w", err)
+	}
+	if mail != nil {
+		spec["realmMail"] = xtenantRealmMail(mail)
 	}
 
 	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)

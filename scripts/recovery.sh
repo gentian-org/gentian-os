@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # The namespace the object store is in, by its function: a name written here
 # is a name that stays behind when the layout changes, which is how this
-# script came to look for MinIO's credentials in a namespace that no longer
+# script came to look for the object store's credentials in a namespace that no longer
 # exists.
 NAMESPACES_FILE="${REPO_ROOT}/kernel/namespaces.yaml"
 # shellcheck source=scripts/lib/namespaces.sh
@@ -272,25 +272,23 @@ locate_bundle() {
     [[ -n "${BUNDLE_BUCKET}" ]] || { error "Export ${OPT_EXPORT} records no bundle."; return 1; }
 }
 
-# mc_alias — point mc at the bundle's storage.
+# rclone_remote — point rclone at the bundle's storage, as the remote
+# gtnrecovery (a name rclone can be given from the environment).
 #
 # Credentials come from the flags first, then the environment, and only then
 # from the cluster. That order is the whole point: the case this script exists
 # for is a cluster that is gone, and reaching for kubectl first would make the
 # tool useless exactly when it is needed. The cluster path stays because it
 # saves looking anything up while the cluster is still there.
-mc_alias() {
-    # MinIO archived the client and took down dl.min.io; the last release's
-    # binaries are still on GitHub, one per platform.
-    need mc "mc is the MinIO client, for reading bundles out of object storage:
-  curl -sSL https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z -o ~/.local/bin/mc && chmod +x ~/.local/bin/mc
-  other platforms: the same release's assets, https://github.com/minio/mc/releases/tag/RELEASE.2025-08-13T08-35-41Z" || return 1
+rclone_remote() {
+    need rclone "rclone reads bundles out of object storage, any S3 store:
+  brew install rclone   /   apt install rclone   /   https://rclone.org/install/" || return 1
     local ak="" sk="" kn
     # Beside the object store: where a destination's credential is
     # materialised, and where the capture Jobs read it.
     kn="$(ns_system s3)" || return 1
 
-    # An empty endpoint means the platform's own MinIO, whose address is a
+    # An empty endpoint means the platform's own object store, whose address is a
     # cluster-internal Service name. Nothing outside the cluster resolves it, so
     # forward a port and talk to that instead.
     if [[ -z "${BUNDLE_ENDPOINT}" ]]; then
@@ -315,7 +313,16 @@ mc_alias() {
         error "  AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
         return 1
     fi
-    mc alias set gtn-recovery "${BUNDLE_ENDPOINT}" "${ak}" "${sk}" --api S3v4 >/dev/null
+    # Through rclone's environment, so no key is on a command line; for this
+    # script's commands alone. Path-style addressing, rclone's default for a
+    # store it does not name.
+    export RCLONE_CONFIG_GTNRECOVERY_TYPE=s3 RCLONE_CONFIG_GTNRECOVERY_PROVIDER=Other
+    export RCLONE_CONFIG_GTNRECOVERY_ENDPOINT="${BUNDLE_ENDPOINT}"
+    export RCLONE_CONFIG_GTNRECOVERY_ACCESS_KEY_ID="${ak}" RCLONE_CONFIG_GTNRECOVERY_SECRET_ACCESS_KEY="${sk}"
+    export RCLONE_S3_NO_CHECK_BUCKET=true RCLONE_CONFIG=/dev/null
+    if [[ -n "${BUNDLE_REGION}" ]]; then
+        export RCLONE_CONFIG_GTNRECOVERY_REGION="${BUNDLE_REGION}"
+    fi
 }
 
 # age_decrypt <file> — print the plaintext, whichever key kind we hold.
@@ -346,26 +353,26 @@ age_decrypt() {
     cat "${WORK}/plain"
 }
 
-# platform_storage_forward — reach the platform's own MinIO from outside.
+# platform_storage_forward — reach the platform's own object store from outside.
 #
 # Its endpoint is http://<svc>.<ns>.svc.cluster.local:9000, which resolves only
-# inside the cluster. The Service is forwarded to a local port and the alias
+# inside the cluster. The Service is forwarded to a local port and the remote
 # points there; the forward dies with the script.
 platform_storage_forward() {
     need kubectl || return 1
     local raw host svc ns port lport=19000 s3ns
     s3ns="$(ns_system s3)" || return 1
-    raw="$(kubectl get secret minio-admin -n "${s3ns}" \
+    raw="$(kubectl get secret s3-admin -n "${s3ns}" \
         -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${raw}" ]] || { error "Cannot read the minio-admin endpoint in ${s3ns}."; return 1; }
+    [[ -n "${raw}" ]] || { error "Cannot read the s3-admin endpoint in ${s3ns}."; return 1; }
 
     host="${raw#*://}"; port="${host##*:}"; host="${host%%:*}"
     svc="${host%%.*}"; ns="${host#*.}"; ns="${ns%%.*}"
     [[ -n "${svc}" && -n "${ns}" ]] || { error "Cannot parse ${raw}"; return 1; }
 
-    OPT_S3_AK="$(kubectl get secret minio-admin -n "${s3ns}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
-    OPT_S3_SK="$(kubectl get secret minio-admin -n "${s3ns}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the minio-admin credentials."; return 1; }
+    OPT_S3_AK="$(kubectl get secret s3-admin -n "${s3ns}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
+    OPT_S3_SK="$(kubectl get secret s3-admin -n "${s3ns}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
+    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the s3-admin credentials."; return 1; }
 
     info "forwarding ${svc}.${ns}:${port} to localhost:${lport}"
     kubectl port-forward -n "${ns}" "svc/${svc}" "${lport}:${port}" >/dev/null 2>&1 &
@@ -391,10 +398,10 @@ platform_storage_forward() {
 cmd_list() {
     if [[ -n "${OPT_S3_BUCKET}" ]]; then
         locate_bundle || return 1
-        mc_alias || return 1
+        rclone_remote || return 1
         banner "Bundles in ${BUNDLE_BUCKET}"
         info "listed from storage: whether each finished is not recorded here"
-        mc ls "gtn-recovery/${BUNDLE_BUCKET}/" | sed 's/^/  /'
+        rclone lsf --dirs-only "gtnrecovery:${BUNDLE_BUCKET}/" | sed 's/^/  /'
         return 0
     fi
 
@@ -439,15 +446,15 @@ cmd_inspect() {
     [[ "${BUNDLE_MODE}" == "passphrase" && "${OPT_PASSPHRASE}" != "1" ]] &&
         warn "This bundle is passphrase-encrypted; pass --passphrase."
 
-    mc_alias || return 1
-    local base="gtn-recovery/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
+    rclone_remote || return 1
+    local base="gtnrecovery:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
 
     banner "bundle-info.json (never encrypted)"
-    mc cat "${base}/bundle-info.json" || { error "Cannot read the bundle."; return 1; }
+    rclone cat "${base}/bundle-info.json" || { error "Cannot read the bundle."; return 1; }
 
     resolve_key || return 1
     banner "manifest.json"
-    mc cat "${base}/manifest.json.age" > "${WORK}/manifest.age" || return 1
+    rclone cat "${base}/manifest.json.age" > "${WORK}/manifest.age" || return 1
     age_decrypt "${WORK}/manifest.age" || return 1
     echo ""
     success "The bundle is readable and this key opens it."

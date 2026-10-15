@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/tests/test-store-network-policies.sh
 # =============================================================================
-# Each shared store of the system tier -- PostgreSQL, MariaDB, Redis, MinIO --
+# Each shared store of the system tier -- PostgreSQL, MariaDB, Redis, SeaweedFS --
 # carries one NetworkPolicy saying who may connect to it. A policy that
 # selects a pod denies every ingress it does not list, so the mistakes that
 # matter show on a cluster and nowhere else:

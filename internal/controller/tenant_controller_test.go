@@ -411,13 +411,13 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// minio-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
+	// s3-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "system-s3"},
+		ObjectMeta: metav1.ObjectMeta{Name: "s3-admin", Namespace: "system-s3"},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio.system-s3.svc:9000"),
-			"accessKey": []byte("minioadmin"),
-			"secretKey": []byte("minioadmin"),
+			"endpoint":  []byte("http://s3.system-s3.svc:9000"),
+			"accessKey": []byte("s3admin"),
+			"secretKey": []byte("s3admin"),
 		},
 	}); err != nil {
 		panic(err)

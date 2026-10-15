@@ -38,11 +38,11 @@ direct analogues for every layer:
 | `libc` — friendly call → raw syscalls | **Crossplane Compositions** |
 | Syscall dispatcher / VFS | **Crossplane Composition engine** |
 | Loadable kernel modules / device drivers | **Crossplane providers** (`provider-helm`, `provider-vault`, `provider-kubernetes`, `provider-keycloak`) |
-| Hardware (disks, NICs) | **External operators & APIs** (Keycloak, CloudNativePG, MinIO, OpenBao, cloud APIs) |
+| Hardware (disks, NICs) | **External operators & APIs** (Keycloak, CloudNativePG, SeaweedFS, OpenBao, cloud APIs) |
 | File descriptor / process handle | **Managed Resource (MR) status** |
 | Kernel scheduler / writeback | **Crossplane reconcile loop** |
 | `init` / `systemd` | **Argo CD** |
-| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Keycloak, OpenFGA, OpenBao, PostgreSQL, MinIO, Envoy Gateway, the desktop, …) |
+| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Keycloak, OpenFGA, OpenBao, PostgreSQL, SeaweedFS, Envoy Gateway, the desktop, …) |
 
 The reasoning behind each mapping is in
 [design/kernel.md](design/kernel.md).
@@ -65,7 +65,7 @@ graph TD
     OP[Operator<br/>reconciles Tenant, Component, …]
     XP[Crossplane<br/>XCluster · XTenant · App claims → managed resources]
     OB[OpenBao + ESO<br/>secrets]
-    UP[Keycloak · CloudNativePG · MinIO · Helm releases]
+    UP[Keycloak · CloudNativePG · SeaweedFS · Helm releases]
 
     P --> DIR
     DIR -- commits --> GIT
@@ -340,7 +340,7 @@ and function; the list is `kernel/namespaces.yaml`.
 | Cluster view | Headlamp | `kernel-observability` |
 | Relational data for tenants | PostgreSQL (CloudNativePG), MariaDB | `system-postgresql`, `system-mariadb` |
 | Cache | Redis | `system-cache` |
-| Object storage | MinIO | `system-s3` |
+| Object storage | SeaweedFS | `system-s3` |
 | Mail (where the claim asks) | Postfix and Dovecot; the mail edge | `system-mail`, `system-mail-dmz` |
 | Models (where the claim asks) | LiteLLM and vLLM | `system-llm` |
 

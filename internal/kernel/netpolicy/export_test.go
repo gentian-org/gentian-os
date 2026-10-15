@@ -40,10 +40,10 @@ func TestExportJobNetworkPolicyIsScopedToExportPods(t *testing.T) {
 			}
 		}
 	}
-	// Interim: the encrypt step installs age at runtime and a tenant-namespace
-	// restore fetches the MinIO client; a dedicated backup image retires this.
+	// A volume's capture and restore run here and reach a bundle destination
+	// a backup policy names, wherever its endpoint is.
 	if !internet {
-		t.Error("missing internet egress for runtime tool installs")
+		t.Error("missing internet egress to an external bundle destination")
 	}
 	want := map[string]bool{layout.System("postgresql"): false, layout.System("mariadb"): false, layout.System("s3"): false}
 	for _, ns := range namespaces {

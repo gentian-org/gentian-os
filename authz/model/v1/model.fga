@@ -130,7 +130,7 @@ type tenant
 # tenant. Installing is asked of the person (tenant#can_install_app); whether
 # the app then arrives is decided where its artefacts are pulled, by the
 # credential the tenant holds for their repository. The platform does no
-# licence gating.
+# license gating.
 type app
   relations
     define tenant: [tenant]

@@ -33,7 +33,9 @@ import (
 // The bundle is uploaded or named; its manifest is read with the key the
 // person gives; the definition of every app the bundle's tenant lists is
 // made sure of -- on the cluster already, or fetched at the build the bundle
-// records -- or the import is refused before anything is changed; the tenant
+// records -- or the import is refused before anything is changed, save the
+// platform's own components of an earlier release, which are left out and
+// named (withoutRetiredPlatformApps); the tenant
 // is declared from the manifest's settings as one commit, by the function a
 // created tenant is committed by; and once the operator reports it Ready,
 // with its apps up, a restore fills the shells from the bundle. Everything
@@ -64,6 +66,9 @@ type ImportStatus struct {
 	Complete    *bool             `json:"complete,omitempty"`
 	NotRestored []json.RawMessage `json:"notRestored,omitempty"`
 	Notes       []string          `json:"notes,omitempty"`
+	// Skipped are the apps of the bundle's tenant the tenant here was not
+	// given, each with why (retiredPlatformApps). Their data is not restored.
+	Skipped []gitops.SkippedApp `json:"skipped,omitempty"`
 }
 
 // importWait is how long one watcher of an import waits, for the tenant and
@@ -178,10 +183,14 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 
+	// The platform's own components of an earlier release are left out; the
+	// rest are the tenant's apps, every one of which it is given.
+	spec, skipped := withoutRetiredPlatformApps(insp.Manifest.TenantSpec)
+
 	// The apps' definitions, before anything is committed. A tenant whose
 	// manifest names a profile the cluster does not have is never
 	// provisioned, and an import that waits for it can only time out.
-	missing, err := s.importProfiles(ctx, name, insp.Manifest.TenantSpec, c.meta)
+	missing, err := s.importProfiles(ctx, name, spec, c.meta)
 	if err != nil {
 		s.repoError(w, r, err)
 		return
@@ -198,16 +207,17 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		Tenant: name, Source: insp.Manifest.Tenant, Export: insp.Manifest.Export, Bundle: req.Bundle,
 		Restore:     "import-" + now.Format("20060102-150405"),
 		RequestedAt: now.Format(time.RFC3339), RequestedBy: c.meta.ActorName(),
+		Skipped: skipped,
 	}
 	origin := fmt.Sprintf("export %s of %s, of tenant %s", insp.Manifest.Export, insp.Manifest.CreatedAt, insp.Manifest.Tenant)
 	res, err := s.cfg.Repo.DeclareTenant(ctx, gitops.ImportedTenant{
-		Name: name, Spec: insp.Manifest.TenantSpec, Origin: origin, Pending: pending,
+		Name: name, Spec: spec, Origin: origin, Pending: pending,
 	}, c.meta)
 	switch {
 	case errors.Is(err, gitops.ErrTenantExists):
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or import under another name")
 		return
-	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken):
+	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	case err != nil:
@@ -215,7 +225,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	st := ImportStatus{Tenant: name, Phase: "declared", Commit: res.Commit, Bundle: req.Bundle, Restore: pending.Restore,
-		Message: "the tenant is committed; the operator provisions it next"}
+		Message: "the tenant is committed; the operator provisions it next", Skipped: pending.Skipped}
 	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
 		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
 		return
@@ -233,7 +243,7 @@ func (s *Server) resumeImport(w http.ResponseWriter, r *http.Request, c call, pe
 		return
 	}
 	st := ImportStatus{Tenant: pending.Tenant, Phase: "provisioning", Bundle: pending.Bundle, Restore: pending.Restore,
-		Message: "going on with the import of this tenant"}
+		Message: "going on with the import of this tenant", Skipped: pending.Skipped}
 	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
 		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
 		return
@@ -277,7 +287,7 @@ func (s *Server) ResumeImports(ctx context.Context) {
 	for _, p := range pending {
 		s.cfg.Log.Info("resuming the import of a tenant", "tenant", p.Tenant, "restore", p.Restore)
 		st := ImportStatus{Tenant: p.Tenant, Phase: "provisioning", Bundle: p.Bundle, Restore: p.Restore,
-			Message: "the director restarted during this import and is going on with it"}
+			Message: "the director restarted during this import and is going on with it", Skipped: p.Skipped}
 		s.watchImport(p, nil, "gentian-director", &st)
 	}
 }
@@ -300,7 +310,7 @@ func (s *Server) importStatus(w http.ResponseWriter, r *http.Request, _ call) {
 		return
 	}
 	st := ImportStatus{Tenant: tenant, Phase: "provisioning", Bundle: pending.Bundle, Restore: pending.Restore,
-		Message: "this import was begun before this director started; it is going on with it"}
+		Message: "this import was begun before this director started; it is going on with it", Skipped: pending.Skipped}
 	s.watchImport(pending, nil, "gentian-director", &st)
 	s.json(w, http.StatusOK, st)
 }
@@ -453,6 +463,38 @@ func (s *Server) importMessage(name string) string {
 	st, _ := s.imports.Load(name)
 	cur, _ := st.(ImportStatus)
 	return cur.Message
+}
+
+// withoutRetiredPlatformApps answers the bundle's tenant settings without the
+// apps that were platform components of an earlier release this one no
+// longer has (gitops.RetiredPlatformProfile), and those apps, each with why.
+//
+// Only those: the list is of names the platform itself placed on every
+// tenant, so leaving one out loses nothing of the tenant's own. Any other
+// app whose definition cannot be had still refuses the import -- a tenant's
+// app left out would be its data left behind. The restore then finds a
+// skipped app not installed here and does not restore what the bundle holds
+// of it, and says so.
+func withoutRetiredPlatformApps(spec *gentianov1alpha1.TenantSpec) (*gentianov1alpha1.TenantSpec, []gitops.SkippedApp) {
+	var kept []gentianov1alpha1.TenantApp
+	var skipped []gitops.SkippedApp
+	for _, app := range spec.Apps {
+		name := app.Profile
+		if name == "" && app.ProfileRef != nil {
+			name = app.ProfileRef.Name
+		}
+		if why := gitops.RetiredPlatformProfile(name); why != "" {
+			skipped = append(skipped, gitops.SkippedApp{App: name, Reason: why})
+			continue
+		}
+		kept = append(kept, app)
+	}
+	if len(skipped) == 0 {
+		return spec, nil
+	}
+	out := *spec
+	out.Apps = kept
+	return &out, skipped
 }
 
 // wantedProfile is one definition a tenant's manifest names.

@@ -100,6 +100,10 @@ type exposureEntry struct {
 	// once approved. Empty for an entry that is published nowhere; Note
 	// says why.
 	Host string `json:"host,omitempty"`
+	// Alias is a second address the surface answers at, directly under
+	// the cluster's own domain, where the cluster's administrator gave it
+	// one. Only on a published surface.
+	Alias string `json:"alias,omitempty"`
 	// Paths are the path prefixes published, and nothing else on the host
 	// is. DenyPaths are refused even below one of them.
 	Paths     []string `json:"paths,omitempty"`
@@ -307,7 +311,7 @@ func (s *Server) readExposureView(ctx context.Context, tenant string) (*exposure
 func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	out := gentianov1alpha1.TenantExposure{
 		Install: e.Install, ExposureName: e.ExposureName, Owner: e.Owner, Reason: e.Reason, Apex: e.Apex,
-		Kind: gentianov1alpha1.ExposureKind(e.Kind),
+		Kind: gentianov1alpha1.ExposureKind(e.Kind), Alias: e.Alias,
 	}
 	if at, err := time.Parse(time.RFC3339, e.ReviewAt); err == nil {
 		out.ReviewAt = metav1.NewTime(at)
@@ -320,7 +324,7 @@ func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 		t := metav1.NewTime(at)
 		return &t
 	}
-	out.ExpiresAt, out.PublishedAt = stamp(e.ExpiresAt), stamp(e.PublishedAt)
+	out.ExpiresAt, out.PublishedAt, out.AliasSetAt = stamp(e.ExpiresAt), stamp(e.PublishedAt), stamp(e.AliasSetAt)
 	return out
 }
 
@@ -397,6 +401,13 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 		return
 	}
 	out.Host, out.Note = v.resolve(out.Install, entry, out.Approval)
+	if out.Host != "" && out.Approval != nil {
+		// By the operator's rule, asked of this tenant alone: what another
+		// tenant holds was refused when the alias was set.
+		in := v.inputs
+		in.Tenants = []gentianov1alpha1.Tenant{*v.subject}
+		out.Alias = addresses.AliasHost(in, v.subject.Name, out.Install, out.ExposureName)
+	}
 	out.Paths = addresses.Prefixes(entry)
 	out.MainAddress = entry.Apex
 	if entry.Apex {

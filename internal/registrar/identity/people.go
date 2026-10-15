@@ -683,6 +683,26 @@ func mailOnly(ctx context.Context) bool {
 	return only
 }
 
+type shownOnlyKey struct{}
+
+// WithShownOnly marks ctx as an activation whose link is shown and never
+// mailed, whatever address the account has: one whose address is its login
+// in a realm that delivers nothing there, where a mailed link would reach
+// nobody. With no address given it is the link that comes back; with one,
+// it is refused, since giving the account that address is what mailing
+// would take.
+func WithShownOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, shownOnlyKey{}, true)
+}
+
+func shownOnly(ctx context.Context) bool {
+	only, _ := ctx.Value(shownOnlyKey{}).(bool)
+	return only
+}
+
+// IsShownOnly reports a context marked by WithShownOnly.
+func IsShownOnly(ctx context.Context) bool { return shownOnly(ctx) }
+
 // ActivateAccount hands an account to its holder through a single-use,
 // expiring link: set a password, and enrol a second factor when one is
 // required and not yet enrolled.
@@ -720,6 +740,9 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 		return Activation{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
 	}
 	email = strings.TrimSpace(strings.ToLower(email))
+	if email != "" && shownOnly(ctx) {
+		return Activation{}, fmt.Errorf("this account's link is shown, not mailed: no address is given to it")
+	}
 	if email != "" {
 		if !looksLikeAddress(email) {
 			return Activation{}, fmt.Errorf("not an address: %q", email)
@@ -756,6 +779,9 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 	}
 
 	mailTo, _ := cur["email"].(string)
+	if shownOnly(ctx) {
+		mailTo = ""
+	}
 	q := url.Values{}
 	if clientID != "" {
 		q.Set("client_id", clientID)

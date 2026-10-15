@@ -471,15 +471,15 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # Operations Console and the API-extension grant its service needs. 1 leaves
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
-# A vanilla installation reports what it runs to the licence report address,
+# A vanilla installation reports what it runs to the usage statistics report address,
 # once a day (docs/design/operations.md). 1 turns that off: nothing is sent,
 # and the App Store is not offered. The address itself is the bootstrap
 # chart's default (kernel/bootstrap/chart/values.yaml) unless
-# GENTIAN_LICENCE_REPORT_URL names another.
+# GENTIAN_USAGE_STATISTICS_URL names another.
 # Unset says nothing either way, and a cluster that already has the report
-# turned off then keeps it off (gentian_licence_report_enabled); 0 turns it on.
-GENTIAN_NO_LICENCE_REPORT="${GENTIAN_NO_LICENCE_REPORT:-}"
-GENTIAN_LICENCE_REPORT_URL="${GENTIAN_LICENCE_REPORT_URL:-}"
+# turned off then keeps it off (gentian_usage_statistics_enabled); 0 turns it on.
+GENTIAN_NO_USAGE_STATISTICS="${GENTIAN_NO_USAGE_STATISTICS:-}"
+GENTIAN_USAGE_STATISTICS_URL="${GENTIAN_USAGE_STATISTICS_URL:-}"
 # The profiles a vanilla installation materialises for every tenant: https
 # addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
 # comma separated, each optionally pinned with @sha256:<digest>. Unset means
@@ -546,7 +546,7 @@ load_env_file() {
     # was not on it went the other way round -- GENTIAN_OS_BRANCH, the stage,
     # the issuer mode -- so an export for one run was silently undone by the
     # file. Exported and non-empty, not merely set: the installer's own
-    # defaults (GENTIAN_DISABLE_API_EXTENSIONS, GENTIAN_NO_LICENCE_REPORT, ...)
+    # defaults (GENTIAN_DISABLE_API_EXTENSIONS, GENTIAN_NO_USAGE_STATISTICS, ...)
     # are assigned before this runs and are not exported, and a default that
     # counted as "already set" was a setting the file could never change.
     while IFS= read -r var; do
@@ -806,8 +806,9 @@ load_operator_config() {
 # Prompt for the gentian-deployments repo URL/branch, cluster id and stage.
 # The repository's address has no default: it is this cluster's own, and an
 # invented one is an install that runs until the first thing reads it.
-# Persist results to ~/.gentian/config (bash-sourceable) so the kubectl-gentian
-# plugin can locate the deployments repo when running `kubectl gentian apps install/uninstall`.
+# The answers reach ~/.gentian/config, where the kubectl-gentian plugin finds
+# the deployments repository, through save_kubectl_gentian_config -- once the
+# run has confirmed they describe the cluster it reaches.
 # =============================================================================
 prompt_app_repos() {
     local default_deploy_branch="main"
@@ -887,7 +888,24 @@ prompt_app_repos() {
     export ENV
     info "Environment: ENV=${ENV} (from GENTIAN_DEPLOYMENTS_STAGE)"
 
-    # Persist to ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
+    # GENTIAN_DEPLOYMENTS_GIT_USERNAME is deliberately given no default here.
+    # This runs before the credentials are collected, and both the local cache
+    # and the recovery from OpenBao leave alone any variable that already has
+    # a value: a default set this early would be kept in place of the username
+    # the cluster really uses. Where the username is used, x-access-token is
+    # the fallback, and by then recovery has had its turn.
+}
+
+# save_kubectl_gentian_config — persist the deployments settings to
+# ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
+#
+# Its own function, called once the run has established that the checkout,
+# the settings and the cluster are one cluster (cluster-identity.sh). It used
+# to be written by prompt_app_repos, before anything had been compared: a
+# shell exporting a second cluster's deployments path repointed the plugin at
+# that cluster's repository on the way to a run that should never have
+# started. The file is shared by every cluster this machine runs.
+save_kubectl_gentian_config() {
     # The plugin sources this file directly; keep variable names aligned with the
     # plugin's expectations (GENTIAN_DEPLOYMENTS_PATH / GENTIAN_DEPLOYMENTS_REPO).
     local cfg_dir="${HOME}/.gentian"
@@ -897,6 +915,10 @@ prompt_app_repos() {
     # cluster's install repointed kubectl-gentian at that cluster.
     if gentian_read_only; then
         gentian_would "save the deployments repository's address to ${cfg_file}, for kubectl gentian"
+        return 0
+    fi
+    if ! gentian_one_cluster_confirmed; then
+        warn "${cfg_file} not written: this run has not confirmed which cluster it is for."
         return 0
     fi
     mkdir -p "$cfg_dir"
@@ -911,13 +933,6 @@ GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"
 EOF
     chmod 0600 "$cfg_file"
     success "App repo configuration saved to ${cfg_file}"
-
-    # GENTIAN_DEPLOYMENTS_GIT_USERNAME is deliberately given no default here.
-    # This runs before the credentials are collected, and both the local cache
-    # and the recovery from OpenBao leave alone any variable that already has
-    # a value: a default set this early would be kept in place of the username
-    # the cluster really uses. Where the username is used, x-access-token is
-    # the fallback, and by then recovery has had its turn.
 }
 
 
@@ -2378,25 +2393,31 @@ gentian_mail_service_mode() {
 }
 
 # =============================================================================
-# gentian_licence_report_enabled — "true" or "false": does this cluster report
+# gentian_usage_statistics_enabled — "true" or "false": does this cluster report
 # what it runs?
 #
-# --no-licence-report (GENTIAN_NO_LICENCE_REPORT=1) says no and
-# GENTIAN_NO_LICENCE_REPORT=0 says yes. A run that says neither keeps what the
+# --no-usage-statistics (GENTIAN_NO_USAGE_STATISTICS=1) says no and
+# GENTIAN_NO_USAGE_STATISTICS=0 says yes. A run that says neither keeps what the
 # cluster has: the flag is typed once, and a later run of one step without it
 # must not start sending reports from a cluster whose owner turned them off.
 # A cluster that has no operator Application yet has said nothing, and
 # reports.
+#
+# The switch was called licenceReport before it had this name. A cluster
+# whose owner turned it off then is still off: a rename must not be what
+# starts sending from it.
 # =============================================================================
-gentian_licence_report_enabled() {
-    case "${GENTIAN_NO_LICENCE_REPORT:-}" in
+gentian_usage_statistics_enabled() {
+    case "${GENTIAN_NO_USAGE_STATISTICS:-}" in
         1) echo false; return 0 ;;
         0) echo true; return 0 ;;
     esac
-    local have
+    local have before
     have="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.usageStatistics.enabled}' 2>/dev/null || true)"
+    before="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
         -o jsonpath='{.spec.sources[0].helm.valuesObject.licenceReport.enabled}' 2>/dev/null || true)"
-    if [[ "${have}" == "false" ]]; then
+    if [[ "${have}" == "false" || ( -z "${have}" && "${before}" == "false" ) ]]; then
         echo false
     else
         echo true

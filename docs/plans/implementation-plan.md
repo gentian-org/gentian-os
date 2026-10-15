@@ -249,7 +249,7 @@ OpenFGA.** They were kept at first, on the argument that what a tenant is
 entitled to install is a fact from outside the cluster and so had to be an
 action of the director's: a statement the App Store signed, verified against
 pinned keys, committed, and mirrored as a conditional tuple. That argument
-held for as long as the platform gated installs on a licence. It no longer
+held for as long as the platform gated installs on a license. It no longer
 does (AD-3): installing is asked of the person (`can_install_app`) and of
 nothing else, and whether a licensed app arrives is decided where its
 artefacts are pulled, by the credential the tenant holds for their

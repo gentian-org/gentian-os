@@ -62,7 +62,7 @@ func (d Decryption) Validate() error {
 // compares it against what was written, and restoring half a database over a
 // live one is the worst outcome this system can produce.
 func fetchAndDecrypt(d Decryption, p JobParams, artefact, localFile string) corev1.Container {
-	remote := fmt.Sprintf("gentian/%s/%s/%s%s", p.Bucket, p.Prefix, artefact, EncryptedSuffix)
+	remote := fmt.Sprintf("%s:%s/%s/%s%s", bundleRemote, p.Bucket, p.Prefix, artefact, EncryptedSuffix)
 	cipher := workDir + "/" + localFile + EncryptedSuffix
 	plain := workDir + "/" + localFile
 
@@ -78,22 +78,16 @@ age -d -i /tmp/identity -o '%s' '%s'
 rm -f /tmp/identity`, IdentityEnvVar, plain, cipher)
 	}
 
+	// Nothing is fetched but the artefact: the storage tools carry rclone and
+	// age. This step used to download MinIO's client at run time, from an
+	// address that stopped answering when MinIO withdrew it -- and with it
+	// every restore of every kind.
 	script := fmt.Sprintf(`set -eu
-%s
-# Deliberately NOT apk-installing "mc": on Alpine that package is Midnight
-# Commander, which installs a binary of the same name, satisfies any "is mc
-# present" check, and then fails on the first alias call with something
-# unrecognisable. The MinIO client is fetched to its own path instead.
-MCLI=/usr/local/bin/mcli
-if [ ! -x "${MCLI}" ]; then
-  wget -qO "${MCLI}" https://dl.min.io/client/mc/release/linux-amd64/mc \
-    || { echo "ERROR: could not fetch the MinIO client" >&2; exit 1; }
-  chmod +x "${MCLI}"
-fi
-"${MCLI}" alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+%[1]s
+%[7]s
 
-"${MCLI}" cp "%[2]s" '%[3]s'
-"${MCLI}" cat "%[2]s.sha256" > /tmp/expected.sha256
+rclone copyto "%[2]s" '%[3]s'
+rclone cat "%[2]s.sha256" > /tmp/expected.sha256
 actual="$(sha256sum '%[3]s' | cut -d' ' -f1)"
 expected="$(cat /tmp/expected.sha256 | tr -d '[:space:]')"
 if [ "${actual}" != "${expected}" ]; then
@@ -105,16 +99,9 @@ fi
 [ -s '%[6]s' ] || { echo "ERROR: decryption produced no output" >&2; exit 1; }
 rm -f '%[3]s'
 echo "fetched and decrypted %[4]s"`,
-		encryptBootstrap(Encryption{Mode: d.Mode}), remote, cipher, artefact, decrypt, plain)
+		encryptBootstrap(Encryption{Mode: d.Mode}), remote, cipher, artefact, decrypt, plain, rcloneRemote(bundleRemote))
 
-	container := corev1.Container{
-		Name:         "fetch",
-		Image:        kernel.KeycloakProvisionerImage(),
-		Command:      []string{"/bin/sh", "-c"},
-		Args:         []string{script},
-		Env:          bundleEnv(p),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+	container := storageTools("fetch", script, bundleEnv(p))
 	if d.SecretName != "" {
 		name := PassphraseEnvVar
 		if d.Mode != gentianov1alpha1.ExportEncryptionPassphrase {
@@ -464,8 +451,8 @@ func (p JobParams) restoreRole() string {
 	return PostgresRole(p.Tenant, p.App)
 }
 
-// S3RestoreJob puts one app bucket back: the bucket, the user and the policy
-// the app reads it with, and its objects.
+// S3RestoreJob puts one app bucket back: the bucket, the identity the app
+// reads it with, and its objects.
 //
 // provision is the container install provisions the bucket with
 // (ObjectStorageProvisionContainer), holding the key pair the vault holds
@@ -475,7 +462,6 @@ func (p JobParams) restoreRole() string {
 // objects are written, so a restore that cannot provision does not replace
 // the bucket's contents either.
 func S3RestoreJob(p JobParams, d Decryption, artefact, bucket string, provision corev1.Container) *batchv1.Job {
-	// A separate container because the mc image has no tar.
 	unpack := corev1.Container{
 		Name:    "unpack-bucket",
 		Image:   kernel.KeycloakProvisionerImage(),
@@ -488,7 +474,7 @@ echo "unpacked bucket archive"`, workDir)},
 	}
 	// Platform storage, not the bundle's location. The init container above
 	// fetched the archive from wherever the bundle lives; this one puts the
-	// app's objects back into the cluster's own MinIO, which is a different
+	// app's objects back into the cluster's own object store, which is a different
 	// system with different credentials whenever the bundle is external.
 	//
 	// Sharing bundleEnv here sent both at the destination: the restore tried to
@@ -496,27 +482,25 @@ echo "unpacked bucket archive"`, workDir)},
 	// policy's credential is scoped to objects — and had it been permitted it
 	// would have mirrored the tenant's objects into the bundle bucket instead
 	// of restoring them.
-	restore := corev1.Container{
-		Name:    "s3-restore",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-mc alias set platform "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-# The bucket, its user and its policy were made by the step before this one,
-# with the code install uses.
-# --remove makes the bucket match the archive rather than merging into it: an
+	restore := storageTools("s3-restore", "set -eu\n"+rcloneRemote(platformRemote)+fmt.Sprintf(`
+# The bucket and the key the app reads it with were made by the step before
+# this one, with the code install uses.
+# sync makes the bucket match the archive rather than merging into it: an
 # object deleted before the backup must not reappear, and one created since must
 # not survive a restore that claims to return the tenant to that point.
-mc mirror --preserve --overwrite --remove %[1]s/restore "platform/%[2]s"
-echo "restored bucket %[2]s"`, workDir, bucket)},
-		Env:          PlatformStorageEnv(),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
-	return restoreJob(p, []corev1.Container{
+# --ignore-times writes every object of the archive, whatever the one there
+# looks like: an object of the same size and time is not the same object.
+rclone sync --ignore-times %[1]s/restore "%[3]s:%[2]s"
+echo "restored bucket %[2]s"`, workDir, bucket, platformRemote), PlatformStorageEnv())
+	job := restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "bucket.tar.gz"),
 		unpack,
 		provision,
 	}, restore, nil)
+	// The provision step administers the store with weed shell, which its
+	// NetworkPolicy admits by this label.
+	job.Spec.Template.Labels[ObjectStorageShellLabel] = "true"
+	return job
 }
 
 // VolumeRestoreJob unpacks one claim's archive back onto it.
@@ -526,8 +510,6 @@ echo "restored bucket %[2]s"`, workDir, bucket)},
 // creates it with the app already paused: unpacking over a running app's volume
 // would race its own writes.
 func VolumeRestoreJob(p JobParams, d Decryption, artefact, claim string) *batchv1.Job {
-	// Alpine, not the mc image: this container only untars, and the mc image
-	// has no tar.
 	restore := corev1.Container{
 		Name:    "volume-restore",
 		Image:   kernel.KeycloakProvisionerImage(),

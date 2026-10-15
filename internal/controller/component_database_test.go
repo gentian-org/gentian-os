@@ -241,7 +241,7 @@ func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 		"psql":    psqlContainer("x", "true", ""),
 		"mariadb": mariadbContainer("x", "true"),
 		"redis":   redisContainer("x", "user", "prefix", "true"),
-		"minio":   backup.ObjectStorageProvisionContainer("x", "bucket", "", ""),
+		"s3":      backup.ObjectStorageProvisionContainer("x", "bucket", "", ""),
 	} {
 		sc := c.SecurityContext
 		if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {

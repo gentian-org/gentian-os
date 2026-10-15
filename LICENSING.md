@@ -54,11 +54,11 @@ installs and runs without any of them, and nothing above depends on one.
 ## What a default install brings that is not ours
 
 The system services are other projects' software under their own licenses.
-One is copyleft with a network clause: MinIO, the default object store, is
-AGPL-3.0. It runs as a separate service behind the S3 API and no Gentian code
-derives from it, but an organisation that excludes AGPL software will want to
-know it is there. Catalogue apps keep their upstream licenses and are
-installed by choice.
+The object store is SeaweedFS (Apache-2.0), installed from its own chart
+(Apache-2.0, vendored unchanged with its attribution in
+`charts/infra/seaweedfs`); the Jobs that move a tenant's objects run rclone
+(MIT) in the platform's storage tools image. Catalogue apps keep their
+upstream licenses and are installed by choice.
 
 ## Contributing
 

@@ -130,14 +130,32 @@ What sign-up changes, and only in that tenant's realm:
   the tenant's groups, so it holds no relation on the platform: the bouncer
   refuses it the desktop and every app, the director and the usher refuse
   every tenant route, and a grant of an app to every member does not reach
-  it. The licence report counts the members of such a tenant, not its
+  it. The usage statistics report counts the members of such a tenant, not its
   realm's accounts. Making such an account a member is an administrator
   putting it in a group, as for anybody.
+
+- **The administrator's account carries its login as its address,
+  recorded as verified.** The realm refuses an account without an address,
+  and nothing is delivered to the administrator's: the tenant's mail only
+  sends. For the same reason its activation link is shown, not mailed
+  (`tenants activate-admin <name>` without `--recovery-email`): mailing it
+  would make the recovery address the account's own, and there an address
+  is the login. The registrar refuses that (`422`).
 
 What it does not change: the realm's administrators, its edge client and
 its groups are as in every tenant; the tenant's own people are still
 invited; and the registrar lists every account of the realm, which is how
 staff look after the customers' accounts.
+
+### 1.1c Brokering: people of another realm signing in
+
+A realm may let people of another realm — another tenant here, or a tenant of
+another cluster — sign in with their own account, mapped into groups by
+where they come from. It is Keycloak's identity brokering, configured by an
+administrator in its console, not composed by the platform:
+[identity-brokering.md](../identity-brokering.md). The sign-in page shows
+every provider not set to *Hide on login page*; the platform's own (`kernel`,
+`vouch-*`) are, and so stay off it.
 
 ### 1.2 Group taxonomy
 
@@ -367,12 +385,17 @@ groups, scopes and mappers are not Jobs: the Composition declares them. The
 platform tenant adopts the kernel realm and gets only the groups Job.
 
 The mail-server Job (`keycloak-tenant-smtp-<tenant>`) writes the realm's
-`smtpServer` with its password, and is built only on a cluster whose
-`keycloak-smtp-credentials` is complete. On a cluster with its own mail the
-Composition declares the same block, and the login it names is minted before
-the realm is declared; which login each realm uses in each mail mode, and
-what Keycloak does with a mail server written without its password, is in
-[mail.md §5d](mail.md).
+`smtpServer` with its password. The Composition declares the same block from
+`spec.realmMail`, which the operator states once the Secret holding the
+password exists; a tenant it states none for has neither the block nor the
+Job. Which login a realm uses in each mail mode, and what Keycloak does with
+a mail server written without its password, is in [mail.md §5d](mail.md).
+
+A tenant realm states `loginWithEmailAllowed` in both cases: `false`, and
+`true` where people sign up with their address as the login. Keycloak makes a
+realm with it on, and a realm the realm Job created before the provider did
+was copied that value, after which the provider refused every update beside
+`duplicateEmailsAllowed`.
 
 What is declared and what is still a Job:
 [tenant-identity-composition.md](tenant-identity-composition.md).

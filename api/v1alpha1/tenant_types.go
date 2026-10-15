@@ -305,6 +305,27 @@ type TenantExposure struct {
 	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
 	// +optional
 	ApexAcknowledgedAt *metav1.Time `json:"apexAcknowledgedAt,omitempty"`
+
+	// Alias is a second address for this surface, directly under the
+	// cluster's own domain: the one label of <alias>.<kernelDomain>. The
+	// surface answers there as well as at its own address, with the same
+	// paths and held to the same limits. It is the cluster administrator's
+	// to set, not the approver's, on a surface that is already published:
+	// a name under the cluster's domain is the cluster's to give. A label
+	// the platform keeps, or one a tenant is named, publishes nothing.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Alias string `json:"alias,omitempty"`
+
+	// AliasSetBy is the subject that set the alias, and AliasSetAt when.
+	// Set by the director from the caller's token. A record: the operator
+	// publishes by Alias.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	AliasSetBy string `json:"aliasSetBy,omitempty"`
+	// +optional
+	AliasSetAt *metav1.Time `json:"aliasSetAt,omitempty"`
 }
 
 // Enablement is this entry as the Component carries it.
@@ -316,6 +337,7 @@ func (e *TenantExposure) Enablement() ExposureEnablement {
 		ExpiresAt:    e.ExpiresAt,
 		ReviewAt:     e.ReviewAt,
 		Apex:         e.Apex,
+		Alias:        e.Alias,
 	}
 }
 

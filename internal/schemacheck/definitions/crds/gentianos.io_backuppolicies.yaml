@@ -112,7 +112,7 @@ spec:
                   endpoint:
                     description: |-
                       Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io or
-                      https://minio.example.org:9000. Empty means the platform's own storage.
+                      https://s3.example.org:9000. Empty means the platform's own storage.
 
                       A scheme is required: "s3.example.org" is ambiguous about TLS, and a
                       backup silently sent in plaintext is worse than one that fails.
@@ -121,8 +121,8 @@ spec:
                     type: string
                   region:
                     description: |-
-                      Region, for providers that require one — Exoscale SOS and AWS do, MinIO
-                      does not.
+                      Region, for providers that require one — Exoscale SOS and AWS do, the
+                      platform's own store does not.
                     maxLength: 64
                     type: string
                 type: object

@@ -1,6 +1,6 @@
 # Who connects to the four shared stores of the system tier, and who must not.
 #
-# Every legitimate client of PostgreSQL, MariaDB, Redis and MinIO, as the code
+# Every legitimate client of PostgreSQL, MariaDB, Redis and SeaweedFS, as the code
 # builds it: the namespace its pod runs in, the labels that pod carries and
 # the port it dials. Two tests read this file and neither is enough alone:
 #
@@ -159,7 +159,10 @@ clients:
     built: cache-destroy-job
     proof: internal/backup/teardown.go CacheDestroyJob
 
-  # ── MinIO (system-s3) ──────────────────────────────────────────────────
+  # ── SeaweedFS (system-s3) ──────────────────────────────────────────────
+  # The S3 port (9000) for every client that reads or writes objects; the
+  # master's and the filer's gRPC ports (19333, 18888), which check no key,
+  # for the platform's Jobs that administer the store with weed shell alone.
   - store: s3
     client: a tenant's app that declared a bucket
     namespace: *tenant
@@ -182,17 +185,31 @@ clients:
     built: restore-volume
     proof: internal/controller/tenantrestore_controller.go restoreUnits
   - store: s3
-    client: the bucket Job that makes an app's bucket, user and policy
+    client: the bucket Job that makes an app's bucket and identity, at the master
     namespace: system-s3
-    podLabels: {}
-    port: 9000
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 19333
     built: s3-bucket-job
-    proof: internal/controller/storage_reconciler.go makeS3BucketJob
+    proof: internal/controller/storage_reconciler.go makeS3BucketJob, internal/backup/teardown.go ObjectStorageProvisionContainer
   - store: s3
-    client: the destroy Job that removes an app's bucket, user and policy
+    client: the bucket Job that makes an app's bucket and identity, at the filer
     namespace: system-s3
-    podLabels: {}
-    port: 9000
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 18888
+    built: s3-bucket-job
+    proof: internal/controller/storage_reconciler.go makeS3BucketJob, internal/backup/teardown.go ObjectStorageProvisionContainer
+  - store: s3
+    client: the destroy Job that removes an app's bucket and identity, at the master
+    namespace: system-s3
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 19333
+    built: s3-destroy-job
+    proof: internal/backup/teardown.go ObjectStorageDestroyJob
+  - store: s3
+    client: the destroy Job that removes an app's bucket and identity, at the filer
+    namespace: system-s3
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 18888
     built: s3-destroy-job
     proof: internal/backup/teardown.go ObjectStorageDestroyJob
   - store: s3
@@ -209,6 +226,20 @@ clients:
     port: 9000
     built: restore-s3
     proof: internal/controller/tenantrestore_controller.go restoreUnits, internal/backup/restore_jobs.go S3RestoreJob
+  - store: s3
+    client: the load of a bucket in a tenant restore, making the bucket and identity first, at the master
+    namespace: system-s3
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 19333
+    built: restore-s3
+    proof: internal/backup/restore_jobs.go S3RestoreJob, its provision step
+  - store: s3
+    client: the load of a bucket in a tenant restore, making the bucket and identity first, at the filer
+    namespace: system-s3
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 18888
+    built: restore-s3
+    proof: internal/backup/restore_jobs.go S3RestoreJob, its provision step
   - store: s3
     client: the Job that writes a bundle's manifest
     namespace: system-s3
@@ -437,7 +468,7 @@ denied:
   - store: postgresql
     client: the object store's own pod, which is not a capture
     namespace: system-s3
-    podLabels: {app.kubernetes.io/name: minio, app.kubernetes.io/instance: minio}
+    podLabels: {app.kubernetes.io/name: seaweedfs, app.kubernetes.io/instance: seaweedfs, app.kubernetes.io/component: seaweedfs-all-in-one}
     port: 5432
   - store: postgresql
     client: a pod of a namespace outside the layout
@@ -540,25 +571,55 @@ denied:
     podLabels: {app.kubernetes.io/name: dovecot}
     port: 9000
   - store: s3
-    client: a capture pod of an export on the console port
+    client: a capture pod of an export at the master, which only the shell Jobs reach
     namespace: system-postgresql
     podLabels: {gentianos.io/component: tenant-export}
-    port: 9001
+    port: 19333
   - store: s3
     client: the edge, which routes nothing to the object store
     namespace: kernel-edge
     podLabels: {}
     port: 9000
   - store: s3
-    client: a tenant's app on the console port
+    client: a tenant's app at the filer, which checks no key
     namespace: *tenant
     podLabels: {gentianos.io/app: wiki}
-    port: 9001
+    port: 18888
   - store: s3
-    client: the operator on the console port
+    client: a tenant's app at the master
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 19333
+  - store: s3
+    client: the operator at the filer
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
-    port: 9001
+    port: 18888
+  - store: s3
+    client: a capture pod beside the object store at the filer, which is no shell Job
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 18888
+  - store: s3
+    client: a pod beside the object store without the shell label, at the master
+    namespace: system-s3
+    podLabels: {}
+    port: 19333
+  - store: s3
+    client: a shell-labelled pod of another namespace, at the master
+    namespace: system-postgresql
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 19333
+  - store: s3
+    client: a tenant's app at the filer's HTTP port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 8888
+  - store: s3
+    client: a tenant's app at the volume server
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 8080
   - store: llm
     server: gateway
     client: a perimeter proxy in a tenant's DMZ

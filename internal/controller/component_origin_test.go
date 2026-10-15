@@ -131,3 +131,55 @@ func TestAnAddonWithNoProfileOnTheClusterHoldsItsApp(t *testing.T) {
 		t.Fatalf("with the add-on's profile on the cluster: condition = %+v", ready)
 	}
 }
+
+// toolsBundle is an adapter's profile: a release of its own in the tenant,
+// nobody opens it, and the reviewed list of its tools.
+const toolsBundle = `apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: wiki-tools
+spec:
+  classes: [adapter]
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/wiki-tools
+      name: wiki-tools
+      version: "1.0.0"
+  adapter:
+    adapts: {profile: wiki}
+    speaksAs: token
+    tools:
+    - {name: search, version: v1, description: {en: Search the wiki}, class: read}
+`
+
+// An adapter is rolled out like an app, from a release of its own in its
+// tenant. An instance of a class its profile is not certified for rolls out
+// nothing, and says that a reinstall is what changes it.
+func TestAnAdapterRollsOutAndAMisclassedInstanceDoesNot(t *testing.T) {
+	h := startDigestHarness(t, materialised(t, toolsBundle), "")
+	h.comp.Spec.Class = gentianov1alpha1.ComponentClassAdapter
+	if err := h.c.Update(context.Background(), h.comp); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("condition = %+v, want the release under way", ready)
+	}
+	if h.releasedVersion() != "1.0.0" {
+		t.Fatalf("release at %q", h.releasedVersion())
+	}
+
+	h = startDigestHarness(t, materialised(t, toolsBundle), "")
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != reasonClassMismatch ||
+		!strings.Contains(ready.Message, "install it again") {
+		t.Fatalf("condition = %+v, want %s", ready, reasonClassMismatch)
+	}
+	if h.releasedVersion() != "" || h.networkPolicyWritten() {
+		t.Fatalf("an adapter rolled out as an app: release %q, network policy %v",
+			h.releasedVersion(), h.networkPolicyWritten())
+	}
+}

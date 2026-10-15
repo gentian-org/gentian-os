@@ -89,13 +89,13 @@ type Store struct {
 }
 
 // Minio reaches the store a bundle sits in, with the credentials the capture
-// Jobs used. The platform's own MinIO records its address beside its keys; a
+// Jobs used. The platform's own store records its address beside its keys; a
 // configured destination has its address on the bundle and only the keys in
 // the Secret -- the same asymmetry the capture Jobs' environment explains.
 func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*minio.Client, error) {
 	secretName := ref.CredentialSecret
 	if secretName == "" {
-		secretName = backup.MinIOAdminSecret
+		secretName = backup.StorageAdminSecret
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: layout.System("s3")}, secret); err != nil {

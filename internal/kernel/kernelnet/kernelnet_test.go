@@ -295,7 +295,7 @@ func TestWhatIsRefused(t *testing.T) {
 		{"another pod of the control namespace reaches the custodian", otherPod, at("kernel-control", chart("custodian")), 9444},
 		{"a pod outside the layout reaches Keycloak", at("default", map[string]string{"app": "x"}), at("kernel-authentication", keycloakPod), 8080},
 		{"a pod outside the layout reaches the director", at("default", map[string]string{"app": "x"}), at("kernel-control", chart("director")), 8080},
-		{"a system namespace's pod reaches the director", at("system-s3", map[string]string{"app": "minio"}), at("kernel-control", chart("director")), 8080},
+		{"a system namespace's pod reaches the director", at("system-s3", map[string]string{"app.kubernetes.io/name": "seaweedfs"}), at("kernel-control", chart("director")), 8080},
 	} {
 		if admitted(policies, f.src, f.dst, f.port) {
 			t.Errorf("admitted: %s (%s -> %s:%d)", f.what, f.src.namespace, f.dst.namespace, f.port)

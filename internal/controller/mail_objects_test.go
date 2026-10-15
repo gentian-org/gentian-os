@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -25,9 +26,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -367,9 +370,12 @@ func TestMailObjects_TheRealmReadsItsSubmissionCredentialBesideKeycloak(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := regexp.MustCompile(`name: \{\{ printf "mail-submission-%s" \$tenant \| quote \}\}\n\s*namespace: \{\{ (\$\w+) \}\}`).FindStringSubmatch(string(raw))
+	// The Composition takes the Secret's name from spec.realmMail, which the
+	// operator states (TestMail_RealmMailIsStatedOnceItsPasswordExists holds
+	// the name), and the namespace is the Composition's own to say.
+	ref := regexp.MustCompile(`name: \{\{ \$rm\.passwordSecretRef\.name \| quote \}\}\n\s*namespace: \{\{ (\$\w+) \}\}`).FindStringSubmatch(string(raw))
 	if ref == nil {
-		t.Fatal("the tenant Composition no longer names the realm's submission Secret")
+		t.Fatal("the tenant Composition no longer names the Secret of the realm's mail password")
 	}
 	if ref[1] != "$identityNs" {
 		t.Errorf("the tenant Composition reads the realm's submission Secret from %s; the operator writes it beside Keycloak ($identityNs)", ref[1])
@@ -698,5 +704,184 @@ func TestMail_RealmCredentialIsMintedBeforeTheRealm(t *testing.T) {
 				t.Errorf("a credential was minted (err=%v)", err)
 			}
 		})
+	}
+}
+
+// The mail server a realm is declared with is stated only once its password
+// exists, and only for a realm that is to send.
+//
+// The provider behind the Composition does not wait for a Secret it is
+// pointed at, and a realm written with a login and no password cannot send.
+// On a cluster that relays, the block left undeclared was worse: the provider
+// rewrote the mail server the Job had written, without the password.
+func TestMail_RealmMailIsStatedOnceItsPasswordExists(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	idNS := layout.Namespace(layout.Authentication)
+	tenant := func(name string, mode gentianov1alpha1.MailMode, signUp bool) *gentianov1alpha1.Tenant {
+		tn := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+		if mode != "" {
+			tn.Spec.Mail = &gentianov1alpha1.TenantMail{Mode: mode}
+		}
+		if signUp {
+			tn.Spec.SignUp = &gentianov1alpha1.TenantSignUp{Enabled: true}
+		}
+		return tn
+	}
+	mailNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: layout.System("mail")}}
+	relay := func(data map[string]string) *corev1.Secret {
+		sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "keycloak-smtp-credentials", Namespace: idNS}, Data: map[string][]byte{}}
+		for k, v := range data {
+			sec.Data[k] = []byte(v)
+		}
+		return sec
+	}
+	supplied := map[string]string{
+		"smtp_configure": "true", "mail_service_mode": "external",
+		"smtp_host": "relay.example.org", "smtp_port": "465", "smtp_ssl": "true", "smtp_starttls": "false",
+		"smtp_user": "relay-user", "smtp_password": "relay-secret", "smtp_from": "noreply@example.org",
+	}
+
+	t.Run("a relay, supplied: its host and login, and the password by name", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(relay(supplied)).Build()
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+		got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]interface{}{
+			"host": "relay.example.org", "port": "465", "from": "noreply@example.org", "username": "relay-user",
+			"ssl": true, "starttls": false,
+			"passwordSecretRef": map[string]interface{}{"name": "keycloak-smtp-credentials", "key": "smtp_password"},
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("realmMail:\n got %v\nwant %v", got, want)
+		}
+		raw, _ := json.Marshal(got)
+		if strings.Contains(string(raw), "relay-secret") {
+			t.Error("the password is on the XTenant")
+		}
+	})
+
+	t.Run("a relay not supplied yet: no mail server, and one after it is", func(t *testing.T) {
+		notYet := map[string]string{}
+		for k, v := range supplied {
+			notYet[k] = v
+		}
+		notYet["smtp_configure"], notYet["smtp_user"], notYet["smtp_password"] = "false", "", ""
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(relay(notYet)).Build()
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+		if got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false)); err != nil || got != nil {
+			t.Fatalf("before the credential: got %v, %v; want none", got, err)
+		}
+		sec := &corev1.Secret{}
+		if err := c.Get(ctx, types.NamespacedName{Name: "keycloak-smtp-credentials", Namespace: idNS}, sec); err != nil {
+			t.Fatal(err)
+		}
+		sec.Data = relay(supplied).Data
+		if err := c.Update(ctx, sec); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false)); err != nil || got == nil {
+			t.Fatalf("after the credential: got %v, %v; want the relay", got, err)
+		}
+	})
+
+	t.Run("no Secret at all: no mail server", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+		if got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false)); err != nil || got != nil {
+			t.Fatalf("got %v, %v; want none", got, err)
+		}
+	})
+
+	// The cluster's own mail: the realm's own login where one is minted, and
+	// nothing otherwise -- the kernel realm's login in keycloak-smtp-credentials
+	// is never a tenant realm's.
+	kernelLogin := relay(map[string]string{
+		"smtp_configure": "true", "mail_service_mode": "system", "smtp_host": "mail.example.org", "smtp_port": "587",
+		"smtp_user": "gentian-system@example.org", "smtp_password": "kernel-secret", "smtp_from": "noreply@example.org",
+	})
+	for _, tc := range []struct {
+		name   string
+		tenant *gentianov1alpha1.Tenant
+		mint   bool
+		want   string
+	}{
+		{"own mail, a tenant with mailboxes, minted", tenant("team", "", false), true, "noreply@team.example.org"},
+		{"own mail, the same tenant before the login is minted", tenant("team", "", false), false, ""},
+		{"own mail, a tenant people sign up to (outbound only)", tenant("team", gentianov1alpha1.MailModeTransportOnly, true), true, "noreply@team.example.org"},
+		{"own mail, outbound only and no sign-up: no login is minted", tenant("team", gentianov1alpha1.MailModeTransportOnly, false), true, ""},
+		{"own mail, mail disabled", tenant("team", gentianov1alpha1.MailModeDisabled, false), true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(mailNS.DeepCopy(), kernelLogin.DeepCopy()).Build()
+			r := &controller.TenantReconciler{Client: c, MailServiceMode: "system", KernelDomain: "example.org", KernelRealm: "kernel", TenancyMode: "multi"}
+			if tc.mint {
+				if err := r.EnsureRealmMailCredentialForTest(ctx, tc.tenant); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := r.TenantRealmMailForTest(ctx, tc.tenant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" {
+				if got != nil {
+					t.Fatalf("a mail server is stated: %v", got)
+				}
+				return
+			}
+			want := map[string]interface{}{
+				"host": "mail.example.org", "port": "587", "from": "noreply@example.org", "username": tc.want,
+				"ssl": false, "starttls": true,
+				"passwordSecretRef": map[string]interface{}{"name": "mail-submission-team", "key": "smtp_password"},
+			}
+			if !reflect.DeepEqual(want, got) {
+				t.Errorf("realmMail:\n got %v\nwant %v", got, want)
+			}
+		})
+	}
+}
+
+// Every key the operator states for a realm's mail server is one the XTenant
+// schema declares: an XRD prunes what it does not, without a word.
+func TestMail_RealmMailKeysAreInTheXTenantSchema(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "xrds", "tenant.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xrd map[string]interface{}
+	if err := yaml.Unmarshal(raw, &xrd); err != nil {
+		t.Fatal(err)
+	}
+	versions, _, _ := unstructured.NestedSlice(xrd, "spec", "versions")
+	props, found, _ := unstructured.NestedMap(versions[0].(map[string]interface{}),
+		"schema", "openAPIV3Schema", "properties", "spec", "properties", "realmMail", "properties")
+	if !found {
+		t.Fatal("the XTenant schema has no spec.realmMail")
+	}
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-smtp-credentials", Namespace: layout.Namespace(layout.Authentication)},
+		Data: map[string][]byte{"smtp_configure": []byte("true"), "smtp_host": []byte("relay.example.org"),
+			"smtp_user": []byte("relay-user"), "smtp_password": []byte("x")},
+	}).Build()
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+	got, err := r.TenantRealmMailForTest(context.Background(),
+		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "team", Namespace: "default"}})
+	if err != nil || got == nil {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	for k := range got {
+		if _, ok := props[k]; !ok {
+			t.Errorf("realmMail.%s is stated and the schema does not declare it", k)
+		}
+	}
+	ref, _, _ := unstructured.NestedMap(props, "passwordSecretRef", "properties")
+	for k := range got["passwordSecretRef"].(map[string]interface{}) {
+		if _, ok := ref[k]; !ok {
+			t.Errorf("realmMail.passwordSecretRef.%s is stated and the schema does not declare it", k)
+		}
 	}
 }

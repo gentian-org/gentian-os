@@ -52,6 +52,16 @@ type PendingImport struct {
 	// RequestedAt and RequestedBy say when and by whom.
 	RequestedAt string `json:"requestedAt,omitempty"`
 	RequestedBy string `json:"requestedBy,omitempty"`
+	// Skipped are the apps of the bundle's tenant the import left out of the
+	// tenant made here, each with why.
+	Skipped []SkippedApp `json:"skipped,omitempty"`
+}
+
+// SkippedApp is one app of a bundle's tenant an import did not give the
+// tenant it made.
+type SkippedApp struct {
+	App    string `json:"app"`
+	Reason string `json:"reason"`
 }
 
 // ImportedTenant is a tenant to be made from a bundle.

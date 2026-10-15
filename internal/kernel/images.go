@@ -55,6 +55,24 @@ const (
 	// build of that repository's develop branch is develop-<commit>; a
 	// release is its version.
 	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-6c430b6@sha256:99b6f7547e58f446c00dc0764fedfcb22661dc50eaf50ca82b9f467f84df8a38"
+
+	// DefaultStorageToolsImage is what every Job that moves a tenant's
+	// objects runs: rclone, age, tar and coreutils
+	// (kernel/images/storage-tools). CI builds it beside the operator and
+	// tags it as the operator is tagged; the operator's chart names the
+	// build of its own tag (charts/gentian-os/templates/deployment.yaml),
+	// so this default is only what an operator started without the chart
+	// runs.
+	DefaultStorageToolsImage = StorageToolsRepository + ":develop"
+	// DefaultSeaweedFSImage is the platform's object store's own image, which
+	// the Jobs that make and destroy buckets and identities run: weed shell
+	// is the store's administration, and it is in the server's image. The
+	// server's pin is kernel/services/infra-seaweedfs/manifests (a test holds
+	// the two equal), so the Jobs never run an image the cluster does not
+	// already pull, nor a client of another version than the server.
+	DefaultSeaweedFSImage = "docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+	// StorageToolsRepository is where CI publishes that image.
+	StorageToolsRepository = "ghcr.io/gentian-org/storage-tools"
 )
 
 func PostgresProvisionerImage() string {
@@ -82,6 +100,17 @@ func PerimeterProxyImage() string {
 // whose profile declares one.
 func SignInSidecarImage() string {
 	return envOrDefault("SIGN_IN_SIDECAR_IMAGE", DefaultSignInSidecarImage)
+}
+
+// StorageToolsImage is the image of the Jobs that capture, upload, fetch,
+// restore and delete a tenant's objects.
+func StorageToolsImage() string {
+	return envOrDefault("STORAGE_TOOLS_IMAGE", DefaultStorageToolsImage)
+}
+
+// SeaweedFSImage is the image of the Jobs that administer the object store.
+func SeaweedFSImage() string {
+	return envOrDefault("SEAWEEDFS_IMAGE", DefaultSeaweedFSImage)
 }
 
 func KeycloakProvisionerImage() string {

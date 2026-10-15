@@ -311,7 +311,7 @@ kubectl get svc -A --field-selector spec.type=LoadBalancer        # external IPs
 ```
 
 Then exercise the platform: sign in to a tenant's desktop (Keycloak), open an app that uses
-both Postgres and MinIO, and send a test mail.
+both Postgres and the object store, and send a test mail.
 
 Confirm the old nodes are genuinely empty — only DaemonSets should remain:
 

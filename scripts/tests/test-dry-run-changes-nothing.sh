@@ -24,8 +24,9 @@
 #     where everything asked for is there, so the checks are walked down both
 #     of their sides.
 #
-# This is the only way install.sh is ever executed by a test: here, against
-# stand-ins, with HOME somewhere else. No cluster, no network.
+# This and test-one-cluster.sh are the only ways install.sh is ever executed
+# by a test: against stand-ins, with HOME somewhere else. No cluster, no
+# network.
 # =============================================================================
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
@@ -115,6 +116,10 @@ case "${verb}" in
         if [[ "${all}" == *" nodes "* ]]; then echo "10.0.0.10"; exit 0; fi
         if [[ "${CLUSTER:-empty}" == "empty" ]]; then
             echo "Error from server (NotFound)" >&2; exit 1
+        fi
+        # Who the cluster is: the one the fixture's claim describes.
+        if [[ "${all}" == *" cluster.gentianos.io "* && "${jsonpath}" == *range* ]]; then
+            printf 'sandbox-dev\tsandbox.example.test\n'; exit 0
         fi
         case "${out}:${jsonpath}" in
             json:*) echo '{"items":[]}' ;;

@@ -16,11 +16,14 @@
        gentian-postgresql-<stage>.
        The default here used to omit the "gentian-" prefix, so MYSQL_HOST pointed at
        a Service that does not exist — silently, since nothing resolves it until an
-       app tries to connect. minio-<stage> and redis-<stage>-master below carry no
+       app tries to connect. redis-<stage>-master below carries no
        prefix, which is why the inconsistency was easy to miss. */ -}}
 {{- $mysqlHost := $ks.mysqlHost | default (printf "gentian-mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
-{{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
+{{- /* The object store's Service s3 in its system namespace
+       (kernel/services/infra-seaweedfs), the address the operator also
+       records in the s3-admin Secret. */ -}}
+{{- $s3Endpoint := $ks.s3Endpoint | default "http://s3.system-s3.svc.cluster.local:9000" -}}
 {{- /* Postfix runs in the mail namespace of the system tier (system-mail,
        kernel/namespaces.yaml), where the mail ApplicationSet deploys it. This
        default named servicesNamespace, which is the edge: a host that resolves

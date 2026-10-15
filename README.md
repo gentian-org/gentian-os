@@ -18,7 +18,7 @@ needs regardless of which apps run on it. It does **not** contain:
 - Proprietary profiles, or any private catalogue: published by whoever maintains
   them, at an address a cluster or a tenant adds as a catalogue
   ([docs/custom-catalogues.md](docs/custom-catalogues.md)).
-- Any licence gate. Editions (`ce · pe · me · ee`) say who maintains and
+- Any license gate. Editions (`ce · pe · me · ee`) say who maintains and
   supports an app; the OS gates none of them. Whether a paid app arrives is
   decided at the repository it is pulled from, by the credential a tenant
   holds for it ([docs/design/store-contract.md](docs/design/store-contract.md) §2).

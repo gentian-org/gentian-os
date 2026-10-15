@@ -95,7 +95,160 @@ spec:
               link to a service hosted elsewhere -- it has no exposure to carry one, and
               counting exposures alone refused every such profile. `package` is a CEL
               reserved word, so the API server names the field __package__.
+              An adapter is reached by the platform's component that speaks as a person,
+              and by nothing else: no person opens it, nothing is exposed, no other app is
+              handed a contract to call it, and it holds no credential of an app of its
+              own -- vouching would be one for every app, a contract key one for its app.
             properties:
+              adapter:
+                description: |-
+                  Adapter is what an adapter adapts and the reviewed list of its tools.
+                  Present exactly when the class is adapter.
+                properties:
+                  adapts:
+                    description: |-
+                      Adapts names the app whose interface this adapter uses: the app's
+                      ComponentProfile, which must be installed in the same tenant. Installing
+                      the adapter opens the way from its pods to that app's pods and nowhere
+                      else in the tenant; the app is not asked to cooperate. Absent for an
+                      adapter packaged as an API, which reaches a service outside the cluster
+                      and no app of the tenant.
+                    properties:
+                      profile:
+                        description: Profile is the ComponentProfile of the app.
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      versions:
+                        description: |-
+                          Versions are the catalogue versions of the app this adapter was
+                          reviewed against. Empty means the reviewer named none.
+                        items:
+                          maxLength: 64
+                          type: string
+                        maxItems: 64
+                        type: array
+                        x-kubernetes-list-type: set
+                    required:
+                    - profile
+                    type: object
+                  speaksAs:
+                    allOf:
+                    - enum:
+                      - token
+                      - app-token
+                      - headers
+                    - enum:
+                      - token
+                      - app-token
+                      - headers
+                    description: |-
+                      SpeaksAs is how a call reaches the app as the person on whose behalf it
+                      is made, in the order of preference the platform has: a short token for
+                      this app from the identity provider, a per-person token of the app's
+                      own, or the platform's identity headers. An adapter never acts as
+                      itself where a person's data is concerned.
+                    type: string
+                  tools:
+                    description: |-
+                      Tools are the operations this adapter offers, each at a version. A
+                      change to what a tool does, what it needs or its class is a new
+                      version, so an adapter update never widens what a person allowed.
+                    items:
+                      description: ToolSpec is one named operation on the adapted
+                        app.
+                      properties:
+                        class:
+                          allOf:
+                          - enum:
+                            - read
+                            - change
+                            - irreversible
+                          - enum:
+                            - read
+                            - change
+                            - irreversible
+                          description: |-
+                            Class is whether the tool reads, changes, or changes irreversibly. A
+                            tool with no class counts as irreversible, and so does one that
+                            reaches outside the platform: what has left cannot be taken back.
+                          type: string
+                        description:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Description is the tool in plain words, by language (en, de, ...). It
+                            is the text a person reads when asked to allow it.
+                          maxProperties: 16
+                          minProperties: 1
+                          type: object
+                        identifiers:
+                          description: |-
+                            Identifiers are the fields of the answer that the app made up, such as
+                            the number of a new task, by their JSON pointer into the answer. A plan
+                            replayed against the real app puts the real value in their place.
+                          items:
+                            maxLength: 256
+                            type: string
+                          maxItems: 32
+                          type: array
+                          x-kubernetes-list-type: set
+                        input:
+                          description: Input is the JSON Schema of the tool's arguments.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        name:
+                          description: Name of the tool, for example create-task.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        output:
+                          description: Output is the JSON Schema of the tool's answer.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        reverse:
+                          description: Reverse is the tool of this adapter that undoes
+                            this one.
+                          properties:
+                            name:
+                              maxLength: 63
+                              minLength: 1
+                              type: string
+                            version:
+                              pattern: ^v[0-9]+$
+                              type: string
+                          required:
+                          - name
+                          - version
+                          type: object
+                        version:
+                          description: Version of the tool, for example v1.
+                          maxLength: 8
+                          pattern: ^v[0-9]+$
+                          type: string
+                      required:
+                      - description
+                      - name
+                      - version
+                      type: object
+                    maxItems: 256
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    - version
+                    x-kubernetes-list-type: map
+                required:
+                - speaksAs
+                - tools
+                type: object
+                x-kubernetes-validations:
+                - message: a tool's reverse names a tool of this adapter, at a version
+                    it lists
+                  rule: self.tools.all(t, !has(t.reverse) || self.tools.exists(u,
+                    u.name == t.reverse.name && u.version == t.reverse.version))
               backup:
                 description: Backup declares what a consistent copy of this component
                   consists of.
@@ -270,6 +423,7 @@ spec:
                   - service
                   - app
                   - shared-app
+                  - adapter
                   type: string
                 maxItems: 2
                 minItems: 1
@@ -697,7 +851,7 @@ spec:
                 description: |-
                   DefaultWhereStoreOffered means every tenant except the platform tenant
                   gets a Component of this profile for as long as the cluster offers an
-                  App Store: licence reporting is on and the Cluster claim names a store
+                  App Store: usage statistics are on and the Cluster claim names a store
                   (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
                   creates its own.
 
@@ -1516,8 +1670,8 @@ spec:
                                   type: string
                               type: object
                             s3:
-                              description: S3 requests a per-tenant S3 bucket via
-                                the MinIO kernel service.
+                              description: S3 requests a per-tenant S3 bucket from
+                                the platform's object store.
                               properties:
                                 bucketPerTenant:
                                   default: true
@@ -2310,7 +2464,7 @@ spec:
                             description: |-
                               StoreURLKey receives the base address of the App Store API this cluster
                               names (the Cluster claim's spec.catalogue.storeUrl), and the empty
-                              string while the cluster offers no App Store: none is named, or licence
+                              string while the cluster offers no App Store: none is named, or license
                               reporting is off.
 
                               Like the URL keys above it is more than a fact. A store is outside the
@@ -3190,8 +3344,8 @@ spec:
                                 type: string
                             type: object
                           s3:
-                            description: S3 requests a per-tenant S3 bucket via the
-                              MinIO kernel service.
+                            description: S3 requests a per-tenant S3 bucket from the
+                              platform's object store.
                             properties:
                               bucketPerTenant:
                                 default: true
@@ -3548,6 +3702,44 @@ spec:
             - message: 'a tile means launch tile: say how a person reaches this'
               rule: self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e,
                 has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))
+            - message: 'adapter is exclusive: an adapter is a component of its own,
+                never also the app it adapts'
+              rule: '!has(self.classes) || !(''adapter'' in self.classes) || self.classes.size()
+                == 1'
+            - message: 'spec.adapter is for class adapter, and class adapter needs
+                it: the reviewed list of its tools'
+              rule: (has(self.classes) && 'adapter' in self.classes) == has(self.adapter)
+            - message: 'an adapter has launch none: nobody opens it'
+              rule: '!has(self.adapter) || self.launch == ''none'''
+            - message: 'an adapter exposes nothing: only the component that speaks
+                as a person reaches it'
+              rule: '!has(self.adapter) || !has(self.expose) || self.expose.size()
+                == 0'
+            - message: 'an adapter provides no contract: another app reaching it through
+                one would call a tool past the component that checks every call'
+              rule: '!has(self.adapter) || !has(self.provides) || self.provides.size()
+                == 0'
+            - message: 'an adapter declares no integrations: it reaches the app it
+                adapts (spec.adapter.adapts), and a contract key would be a credential
+                of its own at that app'
+              rule: '!has(self.adapter) || !has(self.integrations) || self.integrations.size()
+                == 0'
+            - message: 'an adapter does not vouch for people: it speaks as the person
+                with the credential it is handed for one call'
+              rule: '!has(self.adapter) || !has(self.requires) || !has(self.requires.services)
+                || !has(self.requires.services.vouching)'
+            - message: 'an adapter is deployed or reached: a chart, a composition,
+                or an api -- not an addon inside another component'
+              rule: '!has(self.adapter) || !has(self.__package__.addon)'
+            - message: spec.adapter.adapts names the app the adapter uses; only an
+                adapter packaged as an api, which reaches a service outside the cluster,
+                adapts none
+              rule: '!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)'
+            - message: 'an adapter is never placed by default: a tenant''s administrator
+                installs it'
+              rule: '!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants)
+                || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
+                && self.defaultWhereStoreOffered))'
           status:
             description: ComponentProfileStatus is the observed state of a ComponentProfile.
             properties:

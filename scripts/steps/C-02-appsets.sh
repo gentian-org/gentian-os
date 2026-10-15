@@ -27,7 +27,7 @@ _v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "tena
 #
 # Named by the external-name the composition sets rather than by the object
 # name, which carries the XR's prefix.
-_v5_engine_releases() { echo "mariadb redis minio"; }
+_v5_engine_releases() { echo "mariadb redis seaweedfs"; }
 
 # One engine's Ready and Synced, for a message worth reading. Synced=False is
 # the common failure and it means the Release could not be reconciled at all --

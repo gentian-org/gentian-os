@@ -300,6 +300,31 @@ data:
               ${msg("doForgotPassword")}
             </a>
           </#if>
+
+          <#-- The identity providers an administrator added to this realm and
+               left visible: another realm, or another cluster, whose people
+               sign in here with their own account (docs/identity-brokering.md).
+               Keycloak lists only those not set to "Hide on login page", which
+               is how the platform's own brokers (the kernel realm, vouching)
+               stay off this page. -->
+          <#if social.providers?? && social.providers?has_content>
+            <div class="gentian-login__providers" id="kc-social-providers">
+              <p class="gentian-login__subtitle">${msg("identity-provider-login-label")}</p>
+              <#list social.providers as p>
+                <a class="gentian-login__provider" id="social-${p.alias}" href="${p.loginUrl}">${p.displayName!}</a>
+              </#list>
+            </div>
+          </#if>
+
+          <#-- Only in a realm that takes sign-ups (a tenant created with sign-up
+               on); every other realm's people are invited. Keycloak's own words
+               and its own condition, as its base theme shows the link. -->
+          <#if realm.registrationAllowed && !registrationDisabled??>
+            <p class="gentian-login__subtitle">
+              ${msg("noAccount")}
+              <a class="gentian-login__link" id="kc-registration" href="${url.registrationUrl}">${msg("doRegister")}</a>
+            </p>
+          </#if>
         </#if>
       </div>
     </#if>
@@ -308,12 +333,14 @@ data:
     gentianPowWorking=Prüfung, dass dies ein Browser ist… einen Moment.
     gentianPowDone=Geprüft. Sie können das Konto anlegen.
     gentianPowFailed=Die Prüfung, dass dies ein Browser ist, kam nicht zu Ende. Laden Sie die Seite neu und versuchen Sie es noch einmal.
+    identity-provider-login-label=Oder anmelden mit
   login__messages__messages_en.properties: |-
     # The platform's own strings on the login pages. Keycloak's are the parent
     # theme's; these are the ones it has no word for.
     gentianPowWorking=Checking that this is a browser… a moment.
     gentianPowDone=Checked. You can create the account.
     gentianPowFailed=The check that this is a browser did not complete. Reload the page and try again.
+    identity-provider-login-label=Or sign in with
   login__register.ftl: |-
     <#-- The registration page, when a tenant takes sign-ups (spec.signUp.enabled).
 
@@ -849,10 +876,31 @@ data:
       box-sizing: border-box;
     }
 
-    /* Keycloak renders identity-provider buttons on the login page; the portal's
-       form had none. The registration link is left to Keycloak, which renders it
-       only for a realm that takes sign-ups. */
-    .gentian-hidden, #kc-social-providers { display: none !important; }
+    .gentian-hidden { display: none !important; }
+
+    /* The identity providers an administrator added (login.ftl): one outlined
+       button each, under the form. The platform's own brokers are not among
+       them -- they are hidden on the login page in the realm itself. */
+    .gentian-login__providers {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .gentian-login__provider {
+      display: block;
+      padding: 9px 24px;
+      border: 1px solid var(--gtn-border);
+      border-radius: var(--gtn-r1);
+      color: var(--gtn-ink-1, inherit);
+      background: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+    }
+    .gentian-login__provider:hover { border-color: var(--gtn-500); color: var(--gtn-600); }
+    .gentian-login__provider:focus-visible { outline: none; box-shadow: var(--gtn-focus-ring); }
 
     /* The registration page's proof-of-work check: a line that says the browser
        is working, then that it is done. */

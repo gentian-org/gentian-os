@@ -88,23 +88,33 @@ func runTenantSMTPScript(t *testing.T, env map[string]string) map[string]any {
 	put := filepath.Join(dir, "put.json")
 	// The token, the realm as Keycloak returns it (a stored password comes
 	// back as its mask), and the write, kept for the assertions.
+	//
+	// As curl does: the answer's body to -o's file when there is one, the
+	// status for -w '%{http_code}' -- which is how the script's admin calls
+	// (kc_curl) read a refusal.
 	stub := `#!/bin/sh
-body=""; method="GET"; url=""
+body=""; method="GET"; url=""; out=""; fmt=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -X) method="$2"; shift ;;
     -d) body="$2"; shift ;;
+    -o) out="$2"; shift ;;
+    -w) fmt="$2"; shift ;;
     -H|--max-time) shift ;;
     http*) url="$1" ;;
   esac
   shift
 done
+answer() { if [ -n "${out}" ]; then printf '%s' "$1" > "${out}"; else printf '%s' "$1"; fi; }
+code=200
 case "${method} ${url}" in
-  "POST "*"/protocol/openid-connect/token") printf '{"access_token":"t"}' ;;
-  "GET "*"/admin/realms/demo") printf '{"realm":"demo","smtpServer":{"host":"old.example.org","auth":"true","user":"old","password":"**********"}}' ;;
-  "PUT "*"/admin/realms/demo") printf '%s' "${body}" > "` + put + `" ;;
+  "POST "*"/protocol/openid-connect/token") answer '{"access_token":"t"}' ;;
+  "GET "*"/admin/realms/demo") answer '{"realm":"demo","smtpServer":{"host":"old.example.org","auth":"true","user":"old","password":"**********"}}' ;;
+  "PUT "*"/admin/realms/demo") printf '%s' "${body}" > "` + put + `"; answer ''; code=204 ;;
   *) echo "unexpected ${method} ${url}" >&2; exit 22 ;;
 esac
+[ -n "${fmt}" ] && printf '%s' "${code}"
+exit 0
 `
 	if err := os.WriteFile(filepath.Join(dir, "curl"), []byte(stub), 0o700); err != nil {
 		t.Fatal(err)
@@ -213,8 +223,8 @@ func mergeEnv(base map[string]string, k, v string) map[string]string {
 // reaches new tenants only.
 func TestTenantSMTPJobCarriesTheScriptVersion(t *testing.T) {
 	job := makeTenantSMTPJob("demo", "demo", "mail.example.org", "Example Cloud")
-	if got := job.Labels["gentianos.io/keycloak-tenant-smtp"]; got != "5" {
-		t.Fatalf("version label = %q, want 5: the script that knows the mode as \"system\"", got)
+	if got := job.Labels["gentianos.io/keycloak-tenant-smtp"]; got != "6" {
+		t.Fatalf("version label = %q, want 6: the run that puts a relay's password back", got)
 	}
 	for _, c := range job.Spec.Template.Spec.Containers {
 		for _, e := range c.Env {

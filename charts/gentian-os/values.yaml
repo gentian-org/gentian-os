@@ -287,7 +287,7 @@ adminConsole:
 # The App Store app: the store's interface on the cluster, a client of the
 # director, the custodian and the usher. Off by default; the v5 bootstrap
 # turns it on. Turning it on ships the profile only: a tenant gets the
-# component while the cluster offers an App Store -- licence reporting is on
+# component while the cluster offers an App Store -- usage statistics are on
 # and the Cluster claim names a store -- and the platform tenant never does.
 # From gentian-ui like the consoles, pinned to the immutable version the same
 # way.
@@ -541,6 +541,9 @@ provisioners:
   mariadb: "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
   redis: "redis:7-alpine"
   keycloak: "alpine:3.20"
+  # Empty: ghcr.io/gentian-org/storage-tools at the operator's own image tag
+  # (image.tag, else the chart's appVersion), which CI publishes beside it.
+  storageTools: ""
 
 # Memcached image for tenant cache provisioning (operator-managed Deployment).
 # Changing this takes effect on the next operator redeploy without rebuilding.
@@ -829,7 +832,7 @@ grafana:
     # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
     namespace: ""
 
-# The licence report. The software is free under a usage limit that is
+# The usage statistics report. The software is free under a usage limit that is
 # enforced legally and not technically, so a cluster says, in the open, what
 # it runs: once shortly after the operator starts and once a day after that,
 # the operator POSTs a signed JSON body to `url`. The body holds the cluster's
@@ -837,14 +840,14 @@ grafana:
 # installed through the App Store with its digest and the number of people
 # entitled to it -- no names, addresses of people, user ids or group names.
 # Nothing in the cluster is blocked by the answer, and the last report is
-# kept, exactly as sent, in the ConfigMap `gentian-licence-report` beside the
+# kept, exactly as sent, in the ConfigMap `gentian-usage-statistics` beside the
 # operator.
 #
 # Off and with no address by default: this chart and the operator build and
 # run without one, and then nothing is sent, ever. The installer is what turns
 # it on and names an address (docs/design/operations.md). Off also withholds
 # the App Store, whose installs are what the report lists.
-licenceReport:
+usageStatistics:
   enabled: false
   # Where reports go. https only; anything else counts as no address.
   url: ""
@@ -853,8 +856,8 @@ licenceReport:
     # the vault by the ExternalSecret this chart renders while reporting is
     # on. Only the 32-byte private seed is stored; the key pair is derived
     # from it, and the public half is in every report.
-    secretName: gentian-os-licence-report-key
-    openbaoPath: gentian-os/kernel/licence-report
+    secretName: gentian-os-usage-statistics-key
+    openbaoPath: gentian-os/kernel/usage-statistics
     property: signing_seed
 
 # LLM serving support. Fallback only: the operator decides from the claim's

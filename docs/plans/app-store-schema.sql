@@ -315,7 +315,7 @@ create index on subscription (plan_id);
 -- -----------------------------------------------------------------------------
 -- Entitlement: the store's OWN record of a commercial fact
 --
--- None of this reaches a cluster. The cluster does no licence gating (AD-3):
+-- None of this reaches a cluster. The cluster does no license gating (AD-3):
 -- it holds no key of the store's, verifies no statement, and has no relation
 -- for a tenant's right to an app. An install is asked of the person
 -- (tenant#can_install_app) and of nothing else, and whether a licensed app

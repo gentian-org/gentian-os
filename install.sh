@@ -212,12 +212,12 @@ Other options:
                         Console's service and the API-extension grant it needs
                         -- out of the scaffold. Everything of Gentian OS stays:
                         export, import, purge and the bundle need no extension
-  --no-licence-report   turn the licence report off. By default the cluster
+  --no-usage-statistics   turn the usage statistics report off. By default the cluster
                         tells the report address once a day what it runs:
                         tenants, counts of accounts, and the apps installed
                         through the App Store. No personal data. Off, nothing
                         is sent and the App Store is not offered. The same as
-                        GENTIAN_NO_LICENCE_REPORT=1 in install.env, which is
+                        GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
                         where to put it so a later run does not turn it back on
   --no-cluster-infra    do not issue the kernel wildcard certificate (C-03).
                         That is all it leaves out: cert-manager, CNPG and
@@ -299,7 +299,7 @@ parse_driver_args() {
                 GENTIAN_RECOVER_FROM="$1" ;;
             --rotate-break-glass-key) GENTIAN_ROTATE_BREAK_GLASS="rotate" ;;
             --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
-            --no-licence-report) export GENTIAN_NO_LICENCE_REPORT="1" ;;
+            --no-usage-statistics) export GENTIAN_NO_USAGE_STATISTICS="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1"; GENTIAN_PURGE_CLUSTER_INFRA=1 ;;
             --config-file)
@@ -387,6 +387,10 @@ prepare_run() {
     fi
 
     load_operator_config
+    # One run, one cluster (scripts/lib/cluster-identity.sh). First: the
+    # checkout is the repository and branch the settings name -- before it is
+    # synced, so the wrong repository is not even fetched into.
+    gentian_check_deployments_checkout || exit 1
     # Before the claim is read: a checkout behind its remote would answer
     # "this cluster has a definition" for one that was deleted on origin.
     if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" || "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
@@ -394,6 +398,11 @@ prepare_run() {
     else
         gentian_sync_deployments_checkout || exit 1
     fi
+    # Then: a repository that defines other clusters is not handed a new one
+    # by accident, and the cluster kubectl reaches is the one the definition
+    # describes. Before anything is read for the cluster -- its vault, its
+    # salt, the credential cache -- and before anything is written.
+    gentian_check_one_cluster scaffold || exit 1
     load_deployments_cluster_settings
 
     # The key this cluster's definition is signed with has to be on this
@@ -415,6 +424,9 @@ prepare_run() {
     if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]; then
         validate_config || exit 1
         GENTIAN_NONINTERACTIVE=1 prompt_app_repos
+        gentian_check_deployments_checkout || exit 1
+        gentian_check_one_cluster scaffold || exit 1
+        save_kubectl_gentian_config
         local _undefined
         _undefined="$(cluster_deployment_missing | tr '\n' ' ')"
         if [[ -n "${_undefined}" ]]; then
@@ -429,6 +441,11 @@ prepare_run() {
     fi
 
     prompt_app_repos
+    # Again, for whatever was only now asked for; each returns at once for
+    # settings it has already compared.
+    gentian_check_deployments_checkout || exit 1
+    gentian_check_one_cluster scaffold || exit 1
+    save_kubectl_gentian_config
 
     # Step 0. The claims and values this cluster is built from have to exist
     # before any credential is collected -- and when they do not, the install
@@ -611,6 +628,11 @@ main() {
         exit 0
     fi
 
+    # Before anything is loaded: which of the settings that pick a cluster
+    # this shell exports over install.env. A terminal still carrying another
+    # cluster's is the commonest way to reach the wrong one.
+    gentian_report_identity_exports
+
     if [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]]; then
         verify_argocd_apps || true
         print_summary_cp
@@ -633,6 +655,10 @@ main() {
             # activation link from the installer's own Keycloak credential,
             # for when nobody can sign in to ask the director for one.
             load_operator_config
+            # It acts on the cluster kubectl reaches, as that cluster's
+            # administrator: only if it is the one the definition describes.
+            gentian_check_deployments_checkout || exit 1
+            gentian_check_one_cluster || exit 1
             load_deployments_cluster_settings
             resolve_kernel_domain_from_claim
             # shellcheck source=scripts/lib/portal-login-bootstrap.sh
@@ -641,8 +667,11 @@ main() {
             exit $?
             ;;
         export-kit)
-            # Reads the cluster and OpenBao; changes neither.
+            # Reads the cluster and OpenBao; changes neither. The kit names
+            # the cluster it is for, so the cluster it reads has to be that one.
             load_operator_config
+            gentian_check_deployments_checkout || exit 1
+            gentian_check_one_cluster || exit 1
             load_deployments_cluster_settings
             # Get a token the way every other OpenBao caller does, rather than
             # requiring one to be exported already.

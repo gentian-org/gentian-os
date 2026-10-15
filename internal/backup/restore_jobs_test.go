@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 func recipientDecryption() Decryption {
@@ -138,7 +139,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 
 	s3 := strings.Join(containerByName(
 		S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "AK", "SK")), "s3-restore").Args, "\n")
-	if !strings.Contains(s3, "--remove") {
+	if !strings.Contains(s3, "rclone sync ") {
 		t.Errorf("bucket restore merges instead of matching the archive:\n%s", s3)
 	}
 }
@@ -186,25 +187,29 @@ func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 	}
 }
 
-// Alpine's "mc" package is Midnight Commander. Installing it would satisfy any
-// "is mc present" check with a binary that knows nothing about object storage,
-// and the failure surfaces as an unrecognisable error on the first alias call.
-func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
-	script := strings.Join(
-		containerByName(PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"), "fetch").Args, "\n")
-
-	if strings.Contains(script, "apk add --no-cache --quiet mc") ||
-		strings.Contains(script, "apk add mc") {
-		t.Errorf("restore apk-installs 'mc', which is Midnight Commander on Alpine:\n%s", script)
-	}
-	if !strings.Contains(script, "MCLI=/usr/local/bin/mcli") {
-		t.Errorf("restore does not fetch the MinIO client to its own path:\n%s", script)
-	}
-	// And every call goes through that path, not a bare `mc`.
-	for _, line := range strings.Split(script, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "mc ") {
-			t.Errorf("bare mc invocation could pick up the wrong binary: %q", trimmed)
+// The fetch step of every restore downloads nothing. It used to fetch
+// MinIO's client at run time, and when MinIO withdrew the client the address
+// stopped answering: every restore of every kind failed on its first step.
+// The storage tools carry rclone and age.
+func TestRestoreFetchesNothingButTheArtefact(t *testing.T) {
+	for _, d := range []Decryption{recipientDecryption(), {Mode: gentianov1alpha1.ExportEncryptionPassphrase, SecretName: "key", SecretKey: "passphrase"}} {
+		fetch := containerByName(PostgresRestoreJob(params(), d, PostgresArtefact("demo_app"), "demo_app"), "fetch")
+		if fetch.Image != kernel.StorageToolsImage() {
+			t.Errorf("fetch runs %s, not the storage tools", fetch.Image)
+		}
+		script := strings.Join(fetch.Args, "\n")
+		for _, forbidden := range []string{"wget", "curl", "apk ", "dl.min.io", "mc "} {
+			if strings.Contains(script, forbidden) {
+				t.Errorf("the fetch step runs %q:\n%s", forbidden, script)
+			}
+		}
+		for _, want := range []string{
+			`rclone copyto "bundle:demo-gentian-backup/nightly/postgres/demo_app.pgc.age" '/work/dump.pgc.age'`,
+			`rclone cat "bundle:demo-gentian-backup/nightly/postgres/demo_app.pgc.age.sha256" > /tmp/expected.sha256`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("the fetch step does not run %q:\n%s", want, script)
+			}
 		}
 	}
 }
@@ -257,7 +262,7 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 }
 
 // A restore reads from wherever the bundle lives and writes into the cluster's
-// own MinIO. Those are one system only when bundles go to platform storage;
+// own object store. Those are one system only when bundles go to platform storage;
 // with an external destination they are two, with different credentials.
 //
 // Sharing one alias sent both at the destination: the restore tried to create
@@ -284,22 +289,22 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 
 	// Every credential it uses names the platform's own Secret.
 	for _, env := range restore.Env {
-		if env.Name == "MINIO_ENDPOINT" && env.Value != "" {
+		if env.Name == "S3_ENDPOINT" && env.Value != "" {
 			t.Errorf("endpoint is the bundle's literal %q; the app's bucket does not live there", env.Value)
 		}
 		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-			if got := env.ValueFrom.SecretKeyRef.Name; got != MinIOAdminSecret {
-				t.Errorf("%s comes from %q, want the platform's %q", env.Name, got, MinIOAdminSecret)
+			if got := env.ValueFrom.SecretKeyRef.Name; got != StorageAdminSecret {
+				t.Errorf("%s comes from %q, want the platform's %q", env.Name, got, StorageAdminSecret)
 			}
 		}
 	}
 
 	script := restore.Args[0]
-	if !strings.Contains(script, `mc mirror --preserve --overwrite --remove /work/restore "platform/corp-nextcloud"`) {
-		t.Errorf("restore does not mirror into platform storage:\n%s", script)
+	if !strings.Contains(script, `rclone sync --ignore-times /work/restore "platform:corp-nextcloud"`) {
+		t.Errorf("restore does not sync into platform storage:\n%s", script)
 	}
-	if strings.Contains(script, `"gentian/corp-nextcloud"`) {
-		t.Errorf("restore still addresses the bundle alias:\n%s", script)
+	if strings.Contains(script, `"bundle:corp-nextcloud"`) {
+		t.Errorf("restore addresses the bundle remote:\n%s", script)
 	}
 }
 

@@ -54,6 +54,10 @@
 #   kubectl gentian models set -f <file.json>    make the claim declare exactly these settings
 #                                                (no provider's token: that is a credential)
 #
+#   kubectl gentian settings show                the Cluster claim's settings, as JSON
+#   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
+#                                                mainAddress.tenant=<tenant>, mail.serviceMode=system ...
+#
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
@@ -64,6 +68,9 @@
 #                                     [--acknowledge-main-address-rule] [--yes]
 #   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
 #   kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>
+#   kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)
+#                                                               a second address for a published entry, directly under
+#                                                               the cluster's own domain; the cluster's administrator's
 #
 #   kubectl gentian resources plans --tenant <tenant>
 #   kubectl gentian resources show --tenant <tenant>
@@ -82,6 +89,11 @@
 set -euo pipefail
 
 GENTIAN_PLUGIN_VERSION="0.5.0"
+# Written into the installed copy by `make install-plugin`: the checkout it was
+# installed from, and that checkout's commit. Empty in the checkout itself,
+# which is then never told it is out of date.
+GENTIAN_PLUGIN_SOURCE=""
+GENTIAN_PLUGIN_COMMIT=""
 
 die() {
     echo "error: $*" >&2
@@ -114,6 +126,8 @@ cmd_version() {
     echo "kubectl-gentian ${GENTIAN_PLUGIN_VERSION}"
     echo "  fingerprint : $(gentian_plugin_fingerprint)"
     echo "  path        : ${BASH_SOURCE[0]}"
+    [[ -z "${GENTIAN_PLUGIN_SOURCE}" ]] ||
+        echo "  installed   : from ${GENTIAN_PLUGIN_SOURCE} at ${GENTIAN_PLUGIN_COMMIT:-an unknown commit}"
 }
 
 # ---------------------------------------------------------------------------
@@ -141,6 +155,49 @@ _discover() {
     [[ -n "${base}" && -n "${_CLUSTER}" ]] || die "the director in ${_DIR_NS} does not say which issuer or cluster it serves"
     # The platform's administrators sign in through the kernel realm.
     _ISSUER="${base%/}/realms/${GENTIAN_REALM:-kernel}"
+    _check_freshness "$(printf '%s' "${env}" | jq -r '.spec.template.spec.containers[0].image // ""')"
+}
+
+# gentian_plugin_body <file> — a copy of this plugin without the two lines
+# install-plugin writes, so an installed copy and its checkout's compare equal
+# when nothing else differs.
+gentian_plugin_body() {
+    grep -v '^GENTIAN_PLUGIN_\(SOURCE\|COMMIT\)=' "$1" 2>/dev/null
+}
+
+# _check_freshness <image> — say, once an hour per cluster and on stderr,
+# when this copy is out of date, and the command that updates it:
+#   - its checkout has a different copy now (it was pulled, or switched);
+#   - the cluster runs a build whose commit the checkout has and that is
+#     newer than the one this copy came from.
+# Says nothing for a copy run from a checkout, and nothing it cannot tell.
+# GENTIAN_SKIP_UPDATE_CHECK=1 turns it off.
+_check_freshness() {
+    local image="$1" src="${GENTIAN_PLUGIN_SOURCE}" stamp tag sha
+    [[ -n "${src}" && "${GENTIAN_SKIP_UPDATE_CHECK:-}" != "1" ]] || return 0
+    stamp="${HOME}/.gentian/cli-check-${_CLUSTER:-default}"
+    if [[ -f "${stamp}" ]] && [[ -n "$(find "${stamp}" -mmin -60 2>/dev/null)" ]]; then
+        return 0
+    fi
+    mkdir -p "${HOME}/.gentian" 2>/dev/null && touch "${stamp}" 2>/dev/null
+    if [[ -r "${src}/scripts/kubectl-gentian" ]] &&
+        ! cmp -s <(gentian_plugin_body "${src}/scripts/kubectl-gentian") <(gentian_plugin_body "${BASH_SOURCE[0]}"); then
+        echo "note: kubectl gentian is not the copy in ${src} any more. Update it:" >&2
+        echo "  make -C ${src} install-plugin" >&2
+        return 0
+    fi
+    tag="${image##*:}"
+    sha="${tag##*-}"
+    [[ "${sha}" =~ ^[0-9a-f]{7,40}$ && -n "${GENTIAN_PLUGIN_COMMIT}" ]] || return 0
+    [[ "${GENTIAN_PLUGIN_COMMIT}" == "${sha}"* ]] && return 0
+    command -v git >/dev/null 2>&1 || return 0
+    if ! git -C "${src}" cat-file -e "${sha}^{commit}" 2>/dev/null; then
+        echo "note: the cluster runs build ${tag}, which ${src} does not have; kubectl gentian may be older. Update it:" >&2
+        echo "  git -C ${src} fetch && git -C ${src} checkout --detach ${sha} && make -C ${src} install-plugin" >&2
+    elif git -C "${src}" merge-base --is-ancestor "${GENTIAN_PLUGIN_COMMIT}" "${sha}" 2>/dev/null; then
+        echo "note: kubectl gentian (${GENTIAN_PLUGIN_COMMIT:0:7}) is older than the cluster's build (${tag}). Update it:" >&2
+        echo "  git -C ${src} checkout --detach ${sha} && make -C ${src} install-plugin" >&2
+    fi
 }
 
 _TOKEN_FILE=""
@@ -627,7 +684,14 @@ cmd_tenants_retire() {
         echo "is removed once the cluster has taken that in. 'tenants list' shows it as purging until then."
         return 0
     fi
-    _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}" >/dev/null
+    answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "orphan-removed" ]]; then
+        # Git had no such tenant, but the cluster still ran it (a sync that
+        # finished after the directory was removed); the director had the
+        # operator delete it.
+        printf '%s' "${answer}" | jq -r '.detail'
+        return 0
+    fi
     echo "Tenant ${name} retired: git no longer describes it. Its data follows its deletionPolicy."
 }
 
@@ -679,6 +743,9 @@ cmd_tenants_import() {
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
     echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."
+    # Apps of the bundle's tenant left out here: the platform's own
+    # components of an earlier release. Their data is not restored.
+    printf '%s' "${answer}" | jq -r '(.skipped // [])[] | "Skipped app \(.app), its data not restored: \(.reason)"'
     while :; do
         st="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/import")" || exit 1
         phase="$(printf '%s' "${st}" | jq -r '.phase')"
@@ -1266,6 +1333,43 @@ cmd_models() {
     esac
 }
 
+# settings: the Cluster claim's scalar settings, read from git and changed
+# there. The director holds the list of what may be set (its allowlist) and
+# refuses the rest; a change is one commit, and the cluster takes it when
+# Argo CD has synced. The same as editing the claim and running install.sh,
+# without the checkout.
+cmd_settings() {
+    local sub="${1:-}" answer status
+    shift || true
+    case "${sub}" in
+        show)
+            _discover
+            _call GET "/v1/clusters/${_CLUSTER}/settings" | jq '.settings'
+            ;;
+        set)
+            local body='{}' kv key value
+            [[ $# -gt 0 ]] || die "usage: kubectl gentian settings set <path>=<value> [<path>=<value> ...]"
+            need jq
+            for kv in "$@"; do
+                [[ "${kv}" == *=* ]] || die "not a setting: ${kv} (expected <path>=<value>, e.g. tenancyMode=multi)"
+                key="${kv%%=*}"; value="${kv#*=}"
+                [[ -n "${key}" ]] || die "not a setting: ${kv}"
+                body="$(jq -c --arg k "${key}" --arg v "${value}" '. + {($k): $v}' <<<"${body}")"
+            done
+            _discover
+            answer="$(_call PATCH "/v1/clusters/${_CLUSTER}/settings" "{\"settings\":${body}}")" || exit 1
+            status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
+            if [[ "${status}" == "unchanged" ]]; then
+                echo "The claim already says so; nothing was committed."
+            else
+                echo "Settings committed ($(_committed "${answer}")). The cluster takes them once Argo CD has synced."
+                echo "  kubectl gentian settings show"
+            fi
+            ;;
+        *) die "usage: kubectl gentian settings show|set <path>=<value> ..." ;;
+    esac
+}
+
 # tenants delegate-catalogues: whether a tenant's own administrators may add
 # catalogues for their tenant. The cluster administrator's to say.
 cmd_tenants_delegate_catalogues() {
@@ -1485,10 +1589,11 @@ cmd_exposures_list() {
         | def kind: (.kind // "") as $k | (if $k == "" then "public" else $k end) as $k
             | $kinds[$k] // (if $k == "public" then "Public address" else $k end);
         def row(state): [.install, .exposureName, kind, state, (if .apex then "yes" else "-" end),
+            (if (.alias // "") == "" then "-" else .alias end),
             (.owner // "-"), (.publishedAt | day), (.reviewAt | day), (.expiresAt | day),
             (if (.reason // "") == "" then "-" else .reason end)];
         ((.reviewDue // []) | map(.install + " " + .exposureName)) as $due
-        | (["APP INSTANCE","ENTRY","KIND","STATE","MAIN ADDRESS","APPROVED BY","APPROVED","REVIEW","EXPIRES","REASON"] | @tsv),
+        | (["APP INSTANCE","ENTRY","KIND","STATE","MAIN ADDRESS","ALIAS","APPROVED BY","APPROVED","REVIEW","EXPIRES","REASON"] | @tsv),
           ((.live // [])[] | (.install + " " + .exposureName) as $k
               | row(if ($due | index($k)) != null then "review due" else "published" end) | @tsv),
           ((.expired // [])[] | row("expired") | @tsv)' |
@@ -1529,6 +1634,61 @@ cmd_exposures_withdraw() {
     fi
     echo "Withdrawn ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). Once the cluster has taken that in,"
     echo "a public address stops answering, and an entry behind sign-in has its Authorization header removed again."
+}
+
+# exposures alias: give one published entry a second address directly under
+# the cluster's own domain (statistics.<cluster> for an entry that answers at
+# statistics.<tenant>.<cluster>), or take it away.
+# One request to the director (PUT or DELETE /v1/clusters/<c>/tenants/<t>/
+# exposures/<app instance>/<entry>/alias), which decides who may: whoever may
+# configure the cluster, since a name under its domain is the cluster's to
+# give. It adds nothing to what is public -- the tenant's approver publishes
+# the entry first -- so it is not asked twice.
+cmd_exposures_alias() {
+    local inst="" entry="" t="" host="" remove="" answer usage_text
+    usage_text="usage: kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            --host) host="${2:?}"; shift 2 ;;
+            --remove) remove=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${inst}" ]]; then inst="$1"
+                elif [[ -z "${entry}" ]]; then entry="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${inst}" && -n "${entry}" ]] || die "${usage_text}"
+    [[ -n "${t}" ]] || die "--tenant is required"
+    [[ -n "${host}" || -n "${remove}" ]] || die "${usage_text}"
+    [[ -z "${host}" || -z "${remove}" ]] || die "--host and --remove are two different things; give one"
+    _label "a tenant" "${t}"
+    _label "an app instance" "${inst}"
+    _label "an entry" "${entry}"
+    need curl jq
+    _connect
+    if [[ -n "${remove}" ]]; then
+        answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${t}/exposures/${inst}/${entry}/alias")" || exit 1
+        if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+            echo "${inst}/${entry} of ${t} has no alias; nothing was committed."
+            return 0
+        fi
+        echo "${inst}/${entry} of ${t} has no alias any more: committed ($(_committed "${answer}")). It stays at its own address."
+        return 0
+    fi
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${t}/exposures/${inst}/${entry}/alias" \
+        "$(jq -n --arg h "${host}" '{host: $h}')")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "${inst}/${entry} of ${t} already answers at ${host}; nothing was committed."
+        return 0
+    fi
+    echo "${inst}/${entry} of ${t} also answers at ${host}: committed ($(_committed "${answer}"))."
+    echo "Once the cluster has taken that in, the same paths are served there, held to the same limits."
+    echo "The name has to resolve to this cluster: the platform publishes a record for it where it publishes"
+    echo "the cluster's others, and where it does not, the record is yours to make."
 }
 
 # exposures requests: every entry an app installed in the tenant declares for
@@ -1736,7 +1896,8 @@ cmd_exposures() {
         requests) cmd_exposures_requests "$@" ;;
         approve) cmd_exposures_approve "$@" ;;
         withdraw) cmd_exposures_withdraw "$@" ;;
-        *) die "usage: kubectl gentian exposures requests|approve|list|withdraw ..." ;;
+        alias) cmd_exposures_alias "$@" ;;
+        *) die "usage: kubectl gentian exposures requests|approve|list|withdraw|alias ..." ;;
     esac
 }
 
@@ -1865,6 +2026,7 @@ main() {
         catalogue|catalogues) cmd_catalogues "$@" ;;
         repository|repositories) cmd_repositories "$@" ;;
         model|models) cmd_models "$@" ;;
+        setting|settings) cmd_settings "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         version|--version|-v) cmd_version ;;
