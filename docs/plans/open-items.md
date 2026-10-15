@@ -401,10 +401,13 @@ Carried over from before, and still not shown:
   after B-08 and C-01 on each issuer mode, cert-manager issuing the store's
   certificates, External Secrets taking over a self-signed cluster's
   existing `gentian-root-ca-tls`, and the store starting with both.
-  *Open question:* any namespace that may create a cert-manager
-  `Certificate` can have `gentian-ca` issue any common name, and the tenant
-  AppProject lets a tenant's apps create Certificates and even ClusterIssuers;
-  only the store's NetworkPolicy keeps such a certificate from its ports.
+  *Resolved on `test-cb`:* a Certificate or CertificateRequest naming
+  `gentian-ca`, or an Ingress asking the ingress-shim for it, is refused
+  outside the kernel and system namespaces (`gentian-restrict-internal-ca`),
+  and the tenant AppProject no longer allows ClusterIssuers. Shown with the
+  Kyverno CLI. *Needs a cluster:* the policy Ready, a tenant's Certificate
+  for `gentian-ca` refused, the store's certificates still issued, and the
+  live AppProject without ClusterIssuer after the claim reconciles.
 
 ## 3. Known defects, open
 
