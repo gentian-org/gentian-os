@@ -28,6 +28,16 @@ import (
 // app's store password from (jobSecret).
 const jobSecretPasswordKey = "password"
 
+// jobSecretClientSecretKey is the key of the Secret a Keycloak client Job
+// reads an app's OIDC client secret from (jobSecret).
+const jobSecretClientSecretKey = "client-secret"
+
+// clientSecretSecretData is what the Secret handing an app's OIDC client
+// secret to its Keycloak client Job holds.
+func clientSecretSecretData(clientSecret string) map[string][]byte {
+	return map[string][]byte{jobSecretClientSecretKey: []byte(clientSecret)}
+}
+
 // passwordSecretData is what the Secret handing an app's store password to
 // its provisioning Job holds.
 func passwordSecretData(password string) map[string][]byte {
@@ -90,15 +100,16 @@ func ensureJobSecret(ctx context.Context, c client.Client, job *batchv1.Job, des
 
 // provisioningJobSecrets are the credentials the Jobs in a tenant's
 // provisioning manifests are to be handed, by Job: what each Job's Secret
-// holds. They are not in the Jobs.
+// holds -- a store's password or key pair, an OIDC client's secret. They are
+// not in the Jobs.
 type provisioningJobSecrets map[types.NamespacedName]map[string][]byte
 
 // ensureProvisioningJobSecrets hands each Job Crossplane has made from the
-// provisioning manifests the credential it provisions an app's store with. A
-// Job not made yet is passed over: the operator watches the Jobs in the
-// platform namespaces, and the one Crossplane makes brings the tenant back
-// here. Until its Secret is there the Job's pod waits, which kubelet
-// retries; a finished Job needs none.
+// provisioning manifests the credential it provisions an app's store or
+// OIDC client with. A Job not made yet is passed over: the operator watches
+// the Jobs in the platform namespaces, and the one Crossplane makes brings
+// the tenant back here. Until its Secret is there the Job's pod waits, which
+// kubelet retries; a finished Job needs none.
 func (r *TenantReconciler) ensureProvisioningJobSecrets(ctx context.Context, handoffs provisioningJobSecrets) error {
 	for key, data := range handoffs {
 		job := &batchv1.Job{}

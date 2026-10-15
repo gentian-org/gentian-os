@@ -44,7 +44,7 @@ func TestBuildOIDCPackScript(t *testing.T) {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
-		[]string{"https://app.demo.platform.example.test/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
+		[]string{"https://app.demo.platform.example.test/*"}, false, "gentian:tenant:demo:app:catalogue-test-client")
 	for _, want := range []string{
 		"catalogue-test-client-scope",
 		"catalogue-test-client-access-control",

@@ -26,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
 // passwordEnvOf is how a container is handed a password: the Secret and key
@@ -322,4 +323,174 @@ func TestARetainedMariaDBSetupReadsItsPasswordFromASecretItOwns(t *testing.T) {
 	if len(sec.OwnerReferences) != 1 || sec.OwnerReferences[0].UID != "setup-job-uid" {
 		t.Errorf("the Secret is not owned by the setup Job: %+v", sec.OwnerReferences)
 	}
+}
+
+// assertClientJobReadsItsOwnSecret is what each Keycloak client Job builder
+// is held to: the Job reads the app's OIDC client secret from the Secret it
+// owns, and its manifest -- env and script -- carries no literal one.
+func assertClientJobReadsItsOwnSecret(t *testing.T, job *batchv1.Job, clientSecret string) {
+	t.Helper()
+	raw, err := serializeProvisioningJobs([]batchv1.Job{*job})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, clientSecret) {
+		t.Fatal("the provisioning manifests carry the app's client secret")
+	}
+	ref, literal := passwordEnvOf(t, job, "OIDC_CLIENT_SECRET")
+	if literal != "" || ref != job.Name+"/"+jobSecretClientSecretKey {
+		t.Errorf("OIDC_CLIENT_SECRET is not read from the Job's own Secret: ref %q, literal %q", ref, literal)
+	}
+}
+
+// An app's OIDC client secret is handed to the Job that makes its client in
+// a Secret the Job owns, and is in nothing else the operator writes: not in
+// the Job's spec, not in the provisioning ConfigMap Crossplane composes the
+// Job from. Both builders: the pack Job and the plain client Job.
+func TestTheClientJobsReadTheAppsClientSecretFromASecretTheyOwn(t *testing.T) {
+	ctx := context.Background()
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	s := componentDatabaseScheme(t)
+	for name, cfg := range map[string]oidcAppConfig{
+		"oidc pack": {profileName: "wiki", clientID: "demo-wiki", redirectURIs: []string{"https://wiki.demo.example.test/*"},
+			pack: &oidc.Pack{ScopeName: "wiki-scope", ClientRole: "access"}},
+		"oidc client": {profileName: "wiki", clientID: "demo-wiki", redirectURIs: []string{"https://wiki.demo.example.test/*"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(s).Build()
+			vault := memVault{}
+			r := &TenantReconciler{Client: c, Scheme: s, KernelDomain: "example.test",
+				Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master"))}
+
+			built, clientSecret, err := r.buildOIDCClientProvisioningJob(ctx, tenant, "demo", cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if clientSecret == "" || vault[secrets.CategoryPath("demo", "wiki", "oidc")]["client-secret"] != clientSecret {
+				t.Fatalf("the Job is to be handed another client secret than the vault's: %q, %v", clientSecret, vault)
+			}
+			assertClientJobReadsItsOwnSecret(t, built, clientSecret)
+
+			key := types.NamespacedName{Namespace: built.Namespace, Name: built.Name}
+			if key.Namespace != identityNamespace || key.Name != clientJobName("demo", "wiki") {
+				t.Fatalf("the client Job is %s", key)
+			}
+			keys := provisioningJobSecrets{key: clientSecretSecretData(clientSecret)}
+
+			// Before Crossplane has made the Job there is nothing to own the Secret.
+			if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
+				t.Fatal(err)
+			}
+			sec := &corev1.Secret{}
+			if err := c.Get(ctx, key, sec); !apierrors.IsNotFound(err) {
+				t.Fatalf("a Secret was made before its Job (%v)", err)
+			}
+
+			made := built.DeepCopy()
+			made.UID = "client-job-uid"
+			if err := c.Create(ctx, made); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Get(ctx, key, sec); err != nil {
+				t.Fatalf("no Secret beside the Job: %v", err)
+			}
+			if string(sec.Data[jobSecretClientSecretKey]) != clientSecret {
+				t.Error("the Secret holds another client secret than the vault's")
+			}
+			if len(sec.OwnerReferences) != 1 || sec.OwnerReferences[0].Kind != "Job" ||
+				sec.OwnerReferences[0].Name != key.Name || sec.OwnerReferences[0].UID != "client-job-uid" {
+				t.Errorf("the Secret is not owned by its Job: %+v", sec.OwnerReferences)
+			}
+		})
+	}
+}
+
+// A public client, or a cluster without a vault, has no secret to hand over:
+// the Job reads none and nothing is to be handed to it.
+func TestTheClientJobsReadNoClientSecretWhenThereIsNone(t *testing.T) {
+	ctx := context.Background()
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	s := componentDatabaseScheme(t)
+	uris := []string{"https://wiki.demo.example.test/*"}
+	vaulted := &TenantReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s,
+		Seeder: secrets.NewSeeder(memVault{}, secrets.NewDeriver("unit-test-master"))}
+	unvaulted := &TenantReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s}
+	for name, c := range map[string]struct {
+		r   *TenantReconciler
+		cfg oidcAppConfig
+	}{
+		"public pack":          {vaulted, oidcAppConfig{profileName: "wiki", clientID: "demo-wiki", redirectURIs: uris, pack: &oidc.Pack{PublicClient: true}}},
+		"pack without a vault": {unvaulted, oidcAppConfig{profileName: "wiki", clientID: "demo-wiki", redirectURIs: uris, pack: &oidc.Pack{}}},
+		"client without vault": {unvaulted, oidcAppConfig{profileName: "wiki", clientID: "demo-wiki", redirectURIs: uris}},
+	} {
+		job, clientSecret, err := c.r.buildOIDCClientProvisioningJob(ctx, tenant, "demo", c.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if clientSecret != "" {
+			t.Errorf("%s: a client secret is to be handed over", name)
+		}
+		for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+			if e.Name == "OIDC_CLIENT_SECRET" {
+				t.Errorf("%s: the Job carries OIDC_CLIENT_SECRET", name)
+			}
+		}
+	}
+}
+
+// The tenant's provisioning: the client secret of an app whose client the
+// operator's Job makes is among the credentials handed to the Jobs, and in
+// none of the Jobs.
+func TestTheTenantsProvisioningHandsTheClientSecretToItsJob(t *testing.T) {
+	ctx := context.Background()
+	s := componentDatabaseScheme(t)
+	api := &gentianov1alpha1.ComponentProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "wiki"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Package: gentianov1alpha1.PackageSpec{API: &gentianov1alpha1.APIIntegration{}},
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
+					ClientID: "demo-wiki", RedirectURIs: []string{"https://wiki.demo.example.test/*"},
+				}},
+			}},
+		},
+	}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       gentianov1alpha1.TenantSpec{Apps: []gentianov1alpha1.TenantApp{{Profile: "wiki"}}},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(api, tenant).Build()
+	vault := memVault{}
+	r := &TenantReconciler{Client: c, Scheme: s, KernelDomain: "example.test",
+		Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master"))}
+
+	jobs, keys, err := r.buildTenantProvisioningJobs(ctx, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSecret := vault[secrets.CategoryPath("demo", "wiki", "oidc")]["client-secret"]
+	if clientSecret == "" {
+		t.Fatalf("no client secret was seeded: %v", vault)
+	}
+	payload, err := serializeProvisioningJobs(jobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, clientSecret) {
+		t.Fatal("the provisioning manifests carry the app's client secret")
+	}
+	key := types.NamespacedName{Namespace: identityNamespace, Name: clientJobName("demo", "wiki")}
+	if string(keys[key][jobSecretClientSecretKey]) != clientSecret {
+		t.Fatalf("the client Job is not to be handed the vault's client secret: %v", keys[key])
+	}
+	for i := range jobs {
+		if jobs[i].Name == key.Name && jobs[i].Namespace == key.Namespace {
+			assertClientJobReadsItsOwnSecret(t, &jobs[i], clientSecret)
+			return
+		}
+	}
+	t.Fatalf("no Job %s among %d", key, len(jobs))
 }

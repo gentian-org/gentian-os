@@ -376,7 +376,7 @@ func TestMailboxScopeHasOneName(t *testing.T) {
 func TestNothingSwitchesTheIntrospectionAudienceCheckOff(t *testing.T) {
 	attribute := strings.Join([]string{"allow", "token", "introspection", "without", "audience", "check"}, ".")
 
-	script := buildOIDCPackScript("kernel", dovecotOIDCClientID, oidc.Pack{ServiceClient: true}, nil, nil, "", "")
+	script := buildOIDCPackScript("kernel", dovecotOIDCClientID, oidc.Pack{ServiceClient: true}, nil, nil, false, "")
 	if strings.Contains(script, attribute) {
 		t.Fatal("the script that makes gentian-dovecot in the kernel realm sets " + attribute)
 	}

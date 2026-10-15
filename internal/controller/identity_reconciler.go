@@ -349,20 +349,26 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 	}
 }
 
-func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
+// makeClientJob creates a Job that makes or updates an app's OIDC client in
+// the tenant's realm.
+//
+// When withSecret is set (Seeder enabled) the Job gives the client the
+// secret the vault holds for the app. The pod reads it from the Secret of the
+// Job's name, which the Job owns (jobSecret); it is in no Job spec, no
+// ConfigMap and no composed Object. Without it Keycloak keeps or generates
+// the client's secret.
+func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, withSecret bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	redirectURI := redirectURIs[0]
+	jobName := clientJobName(tenant.Name, appName)
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
-	if clientSecret != "" {
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "OIDC_CLIENT_SECRET",
-			Value: clientSecret,
-		})
+	if withSecret {
+		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      clientJobName(tenant.Name, appName),
+			Name:      jobName,
 			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,

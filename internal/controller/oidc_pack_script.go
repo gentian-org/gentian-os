@@ -26,7 +26,7 @@ func buildOIDCPackScript(
 	pack oidc.Pack,
 	templates map[string]oidc.MapperTemplate,
 	redirectURIs []string,
-	clientSecret string,
+	withSecret bool,
 	entitlementGroup string,
 ) string {
 	if pack.ServiceClient {
@@ -46,7 +46,7 @@ func buildOIDCPackScript(
 	}
 
 	secretClause := ""
-	if clientSecret != "" {
+	if withSecret {
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
@@ -156,8 +156,9 @@ echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 // scope and an empty role in every tenant realm and suggest, in the Keycloak
 // admin UI, that users can be entitled to a mail server.
 //
-// The client secret comes from the OIDC_CLIENT_SECRET env the Job carries, never
-// from an argument, so it stays out of the rendered script and out of Job specs.
+// The client secret comes from the OIDC_CLIENT_SECRET env the Job reads from
+// the Secret it owns, never from an argument, so it stays out of the rendered
+// script and out of Job specs.
 func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) string {
 	fullScope := "false"
 	if pack.FullScopeAllowed {

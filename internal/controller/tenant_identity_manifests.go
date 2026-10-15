@@ -48,7 +48,8 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
 	}
 	// The passwords and key pairs the Jobs provision the apps' stores with,
-	// each in a Secret its Job owns: never in the manifests below.
+	// and the apps' OIDC client secrets, each in a Secret its Job owns: never
+	// in the manifests below.
 	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
 		return err
 	}
@@ -150,7 +151,7 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 	var jobs []batchv1.Job
 	realmName := keycloakRealmName(tenant)
 
-	identityJobs, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
+	identityJobs, clientSecrets, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,11 +162,18 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 		return nil, nil, err
 	}
 	jobs = append(jobs, dataJobs...)
+	for job, data := range clientSecrets {
+		keys[job] = data
+	}
 	return jobs, keys, nil
 }
 
-func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {
+// buildIdentityProvisioningJobs builds the Jobs that provision a tenant's
+// realm and its apps' clients, and the OIDC client secrets those Jobs are to
+// be handed, by Job (ensureProvisioningJobSecrets): those are not in the Jobs.
+func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, provisioningJobSecrets, error) {
 	var jobs []batchv1.Job
+	clientSecrets := provisioningJobSecrets{}
 
 	// A tenant that adopts the kernel realm gets no realm Job, no
 	// administrator, no broker and no mail server: those are the realm's,
@@ -184,17 +192,17 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 
 	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	samlConfigs, err := r.collectSAMLAppConfigs(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	groupsJSON, err := r.collectGentianGroupsJSON(ctx, tenant, oidcConfigs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupsJSON))
 
@@ -205,17 +213,20 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if crossplaneOwnsOIDCClient(profile, cfg) {
 			if err := r.seedOIDCSecrets(ctx, tenant, realmName, cfg); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			continue
 		}
-		job, err := r.buildOIDCClientProvisioningJob(ctx, tenant, realmName, cfg)
+		job, clientSecret, err := r.buildOIDCClientProvisioningJob(ctx, tenant, realmName, cfg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if clientSecret != "" {
+			clientSecrets[types.NamespacedName{Namespace: job.Namespace, Name: job.Name}] = clientSecretSecretData(clientSecret)
 		}
 		jobs = append(jobs, *job)
 	}
@@ -242,7 +253,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		// that is to have no mail server gets no Job that would give it one.
 		realmMail, err := r.tenantRealmMail(ctx, tenant)
 		if err != nil {
-			return nil, fmt.Errorf("the realm's mail server: %w", err)
+			return nil, nil, fmt.Errorf("the realm's mail server: %w", err)
 		}
 		if realmMail != nil && r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			mailHost := ""
@@ -253,7 +264,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		}
 	}
 
-	return jobs, nil
+	return jobs, clientSecrets, nil
 }
 
 // tenantAdminUsername is the administrator's login. The account has no
@@ -276,18 +287,21 @@ func (r *TenantReconciler) seedOIDCSecrets(ctx context.Context, tenant *gentiano
 	return nil
 }
 
-func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (*batchv1.Job, error) {
+// buildOIDCClientProvisioningJob builds the Job that makes an app's OIDC
+// client, and the client secret it is to be handed in the Secret it owns
+// (empty when it is handed none).
+func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (*batchv1.Job, string, error) {
 	if cfg.pack != nil {
 		clientSecret := ""
 		if r.Seeder != nil && !cfg.pack.PublicClient {
 			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 			if seedErr != nil {
-				return nil, fmt.Errorf("seed oidc pack for %s: %w", cfg.profileName, seedErr)
+				return nil, "", fmt.Errorf("seed oidc pack for %s: %w", cfg.profileName, seedErr)
 			}
 			clientSecret = creds.ClientSecret
 		}
-		return makeOIDCPackJob(tenant, realmName, cfg, clientSecret, gentianTenantAppGroup(tenant.Name, cfg.profileName)), nil
+		return makeOIDCPackJob(tenant, realmName, cfg, clientSecret != "", gentianTenantAppGroup(tenant.Name, cfg.profileName)), clientSecret, nil
 	}
 
 	clientSecret := ""
@@ -295,11 +309,11 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 		creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 		if seedErr != nil {
-			return nil, fmt.Errorf("seed oidc for %s: %w", cfg.profileName, seedErr)
+			return nil, "", fmt.Errorf("seed oidc for %s: %w", cfg.profileName, seedErr)
 		}
 		clientSecret = creds.ClientSecret
 	}
-	return makeClientJob(tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs, clientSecret), nil
+	return makeClientJob(tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs, clientSecret != ""), clientSecret, nil
 }
 
 // crossplaneOwnsOIDCClient reports whether the app Composition already emits a

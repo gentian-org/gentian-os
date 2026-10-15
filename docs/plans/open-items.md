@@ -389,7 +389,8 @@ Carried over from before, and still not shown:
   Jobs, accepted names set per component); the volume server and the
   filer's HTTP port taking only signed tokens, the keys random at
   `gentian-os/kernel/storage/s3/jwt`. (7) An app's PostgreSQL, MariaDB and
-  cache passwords reach their provisioning Jobs in Secrets the Jobs own.
+  cache passwords, and the OIDC client secret the Keycloak client Jobs set,
+  reach their provisioning Jobs in Secrets the Jobs own.
   Proven in local containers (`make test-object-storage-lab`): a weed client
   without a certificate, with one of another CA, or with one of the CA under
   another name, is refused by the master and the filer; the Jobs' certificate
