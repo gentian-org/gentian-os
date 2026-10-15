@@ -13,8 +13,10 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -153,7 +155,17 @@ func podHasContainer(pod *corev1.Pod, name string) bool {
 	return false
 }
 
-// execAppCommand runs one of a profile's hooks in the app's own pod.
+// AppCommandTimeout bounds one of a profile's hooks: a pause, a resume, a
+// post-restore command or a verification. The hook runs inside the
+// reconcile, and one that hangs would hold the export or restore -- and the
+// app paused -- for as long as it hangs. Long enough for an app's own
+// post-restore work, which may wait for the app to finish starting first.
+// A hook that runs out of it has failed, as one that exits non-zero has; the
+// process in the pod is not killed by the exec ending.
+const AppCommandTimeout = 15 * time.Minute
+
+// execAppCommand runs one of a profile's hooks in the app's own pod, for at
+// most AppCommandTimeout (execTimeout where a test sets it).
 func (r *TenantReconciler) execAppCommand(
 	ctx context.Context,
 	tenantName, appName string,
@@ -171,5 +183,15 @@ func (r *TenantReconciler) execAppCommand(
 	if container == "" && len(pod.Spec.Containers) > 0 {
 		container = pod.Spec.Containers[0].Name
 	}
-	return r.Exec.Exec(ctx, pod.Namespace, pod.Name, container, argv)
+	timeout := r.execTimeout
+	if timeout <= 0 {
+		timeout = AppCommandTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := r.Exec.Exec(ctx, pod.Namespace, pod.Name, container, argv)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return out, fmt.Errorf("the command did not finish within %s: %w", timeout, err)
+	}
+	return out, err
 }

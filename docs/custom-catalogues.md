@@ -376,7 +376,8 @@ there, so each command is run with what it needs to know, and no secret: `GENTIA
 record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
 `GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>`. A new
 credential the command reads from the app's own Secrets, as the app does. The container needs
-`env(1)`, which the platform runs the command through.
+`env(1)`, which the platform runs the command through. Each command, as each `quiesce` command, has
+15 minutes; one that has not finished by then has failed, and a restore fails the app on it.
 
 **An app that verifies who is asking, and does not take the front door's headers on trust**, sets
 `exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with

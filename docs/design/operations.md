@@ -598,7 +598,9 @@ naming both ends: tenant, domain, platform version, cluster, the app's chart
 versions and each store's name in the bundle and here
 ([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
 each app's profile rewrites what its app cached, reading credentials the
-platform made new from the app's own Secrets.
+platform made new from the app's own Secrets. Each of a profile's commands
+runs for at most 15 minutes (`AppCommandTimeout`); one still running then
+has failed, as one that exits non-zero has.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
 artefact) carries `schemaVersion`. Format 1 named each app and the kinds

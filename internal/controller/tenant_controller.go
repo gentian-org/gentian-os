@@ -237,6 +237,8 @@ type TenantReconciler struct {
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
+	// execTimeout replaces AppCommandTimeout where a test needs a short one.
+	execTimeout time.Duration
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
