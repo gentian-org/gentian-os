@@ -600,7 +600,9 @@ versions and each store's name in the bundle and here
 each app's profile rewrites what its app cached, reading credentials the
 platform made new from the app's own Secrets. An app paused by scaling down
 is resumed before them, as they need a pod, and rolled (`rollout restart`)
-once they have run. Each of a profile's commands
+once they have run; one scaled down because its maintenance command could
+not run has its `quiesce.post` command run after them, since its data may
+have been taken in maintenance mode. Each of a profile's commands
 runs for at most 15 minutes (`AppCommandTimeout`); one still running then
 has failed, as one that exits non-zero has.
 

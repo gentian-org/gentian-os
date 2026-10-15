@@ -356,7 +356,15 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// run while users are held out, which is where they belong: the window
 	// between "data replaced" and "app serving it" is the only one in which
 	// "re-read what changed underneath you" means anything.
-	if used == gentianov1alpha1.BackupQuiesceScaleDown && restoreHooksNeedPod(spec) {
+	//
+	// An app whose maintenance command could not run was scaled down
+	// instead, and its resume command is still owed: the data put back may
+	// have been captured in maintenance mode -- an export pauses such an app
+	// by its command -- and scaling up alone brings it back still holding
+	// users out. It runs once a pod answers, after the post-restore
+	// commands, which is where the normal path runs it too.
+	owesResume := resumeCommandOwed(spec, used)
+	if used == gentianov1alpha1.BackupQuiesceScaleDown && (restoreHooksNeedPod(spec) || owesResume) {
 		if entry.QuiesceEnd == nil {
 			if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
 				return ctrl.Result{}, fmt.Errorf("resume %s before hooks: %w", appName, err)
@@ -388,6 +396,13 @@ func (r *TenantRestoreReconciler) restoreApp(
 	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry, restoreHookEnv(restore, tenant, appName, profile, r.Tenant)); err != nil {
 		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
 	}
+	if owesResume && r.Tenant.Exec != nil {
+		_, resume := spec.QuiesceCommands()
+		if _, err := r.Tenant.execAppCommand(ctx, tenant.Name, appName, spec, resume); err != nil {
+			return r.failApp(ctx, restore, tenant, appName, spec,
+				fmt.Sprintf("the app was scaled down because its maintenance command could not run, and its resume command failed after the restore: %v", err))
+		}
+	}
 
 	if entry.QuiesceEnd == nil {
 		if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
@@ -418,7 +433,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// pods started on the data as it was put back -- before the commands
 	// rewrote what it remembers of where it ran. They are started again on
 	// the rewritten data.
-	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) || ranRestoreCommands(r.Tenant, spec) {
+	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) || ranRestoreCommands(r.Tenant, spec, owesResume) {
 		if err := r.Tenant.restartAppWorkloads(ctx, tenant.Name, appName); err != nil {
 			return ctrl.Result{}, fmt.Errorf("restart %s after restore: %w", appName, err)
 		}
@@ -452,14 +467,27 @@ func restoreHooksNeedPod(spec *gentianov1alpha1.BackupSpec) bool {
 	return len(post) > 0 || len(verify) > 0
 }
 
+// resumeCommandOwed reports whether an app paused for a restore by scaling
+// down still owes its profile's resume command: its profile pauses it by a
+// maintenance command, which could not run, and has a command that ends
+// maintenance.
+func resumeCommandOwed(spec *gentianov1alpha1.BackupSpec, used gentianov1alpha1.BackupQuiesceMode) bool {
+	if used != gentianov1alpha1.BackupQuiesceScaleDown {
+		return false
+	}
+	_, resume := spec.QuiesceCommands()
+	return len(resume) > 0
+}
+
 // ranRestoreCommands reports whether a restore ran any of the profile's
-// post-restore commands in the app after loading its data.
-func ranRestoreCommands(tr *TenantReconciler, spec *gentianov1alpha1.BackupSpec) bool {
+// commands in the app after loading its data: its post-restore commands or
+// an owed resume command.
+func ranRestoreCommands(tr *TenantReconciler, spec *gentianov1alpha1.BackupSpec, owesResume bool) bool {
 	if tr == nil || tr.Exec == nil {
 		return false
 	}
 	post, _ := spec.RestoreCommands()
-	return len(post) > 0
+	return len(post) > 0 || owesResume
 }
 
 // runRestoreHooks runs the profile's post-restore commands and its verification.

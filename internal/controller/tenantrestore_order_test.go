@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -109,5 +110,50 @@ func TestAnAppResumedByScalingWithNoCommandsIsNotStartedAgain(t *testing.T) {
 	}
 	if _, ok := getDeployment(t, w.c, "wiki").Spec.Template.Annotations[restartWorkloadAnnotation]; ok {
 		t.Error("an app resumed by scaling, with nothing run in it, was started again")
+	}
+}
+
+// An app paused by its maintenance command whose command could not run is
+// scaled down instead. The data put back may have been captured in
+// maintenance mode, and scaling up alone leaves it there: the profile's
+// resume command is run once a pod answers, after the post-restore
+// commands, and the app is started again after both.
+func TestAnAppWhoseMaintenanceCommandFailedIsTakenOutOfMaintenanceAfterARestore(t *testing.T) {
+	got, exec, w := restoreWithCommands(t, &gentianov1alpha1.BackupSpec{
+		Quiesce: &gentianov1alpha1.BackupQuiesce{
+			Mode: gentianov1alpha1.BackupQuiesceCommand,
+			Pre:  []string{"wiki", "maintenance", "--on"},
+			Post: []string{"wiki", "maintenance", "--off"},
+		},
+		Restore: &gentianov1alpha1.BackupRestore{Post: [][]string{{"wiki", "rewrite"}}},
+	}, "--on")
+	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseReady {
+		t.Fatalf("phase = %s: %+v", got.Status.Phase, got.Status.Conditions)
+	}
+	if mode := appStatus(&got.Status.Apps, "wiki").QuiesceMode; mode != string(gentianov1alpha1.BackupQuiesceScaleDown) {
+		t.Fatalf("quiesce mode = %q, want the scale-down fallback", mode)
+	}
+	if !slices.Equal(exec.calls, []string{"--on", "rewrite", "--off"}) {
+		t.Fatalf("calls = %v, want the failed pause, the post-restore command, then the resume command", exec.calls)
+	}
+	if _, ok := getDeployment(t, w.c, "wiki").Spec.Template.Annotations[restartWorkloadAnnotation]; !ok {
+		t.Error("the app was not started again after its commands")
+	}
+}
+
+// The resume command owed after a fallback failing fails the app, as a
+// post-restore command failing does: the app would otherwise be reported
+// restored while holding users out.
+func TestAFailedOwedResumeCommandFailsTheApp(t *testing.T) {
+	got, _, _ := restoreWithCommands(t, &gentianov1alpha1.BackupSpec{
+		Quiesce: &gentianov1alpha1.BackupQuiesce{
+			Mode: gentianov1alpha1.BackupQuiesceCommand,
+			Pre:  []string{"wiki", "maintenance", "--on"},
+			Post: []string{"wiki", "maintenance", "--on"},
+		},
+	}, "--on")
+	entry := appStatus(&got.Status.Apps, "wiki")
+	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed || !strings.Contains(entry.Message, "resume command failed") {
+		t.Fatalf("app = %s %q", entry.Phase, entry.Message)
 	}
 }

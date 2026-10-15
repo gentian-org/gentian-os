@@ -371,7 +371,10 @@ copied into a file — rewrites that in `spec.backup.restore.post`, the commands
 after its data is put back. An app paused by its maintenance command (`quiesce.mode: command`) runs
 them before it is resumed. One paused by scaling down is resumed first, since a command needs a pod,
 and its pods are started again once the commands have run, so that what it serves is read from the
-rewritten data; until they have, it may answer on what was put back. A restore may come from another cluster or
+rewritten data; until they have, it may answer on what was put back. Where the maintenance command
+could not run and the app was scaled down instead, its `quiesce.post` command is run after the
+`restore.post` commands all the same, since the data put back may have been taken in maintenance
+mode. A restore may come from another cluster or
 domain, and every credential the platform makes (database, bucket, sign-in client) is made new
 there, so each command is run with what it needs to know, and no secret: `GENTIAN_RESTORE_APP`;
 `GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT`, `DOMAIN`,
