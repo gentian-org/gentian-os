@@ -488,11 +488,14 @@ func buildSignInACSRoute(comp *gentianov1alpha1.Component, zone edgeZone, s *sig
 // ensureSignInACSRoute keeps the session-less route of a component's sidecar,
 // and removes any such route the component no longer has a sidecar for: one
 // whose profile stopped declaring it, or whose entry was renamed.
-func (r *ComponentReconciler) ensureSignInACSRoute(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone, s *signInSidecar) error {
+func (r *ComponentReconciler) ensureSignInACSRoute(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone, s *signInSidecar, held bool) error {
 	keep := ""
 	if s != nil {
 		route := buildSignInACSRoute(comp, zone, s, r.KernelDomain)
 		if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
+			return err
+		}
+		if err := withRestoreHold(ctx, r.Client, held, route); err != nil {
 			return err
 		}
 		if err := ensureHTTPRouteResource(ctx, r.Client, route); err != nil {

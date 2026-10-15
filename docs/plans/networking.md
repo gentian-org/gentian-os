@@ -323,6 +323,17 @@ kernel namespace by its rules and on the way out by nothing.
 Nothing is routable without a class. A hostname with no `expose[]` entry
 behind it returns 404 at the listener.
 
+**An app being restored is held back.** While a `TenantRestore` names an app
+in `status.heldBack` and has not ended, each route of the app — tenant app,
+its sign-in sidecar's, its perimeter surfaces — keeps its host, matches,
+policy and annotations, and every rule answers `503` with `Retry-After` from
+the `restore-hold` `HTTPRouteFilter` in the route's namespace instead of a
+backend; the rules it had are kept on the route
+(`gentianos.io/restore-held-rules`). L1 and L2 still run first. No kernel
+route, no other component's and no other tenant's is touched, and the ACME
+solver's routes are cert-manager's own
+([operations.md §9.4](../design/operations.md)).
+
 **Keycloak's administration console shares the issuer's hostname**, and this is
 not a preference. It was `id-admin.<kernel>`, a second hostname behind the
 authenticated Gateway, which is the shape the rest of this document would

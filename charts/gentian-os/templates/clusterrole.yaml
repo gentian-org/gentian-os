@@ -255,6 +255,17 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - gateway.envoyproxy.io
+    resources:
+    - httproutefilters
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
     - gateway.networking.k8s.io
     resources:
     - gatewayclasses

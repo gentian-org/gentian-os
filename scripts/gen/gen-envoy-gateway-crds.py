@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Copy the Envoy Gateway CRDs this repository writes objects of into the operator's tests.
 
-The operator builds SecurityPolicy, BackendTrafficPolicy and ClientTrafficPolicy
-objects as untyped maps, and the installer renders an EnvoyProxy from a chart.
+The operator builds SecurityPolicy, BackendTrafficPolicy, ClientTrafficPolicy
+and HTTPRouteFilter objects as untyped maps, and the installer renders an EnvoyProxy from a chart.
 Nothing compiles against Envoy Gateway's types, so a misspelt field is found by
 the install and not by the build. The operator's tests therefore create every
 such object against the definitions of the pinned release, with unknown fields
@@ -10,7 +10,7 @@ refused (internal/controller/envoy_gateway_schema_test.go), and this script is
 where those definitions come from.
 
 It reads the chart version from versions.yaml, asks helm for the CRDs that
-chart installs, and keeps the four kinds this repository writes. Run it when the
+chart installs, and keeps the five kinds this repository writes. Run it when the
 envoy-gateway pin changes; a test fails until it has been.
 
 Usage:
@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGET = ROOT / "internal" / "controller" / "testdata" / "envoy-gateway-crds"
-KINDS = ("backendtrafficpolicies", "clienttrafficpolicies", "envoyproxies", "securitypolicies")
+KINDS = ("backendtrafficpolicies", "clienttrafficpolicies", "envoyproxies", "httproutefilters", "securitypolicies")
 
 
 def main() -> int:

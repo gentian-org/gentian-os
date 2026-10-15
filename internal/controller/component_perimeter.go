@@ -213,8 +213,14 @@ func (r *ComponentReconciler) ensurePerimeter(
 	if err := r.ensureDMZNamespace(ctx, tenant, dmz); err != nil {
 		return 0, fmt.Errorf("dmz namespace: %w", err)
 	}
+	// A published surface reaches the app as surely as its entries do, and
+	// is held back with them while a restore puts the app back.
+	held, err := heldForRestore(ctx, r.Client, comp)
+	if err != nil {
+		return 0, err
+	}
 	for i := range live {
-		if err := r.ensurePerimeterProxy(ctx, comp, &live[i], dmz); err != nil {
+		if err := r.ensurePerimeterProxy(ctx, comp, &live[i], dmz, held); err != nil {
 			return 0, fmt.Errorf("perimeter %s: %w", live[i].spec.Name, err)
 		}
 	}
@@ -284,7 +290,7 @@ func (r *ComponentReconciler) ensureDMZNamespace(ctx context.Context, tenant *ge
 // that serves it, a Service, the route on the perimeter Gateway, and the two
 // network policies that bound what it may reach and who may reach the tenant.
 func (r *ComponentReconciler) ensurePerimeterProxy(
-	ctx context.Context, comp *gentianov1alpha1.Component, p *perimeterEnablement, dmz string,
+	ctx context.Context, comp *gentianov1alpha1.Component, p *perimeterEnablement, dmz string, held bool,
 ) error {
 	name := perimeterName(comp, p.spec.Name)
 	labels := perimeterLabels(comp, p.spec.Name)
@@ -351,7 +357,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	if err := r.ensurePerimeterPolicies(ctx, comp, name, dmz, labels, p); err != nil {
 		return err
 	}
-	return r.ensurePerimeterRoute(ctx, name, dmz, labels, p)
+	return r.ensurePerimeterRoute(ctx, name, dmz, labels, p, held)
 }
 
 // perimeterDeployment is the proxy pod: one container, read-only, no service
@@ -561,7 +567,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 // would sit a login in front of a link whose whole purpose is to work without
 // one.
 func (r *ComponentReconciler) ensurePerimeterRoute(
-	ctx context.Context, name, dmz string, labels map[string]string, p *perimeterEnablement,
+	ctx context.Context, name, dmz string, labels map[string]string, p *perimeterEnablement, held bool,
 ) error {
 	edge := gatewayv1.Namespace(layout.Namespace(layout.Edge))
 	gwName := gatewayv1.ObjectName(PerimeterGatewayName)
@@ -609,9 +615,13 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 		})
 		route.Spec.Hostnames = append(route.Spec.Hostnames, gatewayv1.Hostname(p.alias))
 	}
+	if err := withRestoreHold(ctx, r.Client, held, route); err != nil {
+		return err
+	}
 	return upsert(ctx, r.Client, route, func(existing *gatewayv1.HTTPRoute) bool {
+		annotated := syncRestoreHoldAnnotation(existing, route)
 		if equality.Semantic.DeepEqual(existing.Spec, route.Spec) {
-			return false
+			return annotated
 		}
 		existing.Spec = route.Spec
 		return true

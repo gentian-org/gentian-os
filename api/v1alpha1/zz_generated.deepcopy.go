@@ -204,6 +204,14 @@ func (in *AppExportStatus) DeepCopyInto(out *AppExportStatus) {
 		in, out := &in.QuiesceEnd, &out.QuiesceEnd
 		*out = (*in).DeepCopy()
 	}
+	if in.HeldBackAt != nil {
+		in, out := &in.HeldBackAt, &out.HeldBackAt
+		*out = (*in).DeepCopy()
+	}
+	if in.RolloutStart != nil {
+		in, out := &in.RolloutStart, &out.RolloutStart
+		*out = (*in).DeepCopy()
+	}
 	if in.CompletedUnits != nil {
 		in, out := &in.CompletedUnits, &out.CompletedUnits
 		*out = make([]string, len(*in))
@@ -4977,6 +4985,11 @@ func (in *TenantRestoreStatus) DeepCopyInto(out *TenantRestoreStatus) {
 	}
 	if in.Quiesced != nil {
 		in, out := &in.Quiesced, &out.Quiesced
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.HeldBack != nil {
+		in, out := &in.HeldBack, &out.HeldBack
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -172,6 +173,7 @@ func (w *restoreWorld) run(t *testing.T) *gentianov1alpha1.TenantRestore {
 				}
 			}
 		}
+		rollOutWorkloads(t, w.c, "tenant-demo")
 		if got := w.restore(t); got.IsTerminal() && i > 0 {
 			// One more pass: what a terminal restore still has to do.
 			if _, err := w.r.Reconcile(ctx, ctrl.Request{NamespacedName: w.key}); err != nil {
@@ -428,5 +430,38 @@ func TestARestoreThatFailsAfterItBeganSaysItIsNotComplete(t *testing.T) {
 	}
 	if len(w.bundles.removed) != 1 || !got.Status.ImportRemoved {
 		t.Errorf("the upload of a restore that ran and failed was kept: %v", w.bundles.removed)
+	}
+}
+
+// rollOutWorkloads plays the Deployment and StatefulSet controllers: every
+// workload in the namespace has rolled out its template.
+func rollOutWorkloads(t *testing.T, c client.Client, namespace string) {
+	t.Helper()
+	ctx := context.Background()
+	deployments := &appsv1.DeploymentList{}
+	if err := c.List(ctx, deployments, client.InNamespace(namespace)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range deployments.Items {
+		d := &deployments.Items[i]
+		want := replicasOf(d.Spec.Replicas)
+		d.Status = appsv1.DeploymentStatus{ObservedGeneration: d.Generation, Replicas: want,
+			UpdatedReplicas: want, ReadyReplicas: want, AvailableReplicas: want}
+		if err := c.Status().Update(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	statefulSets := &appsv1.StatefulSetList{}
+	if err := c.List(ctx, statefulSets, client.InNamespace(namespace)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range statefulSets.Items {
+		st := &statefulSets.Items[i]
+		want := replicasOf(st.Spec.Replicas)
+		st.Status = appsv1.StatefulSetStatus{ObservedGeneration: st.Generation, Replicas: want,
+			UpdatedReplicas: want, ReadyReplicas: want}
+		if err := c.Status().Update(ctx, st); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

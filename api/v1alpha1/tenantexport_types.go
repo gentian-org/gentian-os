@@ -591,6 +591,17 @@ type AppExportStatus struct {
 	// +optional
 	QuiesceEnd *metav1.Time `json:"quiesceEnd,omitempty"`
 
+	// HeldBackAt is when a restore asked the edge to hold this app back
+	// (TenantRestoreStatus.HeldBack). Restore only.
+	// +optional
+	HeldBackAt *metav1.Time `json:"heldBackAt,omitempty"`
+
+	// RolloutStart is when a restore started this app again on the restored
+	// data, after its post-restore commands. The app is done once that
+	// rollout has finished. Restore only.
+	// +optional
+	RolloutStart *metav1.Time `json:"rolloutStart,omitempty"`
+
 	// Attempts counts capture Jobs run for this app. Bounded, because the
 	// shared Job waiter deletes a failed Job so it gets recreated — right for
 	// provisioning, an infinite loop for an export.

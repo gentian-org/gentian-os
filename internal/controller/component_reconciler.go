@@ -201,6 +201,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.Update(ctx, comp)
 	}
 
+	// The restore hold before anything else: whatever below ends this pass
+	// early, a route is held while a restore puts the app back and is not
+	// once the restore has ended (restore_hold.go).
+	held, err := r.restoreHold(ctx, comp)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("restore hold: %w", err)
+	}
+
 	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
 		if errors.IsNotFound(err) {
@@ -609,7 +617,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				authz.keepClientToken = kept[e.Name]
 				authz.idTokenSession = !kept[e.Name]
 			}
-			routeName, err := r.ensureExposureRoute(ctx, comp, profile, zone, e, authz, signIn)
+			routeName, err := r.ensureExposureRoute(ctx, comp, profile, zone, e, authz, signIn, held)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -637,7 +645,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Asked only of a component that routes anything: one that publishes
 	// nothing on the Gateway never had such a route.
 	if signIn != nil || len(routable) > 0 {
-		if err := r.ensureSignInACSRoute(ctx, comp, zone, signIn); err != nil {
+		if err := r.ensureSignInACSRoute(ctx, comp, zone, signIn, held); err != nil {
 			return ctrl.Result{}, fmt.Errorf("sign-in route: %w", err)
 		}
 	}
@@ -1243,7 +1251,7 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 // The entry a sign-in sidecar stands on carries its rules as well: the login
 // path, and the paths that lead to it. They are rules of this route and of
 // no other, so the session and the question of the route are theirs too.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar) (string, error) {
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
 	framers := componentFramers(zone, comp, profile, host)
@@ -1252,6 +1260,9 @@ func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gen
 		route.Spec.Rules = append(signInRouteRules(comp.Namespace, signIn, frameAncestorsFilters(framers)...), route.Spec.Rules...)
 	}
 	if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
+		return "", err
+	}
+	if err := withRestoreHold(ctx, r.Client, held, route); err != nil {
 		return "", err
 	}
 	return routeName, ensureHTTPRouteResource(ctx, r.Client, route)
@@ -1794,6 +1805,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
+		// A restore holding an app back, or ending, is the edge's business
+		// at once: the hold is read from the restore (restore_hold.go).
+		Watches(&gentianov1alpha1.TenantRestore{}, componentsOfRestore(mgr.GetClient()),
+			builder.WithPredicates(restoreHoldChanged())).
 		// Who holds the cluster's main address turns on the user tenant: what
 		// it published and whether it is Ready. The components on that
 		// address -- the website's, and the platform's page, which steps back

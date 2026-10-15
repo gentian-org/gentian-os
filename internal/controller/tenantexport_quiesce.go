@@ -187,6 +187,63 @@ func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, 
 	return nil
 }
 
+// appRolloutPending names the app's Deployments and StatefulSets that have
+// not finished rolling out: whose controller has not seen their latest
+// template, or that still run a pod of an older one, or fewer ready pods
+// than they ask for. Empty when every one has.
+func (r *TenantReconciler) appRolloutPending(ctx context.Context, tenantName, appName string) ([]string, error) {
+	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return nil, err
+	}
+	var pending []string
+	deployments := &appsv1.DeploymentList{}
+	if err := r.List(ctx, deployments, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("list deployments in %s: %w", ns, err)
+	}
+	for i := range deployments.Items {
+		d := &deployments.Items[i]
+		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+			continue
+		}
+		want := replicasOf(d.Spec.Replicas)
+		if want == 0 {
+			continue
+		}
+		if d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < want ||
+			d.Status.Replicas > d.Status.UpdatedReplicas || d.Status.AvailableReplicas < want {
+			pending = append(pending, "deployment/"+d.Name)
+		}
+	}
+	statefulSets := &appsv1.StatefulSetList{}
+	if err := r.List(ctx, statefulSets, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("list statefulsets in %s: %w", ns, err)
+	}
+	for i := range statefulSets.Items {
+		st := &statefulSets.Items[i]
+		if !workloadBelongsToApp(st.Labels, st.Name, appName) {
+			continue
+		}
+		want := replicasOf(st.Spec.Replicas)
+		if want == 0 {
+			continue
+		}
+		if st.Status.ObservedGeneration < st.Generation || st.Status.UpdatedReplicas < want ||
+			st.Status.ReadyReplicas < want ||
+			(st.Status.UpdateRevision != "" && st.Status.CurrentRevision != st.Status.UpdateRevision) {
+			pending = append(pending, "statefulset/"+st.Name)
+		}
+	}
+	return pending, nil
+}
+
+func replicasOf(replicas *int32) int32 {
+	if replicas == nil {
+		return 1
+	}
+	return *replicas
+}
+
 func setTemplateAnnotation(meta *metav1.ObjectMeta, stamp string) {
 	if meta.Annotations == nil {
 		meta.Annotations = map[string]string{}

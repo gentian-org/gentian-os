@@ -213,6 +213,15 @@ type TenantRestoreStatus struct {
 	// +optional
 	Quiesced []string `json:"quiesced,omitempty"`
 
+	// HeldBack names the apps the edge keeps unreachable while this restore
+	// runs: each is added before anything of it is changed, and the edge
+	// answers 503 on its routes until the restore has ended (Ready or Failed)
+	// or is deleted. Read by the edge from here, so an operator restart
+	// changes nothing; emptied when the restore ends.
+	// +optional
+	// +listType=set
+	HeldBack []string `json:"heldBack,omitempty"`
+
 	// Bundle is the bundle actually used, resolved from exportRef or spec.
 	// +optional
 	Bundle *BundleRef `json:"bundle,omitempty"`
@@ -347,6 +356,7 @@ const (
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Bundle",type=string,JSONPath=`.status.bundle.prefix`
 // +kubebuilder:printcolumn:name="Paused",type=string,JSONPath=`.status.quiesced`,priority=1
+// +kubebuilder:printcolumn:name="Held back",type=string,JSONPath=`.status.heldBack`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type TenantRestore struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -367,6 +377,22 @@ type TenantRestoreList struct {
 // IsTerminal reports whether the restore has finished, either way.
 func (r *TenantRestore) IsTerminal() bool {
 	return r.Status.Phase == TenantExportPhaseReady || r.Status.Phase == TenantExportPhaseFailed
+}
+
+// HoldsBack reports whether the edge is to keep the app unreachable for this
+// restore: it names the app in status.heldBack, has not ended and is not
+// being deleted. Everything that ends a restore lifts the hold, whatever
+// status.heldBack still says.
+func (r *TenantRestore) HoldsBack(app string) bool {
+	if r.IsTerminal() || !r.DeletionTimestamp.IsZero() {
+		return false
+	}
+	for _, held := range r.Status.HeldBack {
+		if held == app {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

@@ -384,6 +384,7 @@ func (w *secretsWorld) runWithOperators(t *testing.T) (*gentianov1alpha1.TenantR
 				}
 			}
 		}
+		rollOutWorkloads(t, w.c, "tenant-demo")
 		if got := w.restore(t); got.IsTerminal() && i > 0 {
 			return got, upgraded
 		}

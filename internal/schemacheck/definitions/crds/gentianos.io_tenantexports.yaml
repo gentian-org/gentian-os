@@ -348,6 +348,12 @@ spec:
                       description: Digest is the pinned digest of the app's build,
                         when the tenant pins one.
                       type: string
+                    heldBackAt:
+                      description: |-
+                        HeldBackAt is when a restore asked the edge to hold this app back
+                        (TenantRestoreStatus.HeldBack). Restore only.
+                      format: date-time
+                      type: string
                     lastFailure:
                       description: |-
                         LastFailure is what the capture container actually said, from the last
@@ -405,6 +411,13 @@ spec:
                         app's, without pausing anything; a restore puts it back as retained and
                         installs nothing.
                       type: boolean
+                    rolloutStart:
+                      description: |-
+                        RolloutStart is when a restore started this app again on the restored
+                        data, after its post-restore commands. The app is done once that
+                        rollout has finished. Restore only.
+                      format: date-time
+                      type: string
                     secrets:
                       description: |-
                         Secrets says what was done with the app's own secrets: which an

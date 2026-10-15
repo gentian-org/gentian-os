@@ -164,6 +164,13 @@ been installed again, the data is the installed app's and is restored like
 any app's, which needs `skipVersionCheck`: no build is on record for data an
 uninstalled app left.
 
+While a restore runs, every app it has reached is unreachable: from before
+anything of the app is changed until the restore has ended or is deleted, its
+addresses answer `503` "being restored" with `Retry-After`, and the restore
+names the app under `heldBack`. Nobody signs in to an app whose data is back
+but whose post-restore commands, rollout or people are not yet
+([operations.md §9.4](operations.md)).
+
 The access rights a bundle holds are written last, after the people are back
 and the operator has derived the rest. A restore changes no
 stored credential and brings back no password. A database is replaced only

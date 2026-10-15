@@ -64,6 +64,20 @@ func (r *TenantRestoreReconciler) restoreRetained(
 	}
 	entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
 
+	// Held back like an installed app: one installed while its data is put
+	// back is not served until the restore has ended.
+	held, failure, err := r.holdBack(ctx, restore, tenant, appName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if failure != "" {
+		return failed(failure)
+	}
+	if !held {
+		return ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore)
+	}
+	entry = appStatus(&restore.Status.Apps, appName)
+
 	// The secrets its data was written with, at the app's place in this
 	// tenant's vault, where its next install finds them: an install keeps a
 	// value that is stored. Nothing runs, so nothing is handed them now.

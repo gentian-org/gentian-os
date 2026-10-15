@@ -238,6 +238,9 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	restore.Status.CompletedAt = ptrNow()
+	// Ended: the edge lets the apps through again (HoldsBack is false for a
+	// restore that has ended, whatever this still said).
+	restore.Status.HeldBack = nil
 	restore.Status.PasswordResetRequired = true
 	// Complete only when nothing the bundle holds was left out. What was
 	// left out was decided, and written down, before the first thing was
@@ -271,6 +274,23 @@ func (r *TenantRestoreReconciler) restoreApp(
 	}
 	spec := profileBackupSpec(profile)
 	entry := appStatus(&restore.Status.Apps, appName)
+
+	// Held back at the edge before anything of the app is changed, and until
+	// the restore has ended (restore_hold.go). Once it is paused the hold is
+	// known to be in place.
+	if entry.QuiesceStart == nil {
+		held, failure, err := r.holdBack(ctx, restore, tenant, appName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if failure != "" {
+			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+		}
+		if !held {
+			return ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore)
+		}
+		entry = appStatus(&restore.Status.Apps, appName)
+	}
 
 	// The secrets the bundle's data was written with, before anything else:
 	// the app is handed them while it still runs, and is paused only then.
@@ -341,6 +361,12 @@ func (r *TenantRestoreReconciler) restoreApp(
 		}
 		entry.Message = fmt.Sprintf("restoring; waiting on %s", strings.Join(pending, ", "))
 		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+	}
+
+	// Started again on the restored data already: what is left is to see it
+	// roll out, and nothing above it runs a second time.
+	if entry.RolloutStart != nil {
+		return r.awaitRollout(ctx, restore, tenant, appName, logger)
 	}
 
 	used := gentianov1alpha1.BackupQuiesceMode(entry.QuiesceMode)
@@ -442,6 +468,42 @@ func (r *TenantRestoreReconciler) restoreApp(
 		logger.Info("rolled app after restore", "app", appName)
 	}
 
+	// The app is done when the pods serving it are the ones started on the
+	// restored data, rewritten: until then an old pod can still answer with
+	// what it held from before.
+	entry.RolloutStart = ptrNow()
+	entry.Message = "started again on the restored data; waiting for it to roll out"
+	if err := r.persist(ctx, restore); err != nil {
+		return ctrl.Result{}, err
+	}
+	return r.awaitRollout(ctx, restore, tenant, appName, logger)
+}
+
+// awaitRollout finishes an app once its workloads have rolled out on the
+// restored data. One that does not within restoreRolloutTimeout is finished
+// with a note: its data is back, and it stays held until the restore ends.
+func (r *TenantRestoreReconciler) awaitRollout(
+	ctx context.Context,
+	restore *gentianov1alpha1.TenantRestore,
+	tenant *gentianov1alpha1.Tenant,
+	appName string,
+	logger logr.Logger,
+) (ctrl.Result, error) {
+	entry := appStatus(&restore.Status.Apps, appName)
+	pending, err := r.Tenant.appRolloutPending(ctx, tenant.Name, appName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(pending) > 0 {
+		if time.Since(entry.RolloutStart.Time) <= restoreRolloutTimeout {
+			entry.Message = "started again on the restored data; waiting for " + strings.Join(pending, ", ") + " to roll out"
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		}
+		restore.Status.Notes = append(restore.Status.Notes, fmt.Sprintf(
+			"%s: %s did not finish rolling out on the restored data within %s; the app was held back until the restore ended",
+			appName, strings.Join(pending, ", "), restoreRolloutTimeout))
+	}
+
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
 	if note := secretsNote(entry); note != "" {
@@ -490,6 +552,10 @@ const rightsProjectionWait = 15 * time.Minute
 // restoreHookPodTimeout bounds the wait for an app's pod to come back before
 // its post-restore hooks can run.
 const restoreHookPodTimeout = 5 * time.Minute
+
+// restoreRolloutTimeout bounds the wait for an app to roll out on its
+// restored data.
+const restoreRolloutTimeout = 10 * time.Minute
 
 // restoreHooksNeedPod reports whether this profile has anything to exec after a
 // restore. Nothing to run means nothing to wait for a pod for.
@@ -1482,6 +1548,7 @@ func (r *TenantRestoreReconciler) fail(
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	restore.Status.CompletedAt = ptrNow()
+	restore.Status.HeldBack = nil
 	// A restore that began and failed is not complete, and says so in the
 	// field a reader looks at: the apps still Pending in status.apps are the
 	// ones it never reached.

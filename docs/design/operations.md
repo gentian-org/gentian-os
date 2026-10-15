@@ -636,7 +636,23 @@ once they have run; one scaled down because its maintenance command could
 not run has its `quiesce.post` command run after them, since its data may
 have been taken in maintenance mode. Each of a profile's commands
 runs for at most 15 minutes (`AppCommandTimeout`); one still running then
-has failed, as one that exits non-zero has.
+has failed, as one that exits non-zero has. An app is done once its workloads
+have rolled out on the restored data (at most 10 minutes, then a note).
+
+**Held back at the edge.** Before a restore changes anything of an app — its
+secrets, its pause — it names the app in `status.heldBack` and waits until
+every route of the app is held: its entries, its sign-in sidecar's route and
+its published surfaces in the DMZ answer `503` with `Retry-After: 60` from an
+Envoy Gateway `HTTPRouteFilter` (`restore-hold`) instead of reaching the app,
+behind the same session and bouncer as before
+([networking.md §3](../plans/networking.md)). An edge that has not held it
+within 2 minutes fails the restore with nothing of the app changed. The hold
+lasts until the restore ends, `Ready` or `Failed`, or is deleted — past the
+app's own `restore.post` and rollout and past the realm, which comes back
+last — so nobody signs in to an app before the people it matches on are back.
+It is read from the restore's status by the component reconciler, first in
+each pass, so an operator restart or a failing component does not keep a
+route held; `status.heldBack` is emptied when the restore ends.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
 artefact) carries `schemaVersion`. Format 1 named each app and the kinds
