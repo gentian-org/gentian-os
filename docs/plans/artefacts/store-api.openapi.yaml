@@ -2528,6 +2528,13 @@ components:
            (`POST /v1/tenants/{t}/apps/{app}` with
            `{"coordinate", "digest", "defaultGrant"}`), `coordinate` and
            `digest` being exactly the ones here.
+        3. When `metering` is present -- an app priced by use -- set it as
+           the app's supplied credential `metering` at the custodian
+           (`PUT /v1/credentials/app-<tenant>-<app>-metering` with the
+           fields `url`, `install` and `key`), once the install has made
+           that requirement, and keep it nowhere. The app signs what it
+           reports of its use with the key; a person can replace the
+           credential but never read it.
 
         The cluster then fetches the profile bundle from the catalogue
         source its own Cluster claim names for `<catalogue>`, and installs
@@ -2537,6 +2544,8 @@ components:
         - type: object
           required: [addons]
           properties:
+            metering:
+              $ref: "#/components/schemas/Metering"
             addons:
               type: array
               description: |
@@ -2544,6 +2553,26 @@ components:
                 coordinate, version and digest. Empty when it includes none.
               items:
                 $ref: "#/components/schemas/ConfirmedItem"
+    Metering:
+      type: object
+      description: |
+        Where an app priced by use reports what it ran, the name it reports
+        under, and the key it signs its reports with. Present only for such
+        an app, where its repository's credential would be.
+        Opaque to the cluster, which hands it to the app (step 3 above).
+      required: [url, install, key]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: "^https://"
+        install:
+          type: string
+          maxLength: 64
+        key:
+          type: string
+          maxLength: 128
     ConfirmedItem:
       type: object
       required: [coordinate, version, digest]

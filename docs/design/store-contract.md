@@ -598,6 +598,7 @@ outcome. The store does not tell the cluster.
 | `repository.type` | `oci`, and nothing else: it is the only type a tenant's app charts and images are pulled from with a credential today (§2), and the only one accepted from a store (§7) |
 | `repository.url` | the registry the bundle's chart and images are in. It must contain the chart's address — same host and port, its path a prefix by whole segments — and must not overlap another repository the tenant has declared (§2) |
 | `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. The user name is one per tenant, chosen by the store. `expiresAt` is `null`: a credential does not expire, for now. Present only in an answer to a token with `store.acquire` |
+| `metering` | **opaque to the cluster**, for an app priced by use only: where the app reports what it ran (`url`), the name it reports under (`install`) and the key it signs with (`key`). The App Store app sets it as the app's supplied credential `metering` at the custodian once the install has made that requirement, and keeps it nowhere; a person can replace it but never read it |
 | `addons` | add-ons the acquisition includes, each an entry of its own |
 
 A free app's confirmation carries no repository and no credential.
