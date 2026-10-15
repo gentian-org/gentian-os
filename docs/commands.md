@@ -1244,7 +1244,6 @@ produced, or a bucket prefix the cluster can reach.
 ```bash
 kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt
 kubectl gentian tenants import acme-nightly.gentian --passphrase          # prompts
-kubectl gentian tenants import acme-nightly.gentian --identity-file k.txt --name acme2
 kubectl gentian tenants import --bucket acme-gentian-backup --prefix nightly-20261001 --identity-file k.txt
 kubectl gentian tenants import --bucket b --prefix p --endpoint https://s3.example.org --addressing-style virtualHost --identity-file k.txt
 ```
@@ -1264,16 +1263,17 @@ with its apps up, and starts a `TenantRestore`. The command follows the
 import and prints each phase: `declared`, `provisioning`, `restoring`,
 `ready`.
 
-The new tenant's realm, database prefix and bucket prefix follow from its own
-name, whatever the bundle states. With `--name acme2` beside `acme`, nothing
-of `acme` is touched. A tenant whose realm or prefixes are already another
-tenant's is refused with `409`, on import and on create.
+The tenant is made under the name the bundle carries; an import does not
+rename, and a request that names another is refused with `422`. Its realm,
+database prefix and bucket prefix follow from that name, whatever the bundle
+states. A tenant whose realm or prefixes are already another tenant's is
+refused with `409`, on import and on create.
 
 The import is recorded in git beside the tenant (`import.json`) until it has
 finished, so it survives a restart of the director. The record holds no key.
 If the director restarts before the restore has started, the status says
-`awaiting-key`: run the same command again, with the same bundle, name and
-key, and the import goes on. If the restore was already running, nothing is
+`awaiting-key`: run the same command again, with the same bundle and key,
+and the import goes on. If the restore was already running, nothing is
 needed.
 
 Directly against the director:
@@ -1281,7 +1281,7 @@ Directly against the director:
 ```
 POST /v1/clusters/{c}/bundles                 body: the .gentian bytes -> {bundle}
 POST /v1/clusters/{c}/bundles/inspect         {bundle, decryption} -> manifest
-POST /v1/clusters/{c}/tenants/import          {bundle, decryption, name?} -> 202 status
+POST /v1/clusters/{c}/tenants/import          {bundle, decryption} -> 202 status
 GET  /v1/clusters/{c}/tenants/{t}/import      the status
 ```
 

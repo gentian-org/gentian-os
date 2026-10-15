@@ -27,7 +27,7 @@
 #                                      [--admins-add-catalogues=true|false]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
-#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
+#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase]
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]
 #                                  (--identity-file <f> | --passphrase)
 #   kubectl gentian tenants delegate-catalogues <name> on|off
@@ -735,7 +735,6 @@ cmd_tenants_import() {
         case "$1" in
             --identity-file) idfile="${2:?}"; shift 2 ;;
             --passphrase) ask_pw=1; shift ;;
-            --name) name="${2:?}"; shift 2 ;;
             --bucket) bucket="${2:?}"; shift 2 ;;
             --prefix) prefix="${2:?}"; shift 2 ;;
             --endpoint) endpoint="${2:?}"; shift 2 ;;
@@ -745,7 +744,7 @@ cmd_tenants_import() {
         esac
     done
     if [[ -z "${file}" && -z "${bucket}" ]]; then
-        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase) [--name <n>]"
+        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase)"
     fi
     case "${style}" in
         ""|path|virtualHost) ;;
@@ -775,7 +774,8 @@ cmd_tenants_import() {
         # path-style unless --addressing-style virtualHost says otherwise.
         bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
-    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --arg n "${name}" '{bundle:$b, decryption:$d} + (if $n == "" then {} else {name:$n} end)')"
+    # The tenant's name is the bundle's: an import does not rename.
+    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" '{bundle:$b, decryption:$d}')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
     echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."

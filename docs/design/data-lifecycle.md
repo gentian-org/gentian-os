@@ -30,7 +30,7 @@
 | **Install** an app | Add an app to a tenant, with empty stores | Tenant administrator. App Store app; or `kubectl gentian apps install` | No |
 | **Back up** (export) | Copy the tenant's data into a bundle | Tenant administrator. Admin Console, *Backup*; a schedule; or a `TenantExport` object. *Download* hands out the same bundle as one file | No. Each app is paused while it is copied |
 | **Restore** | Put a bundle's data back into the tenant it came from | Cluster administrator only. A `TenantRestore` object; there is no button | Yes: what was written since the backup is replaced |
-| **Import** | Make a new tenant from a bundle, here or on another cluster, optionally under another name | Cluster administrator. `kubectl gentian tenants import` | No. The new tenant has its own names; nothing of another tenant is touched |
+| **Import** | Make a tenant again from a bundle, under the name it carries, here or on another cluster | Cluster administrator. `kubectl gentian tenants import` | No. The new tenant has its own names; nothing of another tenant is touched |
 | **Uninstall** an app | Take the app away, keep its data | Tenant administrator. App Store app; or `kubectl gentian apps uninstall` | No |
 | **Purge** an app | Destroy what an uninstalled app left | Tenant administrator. App Store app; or `apps uninstall --purge` | Yes, for good |
 | **Retire** a tenant | Take the tenant away, keep its data | Cluster administrator. Console, *Retire*; or `kubectl gentian tenants retire` | No. People can no longer sign in |
@@ -197,13 +197,15 @@ own name: its realm, its database prefix and its bucket prefix. Three
 settings are not the bundle's: the new tenant keeps its data when retired
 (`deletionPolicy: Retain`) whatever the old one said, it has no catalogues of
 its own, and a namespace of another name that the old tenant was placed in
-is not carried. So a bundle
-imported under another name beside the tenant it came from touches nothing of
-that tenant. What the bundle names after the old tenant comes back under the
-new one's names: databases an app made for itself, the platform's groups
-with their members, mailboxes (by the part of each address before the @, in
-the new tenant's mail domain) and entries of the rights store. The old
-tenant's sign-in clients are not imported.
+is not carried. An import does not rename: the tenant is made under the name
+its bundle carries, and a request that names another is refused. A
+`TenantRestore` written by hand can still put a bundle into a tenant of
+another name; it says that it is outside what the platform guarantees
+(`OutsideGuarantee`), and what the bundle names after the
+old tenant comes back under the new one's names: databases an app made for
+itself, the platform's groups with their members, mailboxes (by the part of
+each address before the @, in the new tenant's mail domain) and entries of
+the rights store. The old tenant's sign-in clients are not imported.
 
 Two things are different from a restore, because the tenant is new; both
 follow from `intoNewTenant`, and the second holds for any bundle taken of a
@@ -339,7 +341,7 @@ much it matters.
    which somebody given the address later finds
    ([mail.md §5c](mail.md)).
 7. **The desktop's rows name the tenant they were written in.** A bundle
-   imported under another name fills the new tenant's desktop database with
+   restored into a tenant of another name fills its desktop database with
    rows the desktop does not look for.
 8. **An import that is interrupted before its restore starts needs the
    bundle's key again.** The status says `awaiting-key`.

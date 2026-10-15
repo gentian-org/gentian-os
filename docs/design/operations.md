@@ -588,7 +588,7 @@ format is, by the restore and by the import's inspection alike.
 Each artefact is fetched from the path the manifest gives and loaded into the
 store of that kind the installed app has, by the inventory's names — which
 differ from the bundle's whenever the tenant's name or prefixes do, as when a
-bundle is imported under another name.
+bundle is restored into a tenant of another name.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
 artefact) carries `schemaVersion`. Format 1 named each app and the kinds

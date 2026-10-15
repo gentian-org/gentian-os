@@ -88,8 +88,10 @@ var importPoll = func() *atomic.Int64 {
 type importRequest struct {
 	Bundle     gentianov1alpha1.BundleRef `json:"bundle"`
 	Decryption json.RawMessage            `json:"decryption"`
-	// Name overrides the tenant name the manifest carries: for bringing a
-	// bundle up beside the tenant it came from.
+	// Name is not an override: an import takes the tenant's name from the
+	// bundle. A request that names another is refused, so that a caller
+	// that still asks for a rename is told so rather than given the
+	// bundle's name without a word.
 	Name string `json:"name,omitempty"`
 }
 
@@ -132,7 +134,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	var req importRequest
 	if err := decode(r, &req); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"bundle": {...}, "decryption": {...}, "name": "<optional>"}`)
+		s.fail(w, r, http.StatusBadRequest, `body must be {"bundle": {...}, "decryption": {...}}`)
 		return
 	}
 	status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/bundles/inspect", c.meta.ActorName(),
@@ -152,9 +154,13 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadGateway, "the operator's inspection did not parse")
 		return
 	}
+	// The tenant's name is the bundle's. The platform brings a tenant back
+	// under the name it had, on this cluster or another; it does not rename.
 	name := insp.Manifest.Tenant
-	if req.Name != "" {
-		name = req.Name
+	if req.Name != "" && req.Name != name {
+		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"the bundle is of tenant %s, and an import makes the tenant under the name its bundle carries; it does not rename. Nothing was changed", name))
+		return
 	}
 	if !gitops.ValidName(name) {
 		s.fail(w, r, http.StatusBadRequest, "the tenant name is not a DNS label")
@@ -179,7 +185,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 
 	// A tenant of the name, before anything is fetched or committed for it.
 	if _, err := s.cfg.Repo.IsPlatformTenant(ctx, name); err == nil {
-		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or import under another name")
+		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or retire it and import again")
 		return
 	} else if !errors.Is(err, gitops.ErrTenantNotFound) {
 		s.repoError(w, r, err)
@@ -218,7 +224,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	}, c.meta)
 	switch {
 	case errors.Is(err, gitops.ErrTenantExists):
-		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or import under another name")
+		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or retire it and import again")
 		return
 	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
 		s.fail(w, r, http.StatusConflict, err.Error())
@@ -328,8 +334,8 @@ func (s *Server) setImport(name string, mutate func(*ImportStatus)) {
 // awaitingKey is what an import says that cannot go on without the bundle's
 // key, which this director does not have.
 const awaitingKey = "the tenant is made and empty. The director restarted while this import waited for it, and the bundle's key, " +
-	"which is given with the request and never written down, went with it. Ask for the import again, with the same bundle, " +
-	"the same name and the key, and it goes on from here"
+	"which is given with the request and never written down, went with it. Ask for the import again, with the same bundle " +
+	"and the key, and it goes on from here"
 
 // finishImport waits for the operator, then starts the restore and watches
 // it to its end. key is nil for an import picked up after a restart.

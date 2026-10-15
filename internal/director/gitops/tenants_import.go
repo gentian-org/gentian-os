@@ -66,7 +66,7 @@ type SkippedApp struct {
 
 // ImportedTenant is a tenant to be made from a bundle.
 type ImportedTenant struct {
-	// Name is the tenant's name here: the bundle's, or another.
+	// Name is the tenant's name: the one the bundle carries.
 	Name string
 	// Spec is the tenant's settings as the bundle's manifest carries them.
 	Spec *gentianov1alpha1.TenantSpec
@@ -86,10 +86,10 @@ type ImportedTenant struct {
 //   - The tenant's names. Its realm, its database prefix and its bucket
 //     prefix follow from its name here by the platform's one rule
 //     (backup.RuleIsolation), as a created tenant's do. A bundle's manifest
-//     states the names of the tenant it was taken of; copied, a tenant
-//     imported under another name beside the original pointed at the
-//     original's realm, databases and buckets, and the restore that followed
-//     replaced them. The placement of its workloads (isolation.namespace) is
+//     states the names the tenant had where it was taken, which need not be
+//     the ones the rule gives; copied, they could point at another tenant's
+//     realm, databases and buckets, and the restore that followed would
+//     replace them. The placement of its workloads (isolation.namespace) is
 //     not carried either.
 //   - deletionPolicy is Retain: a tenant that was exported while a purge was
 //     under way must not arrive with its purge; and spec.deletion is dropped

@@ -212,15 +212,16 @@ func waitImport(t *testing.T, h *harness, token, tenant string, phases ...string
 
 const goodImport = `{"bundle":{"bucket":"gentian-imports","prefix":"x"},"decryption":{"passphrase":"open sesame"}`
 
-// A bundle of tenant "demo", imported as "demo2" on the cluster demo is on.
-// The bundle's manifest states demo's own names, as an export of a created
-// tenant does. The new tenant has its own; demo's manifest is untouched; and
-// the restore is asked for in demo2 and nowhere else.
-func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *testing.T) {
+// An import makes the tenant under the name its bundle carries and renames
+// nothing: a request that names another is refused and commits nothing. The
+// tenant's realm and prefixes follow from that name by the platform's rule,
+// whatever the bundle's manifest states -- here demo's own names, in a
+// bundle of demo2 -- and the restore is asked for in demo2 and nowhere else.
+func TestAnImportTakesTheBundlesNameAndItsOwnNamesFollowFromIt(t *testing.T) {
 	defer api.SetImportPoll(20 * time.Millisecond)()
-	op := &importingOperator{declared: true,
-		manifest: `{"schemaVersion":2,"tenant":"demo","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Demo Ltd",` +
-			`"isolation":{"mode":"namespace","keycloakRealm":"demo","databasePrefix":"demo_","s3Prefix":"demo-"},"apps":[{"profile":"element"}]},"apps":[]}`}
+	ofDemo := `{"schemaVersion":2,"tenant":"demo","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Demo Ltd",` +
+		`"isolation":{"mode":"namespace","keycloakRealm":"demo","databasePrefix":"demo_","s3Prefix":"demo-"},"apps":[{"profile":"element"}]},"apps":[]}`
+	op := &importingOperator{declared: true, manifest: ofDemo}
 	h := startWith(t, op)
 	alice := h.token(t, "gentian", "alice")
 	originalBefore, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo/tenant.yaml")
@@ -232,10 +233,21 @@ func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *test
 	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`); code != http.StatusConflict {
 		t.Fatalf("importing over the original = %d %v", code, body)
 	}
-
+	// Under another: refused, and said why.
 	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`,"name":"demo2"}`)
+	if said, _ := body["error"].(string); code != http.StatusUnprocessableEntity || !strings.Contains(said, "does not rename") {
+		t.Fatalf("import of demo's bundle as demo2 = %d %v", code, body)
+	}
+	if _, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo2/tenant.yaml"); err == nil {
+		t.Fatal("a renamed tenant was committed")
+	}
+
+	op.mu.Lock()
+	op.manifest = strings.Replace(ofDemo, `"tenant":"demo"`, `"tenant":"demo2"`, 1)
+	op.mu.Unlock()
+	code, body = h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`,"name":"demo2"}`)
 	if code != http.StatusAccepted || body["tenant"] != "demo2" {
-		t.Fatalf("import as demo2 = %d %v", code, body)
+		t.Fatalf("import of demo2's bundle = %d %v", code, body)
 	}
 	manifest, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo2/tenant.yaml")
 	if err != nil {
@@ -248,7 +260,7 @@ func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *test
 	}
 	for _, not := range []string{"keycloakRealm: demo\n", "databasePrefix: demo_\n", "s3Prefix: demo-\n"} {
 		if strings.Contains(manifest, not) {
-			t.Errorf("the imported tenant has the original's name %q:\n%s", strings.TrimSpace(not), manifest)
+			t.Errorf("the imported tenant has another tenant's name %q:\n%s", strings.TrimSpace(not), manifest)
 		}
 	}
 

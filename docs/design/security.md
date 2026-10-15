@@ -1605,7 +1605,7 @@ built by the operator; the bundle supplies names and values and no path.
 Nothing is written for an app the restore does not restore, under a name the
 profile does not declare, or outside the tenant restored into; what the
 bundle holds besides is named in the result and not written. This holds for
-an import under another tenant's name as well.
+a restore into a tenant of another name as well.
 
 A value that differs from the stored one **replaces it**: the one exception
 to §7. The app's ExternalSecrets are then told to read again, a declared key
