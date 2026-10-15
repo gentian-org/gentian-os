@@ -428,6 +428,9 @@ type captureUnit struct {
 	Claim   *gentianov1alpha1.BundleClaim
 	JobName string
 	Job     *batchv1.Job
+	// Key is a key pair the Job's pod reads from the Secret of the Job's
+	// name, handed over once the Job is made (a bucket's restore).
+	Key *objectStoreKey
 }
 
 // captureUnits enumerates what to capture for one app, entirely from the

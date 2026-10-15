@@ -12,6 +12,7 @@ package backup
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -500,20 +501,24 @@ func DeclaresModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 // --- making a store ---------------------------------------------------------
 
 // ObjectStorageProvisionContainer makes an app's bucket and, when it is
-// given the key pair the vault holds for the app, the identity the app reads
-// the bucket with. It is the one piece of code that does: install runs it as
-// the bucket Job, and a restore runs it before it writes a bucket's objects
-// back.
+// given the Secret holding the key pair the vault holds for the app, the
+// identity the app reads the bucket with. It is the one piece of code that
+// does: install runs it as the bucket Job, and a restore runs it before it
+// writes a bucket's objects back.
 //
-// The key pair is passed in because the operator seeds it and a Job cannot
-// read the vault. Without one only the bucket is made, which is what install
-// does on a cluster with no vault.
+// The key pair is the operator's to hand over, because the operator seeds it
+// and a Job cannot read the vault. It reaches the pod through keySecret, a
+// Secret beside the Job that the Job owns (ObjectStorageKeySecret), never as
+// a value in the pod's spec: the bucket Job's spec travels through a
+// ConfigMap and a composed Object, and is readable wherever a Job is. Without
+// a Secret only the bucket is made, which is what install does on a cluster
+// with no vault.
 //
 // It runs weed shell, in the server's own image, against the master: the
 // store is administered through the master and the filer, which check no
 // key -- the NetworkPolicy beside the server admits this pod to them by its
 // ObjectStorageShellLabel and nothing else.
-func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) corev1.Container {
+func ObjectStorageProvisionContainer(name, bucket, keySecret string) corev1.Container {
 	no := false
 	yes := true
 	user := objectStoreUser
@@ -530,13 +535,46 @@ func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) 
 		},
 		Env: []corev1.EnvVar{objectStoreMasterEnv(), {Name: "BUCKET_NAME", Value: bucket}},
 	}
-	if accessKey != "" && secretKey != "" {
+	if keySecret != "" {
 		c.Env = append(c.Env,
-			corev1.EnvVar{Name: "APP_ACCESS_KEY", Value: accessKey},
-			corev1.EnvVar{Name: "APP_SECRET_KEY", Value: secretKey},
+			meta.SecretEnv("APP_ACCESS_KEY", keySecret, ObjectStorageKeyAccessKey),
+			meta.SecretEnv("APP_SECRET_KEY", keySecret, ObjectStorageKeySecretKey),
 		)
 	}
 	return c
+}
+
+// The keys of the Secret an app's key pair is handed to its bucket's
+// provisioning in.
+const (
+	ObjectStorageKeyAccessKey = "accessKey"
+	ObjectStorageKeySecretKey = "secretKey"
+)
+
+// ObjectStorageKeySecret is the Secret a Job that provisions an app's bucket
+// reads the app's key pair from: named as the Job, in its namespace, and
+// owned by it, so that it is collected with the Job and lives no longer than
+// the step that needs it. job must be the Job as the cluster has it: its
+// UID is what the ownership names.
+func ObjectStorageKeySecret(job *batchv1.Job, accessKey, secretKey string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      job.Name,
+			Namespace: job.Namespace,
+			Labels:    maps.Clone(job.Labels),
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: batchv1.SchemeGroupVersion.String(),
+				Kind:       "Job",
+				Name:       job.Name,
+				UID:        job.UID,
+			}},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			ObjectStorageKeyAccessKey: []byte(accessKey),
+			ObjectStorageKeySecretKey: []byte(secretKey),
+		},
+	}
 }
 
 // ObjectStorageShellLabel marks the pods that administer the object store

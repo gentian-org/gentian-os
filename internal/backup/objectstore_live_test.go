@@ -125,6 +125,16 @@ func (l *liveStore) runContainer(c corev1.Container, mounts map[string]string) (
 	return string(out), err
 }
 
+// keySecret holds a key pair in the Secret a bucket Job of that name reads
+// it from, built by the code the operator builds it with.
+func (l *liveStore) keySecret(job, accessKey, secretKey string) {
+	sec := ObjectStorageKeySecret(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: job, Namespace: "system-s3"}}, accessKey, secretKey)
+	l.secrets[sec.Name] = map[string]string{}
+	for k, v := range sec.Data {
+		l.secrets[sec.Name][k] = string(v)
+	}
+}
+
 // pod runs containers as a Job of their own would.
 func (l *liveStore) pod(name string, containers ...corev1.Container) (string, error) {
 	return l.runJob(&batchv1.Job{
@@ -292,7 +302,15 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 	l.secrets[passSec] = map[string]string{"passphrase": passText}
 
 	// ── install: the bucket and the key the app reads it with ──────────────
-	provision := ObjectStorageProvisionContainer("create-bucket", bucket, appKey, appSec)
+	// The key pair reaches the Job in the Secret the operator makes beside
+	// it, as the operator makes it.
+	l.keySecret("s3-bucket-demo-wiki", appKey, appSec)
+	provision := ObjectStorageProvisionContainer("create-bucket", bucket, "s3-bucket-demo-wiki")
+	for _, e := range provision.Env {
+		if strings.Contains(e.Value, appKey) || strings.Contains(e.Value, appSec) {
+			t.Errorf("the bucket Job's spec carries the app's key in %s", e.Name)
+		}
+	}
 	if out, err := l.pod("s3-bucket-demo-wiki", provision); err != nil {
 		t.Fatalf("the bucket Job failed: %v\n%s", err, out)
 	}
@@ -444,7 +462,8 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 		otherKey = "demo-files-key"
 		otherSec = "demo-files-secret-0123456789"
 	)
-	if out, err := l.pod("s3-bucket-demo-files", ObjectStorageProvisionContainer("create-bucket", other, otherKey, otherSec)); err != nil {
+	l.keySecret("s3-bucket-demo-files", otherKey, otherSec)
+	if out, err := l.pod("s3-bucket-demo-files", ObjectStorageProvisionContainer("create-bucket", other, "s3-bucket-demo-files")); err != nil {
 		t.Fatalf("the bucket Job failed: %v\n%s", err, out)
 	}
 	l.admin("files\n", "rcat", "s:"+other+"/f.txt")
@@ -500,13 +519,13 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 			t.Errorf("the %s Job printed a key:\n%s", name, out)
 		}
 	}
-	if out, err := l.pod("s3-bucket-demo-files-again", ObjectStorageProvisionContainer("create-bucket", other, otherKey, otherSec)); err != nil || strings.Contains(out, otherSec) {
+	if out, err := l.pod("s3-bucket-demo-files-again", ObjectStorageProvisionContainer("create-bucket", other, "s3-bucket-demo-files")); err != nil || strings.Contains(out, otherSec) {
 		t.Errorf("the bucket Job failed or printed the key (%v):\n%s", err, out)
 	}
 	// The unreachable store: the bucket Job fails, it does not wait forever
 	// or report a bucket made.
 	l.secrets[StorageAdminSecret]["master"] = "nothing-here.invalid:9333"
-	if out, err := l.pod("s3-bucket-unreachable", ObjectStorageProvisionContainer("create-bucket", "demo-x", "", "")); err == nil {
+	if out, err := l.pod("s3-bucket-unreachable", ObjectStorageProvisionContainer("create-bucket", "demo-x", "")); err == nil {
 		t.Errorf("the bucket Job succeeded against a store it cannot reach:\n%s", out)
 	}
 }

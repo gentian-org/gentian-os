@@ -25,17 +25,21 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
-func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, error) {
+// buildDataPlaneJobs builds the Jobs that provision a tenant's stores, and
+// the key pairs the bucket Jobs among them are to be handed, by Job name
+// (ensureBucketKeySecrets): those are not in the Jobs.
+func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, map[string]objectStoreKey, error) {
 	var jobs []batchv1.Job
+	keys := map[string]objectStoreKey{}
 	nsName := tenantNamespaceName(tenant)
 
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pgProfileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, appName := range pgApps {
 		profile, _ := appProfileFromIndex(pgProfileIndex, appName)
@@ -49,7 +53,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 				User: roleUserName(tenant.Name, appName),
 			})
 			if seedErr != nil {
-				return nil, fmt.Errorf("seed database for %s: %w", appName, seedErr)
+				return nil, nil, fmt.Errorf("seed database for %s: %w", appName, seedErr)
 			}
 			rolePassword = creds.Password
 		}
@@ -59,12 +63,12 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 
 	mariaApps, err := r.collectMariaDBApps(ctx, tenant, CollectForProvision)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, appName := range mariaApps {
 		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get ComponentProfile %s: %w", appName, err)
+			return nil, nil, fmt.Errorf("get ComponentProfile %s: %w", appName, err)
 		}
 		allowDynamic := false
 		if profile.Services() != nil && profile.Services().Database != nil {
@@ -79,7 +83,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 				User: mariadbUserName(tenant.Name, appName),
 			})
 			if seedErr != nil {
-				return nil, fmt.Errorf("seed mariadb for %s: %w", appName, seedErr)
+				return nil, nil, fmt.Errorf("seed mariadb for %s: %w", appName, seedErr)
 			}
 			dbPassword = creds.Password
 		}
@@ -88,26 +92,30 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, appName := range s3Apps {
 		accessKey, secretKey, seedErr := r.seedObjectStorage(ctx, tenant, appName)
 		if seedErr != nil {
-			return nil, seedErr
+			return nil, nil, seedErr
 		}
-		jobs = append(jobs, *makeS3BucketJob(tenant, appName, accessKey, secretKey))
+		withKey := accessKey != "" && secretKey != ""
+		if withKey {
+			keys[s3BucketJobName(tenant.Name, appName)] = objectStoreKey{accessKey: accessKey, secretKey: secretKey}
+		}
+		jobs = append(jobs, *makeS3BucketJob(tenant, appName, withKey))
 	}
 
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, appName := range redisApps {
 		userPassword := ""
 		if r.Seeder != nil {
 			redisHost, redisPort, hostErr := r.redisCacheEndpoint(ctx)
 			if hostErr != nil {
-				return nil, hostErr
+				return nil, nil, hostErr
 			}
 			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
 				Host: redisHost,
@@ -115,7 +123,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 				User: redisACLUsername(tenant.Name, appName),
 			})
 			if seedErr != nil {
-				return nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)
+				return nil, nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)
 			}
 			userPassword = creds.Password
 		}
@@ -123,7 +131,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	}
 	_ = memcachedApps // memcached workload is emitted via buildDataPlaneObjects
 
-	return jobs, nil
+	return jobs, keys, nil
 }
 
 func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {

@@ -63,7 +63,7 @@ func unitJobs(t *testing.T) map[string]*batchv1.Job {
 				"postgres owned restore": PostgresOwnedRestoreJob(p, d, PostgresOwnedArtefact("old_wiki"), "old_wiki", "demo_wiki"),
 				"mariadb restore":        MariaDBRestoreJob(p, d, MariaDBArtefact("old_shop"), "demo_shop"),
 				"mariadb owned restore":  MariaDBOwnedRestoreJob(p, d, MariaDBOwnedArtefact("old_shop"), "old_shop", "demo_shop", "demo_shop"),
-				"bucket restore":         S3RestoreJob(p, d, S3Artefact("old-wiki"), "demo-wiki", ObjectStorageProvisionContainer("provision-bucket", "demo-wiki", "AK", "SK")),
+				"bucket restore":         S3RestoreJob(p, d, S3Artefact("old-wiki"), "demo-wiki", ObjectStorageProvisionContainer("provision-bucket", "demo-wiki", "key-secret")),
 				"volume restore":         VolumeRestoreJob(p, d, VolumeArtefact("data"), "data"),
 				"realm import":           RealmImportJob(p, d, IdentityArtefact, "demo", RealmSource{}),
 				"realm import, renamed":  RealmImportJob(p, d, IdentityArtefact, "demo", RealmSource{Tenant: "old", Realm: "old"}),

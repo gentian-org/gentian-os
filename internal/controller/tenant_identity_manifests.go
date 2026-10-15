@@ -43,9 +43,14 @@ func tenantProvisioningConfigMapName(tenantName string) string {
 // that Crossplane applies via tenant-default. The operator seeds
 // credentials and updates this ConfigMap; it does not create those resources directly.
 func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	jobs, err := r.buildTenantProvisioningJobs(ctx, tenant)
+	jobs, keys, err := r.buildTenantProvisioningJobs(ctx, tenant)
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
+	}
+	// The key pairs the bucket Jobs make the apps' identities with, each in
+	// a Secret its Job owns: never in the manifests below.
+	if err := r.ensureBucketKeySecrets(ctx, keys); err != nil {
+		return err
 	}
 	// On record before anything is made: see recordProvisionedStores.
 	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
@@ -141,22 +146,22 @@ func sanitizeJobForJSON(job *batchv1.Job) batchv1.Job {
 	return *out
 }
 
-func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, error) {
+func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, map[string]objectStoreKey, error) {
 	var jobs []batchv1.Job
 	realmName := keycloakRealmName(tenant)
 
 	identityJobs, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	jobs = append(jobs, identityJobs...)
 
-	dataJobs, err := r.buildDataPlaneJobs(ctx, tenant)
+	dataJobs, keys, err := r.buildDataPlaneJobs(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	jobs = append(jobs, dataJobs...)
-	return jobs, nil
+	return jobs, keys, nil
 }
 
 func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {

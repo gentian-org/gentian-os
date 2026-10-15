@@ -196,7 +196,7 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"restore-mariadb-fetch":  unit(restores, bundle.ArtefactMariaDBOwned),
 		"redis-acl-job":          job(makeRedisACLJob(tenant, "wiki", "")),
 		"cache-destroy-job":      job(backup.CacheDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
-		"s3-bucket-job":          job(makeS3BucketJob(tenant, "wiki", "", "")),
+		"s3-bucket-job":          job(makeS3BucketJob(tenant, "wiki", false)),
 		"s3-destroy-job":         job(backup.ObjectStorageDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
 		"export-s3-archive":      unit(exports, bundle.ArtefactS3),
 		"restore-s3":             unit(restores, bundle.ArtefactS3),

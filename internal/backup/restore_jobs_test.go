@@ -70,7 +70,7 @@ func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 	jobs := map[string]*batchv1.Job{
 		"postgres": PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
 		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
-		"s3":       S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "AK", "SK")),
+		"s3":       S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "key-secret")),
 		"volume":   VolumeRestoreJob(params(), recipientDecryption(), VolumeArtefact("data"), "data"),
 		"realm":    RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 	}
@@ -138,7 +138,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	}
 
 	s3 := strings.Join(containerByName(
-		S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "AK", "SK")), "s3-restore").Args, "\n")
+		S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "key-secret")), "s3-restore").Args, "\n")
 	if !strings.Contains(s3, "rclone sync ") {
 		t.Errorf("bucket restore merges instead of matching the archive:\n%s", s3)
 	}
@@ -275,7 +275,7 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 	p.Region = "ch-dk-2"
 	p.UploadCredentialsSecret = "backup-destination-corp"
 
-	job := S3RestoreJob(p, recipientDecryption(), S3Artefact("corp-nextcloud"), "corp-nextcloud", ObjectStorageProvisionContainer("provision-bucket", "corp-nextcloud", "AK", "SK"))
+	job := S3RestoreJob(p, recipientDecryption(), S3Artefact("corp-nextcloud"), "corp-nextcloud", ObjectStorageProvisionContainer("provision-bucket", "corp-nextcloud", "key-secret"))
 
 	var restore *corev1.Container
 	for i := range job.Spec.Template.Spec.Containers {

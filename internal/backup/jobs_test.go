@@ -390,7 +390,7 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 		"realm-export":  RealmExportJob(p, "demo"),
 		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
 		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "key-secret")),
 		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
@@ -488,7 +488,7 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 		"realm-export":  RealmExportJob(p, "demo"),
 		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
 		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "key-secret")),
 		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}

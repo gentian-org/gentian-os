@@ -537,13 +537,14 @@ func (r *TenantRestoreReconciler) restoreUnits(
 		case bundle.ArtefactS3:
 			// The bucket's user and policy, by the code install provisions
 			// them with and the key pair the vault holds for the app.
-			provision, err := r.Tenant.objectStorageProvisioner(ctx, tenant, appName, "provision-bucket")
+			// The key pair reaches the step in a Secret the Job owns.
+			p.Name = name("s3r")
+			provision, key, err := r.Tenant.objectStorageProvisioner(ctx, tenant, appName, "provision-bucket", p.Name)
 			if err != nil {
 				return nil, err
 			}
-			p.Name = name("s3r")
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
-				Job: backup.S3RestoreJob(p, d, a.Path, a.Target, provision)})
+				Job: backup.S3RestoreJob(p, d, a.Path, a.Target, provision), Key: key})
 		case bundle.ArtefactVolume:
 			p = volParams
 			p.Name = name(fmt.Sprintf("vr%d", volumes))
@@ -774,6 +775,13 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 		if err := r.Create(ctx, unit.Job); err != nil && !apierrors.IsAlreadyExists(err) {
 			return false, fmt.Errorf("create restore Job %s: %w", unit.JobName, err)
 		}
+		// The Job as made, with the UID its Secret is owned by; a Job made
+		// by an earlier pass is handed its Secret below on the next.
+		if unit.Key != nil && unit.Job.UID != "" {
+			if err := ensureObjectStoreKeySecret(ctx, r.Client, unit.Job, *unit.Key); err != nil {
+				return false, err
+			}
+		}
 		return false, nil
 	case err != nil:
 		return false, err
@@ -789,6 +797,11 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 	if jobIsComplete(existing) {
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		return true, nil
+	}
+	if unit.Key != nil && existing.DeletionTimestamp == nil {
+		if err := ensureObjectStoreKeySecret(ctx, r.Client, existing, *unit.Key); err != nil {
+			return false, err
+		}
 	}
 	// The first reason is kept, and read while there is a pod to read it from.
 	if entry.LastFailure == "" && r.Reconciler != nil {

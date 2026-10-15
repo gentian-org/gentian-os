@@ -65,8 +65,12 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// shell in the server's image (kernel.DefaultSeaweedFSImage), the
 		// master's address is the one Secret value the pod reads, and the
 		// pod carries the label the store's NetworkPolicy admits it by.
-		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "203474f05780f15f3061c3e2fd5bf53548da4a5f3ca9b763a23c2f11178fd0ab"},
-		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "9ed306136ae01d209c6f12054064db4733ab99a3d140b375c6987cb24240a969"},
+		// The keyed one moved once more, deliberately, when the app's key
+		// pair left the spec: APP_ACCESS_KEY and APP_SECRET_KEY are read
+		// from the Secret of the Job's name, which the Job owns
+		// (ensureBucketKeySecrets), and are written into no Job.
+		"bucket":         {makeS3BucketJob(tenant, "wiki", true), "09420de1d58d46a42c70b0c6dd7acf7e6d9c9ef89980fa3f9d66f339d7543131"},
+		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false), "9ed306136ae01d209c6f12054064db4733ab99a3d140b375c6987cb24240a969"},
 		"cache user":     {makeRedisACLJob(tenant, "wiki", "pw"), "980aa4ecd34b77778b2225cbe86860dfe74dd7bd6ee0e79493bc0cfd1235d57a"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {

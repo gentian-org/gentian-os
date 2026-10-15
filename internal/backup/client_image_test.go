@@ -44,7 +44,7 @@ func TestTheObjectStorageJobsRunTheImageTheS3ServerRuns(t *testing.T) {
 	}
 	demo := tenant("demo", nil)
 	for name, image := range map[string]string{
-		"the bucket Job":  ObjectStorageProvisionContainer("create-bucket", "demo-wiki", "AK", "SK").Image,
+		"the bucket Job":  ObjectStorageProvisionContainer("create-bucket", "demo-wiki", "key-secret").Image,
 		"the destroy Job": ObjectStorageDestroyJob(demo, "wiki", DestroyWithinARequest).Spec.Template.Spec.Containers[0].Image,
 	} {
 		if image != server {
