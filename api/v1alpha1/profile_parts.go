@@ -1394,6 +1394,18 @@ type BackupRestore struct {
 	// was written, not that the app can read it.
 	// +optional
 	Verify []string `json:"verify,omitempty"`
+
+	// DomainBound says the app's data cannot be moved to another domain: it
+	// names the tenant's domain in a way the app refuses to run with another
+	// (a server name baked into every id it stores, for one). When the domain
+	// a restore puts a bundle onto is not the one the bundle was taken on,
+	// this app's data is not restored: the app stays as it is installed
+	// there, and the restore names it among the apps it did not put back,
+	// with that reason. On the same domain it is restored as any app is. A
+	// bundle that does not say its domain is restored as on the same one,
+	// and the restore says it could not tell.
+	// +optional
+	DomainBound bool `json:"domainBound,omitempty"`
 }
 
 // QuiesceMode returns how this app's writes should be paused, resolving the
@@ -1465,6 +1477,12 @@ func (b *BackupSpec) RestoreCommands() (post [][]string, verify []string) {
 		return nil, nil
 	}
 	return b.Restore.Post, b.Restore.Verify
+}
+
+// IsDomainBound reports whether this app's data cannot be restored onto
+// another domain than the one it was written on (BackupRestore.DomainBound).
+func (b *BackupSpec) IsDomainBound() bool {
+	return b != nil && b.Restore != nil && b.Restore.DomainBound
 }
 
 // AppPostInstallJob configures a Kubernetes Job the app-default composition

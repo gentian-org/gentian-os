@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 )
@@ -150,5 +151,147 @@ func TestARestoreOnAnotherDomainSaysSoAndThatACustomDomainIsDeclaredAgain(t *tes
 			r.Status.Source != nil && (r.Status.Source.Domain != "" || r.Status.Source.CustomDomain != "") {
 			t.Errorf("a bundle with the domain %q is said to differ: %+v %+v", domain, r.Status.Conditions, r.Status.Source)
 		}
+	}
+}
+
+// An app whose profile binds its data to the domain
+// (spec.backup.restore.domainBound) is restored only onto the domain the
+// bundle was taken on. Onto another its data is left out, named with the
+// reason, and the move says so; the other apps are restored as ever. A
+// bundle that does not say its domain is restored as onto the same one, and
+// the result says it could not tell.
+func TestAnAppBoundToItsDomainIsNotRestoredOntoAnother(t *testing.T) {
+	tenant := planTenant("acme", "wiki", "chat")
+	chat := chartProfile("chat", "1.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, false)
+	chat.Spec.Backup = &gentianov1alpha1.BackupSpec{Restore: &gentianov1alpha1.BackupRestore{DomainBound: true}}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{
+		"wiki": chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
+		"chat": chat,
+	}
+	claims := map[string][]string{"wiki": {"wiki-release-data"}}
+	manifest := func(domain string) *backup.Manifest {
+		m := wikiManifest()
+		m.Tenant, m.OperatorVersion, m.Domain = "acme", backup.PlatformVersionLine, domain
+		m.Apps = []backup.ManifestApp{m.Apps[0], {Name: "chat", ChartVersion: "1.0.0", Stores: []backup.ManifestStore{
+			{Kind: bundle.ArtefactPostgres, Name: "acme_chat", Path: "postgres/acme_chat.pgc"},
+		}}}
+		return m
+	}
+	plan := func(domain, here string, apps ...string) (*gentianov1alpha1.TenantRestore, error) {
+		t.Helper()
+		target := targetOf(tenant)
+		target.domain = here
+		p, err := planRestore(manifest(domain), tenant, apps, false, target, liveFrom(tenant, profiles, claims))
+		if err != nil {
+			return nil, err
+		}
+		restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "tenant-acme"}}
+		recordPlan(restore, p)
+		return restore, nil
+	}
+	restored := func(r *gentianov1alpha1.TenantRestore) []string { return plannedApps(r) }
+
+	// Onto another domain: chat is left out, and said to be.
+	r, err := plan("acme.example.org", "acme.example.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := restored(r); !slices.Equal(got, []string{"wiki"}) {
+		t.Errorf("restored %v, want wiki only", got)
+	}
+	if len(r.Status.NotRestored) != 1 || r.Status.NotRestored[0].App != "chat" ||
+		!strings.Contains(r.Status.NotRestored[0].Reason, "spec.backup.restore.domainBound") ||
+		!strings.Contains(r.Status.NotRestored[0].Reason, "taken on acme.example.org while the tenant is on acme.example.net here: its data was NOT restored") {
+		t.Errorf("notRestored = %+v", r.Status.NotRestored)
+	}
+	cond := meta.FindStatusCondition(r.Status.Conditions, conditionOutsideGuarantee)
+	if cond == nil || cond.Reason != outsideGuaranteeDomain || !strings.Contains(cond.Message, "The data of chat, which names the old domain") {
+		t.Errorf("condition = %+v", cond)
+	}
+	// Asked for by name onto another domain: refused before anything is
+	// changed, as any app asked for that cannot be restored.
+	if _, err := plan("acme.example.org", "acme.example.net", "chat"); err == nil || !strings.Contains(err.Error(), "domainBound") {
+		t.Errorf("chat asked for onto another domain: %v", err)
+	}
+
+	// The same domain, in another case: restored as any app, nothing said.
+	r, err = plan("ACME.example.org", "acme.example.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := restored(r); !slices.Equal(got, []string{"wiki", "chat"}) || len(r.Status.NotRestored) != 0 {
+		t.Errorf("restored %v, not restored %+v", got, r.Status.NotRestored)
+	}
+	for _, n := range r.Status.Notes {
+		if strings.Contains(n, "domainBound") {
+			t.Errorf("note on the same domain: %s", n)
+		}
+	}
+
+	// A bundle that does not say its domain: restored, and said.
+	r, err = plan("", "acme.example.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := restored(r); !slices.Equal(got, []string{"wiki", "chat"}) {
+		t.Errorf("restored %v", got)
+	}
+	if !slices.Contains(r.Status.Notes, "chat: "+domainBoundUnknownNote) {
+		t.Errorf("the notes do not say the domain could not be told: %v", r.Status.Notes)
+	}
+}
+
+// The domain a bundle was taken on is what the platform computed there:
+// recorded, else the custom domain, else <tenant>.<kernel domain> -- except
+// for a tenant that may have been the one user tenant of a single-tenancy
+// cluster, whose domain was the kernel domain itself.
+func TestTheDomainABundleWasTakenOn(t *testing.T) {
+	for _, tc := range []struct {
+		source *gentianov1alpha1.RestoreSource
+		tenant string
+		want   string
+	}{
+		{nil, "acme", ""},
+		{&gentianov1alpha1.RestoreSource{Domain: "acme.k.example", CustomDomain: "acme.ch", KernelDomain: "k.example"}, "acme", "acme.k.example"},
+		{&gentianov1alpha1.RestoreSource{CustomDomain: "acme.ch", KernelDomain: "k.example"}, "acme", "acme.ch"},
+		{&gentianov1alpha1.RestoreSource{KernelDomain: "k.example"}, "acme", "acme.k.example"},
+		{&gentianov1alpha1.RestoreSource{KernelDomain: "k.example"}, gentianov1alpha1.SingleUserTenantName, ""},
+		{&gentianov1alpha1.RestoreSource{KernelDomain: "k.example"}, "", ""},
+		{&gentianov1alpha1.RestoreSource{KernelDomain: "k.example"}, "bad name; x", ""},
+		{&gentianov1alpha1.RestoreSource{PlatformVersion: "0.5"}, "acme", ""},
+	} {
+		if got := bundleDomain(tc.source, tc.tenant); got != tc.want {
+			t.Errorf("bundleDomain(%+v, %q) = %q, want %q", tc.source, tc.tenant, got, tc.want)
+		}
+	}
+}
+
+// A realm restore says what becomes of the people's addresses: moved to the
+// tenant's mail domain here, or, from a bundle that does not say its own,
+// left as they are.
+func TestARealmRestoreSaysWhatBecomesOfThePeoplesAddresses(t *testing.T) {
+	tenant := planTenant("acme", "wiki", "notes")
+	notes := func(domain, here string) string {
+		t.Helper()
+		m := wikiManifest()
+		m.Tenant, m.Domain = "acme", domain
+		target := targetOf(tenant)
+		target.domain = here
+		p, err := planRestore(m, tenant, nil, false, target, liveFrom(tenant, map[string]*gentianov1alpha1.ComponentProfile{
+			"wiki": chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true), "notes": chartProfile("notes", "1.0.0", "", false),
+		}, map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(p.notes, "\n")
+	}
+	if n := notes("acme.example.org", "acme.example.net"); !strings.Contains(n, "addresses at acme.example.org were changed to the same name at acme.example.net") {
+		t.Errorf("a move does not say the addresses moved:\n%s", n)
+	}
+	if n := notes("", "acme.example.net"); !strings.Contains(n, "an address at the old domain was NOT changed to acme.example.net") {
+		t.Errorf("an unknown domain does not say the addresses were left:\n%s", n)
+	}
+	if n := notes("acme.example.org", "acme.example.org"); strings.Contains(n, "address") {
+		t.Errorf("the same domain says something of addresses:\n%s", n)
 	}
 }

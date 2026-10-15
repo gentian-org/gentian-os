@@ -360,6 +360,18 @@ spec:
                       Restore declares what must run after this app's data is loaded and before
                       it is resumed.
                     properties:
+                      domainBound:
+                        description: |-
+                          DomainBound says the app's data cannot be moved to another domain: it
+                          names the tenant's domain in a way the app refuses to run with another
+                          (a server name baked into every id it stores, for one). When the domain
+                          a restore puts a bundle onto is not the one the bundle was taken on,
+                          this app's data is not restored: the app stays as it is installed
+                          there, and the restore names it among the apps it did not put back,
+                          with that reason. On the same domain it is restored as any app is. A
+                          bundle that does not say its domain is restored as on the same one,
+                          and the restore says it could not tell.
+                        type: boolean
                       post:
                         description: |-
                           Post lists commands run in order once the app's data is loaded and before

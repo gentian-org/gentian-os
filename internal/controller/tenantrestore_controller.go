@@ -670,9 +670,17 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 		case bundle.ArtefactIdentity:
 			p, unitD := r.placeRestoreUnit(restore, params, d, identityNamespace)
 			p.Name = exportJobName(tenant.Name, restore.Name, backupTenantComponent, "realmr")
+			// The people's addresses follow the tenant's mail domain, from
+			// the one the bundle was taken on to this tenant's; where the
+			// bundle does not say its own, they are left as they are.
+			source := backup.RealmSource{Tenant: restore.Status.SourceTenant, Realm: a.Name}
+			if r.Tenant != nil {
+				if was, now := bundleDomain(restore.Status.Source, restore.Status.SourceTenant), r.Tenant.tenantEffectiveDomain(tenant); domainMoved(was, now) {
+					source.MailDomain, source.TargetMailDomain = was, now
+				}
+			}
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
-				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target,
-					backup.RealmSource{Tenant: restore.Status.SourceTenant, Realm: a.Name})})
+				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target, source)})
 		case bundle.ArtefactPostgres:
 			_, namespace := r.Reconciler.desktopDatabase(tenant)
 			p, unitD := r.placeRestoreUnit(restore, params, d, namespace)

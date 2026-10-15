@@ -389,6 +389,14 @@ credential the command reads from the app's own Secrets, as the app does. The co
 `env(1)`, which the platform runs the command through. Each command, as each `quiesce` command, has
 15 minutes; one that has not finished by then has failed, and a restore fails the app on it.
 
+**An app whose data cannot move to another domain** — one that writes the tenant's domain into
+every id it stores and refuses to start under another, as a Matrix server does with its server
+name — sets `spec.backup.restore.domainBound: true`. Restored onto the domain the bundle was taken
+on, its data is put back as any app's. Onto another, it is not: the app is left as it is installed
+there (empty, in an import), and the restore names it in `status.notRestored` with the reason,
+which the `OutsideGuarantee` condition repeats. A bundle that does not record its domain is
+restored as onto the same one, and the result says it could not tell.
+
 **An app that verifies who is asking, and does not take the front door's headers on trust**, sets
 `exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a

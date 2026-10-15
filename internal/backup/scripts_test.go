@@ -468,6 +468,86 @@ func TestARealmImportKeepsPeoplesIds(t *testing.T) {
 	}
 }
 
+// A tenant whose mail domain is another than where the bundle was taken gets
+// its people back with their addresses at the new one: the same name before
+// the @, and a username that was the address with it. An address at another
+// domain -- a subdomain of the old one among them -- is the person's own and
+// is not touched; a person who is there already under the new address is
+// left as they are, and their groups are put back by that name.
+func TestARealmImportMovesAddressesToTheNewMailDomain(t *testing.T) {
+	w := newRealmWorld(t)
+	users := `{"id":"u1","username":"ada","email":"Ada@Acme.Example.Org"}
+{"id":"u2","username":"admin@acme.example.org","email":"admin@acme.example.org"}
+{"id":"u3","username":"carol@elsewhere.example","email":"carol@elsewhere.example"}
+{"id":"u4","username":"dan","email":"dan@mail.acme.example.org"}
+{"id":"u5","username":"eve"}
+`
+	w.archive(bundleRealm, users, `{"userId":"u2","groups":[{"path":"/staff/board"}]}
+`)
+	w.answer("POST", "acme/partialImport", 200, `{}`)
+	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
+	for _, name := range []string{"ada", "carol%40elsewhere.example", "dan", "eve"} {
+		w.answer("GET", "acme/users?exact=true&username="+name, 200, `[]`)
+	}
+	// The administrator is made with the tenant, under the new address.
+	w.answer("GET", "acme/users?exact=true&username=admin%40acme.example.net", 200, `[{"id":"n2"}]`)
+	w.answer("GET", "acme/group-by-path/staff/board", 200, `{"id":"g-board"}`)
+	w.answer("PUT", "acme/users/n2/groups/g-board", 204, ``)
+
+	out, err := w.run(importScript("acme", RealmSource{Tenant: "acme", Realm: "acme", MailDomain: "acme.example.org", TargetMailDomain: "Acme.Example.NET"}))
+	if err != nil {
+		t.Fatalf("the import failed: %v\n%s\n%s", err, out, w.log())
+	}
+	log := compactJSON(w.log())
+	var people []string
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "BODY POST acme/partialImport ") && strings.Contains(line, `"users"`) {
+			people = append(people, line)
+		}
+	}
+	if len(people) != 4 {
+		t.Fatalf("want ada, carol, dan and eve created, got %d:\n%s", len(people), log)
+	}
+	for i, want := range [][]string{
+		{`"username":"ada"`, `"email":"Ada@acme.example.net"`},
+		{`"username":"carol@elsewhere.example"`, `"email":"carol@elsewhere.example"`},
+		{`"username":"dan"`, `"email":"dan@mail.acme.example.org"`},
+		{`"username":"eve"`},
+	} {
+		for _, w := range want {
+			if !strings.Contains(people[i], w) {
+				t.Errorf("person %d does not carry %s:\n%s", i, w, people[i])
+			}
+		}
+	}
+	if strings.Contains(log, "admin%40acme.example.org") || strings.Contains(log, `"admin@acme.example.org"`) {
+		t.Errorf("the administrator was looked up or created under the old address:\n%s", log)
+	}
+	if !strings.Contains(log, "PUT acme/users/n2/groups/g-board") {
+		t.Errorf("the administrator's group was not put back by the new address:\n%s", log)
+	}
+	if !strings.Contains(out, "the addresses at acme.example.org are put back at acme.example.net, the tenant's mail domain here: 2 person(s)") {
+		t.Errorf("the output does not say how many addresses moved:\n%s", out)
+	}
+
+	// The same domain, an unknown one, or one that is not a domain's name:
+	// nothing moves.
+	for _, source := range []RealmSource{
+		{MailDomain: "acme.example.org", TargetMailDomain: "ACME.example.org"},
+		{TargetMailDomain: "acme.example.net"},
+		{MailDomain: "acme.example.org"},
+		{MailDomain: "acme.example.org", TargetMailDomain: "x'; rm -rf /; '"},
+		{MailDomain: "a+b:c", TargetMailDomain: "acme.example.net"},
+	} {
+		if from, to := source.mailMove(); from != "" || to != "" {
+			t.Errorf("%+v moves %q to %q", source, from, to)
+		}
+		if script := importScript("acme", source); !strings.Contains(script, "MAIL_FROM=''\nMAIL_TO=''") {
+			t.Errorf("%+v sets the domains in the script", source)
+		}
+	}
+}
+
 // What the import used to pass over in silence now fails it, with the name:
 // a person the provider refuses, a group that is not there, a membership
 // that is refused -- and it still goes to the end, so the output names all.

@@ -12,6 +12,7 @@ package backup
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -578,10 +579,34 @@ echo "restored volume %s"`, workDir, claim)},
 	}, restore, []corev1.Volume{target})
 }
 
-// RealmSource is where a realm capture was taken: the tenant and its realm.
+// RealmSource is where a realm capture was taken: the tenant and its realm,
+// and, where the tenant's mail domain there is not the one it is restored
+// into, both mail domains.
 type RealmSource struct {
 	Tenant string
 	Realm  string
+	// MailDomain is the tenant's mail domain where the capture was taken and
+	// TargetMailDomain the one it is put back into. Set, both, only where
+	// they differ: each person's address at MailDomain is put back at
+	// TargetMailDomain under the same name, and a username that was that
+	// address with it. A value that is not a domain's name moves nothing.
+	MailDomain       string
+	TargetMailDomain string
+}
+
+// mailDomainName is a domain's name, in lower case: what a mail domain a
+// realm import rewrites addresses between may be.
+var mailDomainName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+
+// mailMove is the two mail domains a realm import moves addresses between,
+// both "" when there is no move: they are the same, either is unknown, or
+// either is not a domain's name.
+func (s RealmSource) mailMove() (from, to string) {
+	from, to = strings.ToLower(s.MailDomain), strings.ToLower(s.TargetMailDomain)
+	if from == to || len(from) > 253 || len(to) > 253 || !mailDomainName.MatchString(from) || !mailDomainName.MatchString(to) {
+		return "", ""
+	}
+	return from, to
 }
 
 // RealmImportJob puts a tenant's realm, its people and their groups back.
@@ -610,6 +635,13 @@ type RealmSource struct {
 //     provisioning made here for this tenant's own clients;
 //   - the old realm's default role is left out.
 //
+// Where the tenant's mail domain is another than where the bundle was taken
+// (RealmSource.MailDomain), each person's address at the old one comes back
+// at the new one, under the same name, and a username that was that address
+// with it: the mailboxes are put back into the new domain under the same
+// names (MailboxRestoreJob), and a person signs in to theirs by the address.
+// An address at any other domain is the person's own and is not touched.
+//
 // Nothing is skipped in silence. A person who cannot be created, a group
 // that is not there, a membership that is refused: each is said, the import
 // goes on to the end so that the output names all of them, and the Job
@@ -621,6 +653,7 @@ func RealmImportJob(p JobParams, d Decryption, artefact, realm string, source Re
 	if source.Realm == "" {
 		source.Realm = realm
 	}
+	mailFrom, mailTo := source.mailMove()
 	restore := corev1.Container{
 		Name:    "realm-import",
 		Image:   kernel.KeycloakProvisionerImage(),
@@ -629,6 +662,8 @@ func RealmImportJob(p JobParams, d Decryption, artefact, realm string, source Re
 SRC=%[3]s
 DST=%[4]s
 SRC_REALM=%[5]s
+MAIL_FROM=%[6]s
+MAIL_TO=%[7]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
 OLD="gentian:tenant:${SRC}:"
 NEW="gentian:tenant:${DST}:"
@@ -636,6 +671,24 @@ tar xzf %[2]s/realm.tar.gz -C %[2]s
 for f in realm.json users.ndjson memberships.ndjson; do
   [ -f "%[2]s/${f}" ] || { echo "ERROR: the realm archive holds no ${f}" >&2; exit 1; }
 done
+
+# The tenant's mail domain was MAIL_FROM where the bundle was taken and is
+# MAIL_TO here. Each person's address at the old one comes back at the new
+# one under the same name, and a username that was that address with it,
+# before anything is read by a username: the memberships find each person by
+# the name they come back under. An address at any other domain is the
+# person's own. "@" belongs to the match, so a subdomain is not the domain.
+if [ -n "${MAIL_FROM}" ] && [ -n "${MAIL_TO}" ]; then
+  moved=$(jq -s --arg from "@${MAIL_FROM}" '[.[] | select((.email // "") | ascii_downcase | endswith($from))] | length' %[2]s/users.ndjson)
+  jq -c --arg from "@${MAIL_FROM}" --arg to "@${MAIL_TO}" '
+    if ((.email // "") | ascii_downcase | endswith($from)) then
+      .email as $was
+      | .email = (.email[0:((.email | length) - ($from | length))] + $to)
+      | if ((.username // "") | ascii_downcase) == ($was | ascii_downcase) then .username = (.email | ascii_downcase) else . end
+    else . end' %[2]s/users.ndjson > %[2]s/users.moved.ndjson
+  mv %[2]s/users.moved.ndjson %[2]s/users.ndjson
+  echo "the addresses at ${MAIL_FROM} are put back at ${MAIL_TO}, the tenant's mail domain here: ${moved} person(s)"
+fi
 new_token
 
 # partialImport with OVERWRITE brings groups, roles and clients back to what the
@@ -761,7 +814,8 @@ if [ "${failed}" -ne 0 ]; then
   exit 1
 fi
 echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a password reset"`,
-			quotedRealm(realm), workDir, shellSingleQuote(source.Tenant), shellSingleQuote(p.Tenant), shellSingleQuote(source.Realm))},
+			quotedRealm(realm), workDir, shellSingleQuote(source.Tenant), shellSingleQuote(p.Tenant), shellSingleQuote(source.Realm),
+			shellSingleQuote(mailFrom), shellSingleQuote(mailTo))},
 		Env:          keycloakAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}

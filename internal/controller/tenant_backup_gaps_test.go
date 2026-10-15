@@ -933,6 +933,32 @@ func TestATenantsMailboxesAreCapturedRestoredAndDestroyed(t *testing.T) {
 	if !found {
 		t.Error("no unit puts the mailboxes back")
 	}
+	// The people's addresses follow into the same mail domain the mailboxes
+	// are put back into, so that each person's address opens their mailbox;
+	// and the result says so.
+	realm := ""
+	for _, u := range back {
+		if u.Kind == bundle.ArtefactIdentity {
+			realm = containerArgs(u.Job)
+		}
+	}
+	if !strings.Contains(realm, "MAIL_FROM='demo.k.example'\nMAIL_TO='other.k.example'") {
+		t.Errorf("the realm import does not move the addresses to the mailboxes' domain:\n%s", realm)
+	}
+	if !slices.ContainsFunc(restore.Status.Notes, func(n string) bool {
+		return strings.Contains(n, "addresses at demo.k.example were changed to the same name at other.k.example")
+	}) {
+		t.Errorf("the result does not say the addresses moved: %v", restore.Status.Notes)
+	}
+	// Into the tenant it was taken of, on its domain, nothing moves.
+	same := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "r2", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantRestoreStatus{Bundle: restore.Status.Bundle, Source: restore.Status.Source, SourceTenant: "demo",
+			Apps: []gentianov1alpha1.AppExportStatus{{Name: backupTenantComponent, Artefacts: []gentianov1alpha1.BundleArtefact{
+				{Kind: bundle.ArtefactIdentity, Name: "demo", Path: backup.IdentityArtefact, Target: "demo"}}}}}}
+	again, err := rr.tenantWideRestoreUnits(ctx, w.tenant, same, d)
+	if err != nil || len(again) != 1 || !strings.Contains(containerArgs(again[0].Job), "MAIL_FROM=''\nMAIL_TO=''") {
+		t.Errorf("a restore on the same domain moves addresses: %v %v", again, err)
+	}
 	// Into a cluster that keeps no mailboxes they are not put back, and the
 	// result says so: nothing a bundle holds is dropped without a word.
 	plan, err = planRestore(m, other, nil, true, targetOf(other), installed)
