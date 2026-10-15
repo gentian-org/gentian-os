@@ -48,7 +48,7 @@ func tenantSMTPJobName(tenantName string) string {
 
 // buildTenantSMTPConfigureScript copies cluster Keycloak SMTP settings into a tenant realm.
 func buildTenantSMTPConfigureScript(realmExpr string) string {
-	return fmt.Sprintf(`
+	return keycloak.ShellAdminCall() + fmt.Sprintf(`
 set -eu
 REALM=%s
 
@@ -62,7 +62,7 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 %s
 
-REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+REALM_JSON=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}")
 # The cluster's own mail authenticates too, when the realm has been given an
 # identity to authenticate as.
@@ -140,7 +140,7 @@ SMTP_JSON=$(jq -n \
   # use them again if auth is ever flipped back on; omit them entirely instead.
   + (if $auth == "true" then {user: $user, password: $pass} else {} end)')
 UPDATED=$(printf '%%s' "${REALM_JSON}" | jq --argjson smtp "${SMTP_JSON}" '.smtpServer = $smtp')
-curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}" \
+kc_curl -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}" \
   -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "${UPDATED}" >/dev/null
 echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
