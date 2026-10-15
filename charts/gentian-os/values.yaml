@@ -541,6 +541,9 @@ provisioners:
   mariadb: "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
   redis: "redis:7-alpine"
   keycloak: "alpine:3.20"
+  # Empty: ghcr.io/gentian-org/storage-tools at the operator's own image tag
+  # (image.tag, else the chart's appVersion), which CI publishes beside it.
+  storageTools: ""
 
 # Memcached image for tenant cache provisioning (operator-managed Deployment).
 # Changing this takes effect on the next operator redeploy without rebuilding.

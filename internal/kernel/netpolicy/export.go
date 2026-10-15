@@ -46,12 +46,13 @@ func ExportJobNetworkPolicy(tenantName, nsName string, cfg Config) *networkingv1
 				namespaceEgress(layout.System("postgresql")),
 				namespaceEgress(layout.System("mariadb")),
 				namespaceEgress(layout.System("s3")),
-				// Internet, because the encrypt step installs age via apk and
-				// a tenant-namespace restore fetches the MinIO client — both
-				// at runtime, from public endpoints. Confined to export pods,
-				// which are operator-authored workloads; a dedicated backup
-				// image with the tools baked in retires this rule, and is the
-				// intended successor.
+				// Internet, for a bundle that goes to a destination a backup
+				// policy names: its endpoint is wherever the operator put it,
+				// and a volume's capture and restore reach it from here. The
+				// tools are no longer fetched at run time (the storage tools
+				// image carries them), so on a cluster whose bundles stay in
+				// its own object store nothing uses this rule. Confined to
+				// export pods, which are operator-authored workloads.
 				internetEgress(),
 			},
 		},

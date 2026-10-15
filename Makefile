@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-build-pin test-one-cluster
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-object-storage-lab test-build-pin test-one-cluster
 
 all: generate build test
 
@@ -268,6 +268,13 @@ test-mail-edge-lab:
 ## so it is its own target and not part of verify.
 test-realm-smtp-lab:
 	@bash scripts/tests/test-realm-smtp-lab.sh
+
+## The Jobs that move a tenant's objects -- bucket, capture, upload, manifest,
+## restore, bundle deletion, purge -- run container by container against the
+## object store the platform deploys, with the storage tools image built here.
+## Needs docker and go, so it is its own target and not part of verify.
+test-object-storage-lab:
+	@bash scripts/tests/test-object-storage-lab.sh
 
 test-wildcard-cache:
 	@bash scripts/tests/test-wildcard-cache.sh

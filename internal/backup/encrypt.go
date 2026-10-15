@@ -135,7 +135,7 @@ echo "encrypted %s"`, encryptBootstrap(e), encrypt, plain, cipher, localFile)
 
 	container := corev1.Container{
 		Name:         "encrypt",
-		Image:        kernel.KeycloakProvisionerImage(),
+		Image:        kernel.StorageToolsImage(),
 		Command:      []string{"/bin/sh", "-c"},
 		Args:         []string{script},
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
@@ -148,25 +148,20 @@ echo "encrypted %s"`, encryptBootstrap(e), encrypt, plain, cipher, localFile)
 	return container
 }
 
-// encryptBootstrap installs age, and script(1) when a passphrase needs a pty.
+// encryptBootstrap checks that the tools are there: age, and script(1) when
+// a passphrase needs a pty. The storage tools image carries both; nothing is
+// installed when a Job runs.
 //
 // Verified rather than assumed: a missing tool must fail here, loudly, and not
 // later as an upload that quietly carried plaintext.
 func encryptBootstrap(e Encryption) string {
-	packages := "age"
 	required := "age"
 	if e.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
-		// script(1) lives in util-linux-misc on recent Alpine and in util-linux
-		// on older ones; ask for whichever is present.
-		packages = "age util-linux-misc"
 		required = "age script"
 	}
-	return fmt.Sprintf(`apk add --no-cache --quiet %[1]s >/dev/null 2>&1 \
-  || apk add --no-cache --quiet age util-linux >/dev/null 2>&1 \
-  || { echo "ERROR: could not install %[1]s" >&2; exit 1; }
-for tool in %[2]s; do
+	return fmt.Sprintf(`for tool in %s; do
   command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: ${tool} unavailable" >&2; exit 1; }
-done`, packages, required)
+done`, required)
 }
 
 // BundleInfo is the one file in a bundle that is not encrypted; its format

@@ -519,7 +519,7 @@ func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) 
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
-		Env: append(PlatformStorageEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
+		Env: append(minioAdminEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
 	}
 	if accessKey != "" && secretKey != "" {
 		c.Env = append(c.Env,
@@ -738,9 +738,9 @@ func ObjectStorageDestroyJob(tenant *gentianov1alpha1.Tenant, unit string, deadl
 	return destroyJob(layout.System("s3"), ObjectStorageDestroyJobName(tenant.Name, unit), tenant.Name, unit, deadline,
 		corev1.Container{
 			Name:    "delete-bucket",
-			Image:   mcImage,
+			Image:   MinIOClientImage,
 			Command: []string{"/bin/sh", "-c", objectStorageDestroyScript(S3Bucket(tenant, unit))},
-			Env:     PlatformStorageEnv(),
+			Env:     minioAdminEnv(),
 		})
 }
 

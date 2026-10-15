@@ -334,6 +334,10 @@ spec:
               value: {{ .Values.provisioners.redis | quote }}
             - name: KEYCLOAK_PROVISIONER_IMAGE
               value: {{ .Values.provisioners.keycloak | quote }}
+            # The tools the Jobs that move a tenant's objects run, from the
+            # same CI run as this operator: its own tag, unless set.
+            - name: STORAGE_TOOLS_IMAGE
+              value: {{ .Values.provisioners.storageTools | default (printf "ghcr.io/gentian-org/storage-tools:%s" $imageTag) | quote }}
             - name: CNPG_CLUSTER_NAME
               value: {{ .Values.database.clusterName | quote }}
             - name: TENANT_CROSSPLANE_ONLY

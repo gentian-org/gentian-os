@@ -178,7 +178,7 @@ func TestAppSecretsAgainstAnObjectStoreAndAVault(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	store := &Store{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: layout.System("s3")},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: layout.System("s3")},
 		Data: map[string][]byte{"endpoint": []byte(endpoint),
 			backup.DestinationAccessKeyField: []byte(liveMinioUser), backup.DestinationSecretKeyField: []byte(liveMinioPass)},
 	}).Build()}

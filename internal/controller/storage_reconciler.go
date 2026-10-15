@@ -29,7 +29,7 @@ import (
 
 const (
 	conditionStorageReady = "StorageReady"
-	minioAdminSecret      = backup.MinIOAdminSecret
+	storageAdminSecret    = backup.StorageAdminSecret
 	storageRequeueAfter   = 2 * time.Second
 )
 
@@ -141,12 +141,12 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 	}
 }
 
-// minioEndpoint returns the MinIO S3 endpoint from the kernel minio-admin
+// storageEndpoint returns the MinIO S3 endpoint from the kernel minio-admin
 // Secret. Best-effort: returns "" when the Secret is unavailable so seeding
 // still records the remaining S3 fields.
-func (r *TenantReconciler) minioEndpoint(ctx context.Context) string {
+func (r *TenantReconciler) storageEndpoint(ctx context.Context) string {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: minioAdminSecret, Namespace: s3Namespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: storageAdminSecret, Namespace: s3Namespace}, secret); err != nil {
 		return ""
 	}
 	return string(secret.Data["endpoint"])
@@ -178,7 +178,7 @@ func (r *TenantReconciler) seedObjectStorage(ctx context.Context, tenant *gentia
 		return "", "", nil
 	}
 	creds, err := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-		Endpoint: r.minioEndpoint(ctx),
+		Endpoint: r.storageEndpoint(ctx),
 		Bucket:   s3BucketName(tenant, appName),
 		Region:   "us-east-1",
 	})

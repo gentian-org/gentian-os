@@ -50,7 +50,7 @@ func adminSecrets() []adminSecret {
 			map[string]string{"host": "maria", "port": "3306", "username": "root", "password": "MARIA-ADMIN-PASSWORD"}},
 		{backup.KeycloakAdminSecret, identityNamespace, "kernel/services/keycloak-idp/manifests/templates/externalsecret-admin.yaml",
 			map[string]string{"url": "http://keycloak", "username": "admin", "password": "KC-ADMIN-PASSWORD"}},
-		{backup.MinIOAdminSecret, s3Namespace, "kernel/services/infra-minio/manifests/templates/externalsecret.yaml",
+		{backup.StorageAdminSecret, s3Namespace, "kernel/services/infra-minio/manifests/templates/externalsecret.yaml",
 			map[string]string{"endpoint": "http://minio:9000", "accessKey": "minio-root", "secretKey": "MINIO-ROOT-SECRET"}},
 	}
 }
@@ -319,7 +319,7 @@ func assertNoAdminCredentialWasCopied(t *testing.T, c client.Client) {
 		t.Fatal(err)
 	}
 	for _, admin := range adminSecrets() {
-		if admin.name == backup.MinIOAdminSecret {
+		if admin.name == backup.StorageAdminSecret {
 			// The credential a bundle on the platform's own storage is written
 			// with: it is what is staged.
 			continue

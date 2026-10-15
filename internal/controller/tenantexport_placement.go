@@ -151,7 +151,7 @@ func stageRunSecret(
 	extra map[string][]byte,
 ) error {
 	if sourceSecret == "" {
-		sourceSecret = backup.MinIOAdminSecret
+		sourceSecret = backup.StorageAdminSecret
 	}
 	source := &corev1.Secret{}
 	if err := c.Get(ctx, types.NamespacedName{Name: sourceSecret, Namespace: s3Namespace}, source); err != nil {

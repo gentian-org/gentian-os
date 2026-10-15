@@ -209,8 +209,8 @@ func TestPassphraseModeUsesAPtyAndReadsFromASecret(t *testing.T) {
 	if !strings.Contains(script, "age -p -o") {
 		t.Errorf("passphrase mode does not use age -p:\n%s", script)
 	}
-	if !strings.Contains(script, "util-linux") {
-		t.Errorf("script(1) is not installed:\n%s", script)
+	if !strings.Contains(script, "for tool in age script;") {
+		t.Errorf("the script does not check that script(1) is there:\n%s", script)
 	}
 	if !strings.Contains(script, "passphrase is empty") {
 		t.Errorf("no guard against an empty passphrase:\n%s", script)

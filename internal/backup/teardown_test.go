@@ -387,10 +387,10 @@ func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 		t.Errorf("the artefact fetched is not the one the manifest names:\n%s", fetch)
 	}
 	write := containerByName(job, "s3-restore").Args[0]
-	if !strings.Contains(write, `"platform/demo-wiki"`) || strings.Contains(write, "old-wiki") {
+	if !strings.Contains(write, `"platform:demo-wiki"`) || strings.Contains(write, "old-wiki") {
 		t.Errorf("the objects are not written to the tenant's bucket:\n%s", write)
 	}
-	if strings.Contains(write, "mc mb") {
+	if strings.Contains(write, "mkdir") {
 		t.Error("the restore makes the bucket a second time, by itself")
 	}
 }

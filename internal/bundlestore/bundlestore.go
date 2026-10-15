@@ -95,7 +95,7 @@ type Store struct {
 func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*minio.Client, error) {
 	secretName := ref.CredentialSecret
 	if secretName == "" {
-		secretName = backup.MinIOAdminSecret
+		secretName = backup.StorageAdminSecret
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: layout.System("s3")}, secret); err != nil {

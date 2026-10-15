@@ -26,11 +26,14 @@ import (
 )
 
 const (
-	// MinIOAdminSecret holds the credentials every capture uses to write into
-	// the tenant's backup bucket. Captures authenticate as the MinIO admin
-	// because they read app buckets they were never issued a key for; the
-	// bundle they produce is encrypted, and no tenant workload can reach it.
-	MinIOAdminSecret = "minio-admin"
+	// StorageAdminSecret holds the address of the platform's object store and
+	// the administrator's keys, beside the store: what every capture uses to
+	// write into the tenant's backup bucket, and what a capture or a restore
+	// of an app's bucket reads it with. Captures authenticate as the
+	// administrator because they read app buckets they were never issued a
+	// key for; the bundle they produce is encrypted, and no tenant workload
+	// can reach it.
+	StorageAdminSecret = "minio-admin"
 	// PostgresAdminSecret and MariaDBAdminSecret hold the superuser credentials
 	// the dumps run as. A per-app role can read only its own database, which is
 	// exactly what a dump needs, but the roles are per app and the connection
@@ -41,23 +44,18 @@ const (
 	// the identity reconciler already authenticates with.
 	KeycloakAdminSecret = "keycloak-admin"
 
-	// mcImage carries the MinIO client used to upload every artefact: the
-	// image the cluster's own S3 server runs, which ships the client beside
-	// the server. See MinIOClientImage.
-	mcImage = MinIOClientImage
-
 	// workDir is the scratch mount a dump is staged in before upload.
 	//
 	// Staging rather than streaming is a deliberate v1 simplification: piping a
-	// dump straight into `mc pipe` needs the dump tool and mc in one image, and
-	// the platform has no such image yet. The cost is real — a capture needs
+	// dump straight into the upload needs the dump tool and rclone in one
+	// image, and the platform has no such image. The cost is real — a capture needs
 	// ephemeral node storage the size of the artefact — so ScratchLimit exists
 	// to bound it, and streaming is the obvious Phase 6 follow-up.
 	workDir = "/work"
 )
 
-// MinIOClientImage is the image every Job that talks to object storage
-// runs: provisioning a bucket, capturing one, restoring one, destroying one.
+// MinIOClientImage is the image the Jobs that make and destroy an app's
+// bucket run.
 //
 // It is the image the cluster's S3 server runs
 // (kernel/services/infra-minio/manifests/templates/configmap.yaml), which
@@ -110,11 +108,11 @@ type JobParams struct {
 	Bucket string
 	Prefix string
 	// Endpoint is the S3 API URL when bundles go somewhere other than the
-	// platform's own MinIO, whose address travels with its credentials.
+	// platform's own object store, whose address travels with its credentials.
 	// Resolved from BackupPolicy; empty means the platform's own storage.
 	Endpoint string
-	// Region is passed to S3 tooling that requires one. Recorded rather than
-	// used by mc, which derives a bucket's location from the endpoint.
+	// Region is the destination's, for a provider that requires one; rclone
+	// signs with it. Empty leaves rclone's default.
 	Region string
 	// ScratchLimit bounds the emptyDir a dump is staged in. Zero leaves it
 	// unbounded, which lets one large tenant fill a node's ephemeral storage.
@@ -127,12 +125,13 @@ type JobParams struct {
 	// value that means plaintext; Encryption.Validate rejects that before any
 	// Job is built.
 	Encryption Encryption
-	// UploadCredentialsSecret overrides where the MinIO credentials come from.
+	// UploadCredentialsSecret overrides where the bundle store's credentials
+	// come from.
 	//
-	// Empty means the kernel's minio-admin Secret, which is right for every
-	// Job that runs in the kernel namespace. Volume Jobs cannot: a PVC is only
-	// mountable from its own namespace, so they run in the tenant namespace —
-	// where minio-admin does not exist and must not. The controller stages a
+	// Empty means StorageAdminSecret, which is right for every Job that runs
+	// beside the object store. Volume Jobs cannot: a PVC is only mountable
+	// from its own namespace, so they run in the tenant namespace -- where
+	// the administrator's Secret does not exist and must not. The controller stages a
 	// short-lived copy there and names it here.
 	UploadCredentialsSecret string
 }
@@ -158,12 +157,13 @@ func hardened(containers []corev1.Container) []corev1.Container {
 	return containers
 }
 
-// uploadSecretName resolves which Secret carries the MinIO credentials.
+// uploadSecretName resolves which Secret carries the bundle store's
+// credentials.
 func (p JobParams) uploadSecretName() string {
 	if p.UploadCredentialsSecret != "" {
 		return p.UploadCredentialsSecret
 	}
-	return MinIOAdminSecret
+	return StorageAdminSecret
 }
 
 // Where each artefact is in a bundle, below the bundle's prefix and before
@@ -384,9 +384,8 @@ func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1
 	for _, pattern := range sortedUnique(excludePaths) {
 		fmt.Fprintf(&excludes, " --exclude=%s", shellSingleQuote(pattern))
 	}
-	// Alpine, not the mc image: this container only tars, and the mc image —
-	// a minimal UBI — ships no tar at all. Every container that runs tar must
-	// use an image that has it; the first live volume capture exited 127 on
+	// Every container that runs tar must use an image that has it; the first
+	// live volume capture ran a client image without one and exited 127 on
 	// its first command.
 	archive := corev1.Container{
 		Name:    "archive",
@@ -425,31 +424,23 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // put each object back under the name the app's database refers to.
 func S3ArchiveJob(p JobParams, sourceBucket string) *batchv1.Job {
 	artefact := S3Artefact(sourceBucket)
-	// The app's bucket is in the platform's own MinIO, always — it is where the
+	// The app's bucket is in the platform's own object store, always — it is where the
 	// app writes. The bundle may be somewhere else entirely, and the two are the
 	// same system only when bundles go to platform storage.
 	//
 	// Sharing bundleEnv here pointed the source read at the destination: with an
 	// external bundle store this went looking for the tenant's bucket in someone
 	// else's account, and failed in fetch-bucket before a byte was captured. It
-	// worked for as long as it did because every bundle went to the same MinIO
+	// worked for as long as it did because every bundle went to the same store
 	// the apps use, which made one set of credentials look like enough for both.
 	// The restore path already carries this distinction; capture did not.
-	fetch := corev1.Container{
-		Name:    "fetch-bucket",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-mc alias set platform "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+	fetch := storageTools("fetch-bucket", "set -eu\n"+rcloneRemote(platformRemote)+fmt.Sprintf(`
 mkdir -p %[1]s/bucket
-# An empty bucket is normal (an app may never have written), so mirror into a
+# An empty bucket is normal (an app may never have written), so copy into a
 # directory that already exists and let the pack step archive it empty too.
-mc mirror --preserve "platform/%[2]s" %[1]s/bucket
-echo "fetched bucket %[2]s"`, workDir, sourceBucket)},
-		Env:          PlatformStorageEnv(),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
-	// A separate container because the mc image has no tar.
+# Each object's modification time comes with it, as a file's.
+rclone copy "%[3]s:%[2]s" %[1]s/bucket
+echo "fetched bucket %[2]s"`, workDir, sourceBucket, platformRemote), PlatformStorageEnv())
 	pack := corev1.Container{
 		Name:    "pack-bucket",
 		Image:   kernel.KeycloakProvisionerImage(),
@@ -591,21 +582,22 @@ kc() {
 // bucketPreparation returns the commands that ready the destination bucket,
 // which differ by who owns it.
 //
-// The platform's own MinIO is administered by this operator with the kernel's
+// The platform's own object store is administered by this operator with the kernel's
 // admin credential, and the bundle bucket may not exist yet — creating it here
 // is what keeps tenant provisioning from depending on backup infrastructure.
 //
 // An external destination is the opposite on every count. The bucket was
 // created by whoever owns the account, and the credential the policy carries is
 // deliberately scoped to objects, so create-bucket and put-bucket-policy are
-// denied. mc's --ignore-existing does not cover a denial; it covers a bucket
-// you already own. Issuing these against someone else's bucket failed on the
-// upload container's first command, before a single artefact was sent:
+// denied. "Make it if it is not there" does not cover a denial; it covers a
+// bucket you already own. Issuing these against someone else's bucket failed
+// on the upload container's first command, before a single artefact was
+// sent:
 //
 //	mc: <ERROR> Unable to make bucket gentian/<bucket>.
 //	    You are not authorized to perform create-bucket on bucket <bucket>
 //
-// A bucket that genuinely is not there still fails, on the mc cp below, with
+// A bucket that genuinely is not there still fails, on the copy below, with
 // the S3 error that says so. Prechecking instead would mean asking for a
 // listing permission we have equally little right to assume.
 func bucketPreparation(p JobParams) string {
@@ -614,10 +606,11 @@ func bucketPreparation(p JobParams) string {
 	}
 	return `# The bundle bucket is created here rather than during tenant provisioning.
 # Gating a tenant's readiness on backup infrastructure would couple every
-# install to a bucket only exports need; --ignore-existing makes this
-# idempotent, and anonymous access is denied on every pass.
-mc mb --ignore-existing "gentian/${BUNDLE_BUCKET}"
-mc anonymous set none "gentian/${BUNDLE_BUCKET}"`
+# install to a bucket only exports need. rclone makes a bucket only when it is
+# not there, and only when it is told to check (the remote is told not to).
+# No bucket of the store is readable without a key: it has no anonymous
+# identity.
+RCLONE_S3_NO_CHECK_BUCKET=false rclone mkdir "` + bundleRemote + `:${BUNDLE_BUCKET}"`
 }
 
 func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
@@ -625,23 +618,16 @@ func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Conta
 	// only ever see ciphertext: the plaintext is removed before it starts.
 	producers = append(producers, encryptContainer(p.Encryption, localFile))
 	local := workDir + "/" + localFile + EncryptedSuffix
-	target := fmt.Sprintf("gentian/%s/%s/%s%s", p.Bucket, p.Prefix, artefact, EncryptedSuffix)
-	upload := corev1.Container{
-		Name:    "upload",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+	target := fmt.Sprintf("%s:%s/%s/%s%s", bundleRemote, p.Bucket, p.Prefix, artefact, EncryptedSuffix)
+	upload := storageTools("upload", "set -eu\n"+rcloneRemote(bundleRemote)+fmt.Sprintf(`
 %[4]s
-mc cp "%[1]s" "%[2]s"
+rclone copyto "%[1]s" "%[2]s"
 # The checksum is written after the artefact and read before any restore, so a
 # bundle whose upload was cut short fails verification instead of restoring
-# quietly truncated data.
-sha256sum "%[1]s" | cut -d' ' -f1 | mc pipe "%[2]s.sha256"
-echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p))},
-		Env:          bundleEnv(p),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+# quietly truncated data. One line, the hex digest and a newline: what every
+# bundle has carried, and what a restore of an older one reads.
+sha256sum "%[1]s" | cut -d' ' -f1 | rclone rcat "%[2]s.sha256"
+echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p)), bundleEnv(p))
 	return newJob(p, []corev1.Container{upload}, producers, extraVolumes)
 }
 
@@ -653,36 +639,38 @@ echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p))},
 // --recursive on the bare bucket is exactly the command the guard exists to
 // make unwritable.
 func BundleDeleteJob(p JobParams) *batchv1.Job {
-	del := corev1.Container{
-		Name:    "bundle-delete",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{`set -eu
+	del := storageTools("bundle-delete", `set -eu
 [ -n "${BUNDLE_PREFIX}" ] || { echo "refusing to delete: empty bundle prefix" >&2; exit 1; }
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+`+rcloneRemote(bundleRemote)+`
 # Nothing there is success, not failure: the bundle may never have been
 # written (a capture that failed before its first upload), the bucket may not
 # exist yet, or a previous attempt already removed the objects. But "nothing
 # there" is what the store's listing says, not what a failed question means:
 # a store that cannot be reached fails this Job. A failing "mc stat" used to
 # be read as "nothing to delete", and the bundle was reported deleted.
-if ! listing="$(mc ls "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" 2>&1)"; then
-  case "${listing}" in
-    *"does not exist"*|*NoSuchBucket*)
-      echo "no bucket ${BUNDLE_BUCKET} - nothing to delete"
-      exit 0 ;;
-  esac
-  echo "ERROR: could not list ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}: ${listing}" >&2
+#
+# rclone says a bucket is not there by its exit status, 3; under a bucket
+# that is there, a prefix with nothing below it lists empty.
+status=0
+listing="$(rclone lsf -R "bundle:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" 2>/tmp/lsf.err)" || status=$?
+if [ "${status}" -eq 3 ]; then
+  echo "no bucket ${BUNDLE_BUCKET} - nothing to delete"
+  exit 0
+fi
+if [ "${status}" -ne 0 ]; then
+  echo "ERROR: could not list ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}: $(cat /tmp/lsf.err)" >&2
   exit 1
 fi
 if [ -z "${listing}" ]; then
   echo "no objects under ${BUNDLE_BUCKET}/${BUNDLE_PREFIX} - nothing to delete"
   exit 0
 fi
-mc rm --recursive --force "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/"
-echo "deleted bundle ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`},
-		Env: append(bundleEnv(p), corev1.EnvVar{Name: "BUNDLE_PREFIX", Value: p.Prefix}),
-	}
+# The prefix as a directory: everything below BUNDLE_PREFIX/, and nothing of
+# a bundle whose name merely begins the same way.
+rclone purge "bundle:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
+echo "deleted bundle ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`,
+		append(bundleEnv(p), corev1.EnvVar{Name: "BUNDLE_PREFIX", Value: p.Prefix}))
+	del.VolumeMounts = nil
 	return newJob(p, []corev1.Container{del}, nil, nil)
 }
 
@@ -738,8 +726,8 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 						meta.TenantLabel:    p.Tenant,
 						meta.ManagedByLabel: meta.ManagedByValue,
 						// On the pod, not only the Job: the tenant-namespace
-						// NetworkPolicy that lets a capture pod reach MinIO
-						// selects on this.
+						// NetworkPolicy that lets a capture pod reach the
+						// object store selects on this.
 						meta.ComponentLabel: "tenant-export",
 						ExportLabel:         p.Export,
 					},
@@ -804,7 +792,7 @@ func needsWorkDir(groups ...[]corev1.Container) bool {
 // the name of the bucket it must ensure exists before writing.
 //
 // The endpoint comes from a different place depending on where bundles go, and
-// that asymmetry is the point. The platform's own MinIO records its address
+// that asymmetry is the point. The platform's own store records its address
 // alongside its keys, so all three read from one Secret. A destination the
 // operator configured has its address in the policy — a fact, not a
 // credential — while only the keys come from the custodian. Reading
@@ -814,43 +802,42 @@ func bundleEnv(p JobParams) []corev1.EnvVar {
 	env := []corev1.EnvVar{{Name: "BUNDLE_BUCKET", Value: p.Bucket}}
 
 	if p.Endpoint == "" {
-		secret := p.uploadSecretName()
-		env = append(env,
-			meta.SecretEnv("MINIO_ENDPOINT", secret, "endpoint"),
-			meta.SecretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
-			meta.SecretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
-		)
-		return env
+		return append(env, storageEnv(p.uploadSecretName())...)
 	}
 
 	secret := p.uploadSecretName()
 	env = append(env,
-		corev1.EnvVar{Name: "MINIO_ENDPOINT", Value: p.Endpoint},
-		meta.SecretEnv("MINIO_ACCESS_KEY", secret, DestinationAccessKeyField),
-		meta.SecretEnv("MINIO_SECRET_KEY", secret, DestinationSecretKeyField),
+		corev1.EnvVar{Name: "S3_ENDPOINT", Value: p.Endpoint},
+		meta.SecretEnv("S3_ACCESS_KEY", secret, DestinationAccessKeyField),
+		meta.SecretEnv("S3_SECRET_KEY", secret, DestinationSecretKeyField),
 	)
 	if p.Region != "" {
-		// mc derives a bucket's location from the endpoint, so this changes
-		// nothing for the capture path. It is set because every other S3 tool
-		// reads it, and a destination that works for mc and fails for the next
-		// thing pointed at it would be a trap.
-		env = append(env, corev1.EnvVar{Name: "AWS_REGION", Value: p.Region})
+		// The destination's region: rclone signs every request with it, and a
+		// provider that requires one (AWS, Exoscale SOS) refuses a request
+		// signed for another.
+		env = append(env, corev1.EnvVar{Name: "S3_REGION", Value: p.Region})
 	}
 	return env
 }
 
-// PlatformStorageEnv addresses the platform's own MinIO, whose address travels
-// with its credentials.
+// PlatformStorageEnv addresses the platform's own object store, whose address
+// travels with its credentials.
 //
 // Distinct from bundleEnv, which addresses wherever the bundle lives. The two
 // are the same place only when bundles go to platform storage; with an external
 // destination they are different systems with different credentials, and a Job
 // that needs both must not assume one covers the other.
 func PlatformStorageEnv() []corev1.EnvVar {
+	return storageEnv(StorageAdminSecret)
+}
+
+// minioAdminEnv is how the bucket and destroy Jobs, which still run MinIO's
+// client, address the server as its administrator.
+func minioAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		meta.SecretEnv("MINIO_ENDPOINT", MinIOAdminSecret, "endpoint"),
-		meta.SecretEnv("MINIO_ACCESS_KEY", MinIOAdminSecret, "accessKey"),
-		meta.SecretEnv("MINIO_SECRET_KEY", MinIOAdminSecret, "secretKey"),
+		meta.SecretEnv("MINIO_ENDPOINT", StorageAdminSecret, "endpoint"),
+		meta.SecretEnv("MINIO_ACCESS_KEY", StorageAdminSecret, "accessKey"),
+		meta.SecretEnv("MINIO_SECRET_KEY", StorageAdminSecret, "secretKey"),
 	}
 }
 

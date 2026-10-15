@@ -108,7 +108,7 @@ func newRestoreWorld(t *testing.T, mutate func(*gentianov1alpha1.TenantRestore))
 		chartProfile("drive", "1.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "r1-key", Namespace: "tenant-demo"},
 			Data: map[string][]byte{"passphrase": []byte("correct horse")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
 			Data: map[string][]byte{"endpoint": []byte("http://minio:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "wiki-release-data", Namespace: "tenant-demo",
 			Annotations: map[string]string{"meta.helm.sh/release-name": "wiki-release"}}},
