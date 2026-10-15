@@ -116,9 +116,9 @@ const (
 	// reasonClassMismatch is a Component whose class is not one its profile
 	// is certified for.
 	reasonClassMismatch = "ClassMismatch"
-	componentFinalizer      = "gentianos.io/component-cleanup"
-	componentLabel          = "gentianos.io/component"
-	componentRequeue        = 15 * time.Second
+	componentFinalizer  = "gentianos.io/component-cleanup"
+	componentLabel      = "gentianos.io/component"
+	componentRequeue    = 15 * time.Second
 	// modelAccessRecheck is how often a Ready component the platform placed,
 	// whose profile declares the model gateway, is reconciled again.
 	modelAccessRecheck = 5 * time.Minute
