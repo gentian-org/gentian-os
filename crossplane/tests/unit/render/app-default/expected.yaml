@@ -58,11 +58,8 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     attributes:
-      gentianOdooModules:
-      - account
-      - crm
-      gentianSingle:
-      - one
+      gentianOdooModules: account##crm
+      gentianSingle: one
       gentianos.io/managed-by: platform
     name: gentian:tenant:demo:app:demo-app
     realmId: demo

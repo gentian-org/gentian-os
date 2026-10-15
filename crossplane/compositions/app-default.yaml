@@ -1052,14 +1052,16 @@ spec:
                  the modules and roles the app provisions from — so a Group
                  declared without them would strip what the groups Job sets.
 
-                 Values are coerced to lists: Keycloak group attributes are
-                 map[string][]string, and the annotation writes a bare string for
-                 single values, exactly as collectGentianGroupsJSON normalises. */}}
+                 Values are strings: provider-keycloak types a Group's
+                 attributes as a map of strings and splits a value on "##"
+                 into Keycloak's list, so a list in the annotation is joined
+                 with "##" and a bare string stays as it is -- the same values
+                 collectGentianGroupsJSON sets. */}}
             {{- $gAttrsRaw := dig "metadata" "annotations" "gentianos.io/keycloak-group-attributes" "" $profile }}
             {{- $gAttrs := dict }}
             {{- if $gAttrsRaw }}
             {{- range $k, $v := (fromJson $gAttrsRaw) }}
-            {{- $_ := set $gAttrs $k (ternary $v (list (toString $v)) (kindIs "slice" $v)) }}
+            {{- $_ := set $gAttrs $k (join "##" $v) }}
             {{- end }}
             {{- end }}
             {{- /* And the platform's mark, which a realm import reads: a group
