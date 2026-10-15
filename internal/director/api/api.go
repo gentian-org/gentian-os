@@ -1749,6 +1749,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
+	case errors.Is(err, gitops.ErrInvalidBackupPolicy):
+		s.fail(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, gitops.ErrNoPushCredential):
 		// 503, not 500: nothing is broken and the request was fine. The
 		// cluster has not been given a credential to write with, which is

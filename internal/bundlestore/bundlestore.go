@@ -114,7 +114,18 @@ func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*mi
 			string(secret.Data[backup.DestinationSecretKeyField]), ""),
 		Secure: u.Scheme == "https",
 		Region: ref.Region,
+		// As the Jobs that wrote the bundle addressed it: path, unless the
+		// bundle records virtualHost. Never minio-go's guess from the host.
+		BucketLookup: BucketLookup(ref.AddressingStyle),
 	})
+}
+
+// BucketLookup is minio-go's name for an addressing style: path when empty.
+func BucketLookup(style gentianov1alpha1.S3AddressingStyle) minio.BucketLookupType {
+	if style.VirtualHost() {
+		return minio.BucketLookupDNS
+	}
+	return minio.BucketLookupPath
 }
 
 // Manifest reads a bundle's manifest and opens it with the key.

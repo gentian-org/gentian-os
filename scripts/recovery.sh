@@ -89,6 +89,7 @@ Reaching the bundle straight from object storage, with no cluster
   --s3-bucket NAME
   --s3-prefix NAME   the bundle's prefix, e.g. policy-20260904-0300
   --s3-region NAME
+  --s3-addressing-style path|virtualHost   how the bucket is named (default path)
   --s3-access-key K  or AWS_ACCESS_KEY_ID
   --s3-secret-key S  or AWS_SECRET_ACCESS_KEY
 
@@ -227,6 +228,7 @@ resolve_key() {
 # ── bundle location ──────────────────────────────────────────────────────────
 
 BUNDLE_ENDPOINT=""; BUNDLE_BUCKET=""; BUNDLE_PREFIX=""; BUNDLE_REGION=""; BUNDLE_SECRET=""
+BUNDLE_STYLE=""
 BUNDLE_MODE=""
 
 # locate_bundle — from --bundle, or from the export's own status.
@@ -236,6 +238,7 @@ locate_bundle() {
         BUNDLE_BUCKET="${OPT_S3_BUCKET}"
         BUNDLE_PREFIX="${OPT_S3_PREFIX}"
         BUNDLE_REGION="${OPT_S3_REGION}"
+        BUNDLE_STYLE="${OPT_S3_STYLE}"
         [[ -n "${BUNDLE_ENDPOINT}" ]] || { error "--s3-bucket needs --s3-endpoint."; return 1; }
         [[ -n "${BUNDLE_PREFIX}" ]]  || { error "--s3-bucket needs --s3-prefix."; return 1; }
         return 0
@@ -267,6 +270,7 @@ locate_bundle() {
     BUNDLE_BUCKET="$(printf '%s'   "${json}" | jq -r '.status.bundle.bucket // ""')"
     BUNDLE_PREFIX="$(printf '%s'   "${json}" | jq -r '.status.bundle.prefix // ""')"
     BUNDLE_REGION="$(printf '%s'   "${json}" | jq -r '.status.bundle.region // ""')"
+    BUNDLE_STYLE="$(printf '%s'    "${json}" | jq -r '.status.bundle.addressingStyle // ""')"
     BUNDLE_SECRET="$(printf '%s'   "${json}" | jq -r '.status.bundle.credentialSecret // ""')"
     BUNDLE_MODE="$(printf '%s'     "${json}" | jq -r '.status.encryption.mode // ""')"
     [[ -n "${BUNDLE_BUCKET}" ]] || { error "Export ${OPT_EXPORT} records no bundle."; return 1; }
@@ -314,14 +318,19 @@ rclone_remote() {
         return 1
     fi
     # Through rclone's environment, so no key is on a command line; for this
-    # script's commands alone. Path-style addressing, rclone's default for a
-    # store it does not name.
+    # script's commands alone. Path-style addressing, unless the bundle was
+    # written virtual-host style.
     export RCLONE_CONFIG_GTNRECOVERY_TYPE=s3 RCLONE_CONFIG_GTNRECOVERY_PROVIDER=Other
     export RCLONE_CONFIG_GTNRECOVERY_ENDPOINT="${BUNDLE_ENDPOINT}"
     export RCLONE_CONFIG_GTNRECOVERY_ACCESS_KEY_ID="${ak}" RCLONE_CONFIG_GTNRECOVERY_SECRET_ACCESS_KEY="${sk}"
     export RCLONE_S3_NO_CHECK_BUCKET=true RCLONE_CONFIG=/dev/null
     if [[ -n "${BUNDLE_REGION}" ]]; then
         export RCLONE_CONFIG_GTNRECOVERY_REGION="${BUNDLE_REGION}"
+    fi
+    if [[ "${BUNDLE_STYLE}" == "virtualHost" ]]; then
+        export RCLONE_CONFIG_GTNRECOVERY_FORCE_PATH_STYLE=false
+    else
+        export RCLONE_CONFIG_GTNRECOVERY_FORCE_PATH_STYLE=true
     fi
 }
 
@@ -568,7 +577,7 @@ cmd_show_key() {
 OPT_KIT=""; OPT_TENANT=""; OPT_EXPORT=""; OPT_APPS=""
 OPT_CONFIRM=""; OPT_KEY_FILE=""; OPT_QR=""; OPT_PASSPHRASE="0"
 OPT_DRY_RUN="0"
-OPT_S3_ENDPOINT=""; OPT_S3_BUCKET=""; OPT_S3_PREFIX=""; OPT_S3_REGION=""
+OPT_S3_ENDPOINT=""; OPT_S3_BUCKET=""; OPT_S3_PREFIX=""; OPT_S3_REGION=""; OPT_S3_STYLE=""
 OPT_S3_AK=""; OPT_S3_SK=""
 
 [[ $# -gt 0 ]] || { usage; exit 1; }
@@ -607,6 +616,7 @@ while [[ $# -gt 0 ]]; do
         --s3-bucket)     shift; OPT_S3_BUCKET="${1:-}" ;;
         --s3-prefix)     shift; OPT_S3_PREFIX="${1:-}" ;;
         --s3-region)     shift; OPT_S3_REGION="${1:-}" ;;
+        --s3-addressing-style) shift; OPT_S3_STYLE="${1:-}" ;;
         --s3-access-key) shift; OPT_S3_AK="${1:-}" ;;
         --s3-secret-key) shift; OPT_S3_SK="${1:-}" ;;
         -h|--help)    usage; exit 0 ;;

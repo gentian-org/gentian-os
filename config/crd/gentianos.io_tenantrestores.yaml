@@ -80,6 +80,16 @@ spec:
                   Bundle locates a bundle directly, for restoring one this cluster did not
                   produce — a migration, or a rebuild where the original export is gone.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how the bucket was named in requests to Endpoint
+                      when the bundle was written: path (empty) or virtualHost. Recorded for
+                      the reason Endpoint is: a restore or a deletion of this bundle
+                      addresses it as it was written, whatever the policy says today.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: |-
                       Bucket holds the tenant's bundles. It is provisioned per tenant and is
@@ -507,6 +517,16 @@ spec:
                 description: Bundle is the bundle actually used, resolved from exportRef
                   or spec.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how the bucket was named in requests to Endpoint
+                      when the bundle was written: path (empty) or virtualHost. Recorded for
+                      the reason Endpoint is: a restore or a deletion of this bundle
+                      addresses it as it was written, whatever the policy says today.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: |-
                       Bucket holds the tenant's bundles. It is provisioned per tenant and is

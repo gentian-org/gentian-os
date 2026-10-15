@@ -28,7 +28,8 @@
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
-#   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
+#   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]
+#                                  (--identity-file <f> | --passphrase)
 #   kubectl gentian tenants delegate-catalogues <name> on|off
 #   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
@@ -701,7 +702,7 @@ cmd_tenants_retire() {
 # from a prompt.
 cmd_tenants_import() {
     local file="" idfile="" ask_pw="" name="" identity="" passphrase="" dec body answer bundle st phase msg last=""
-    local bucket="" prefix="" endpoint=""
+    local bucket="" prefix="" endpoint="" style=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --identity-file) idfile="${2:?}"; shift 2 ;;
@@ -710,13 +711,19 @@ cmd_tenants_import() {
             --bucket) bucket="${2:?}"; shift 2 ;;
             --prefix) prefix="${2:?}"; shift 2 ;;
             --endpoint) endpoint="${2:?}"; shift 2 ;;
+            --addressing-style) style="${2:?}"; shift 2 ;;
             -*) die "unknown flag $1" ;;
             *) file="$1"; shift ;;
         esac
     done
     if [[ -z "${file}" && -z "${bucket}" ]]; then
-        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url>]  (--identity-file <f> | --passphrase) [--name <n>]"
+        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase) [--name <n>]"
     fi
+    case "${style}" in
+        ""|path|virtualHost) ;;
+        *) die "--addressing-style is path or virtualHost" ;;
+    esac
+    [[ -z "${style}" || -n "${endpoint}" ]] || die "--addressing-style goes with --endpoint"
     [[ -z "${file}" || -f "${file}" ]] || die "no such file: ${file}"
     [[ -z "${bucket}" || -n "${prefix}" ]] || die "--bucket needs --prefix"
     if [[ -n "${idfile}" ]]; then
@@ -736,8 +743,9 @@ cmd_tenants_import() {
         bundle="$(printf '%s' "${answer}" | jq -c '.bundle')"
     else
         # A bundle still in a bucket the cluster can reach: the platform's
-        # own when no endpoint is given, a destination's otherwise.
-        bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end)')"
+        # own when no endpoint is given, a destination's otherwise, named
+        # path-style unless --addressing-style virtualHost says otherwise.
+        bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
     body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --arg n "${name}" '{bundle:$b, decryption:$d} + (if $n == "" then {} else {name:$n} end)')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1

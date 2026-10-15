@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // A backup policy, as a commit.
@@ -58,6 +60,27 @@ type BackupDestination struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	Bucket   string `json:"bucket,omitempty"`
 	Region   string `json:"region,omitempty"`
+	// AddressingStyle is path (empty) or virtualHost: how a request names
+	// the bucket at the endpoint.
+	AddressingStyle string `json:"addressingStyle,omitempty"`
+}
+
+// ErrInvalidBackupPolicy is a policy the cluster's definition would refuse,
+// told the caller before it is committed rather than by a sync that fails.
+var ErrInvalidBackupPolicy = errors.New("invalid backup policy")
+
+// validate refuses what the BackupPolicy definition's schema refuses and
+// this file would otherwise commit.
+func (p BackupPolicy) validate() error {
+	if d := p.Destination; d != nil {
+		switch d.AddressingStyle {
+		case "", string(gentianov1alpha1.S3AddressingPath), string(gentianov1alpha1.S3AddressingVirtualHost):
+		default:
+			return fmt.Errorf("%w: destination.addressingStyle is %q; it is path or virtualHost",
+				ErrInvalidBackupPolicy, d.AddressingStyle)
+		}
+	}
+	return nil
 }
 
 // BackupRetention is which bundles survive.
@@ -89,6 +112,9 @@ func (g *GitOps) SetTenantBackupPolicy(ctx context.Context, tenant string, polic
 	// has it dropped rather than refused: it changes nothing either way, and
 	// refusing a field the screen never shows would be a puzzle.
 	policy.AllowTenantOverride = nil
+	if err := policy.validate(); err != nil {
+		return Result{}, err
+	}
 	body := renderBackupPolicy("tenant", tenant, policy)
 	return g.writeTenantFile(ctx, tenant, BackupPolicyFile, body, listResource,
 		fmt.Sprintf("Set the backup policy for tenant %s", tenant), meta)
@@ -108,6 +134,9 @@ func (g *GitOps) ClearTenantBackupPolicy(ctx context.Context, tenant string, met
 
 // SetClusterBackupPolicy writes the cluster's own policy and commits it.
 func (g *GitOps) SetClusterBackupPolicy(ctx context.Context, policy BackupPolicy, meta Meta) (Result, error) {
+	if err := policy.validate(); err != nil {
+		return Result{}, err
+	}
 	return g.writeClaimsFile(ctx, BackupPolicyFile, renderBackupPolicy("cluster", "", policy),
 		"Set the cluster's backup policy", meta)
 }
@@ -297,11 +326,12 @@ func renderBackupPolicy(scope, tenant string, p BackupPolicy) string {
 	if scope == "tenant" {
 		b.WriteString("  tenant: " + tenant + "\n")
 	}
-	if d := p.Destination; d != nil && (d.Endpoint != "" || d.Bucket != "" || d.Region != "") {
+	if d := p.Destination; d != nil && (d.Endpoint != "" || d.Bucket != "" || d.Region != "" || d.AddressingStyle != "") {
 		b.WriteString("  destination:\n")
 		writeScalar(&b, "    endpoint", d.Endpoint)
 		writeScalar(&b, "    bucket", d.Bucket)
 		writeScalar(&b, "    region", d.Region)
+		writeScalar(&b, "    addressingStyle", d.AddressingStyle)
 	}
 	writeScalar(&b, "  schedule", p.Schedule)
 	if p.SuspendSchedule {

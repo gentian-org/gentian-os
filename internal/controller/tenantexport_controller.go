@@ -226,6 +226,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			Prefix:           export.Name,
 			Endpoint:         eff.Endpoint,
 			Region:           eff.Region,
+			AddressingStyle:  eff.AddressingStyle,
 			CredentialSecret: eff.CredentialSecret,
 		}
 		export.Status.Phase = gentianov1alpha1.TenantExportPhaseRunning
@@ -908,17 +909,18 @@ func (r *TenantExportReconciler) jobParams(
 ) backup.JobParams {
 	bundle := export.Status.Bundle
 	p := backup.JobParams{
-		Namespace:    s3Namespace,
-		Tenant:       tenant.Name,
-		App:          appName,
-		Export:       export.Name,
-		Bucket:       bundle.Bucket,
-		Prefix:       bundle.Prefix,
-		Endpoint:     bundle.Endpoint,
-		Region:       bundle.Region,
-		ScratchLimit: exportScratchLimit,
-		BackoffLimit: exportCaptureBackoffLimit,
-		Encryption:   encryption,
+		Namespace:       s3Namespace,
+		Tenant:          tenant.Name,
+		App:             appName,
+		Export:          export.Name,
+		Bucket:          bundle.Bucket,
+		Prefix:          bundle.Prefix,
+		Endpoint:        bundle.Endpoint,
+		Region:          bundle.Region,
+		AddressingStyle: bundle.AddressingStyle,
+		ScratchLimit:    exportScratchLimit,
+		BackoffLimit:    exportCaptureBackoffLimit,
+		Encryption:      encryption,
 	}
 	// The bundle's own record, not the policy's current answer: these Jobs
 	// write into a bundle whose address was fixed when it was assigned.
@@ -1417,16 +1419,17 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 		// cleanup that assumed the platform's own would report success having
 		// deleted a prefix that was never there, leaving the real objects.
 		deleteParams := backup.JobParams{
-			Namespace:    s3Namespace,
-			Name:         name,
-			Tenant:       tenantName,
-			App:          "bundle",
-			Export:       export.Name,
-			Bucket:       bundle.Bucket,
-			Prefix:       bundle.Prefix,
-			Endpoint:     bundle.Endpoint,
-			Region:       bundle.Region,
-			BackoffLimit: exportCaptureBackoffLimit,
+			Namespace:       s3Namespace,
+			Name:            name,
+			Tenant:          tenantName,
+			App:             "bundle",
+			Export:          export.Name,
+			Bucket:          bundle.Bucket,
+			Prefix:          bundle.Prefix,
+			Endpoint:        bundle.Endpoint,
+			Region:          bundle.Region,
+			AddressingStyle: bundle.AddressingStyle,
+			BackoffLimit:    exportCaptureBackoffLimit,
 		}
 		if bundle.CredentialSecret != "" {
 			deleteParams.UploadCredentialsSecret = bundle.CredentialSecret

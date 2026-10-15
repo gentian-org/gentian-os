@@ -28,7 +28,8 @@ import (
 // when a Job runs.
 //
 // A container is handed S3_ENDPOINT, S3_ACCESS_KEY and S3_SECRET_KEY, from
-// Secret references (and S3_REGION where a destination names one), and its
+// Secret references (and S3_REGION and S3_ADDRESSING_STYLE where a
+// destination names them), and its
 // script begins with rcloneRemote, which turns them into an rclone remote
 // through rclone's environment. No key is ever on a command line.
 
@@ -50,13 +51,16 @@ const (
 // write fails before it starts. The one place a bucket is made on purpose
 // (bucketPreparation) says so for that command.
 //
-// Path-style addressing (rclone's default for a provider it does not name)
-// and the region when one is given.
+// Path-style addressing, stated rather than left to rclone's default for a
+// provider it does not name, unless S3_ADDRESSING_STYLE says virtualHost (a
+// destination that serves a bucket only by its own host name); and the
+// region when one is given.
 func rcloneRemote(remote string) string {
 	r := "RCLONE_CONFIG_" + strings.ToUpper(remote)
 	return fmt.Sprintf(`export %[1]s_TYPE=s3 %[1]s_PROVIDER=Other RCLONE_S3_NO_CHECK_BUCKET=true
 export %[1]s_ENDPOINT="${S3_ENDPOINT}" %[1]s_ACCESS_KEY_ID="${S3_ACCESS_KEY}" %[1]s_SECRET_ACCESS_KEY="${S3_SECRET_KEY}"
-if [ -n "${S3_REGION:-}" ]; then export %[1]s_REGION="${S3_REGION}"; fi`, r)
+if [ -n "${S3_REGION:-}" ]; then export %[1]s_REGION="${S3_REGION}"; fi
+if [ "${S3_ADDRESSING_STYLE:-path}" = virtualHost ]; then export %[1]s_FORCE_PATH_STYLE=false; else export %[1]s_FORCE_PATH_STYLE=true; fi`, r)
 }
 
 // storageEnv addresses an object store whose address and keys are all in

@@ -846,10 +846,11 @@ func (r *TenantRestoreReconciler) jobParams(
 		// The bundle's own record of where it was written, never the policy's
 		// current answer. A tenant that moved its destination last week must
 		// still be able to restore what it wrote the week before.
-		Endpoint:     bundle.Endpoint,
-		Region:       bundle.Region,
-		ScratchLimit: exportScratchLimit,
-		BackoffLimit: exportCaptureBackoffLimit,
+		Endpoint:        bundle.Endpoint,
+		Region:          bundle.Region,
+		AddressingStyle: bundle.AddressingStyle,
+		ScratchLimit:    exportScratchLimit,
+		BackoffLimit:    exportCaptureBackoffLimit,
 	}
 	if bundle.CredentialSecret != "" {
 		p.UploadCredentialsSecret = bundle.CredentialSecret

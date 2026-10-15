@@ -347,6 +347,24 @@ func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
 	if !strings.Contains(claim, "scope: cluster") || !strings.Contains(claim, "allowTenantOverride: false") {
 		t.Fatalf("cluster policy:\n%s", claim)
 	}
+
+	// A destination's addressing style is committed as stated, and one the
+	// definition would refuse is refused here, before anything is written.
+	code, body = h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"destination":{"endpoint":"https://s3.example.org","addressingStyle":"virtualHost"}}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("cluster policy with an addressing style: %d %v", code, body)
+	}
+	claim = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/backup-policy.yaml")
+	if !strings.Contains(claim, `addressingStyle: "virtualHost"`) && !strings.Contains(claim, "addressingStyle: virtualHost") {
+		t.Fatalf("the addressing style is not committed:\n%s", claim)
+	}
+	before = h.tip(t)
+	code, body = h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"destination":{"endpoint":"https://s3.example.org","addressingStyle":"dns"}}`)
+	if code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("an addressing style the definition refuses: %d %v", code, body)
+	}
 }
 
 // The realm policy is declared state: read from git, written as a commit, and

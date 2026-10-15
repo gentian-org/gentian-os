@@ -364,3 +364,44 @@ func TestResolveEffectiveTenantKeyReplacesTheClusters(t *testing.T) {
 		}
 	})
 }
+
+// A destination's addressing style travels with its endpoint: from the
+// policy, from one export's own destination, and not at all to the
+// platform's own storage.
+func TestTheAddressingStyleTravelsWithTheEndpoint(t *testing.T) {
+	tenant := policyTenant()
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{
+			Endpoint:        "https://s3.example.org",
+			AddressingStyle: gentianov1alpha1.S3AddressingVirtualHost,
+		},
+	})
+	eff, err := ResolveEffective(tenant, cluster, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eff.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
+		t.Errorf("the policy's style is not resolved: %q", eff.AddressingStyle)
+	}
+	// A tenant's destination replaces the cluster's wholesale, style and all.
+	own := tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{Endpoint: "https://other.example.org"},
+	})
+	allow := true
+	cluster.Spec.AllowTenantOverride = &allow
+	if eff, err := ResolveEffective(tenant, cluster, own); err != nil || eff.AddressingStyle != "" {
+		t.Errorf("the cluster's style outlived its endpoint (%v): %q", err, eff.AddressingStyle)
+	}
+	local := ApplyExportDestination(eff,
+		&gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationPlatform}, tenant, "m")
+	if local.AddressingStyle != "" {
+		t.Errorf("the platform's storage is given a style: %q", local.AddressingStyle)
+	}
+	custom := ApplyExportDestination(Effective{}, &gentianov1alpha1.ExportDestination{
+		Mode: gentianov1alpha1.ExportDestinationCustom, Endpoint: "https://s3.example.org",
+		AddressingStyle: gentianov1alpha1.S3AddressingVirtualHost,
+	}, tenant, "m")
+	if custom.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
+		t.Errorf("one export's style is not taken: %q", custom.AddressingStyle)
+	}
+}

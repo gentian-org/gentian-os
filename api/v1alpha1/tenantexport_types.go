@@ -133,7 +133,7 @@ func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint) > 0)",message="mode: custom requires an endpoint"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && size(self.credentialSecretRef) > 0)",message="credentialSource: transient requires credentialSecretRef"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0) && !has(self.addressingStyle))",message="endpoint, region, addressingStyle and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
 	// and an endpoint named here.
@@ -162,6 +162,11 @@ type ExportDestination struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
+
+	// AddressingStyle is how a bucket is named in a request to Endpoint:
+	// path (the default when empty) or virtualHost (BackupDestination).
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
 
 	// CredentialSource decides where mode: custom gets its keys.
 	//
@@ -406,6 +411,13 @@ type BundleRef struct {
 	// Region accompanies Endpoint for tooling that needs it.
 	// +optional
 	Region string `json:"region,omitempty"`
+
+	// AddressingStyle is how the bucket was named in requests to Endpoint
+	// when the bundle was written: path (empty) or virtualHost. Recorded for
+	// the reason Endpoint is: a restore or a deletion of this bundle
+	// addresses it as it was written, whatever the policy says today.
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
 
 	// CredentialSecret names the Secret whose keys open this endpoint. Also
 	// recorded, and for the same reason: a bundle written to a destination the

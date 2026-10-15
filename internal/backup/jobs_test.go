@@ -776,3 +776,38 @@ func TestJobsWithoutAVolumeAreNotPinned(t *testing.T) {
 		t.Errorf("a database dump was pinned to %v", sel)
 	}
 }
+
+// The bundle's addressing style reaches rclone: path unless the destination
+// says virtualHost, and the platform's own store always path.
+func TestTheAddressingStyleReachesRclone(t *testing.T) {
+	styleOf := func(p JobParams) (string, string) {
+		job := BundleDeleteJob(p)
+		c := job.Spec.Template.Spec.Containers[0]
+		style := ""
+		for _, e := range c.Env {
+			if e.Name == "S3_ADDRESSING_STYLE" {
+				style = e.Value
+			}
+		}
+		return style, strings.Join(append(append([]string{}, c.Command...), c.Args...), "\n")
+	}
+	p := params()
+	p.Endpoint, p.UploadCredentialsSecret = "https://s3.example.org", "backup-destination-cluster"
+	p.AddressingStyle = gentianov1alpha1.S3AddressingVirtualHost
+	style, script := styleOf(p)
+	if style != "virtualHost" {
+		t.Errorf("S3_ADDRESSING_STYLE = %q, want virtualHost", style)
+	}
+	if !strings.Contains(script, `if [ "${S3_ADDRESSING_STYLE:-path}" = virtualHost ]; then export RCLONE_CONFIG_BUNDLE_FORCE_PATH_STYLE=false; else export RCLONE_CONFIG_BUNDLE_FORCE_PATH_STYLE=true; fi`) {
+		t.Errorf("the remote does not follow S3_ADDRESSING_STYLE:\n%s", script)
+	}
+	for name, p := range map[string]JobParams{
+		"path":     func() JobParams { q := p; q.AddressingStyle = gentianov1alpha1.S3AddressingPath; return q }(),
+		"empty":    func() JobParams { q := p; q.AddressingStyle = ""; return q }(),
+		"platform": params(),
+	} {
+		if style, _ := styleOf(p); style != "" {
+			t.Errorf("%s: S3_ADDRESSING_STYLE = %q, want none (path)", name, style)
+		}
+	}
+}

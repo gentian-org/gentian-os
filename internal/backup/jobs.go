@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -90,6 +91,9 @@ type JobParams struct {
 	// Region is the destination's, for a provider that requires one; rclone
 	// signs with it. Empty leaves rclone's default.
 	Region string
+	// AddressingStyle is how the destination names a bucket in a request:
+	// path when empty, as the platform's own store does, or virtualHost.
+	AddressingStyle gentianov1alpha1.S3AddressingStyle
 	// ScratchLimit bounds the emptyDir a dump is staged in. Zero leaves it
 	// unbounded, which lets one large tenant fill a node's ephemeral storage.
 	ScratchLimit string
@@ -792,6 +796,10 @@ func bundleEnv(p JobParams) []corev1.EnvVar {
 		// provider that requires one (AWS, Exoscale SOS) refuses a request
 		// signed for another.
 		env = append(env, corev1.EnvVar{Name: "S3_REGION", Value: p.Region})
+	}
+	if p.AddressingStyle.VirtualHost() {
+		// A provider that serves a bucket only by its own host name.
+		env = append(env, corev1.EnvVar{Name: "S3_ADDRESSING_STYLE", Value: string(p.AddressingStyle)})
 	}
 	return env
 }

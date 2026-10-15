@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"filippo.io/age"
+	"github.com/minio/minio-go/v7"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -131,6 +132,20 @@ func TestOnlyAnUploadedBundleIsRemoved(t *testing.T) {
 		// say no.
 		if err := (&Store{}).RemoveImported(context.Background(), ref); err == nil || !strings.Contains(err.Error(), "not an uploaded bundle") {
 			t.Errorf("%+v: err = %v, want a refusal", ref, err)
+		}
+	}
+}
+
+// The operator's own reads and deletions address a bundle as the Jobs wrote
+// it: path unless it records virtualHost, never minio-go's guess.
+func TestBucketLookupFollowsTheBundle(t *testing.T) {
+	for style, want := range map[gentianov1alpha1.S3AddressingStyle]minio.BucketLookupType{
+		"":                                       minio.BucketLookupPath,
+		gentianov1alpha1.S3AddressingPath:        minio.BucketLookupPath,
+		gentianov1alpha1.S3AddressingVirtualHost: minio.BucketLookupDNS,
+	} {
+		if got := BucketLookup(style); got != want {
+			t.Errorf("%q: %v, want %v", style, got, want)
 		}
 	}
 }

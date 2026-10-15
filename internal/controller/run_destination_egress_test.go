@@ -95,3 +95,18 @@ func TestARunWithNoUnitInTheTenantsNamespaceIsGivenNoWayOut(t *testing.T) {
 		t.Errorf("given a way out with no unit in the tenant's namespace (%v)", err)
 	}
 }
+
+// A restore and a bundle's deletion address the bundle as it was written:
+// the style recorded on it, not the policy's today.
+func TestARestoreAddressesTheBundleAsItWasWritten(t *testing.T) {
+	w := newPlacementWorld(t, true)
+	w.restore.Status.Bundle.AddressingStyle = gentianov1alpha1.S3AddressingVirtualHost
+	p := w.rr.jobParams(w.tenant, "wiki", w.restore)
+	if p.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
+		t.Errorf("the restore's Jobs address the bundle %q", p.AddressingStyle)
+	}
+	w.export.Status.Bundle.AddressingStyle = gentianov1alpha1.S3AddressingVirtualHost
+	if p := w.er.jobParams(w.tenant, "wiki", w.export, backup.Encryption{}); p.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
+		t.Errorf("the export's Jobs address the bundle %q", p.AddressingStyle)
+	}
+}
