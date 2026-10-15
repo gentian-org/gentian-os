@@ -277,7 +277,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 		// A display name with a quote and a newline is the shape that breaks
 		// naive here-doc embedding.
 		Apps: []ManifestApp{{Name: "app\"one", ChartVersion: "1.0.0"}},
-	}, NewBundleInfo("demo", "nightly", "now", params().Encryption))
+	}, NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 // creates it. Every one of them, because any can be the first to run.
 func TestBundleWritersCreateTheirOwnBucket(t *testing.T) {
 	manifest, err := ManifestJob(params(), &Manifest{Tenant: "demo"},
-		NewBundleInfo("demo", "nightly", "now", params().Encryption))
+		NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 	p.UploadCredentialsSecret = "backup-destination-corp"
 
 	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"},
-		NewBundleInfo("demo", "nightly", "now", p.Encryption))
+		NewBundleInfo("demo", "nightly", "now", p.Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}

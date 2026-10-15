@@ -570,7 +570,7 @@ func TestArchivedMailboxesTravelAsArchives(t *testing.T) {
 		By: "admin@demo.k.example", SizeBytes: 4096, Messages: 3}) {
 		t.Errorf("named as %+v", held[0])
 	}
-	unit, err := er.manifestUnitWith(export, demo, gapsEncryption, nil, held)
+	unit, err := er.manifestUnitWith(export, demo, gapsEncryption, nil, held, signing{})
 	if err != nil || !strings.Contains(containerArgs(unit.Job), `"archivedMailboxes":[{"archive":"alice-20261009T143000Z","address":"alice@demo.k.example"`) {
 		t.Fatalf("the manifest does not carry them: %v", err)
 	}

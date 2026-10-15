@@ -40,6 +40,10 @@ const (
 	clusterConfigMailEgressKey  = "mail.egressHost"
 	clusterConfigSecretModeKey  = "secretMode"
 	clusterConfigMainAddressKey = "mainAddress.tenant"
+	// The cluster's random id (spec.clusterUID), which a bundle records and
+	// a restore compares. No environment fallback: a cluster whose claim
+	// carries none has none, and says so.
+	clusterConfigUIDKey = "cluster.uid"
 )
 
 // clusterConfigValue returns what the claim says for key, or the named

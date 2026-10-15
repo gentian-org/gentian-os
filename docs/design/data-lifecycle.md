@@ -99,7 +99,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | Archived mailboxes of removed people (the same clusters and domains) | made when a person is removed and whoever removed them chose *archive* | copied, as archived | put back as archived, never into a live mailbox | put back as archived into the new tenant's mail domain, and put on record there | — | — | kept | destroyed, with the mailboxes |
 | Web addresses: routes, certificate, DNS records | made | not copied | — | made new | the app's route removed | — | removed | removed |
 | Access rights that follow from the tenant, its apps and its people (the rights store) | derived | not copied | derived again | derived again | the app's removed | — | the apps' removed | the apps' removed; the tenant's own entries and who is its member stay (gap 1) |
-| Access rights that follow from nothing else: a right granted beyond the defaults, a default withdrawn | written in the store | copied | put back, after the rest is derived | what was withdrawn is withdrawn; what was granted is **not** brought, and named | kept | — | kept | **not removed** (gap 1) |
+| Access rights that follow from nothing else: a right granted beyond the defaults, a default withdrawn | written in the store | copied; the manifest is signed by the cluster | put back, after the rest is derived, from a bundle this cluster signed and took; from any other only what was withdrawn | as a restore: granted ones (a person's among them) only from this cluster's own bundle of a tenant of the same name, otherwise **not** brought, and named | kept | — | kept | **not removed** (gap 1) |
 | The backup bucket and the bundles in it | made by the first backup | bundles are written here | read | — | — | — | kept | destroyed, unless the tenant keeps its bundles |
 | The list of what was provisioned | written | not copied | — | written new | kept | shortened, kind by kind | kept | destroyed, last |
 
@@ -217,15 +217,21 @@ itself, the platform's groups with their members, mailboxes (by the part of
 each address before the @, in the new tenant's mail domain) and entries of
 the rights store. The old tenant's sign-in clients are not imported.
 
-Two things are different from a restore, because the tenant is new; both
-follow from `intoNewTenant`, and the second holds for any bundle taken of a
-tenant of another name or on another cluster, whatever the restore says. The data
-of apps the bundle holds as uninstalled comes with stores made for it — the
-database and its role, the bucket, the volume claims — and the apps stay
-uninstalled; an app whose definition this cluster does not have is left out
-and named. And no access right that was *granted* in the old tenant is
-granted in the new one: each is named in the result, for whoever may grant it
-here. A right the old tenant had *withdrawn* is withdrawn in the new one too.
+One thing is different from a restore, because the tenant is new, and
+follows from `intoNewTenant`: the data of apps the bundle holds as
+uninstalled comes with stores made for it — the database and its role, the
+bucket, the volume claims — and the apps stay uninstalled; an app whose
+definition this cluster does not have is left out and named.
+
+Access rights follow one rule for an import and a restore alike. A right
+*withdrawn* in the old tenant is withdrawn in the new one. A right *granted*
+there, a person's among them, is granted only when the bundle provably comes
+from this cluster: its manifest signed with this cluster's key, taken on a
+cluster of this cluster's id, and of a tenant of the same name
+([security.md §6.4](security.md)). From any other bundle — unsigned as every
+bundle written before signing is, another cluster's, another name's — each
+is named in the result, for whoever may grant it here, and
+`status.rights.provenance` says why.
 
 The import is recorded in git beside the new tenant until it has finished.
 A director that restarts goes on with it. It needs the bundle's key again
@@ -271,10 +277,11 @@ tenant's own key is made by a person, on the command line or in the browser,
 and is on the cluster only if that person had the custodian keep a copy
 ([security.md §6.4](security.md)).
 
-A bundle is not signed. A restore cannot tell who made the bundle it is
-given, and sets the secrets of the apps it restores to the values that
-bundle holds. Restore only a bundle whose origin you know
-([security.md §6.4](security.md)).
+The cluster signs a bundle's manifest and not its artefacts. The signature
+decides whether granted rights come back, nothing else: a restore cannot
+tell who made the data it is given, and sets the secrets of the apps it
+restores to the values that bundle holds. Restore only a bundle whose origin
+you know ([security.md §6.4](security.md)).
 
 After a **restore**:
 

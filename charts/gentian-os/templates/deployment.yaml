@@ -320,6 +320,10 @@ spec:
             - name: USAGE_STATISTICS_KEY_FILE
               value: /etc/gentian/usage-statistics/{{ .Values.usageStatistics.signingKey.property }}
             {{- end }}
+            # The bundle signing key, a file like the one above, read when a
+            # manifest is written or checked.
+            - name: BUNDLE_SIGNING_KEY_FILE
+              value: /etc/gentian/bundle-signing/{{ .Values.bundleSigning.signingKey.property }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}
@@ -425,8 +429,10 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if or $webhookEnabled .Values.trustAnchorSecret $usageStatisticsEnabled }}
           volumeMounts:
+            - name: bundle-signing-key
+              mountPath: /etc/gentian/bundle-signing
+              readOnly: true
             {{- if $usageStatisticsEnabled }}
             - name: usage-statistics-key
               mountPath: /etc/gentian/usage-statistics
@@ -442,7 +448,6 @@ spec:
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
             {{- end }}
-          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -455,8 +460,14 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or $webhookEnabled .Values.trustAnchorSecret $usageStatisticsEnabled }}
       volumes:
+        # Optional, like the usage statistics key: until the vault path and
+        # the Secret exist the operator writes bundles unsigned and says so.
+        - name: bundle-signing-key
+          secret:
+            secretName: {{ .Values.bundleSigning.signingKey.secretName | quote }}
+            optional: true
+            defaultMode: 0440
         {{- if $usageStatisticsEnabled }}
         # Optional: the pod starts while the vault path or the Secret is still
         # missing, and the operator then records that it has no key instead
@@ -477,5 +488,4 @@ spec:
           secret:
             secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
         {{- end }}
-      {{- end }}
       terminationGracePeriodSeconds: 10

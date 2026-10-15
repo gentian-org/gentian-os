@@ -46,7 +46,7 @@ func unitJobs(t *testing.T) map[string]*batchv1.Job {
 			if external {
 				p.Endpoint, p.UploadCredentialsSecret = "https://s3.example.org", "destination"
 			}
-			manifest, err := ManifestJob(p, &Manifest{SchemaVersion: ManifestSchemaVersion, Tenant: "demo"}, NewBundleInfo("demo", "nightly", "now", p.Encryption))
+			manifest, err := ManifestJob(p, &Manifest{SchemaVersion: ManifestSchemaVersion, Tenant: "demo"}, NewBundleInfo("demo", "nightly", "now", p.Encryption), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -71,7 +71,9 @@ type TenantRestoreReconciler struct {
 // BundleReader is the object store as a restore uses it. *bundlestore.Store
 // is one.
 type BundleReader interface {
-	Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, error)
+	// SignedManifest reads the manifest, and what its signature is checked
+	// against: the bytes it was parsed from and the bundle's signature.
+	SignedManifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, *bundlestore.Signed, error)
 	// AppSecrets reads an app's secrets artefact, at the path the manifest
 	// gives for it, and opens it with the key.
 	AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppSecrets, error)
@@ -1033,7 +1035,7 @@ func (r *TenantRestoreReconciler) plan(
 	if err != nil {
 		return nil, refuseRestore("DecryptionUnavailable", "%v", err)
 	}
-	manifest, err := r.Bundles.Manifest(ctx, *ref, key)
+	manifest, signed, err := r.Bundles.SignedManifest(ctx, *ref, key)
 	if err != nil {
 		return nil, refuseRestore("BundleUnusable", "the bundle's manifest could not be read, so what the bundle holds is not known: %v. Nothing was changed", err)
 	}
@@ -1085,6 +1087,7 @@ func (r *TenantRestoreReconciler) plan(
 	if err != nil {
 		return nil, err
 	}
+	target.provenance = r.provenance(ctx, manifest, signed)
 	return planRestore(manifest, tenant, restore.Spec.Apps, restore.Spec.SkipVersionCheck, target, live)
 }
 
@@ -1107,6 +1110,23 @@ func (r *TenantRestoreReconciler) planTarget(ctx context.Context, tenant *gentia
 		target.haveRights = r.Tenant.Rights != nil && r.Tenant.ClusterID != ""
 	}
 	return target, nil
+}
+
+// provenance is whether the bundle was written on this cluster: signed with
+// its key and taken on it (backup.CheckProvenance).
+func (r *TenantRestoreReconciler) provenance(ctx context.Context, m *backup.Manifest, signed *bundlestore.Signed) backup.Provenance {
+	var key *backup.SigningKey
+	uid := ""
+	if r.Reconciler != nil {
+		key, _ = r.Reconciler.bundleSigningKey()
+		uid = r.Reconciler.clusterUID(ctx)
+	}
+	var plain []byte
+	var sig *bundle.ManifestSignature
+	if signed != nil {
+		plain, sig = signed.Plain, signed.Signature
+	}
+	return backup.CheckProvenance(plain, m, sig, key, uid)
 }
 
 // bundleKey reads the key material the restore names, to open the manifest
@@ -1177,6 +1197,16 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.ArchivedMailboxes = plan.archivedMailboxes
 	restore.Status.Rights = plan.rights
 	if plan.rights != nil {
+		// Where the bundle comes from decides whether what was granted
+		// comes back; a signature that does not hold is said apart.
+		switch {
+		case plan.rights.Provenance == backup.ProvenanceBadSignature:
+			restore.Status.Notes = append(restore.Status.Notes, "The bundle's signature does NOT hold: "+
+				plan.rights.ProvenanceMessage+". No right granted in the tenant it was taken of was brought back.")
+		case plan.rights.Provenance != backup.ProvenanceProven && plan.rights.Provenance != "":
+			restore.Status.Notes = append(restore.Status.Notes, "No right granted in the tenant the bundle was taken of was brought back: "+
+				plan.rights.ProvenanceMessage+".")
+		}
 		for _, left := range plan.rights.NotBrought {
 			restore.Status.Notes = append(restore.Status.Notes, "A right the bundle holds was NOT brought: "+left+".")
 		}

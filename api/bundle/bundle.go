@@ -231,6 +231,15 @@ type Manifest struct {
 	// version 4, and not secret.
 	KernelDomain string `json:"kernelDomain,omitempty"`
 
+	// ClusterUID is the random id the cluster the bundle was taken on was
+	// given once, when it was installed (spec.clusterUID of its Cluster
+	// claim, kept in its deployments repository). Cluster above is a name
+	// somebody chose and many clusters share; this one is not. A restore
+	// brings back the rights granted in the tenant only from a bundle
+	// signed by the cluster it is restored on (SignatureFile) and taken on
+	// a cluster of this id. Optional within version 4.
+	ClusterUID string `json:"clusterUid,omitempty"`
+
 	// Apps records what was captured per app, including the pause window. The
 	// windows are published rather than smoothed over: an export is consistent
 	// within an app and not across them, and the timestamps are what make that
@@ -404,6 +413,37 @@ type RightsTuple struct {
 	User     string `json:"user"`
 	Relation string `json:"relation"`
 	Object   string `json:"object"`
+}
+
+// SignatureFile is the manifest's signature, beside it in the bundle: a
+// ManifestSignature as JSON, in the clear like bundle-info.json. A bundle
+// without one is unsigned, and a reader that does not know the file reads
+// the bundle as before.
+const SignatureFile = "manifest.json.sig"
+
+// SignatureContext is put before the manifest's bytes in what is signed, so
+// that a signature over a manifest is never also one over anything else the
+// key might sign.
+const SignatureContext = "gentian-os bundle manifest v1\n"
+
+// SignatureAlgorithm is the one algorithm a manifest is signed with.
+const SignatureAlgorithm = "ed25519"
+
+// ManifestSignature is the cluster's signature over a bundle's manifest.
+//
+// What is signed is SignatureContext followed by the manifest exactly as
+// manifest.json holds it once decrypted, without a final newline. The
+// manifest names the tenant, the cluster's id (Manifest.ClusterUID) and the
+// rights, so all three are covered.
+type ManifestSignature struct {
+	// Algorithm is SignatureAlgorithm.
+	Algorithm string `json:"algorithm"`
+	// PublicKey is the public half of the key that signed, base64. It says
+	// which key to check with; it proves nothing by itself: a restore
+	// checks with its own cluster's key and with no key a bundle names.
+	PublicKey string `json:"publicKey"`
+	// Signature is the signature, base64.
+	Signature string `json:"signature"`
 }
 
 // ManifestIdentity records the realm capture.

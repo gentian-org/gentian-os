@@ -746,6 +746,17 @@ spec:
                       type: string
                     type: array
                     x-kubernetes-list-type: atomic
+                  provenance:
+                    description: |-
+                      Provenance is whether the bundle was written on this cluster, which
+                      decides whether what was granted in its tenant comes back: Proven
+                      (signed with this cluster's key, taken on this cluster), or why not
+                      -- NoSigningKey, Unsigned, SignedByAnotherKey, BadSignature,
+                      NoClusterID, AnotherCluster, AnotherTenant.
+                    type: string
+                  provenanceMessage:
+                    description: ProvenanceMessage says the same in a sentence.
+                    type: string
                   waitingSince:
                     description: |-
                       WaitingSince is when the restore began to wait for the operator to

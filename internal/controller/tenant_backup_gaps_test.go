@@ -1172,6 +1172,18 @@ func TestAnExportCarriesTheRightsThatFollowFromNothingElse(t *testing.T) {
 	if staged := containerArgs(unit.Job); !strings.Contains(staged, `"rights":{"cluster":"c1","granted":[`) || !strings.Contains(staged, `"withdrawn":[{"user":"cluster:c1","relation":"operated_by","object":"tenant:demo"}]`) {
 		t.Errorf("the manifest does not hold the rights:\n%s", staged)
 	}
+	// Signed, with the cluster's id in it, where the cluster has a key.
+	key, err := backup.SigningKeyFromSeed(strings.Repeat("ab", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit, err = w.er.manifestUnitWith(w.export, w.tenant, gapsEncryption, rights, nil, signing{key: key, clusterUID: "u-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staged := containerArgs(unit.Job); !strings.Contains(staged, `"clusterUid":"u-1"`) || !strings.Contains(staged, bundle.SignatureFile) {
+		t.Errorf("the manifest is not signed:\n%s", staged)
+	}
 
 	// A tenant the projection has not attached yet has nothing withdrawn:
 	// the export waits instead of recording every default as taken away.
@@ -1201,94 +1213,141 @@ func rightsManifest(tenant, cluster string) *backup.Manifest {
 	}
 }
 
-// A restore into the tenant the bundle was taken of puts the rights back.
-// An import -- a tenant made new, under any name, on any cluster -- brings
-// no right that was granted, names each, and withdraws what was withdrawn,
-// under the new tenant's names.
-func TestARestorePutsRightsBackAndAnImportBringsNoGrant(t *testing.T) {
+// proven is a bundle this cluster wrote; unproven one it cannot say it did.
+var (
+	proven   = backup.Provenance{Reason: backup.ProvenanceProven, Message: "signed with this cluster's key"}
+	unproven = map[string]backup.Provenance{
+		backup.ProvenanceNoKey:        {Reason: backup.ProvenanceNoKey, Message: "this cluster holds no bundle signing key"},
+		backup.ProvenanceUnsigned:     {Reason: backup.ProvenanceUnsigned, Message: "the bundle is not signed"},
+		backup.ProvenanceOtherKey:     {Reason: backup.ProvenanceOtherKey, Message: "signed with another key"},
+		backup.ProvenanceBadSignature: {Reason: backup.ProvenanceBadSignature, Message: "the signature does NOT match"},
+		backup.ProvenanceNoClusterID:  {Reason: backup.ProvenanceNoClusterID, Message: "this cluster has no cluster id"},
+		backup.ProvenanceOtherCluster: {Reason: backup.ProvenanceOtherCluster, Message: "taken on a cluster of another id"},
+	}
+)
+
+// A bundle this cluster wrote of this tenant puts its rights back, into the
+// tenant it was taken of and into one made new for it alike -- a person's
+// among them. Any other bundle withdraws what was withdrawn and grants
+// nothing, names each grant it leaves, and says why once.
+func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 	installed := func(string) (liveApp, error) {
 		return liveApp{installed: true, profile: chartProfile("wiki", "", gentianov1alpha1.DatabaseEnginePostgreSQL, false)}, nil
 	}
-	target := func(tenant *gentianov1alpha1.Tenant, cluster string, intoNew bool) planTarget {
+	target := func(tenant *gentianov1alpha1.Tenant, cluster string, intoNew bool, p backup.Provenance) planTarget {
 		out := targetOf(tenant)
-		out.cluster, out.haveRights, out.intoNewTenant = cluster, true, intoNew
+		out.cluster, out.haveRights, out.intoNewTenant, out.provenance = cluster, true, intoNew, p
 		return out
 	}
-
-	// --- a restore, same tenant, same cluster.
+	withPerson := func() *backup.Manifest {
+		m := rightsManifest("demo", "c1")
+		m.Rights.Granted = append(m.Rights.Granted, bundle.RightsTuple{User: "user:5f1c", Relation: "admin", Object: "app:demo/wiki"})
+		return m
+	}
 	demo := planTenant("demo", "wiki")
-	plan, err := planRestore(rightsManifest("demo", "c1"), demo, nil, true, target(demo, "c1", false), installed)
+
+	// --- proven, same name: in place and into a tenant made new alike.
+	for _, intoNew := range []bool{false, true} {
+		plan, err := planRestore(withPerson(), demo, nil, true, target(demo, "c1", intoNew, proven), installed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := plan.rights
+		if r == nil || len(r.Grant) != 3 || len(r.Withdraw) != 1 || len(r.NotBrought) != 0 || r.Provenance != backup.ProvenanceProven {
+			t.Fatalf("intoNew=%v: this cluster's bundle of this tenant: %+v", intoNew, r)
+		}
+		if r.Withdraw[0] != "cluster:c1 operated_by tenant:demo" || r.Grant[1] != "group:gentian/tenant/demo/leads#member admin app:demo/wiki" ||
+			r.Grant[2] != "user:5f1c admin app:demo/wiki" {
+			t.Errorf("intoNew=%v: rights = %+v", intoNew, r)
+		}
+	}
+
+	// --- proven, and restored under another name: nothing granted.
+	acme := planTenant("acme", "wiki")
+	plan, err := planRestore(withPerson(), acme, nil, true, target(acme, "c1", true, proven), installed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := plan.rights
-	if r == nil || len(r.Grant) != 2 || len(r.Withdraw) != 1 || len(r.NotBrought) != 0 {
-		t.Fatalf("a restore's rights = %+v", r)
-	}
-	if r.Withdraw[0] != "cluster:c1 operated_by tenant:demo" || r.Grant[1] != "group:gentian/tenant/demo/leads#member admin app:demo/wiki" {
-		t.Errorf("rights = %+v", r)
+	if r := plan.rights; len(r.Grant) != 0 || len(r.Withdraw) != 1 || r.Withdraw[0] != "cluster:c1 operated_by tenant:acme" ||
+		len(r.NotBrought) != 3 || r.Provenance != backup.ProvenanceOtherTenant || !strings.Contains(r.ProvenanceMessage, "of tenant demo") {
+		t.Errorf("another name: %+v", r)
 	}
 
-	// --- an import, in each of the three ways a tenant is new.
-	renamed := planTenant("acme", "wiki")
-	cases := map[string]struct {
-		tenant   *gentianov1alpha1.Tenant
-		target   planTarget
-		withdraw string
-		named    string
-	}{
-		"said to be new":  {demo, target(demo, "c1", true), "cluster:c1 operated_by tenant:demo", "group:gentian/platform/support#member admin tenant:demo"},
-		"another name":    {renamed, target(renamed, "c1", false), "cluster:c1 operated_by tenant:acme", "group:gentian/tenant/acme/leads#member admin app:acme/wiki"},
-		"another cluster": {demo, target(demo, "c2", false), "cluster:c2 operated_by tenant:demo", "group:gentian/platform/support#member admin tenant:demo"},
-	}
-	for name, c := range cases {
-		plan, err := planRestore(rightsManifest("demo", "c1"), c.tenant, nil, true, c.target, installed)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		r := plan.rights
-		if r == nil || len(r.Grant) != 0 {
-			t.Errorf("%s: an import grants %v", name, r)
-			continue
-		}
-		if len(r.Withdraw) != 1 || r.Withdraw[0] != c.withdraw {
-			t.Errorf("%s: withdraws %v, want %s", name, r.Withdraw, c.withdraw)
-		}
-		left := strings.Join(r.NotBrought, "\n")
-		if len(r.NotBrought) != 2 || !strings.Contains(left, c.named) || !strings.Contains(left, "not carried into a tenant made new") {
-			t.Errorf("%s: not brought:\n%s", name, left)
-		}
-		// Said in the result, entry by entry.
-		restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-" + c.tenant.Name}}
-		recordPlan(restore, plan)
-		if notes := strings.Join(restore.Status.Notes, "\n"); strings.Count(notes, "A right the bundle holds was NOT brought") != 2 {
-			t.Errorf("%s: the result does not name what was not brought:\n%s", name, notes)
+	// --- not proven, each way: what was withdrawn is withdrawn, nothing
+	// granted, the person's entry named, and the reason said once.
+	for reason, p := range unproven {
+		for _, intoNew := range []bool{false, true} {
+			plan, err := planRestore(withPerson(), demo, nil, true, target(demo, "c1", intoNew, p), installed)
+			if err != nil {
+				t.Fatalf("%s: %v", reason, err)
+			}
+			r := plan.rights
+			if r == nil || len(r.Grant) != 0 || len(r.Withdraw) != 1 || len(r.NotBrought) != 3 || r.Provenance != reason || r.ProvenanceMessage != p.Message {
+				t.Errorf("%s intoNew=%v: %+v", reason, intoNew, r)
+				continue
+			}
+			left := strings.Join(r.NotBrought, "\n")
+			if !strings.Contains(left, "group:gentian/platform/support#member admin tenant:demo: it was granted in the tenant the bundle was taken of") ||
+				!strings.Contains(left, "user:5f1c admin app:demo/wiki: it names a person") || !strings.Contains(left, p.Message) {
+				t.Errorf("%s: not brought:\n%s", reason, left)
+			}
+			restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-demo"}}
+			recordPlan(restore, plan)
+			notes := strings.Join(restore.Status.Notes, "\n")
+			if strings.Count(notes, "A right the bundle holds was NOT brought") != 3 {
+				t.Errorf("%s: the result does not name what was not brought:\n%s", reason, notes)
+			}
+			// A signature that does not hold is said apart from a bundle
+			// that is merely not this cluster's.
+			bad := strings.Contains(notes, "The bundle's signature does NOT hold: "+p.Message)
+			other := strings.Contains(notes, "No right granted in the tenant the bundle was taken of was brought back: "+p.Message)
+			if (reason == backup.ProvenanceBadSignature) != bad || bad == other {
+				t.Errorf("%s: the result says:\n%s", reason, notes)
+			}
 		}
 	}
 
-	// --- what is never written, wherever the bundle is restored: an entry
-	// on something that is not the tenant's, a person by an identifier of
-	// the old realm, and what is no id of the store at all.
+	// --- a person's entry withdrawn in the bundle is a person's too.
 	m := rightsManifest("demo", "c1")
+	m.Rights.Withdrawn = append(m.Rights.Withdrawn, bundle.RightsTuple{User: "user:5f1c", Relation: "viewer", Object: "tenant:demo"})
+	plan, err = planRestore(m, demo, nil, true, target(demo, "c1", true, unproven[backup.ProvenanceUnsigned]), installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := plan.rights; len(r.Withdraw) != 1 || !strings.Contains(strings.Join(r.NotBrought, "\n"), "user:5f1c viewer tenant:demo (withdrawn in the bundle): it names a person") {
+		t.Errorf("a person's withdrawn entry from an unsigned bundle: %+v", r)
+	}
+	plan, err = planRestore(m, demo, nil, true, target(demo, "c1", true, proven), installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := plan.rights; len(r.Withdraw) != 2 {
+		t.Errorf("a person's withdrawn entry from this cluster's bundle: %+v", r)
+	}
+
+	// --- what is never written, wherever the bundle comes from: an entry
+	// on something that is not the tenant's, and what is no id of the
+	// store at all.
+	m = rightsManifest("demo", "c1")
 	m.Rights.Granted = []bundle.RightsTuple{
 		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "tenant:other"},
 		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "cluster:c1"},
-		{User: "user:1234", Relation: "admin", Object: "tenant:demo"},
 		{User: "user:*", Relation: "admin", Object: "tenant:demo"},
 		{User: "group:x#member extra", Relation: "admin", Object: "tenant:demo"},
 		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "app:demo/"},
 	}
 	m.Rights.Withdrawn = []bundle.RightsTuple{{User: "cluster:c1", Relation: "cluster", Object: "tenant:other"}}
-	plan, err = planRestore(m, demo, nil, true, target(demo, "c1", false), installed)
+	plan, err = planRestore(m, demo, nil, true, target(demo, "c1", false, proven), installed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := plan.rights; len(r.Grant) != 0 || len(r.Withdraw) != 0 || len(r.NotBrought) != 7 {
+	if r := plan.rights; len(r.Grant) != 0 || len(r.Withdraw) != 0 || len(r.NotBrought) != 6 {
 		t.Errorf("entries a restore must not write: %+v", r)
 	}
 
 	// A cluster without a rights store writes none and says so.
 	none := targetOf(demo)
+	none.provenance = proven
 	plan, err = planRestore(rightsManifest("demo", "c1"), demo, nil, true, none, installed)
 	if err != nil {
 		t.Fatal(err)
@@ -1356,6 +1415,7 @@ func TestARestoreWritesTheRightsLast(t *testing.T) {
 		{Kind: bundle.ArtefactPostgres, Name: "demo_wiki", Path: "postgres/demo_wiki.pgc"}}}
 	w.bundles.manifest = m
 	ctx := context.Background()
+	signBundle(t, w, m, "u-1")
 
 	finish := func() {
 		for _, job := range w.jobs(t) {
@@ -1391,6 +1451,56 @@ func TestARestoreWritesTheRightsLast(t *testing.T) {
 	}
 	if !store.has("group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki") || store.has("cluster:c1", "operated_by", "tenant:demo") {
 		t.Errorf("the store after the restore: %v", store.tuples)
+	}
+}
+
+// signBundle makes the restore world's cluster one with a bundle signing
+// key and the id uid, and its bundle m one that cluster signed.
+func signBundle(t *testing.T, w *restoreWorld, m *backup.Manifest, uid string) {
+	t.Helper()
+	key, err := backup.SigningKeyFromSeed(strings.Repeat("ab", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.r.Reconciler.SigningKey = func() (*backup.SigningKey, error) { return key, nil }
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterConfigName, Namespace: clusterConfigNamespace},
+		Data:       map[string]string{clusterConfigUIDKey: uid},
+	}
+	if err := w.c.Create(context.Background(), cm); err != nil {
+		t.Fatal(err)
+	}
+	m.ClusterUID = uid
+	plain, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.bundles.plain = append(plain, '\n')
+	w.bundles.signature = key.SignManifest(plain)
+}
+
+// The same restore of a bundle that is not signed: what was withdrawn is
+// withdrawn, nothing is granted, and the result says why.
+func TestARestoreOfAnUnsignedBundleGrantsNothing(t *testing.T) {
+	w := newRestoreWorld(t, func(r *gentianov1alpha1.TenantRestore) { r.Name = "r1" })
+	store := newFakeRights(projected("c1", "demo", "wiki")...)
+	w.r.Tenant.Rights, w.r.Tenant.ClusterID = store, "c1"
+	m := rightsManifest("demo", "c1")
+	m.Apps[0] = backup.ManifestApp{Name: "wiki", ChartVersion: "2.0.0", Stores: []backup.ManifestStore{
+		{Kind: bundle.ArtefactPostgres, Name: "demo_wiki", Path: "postgres/demo_wiki.pgc"}}}
+	w.bundles.manifest = m
+	signBundle(t, w, m, "u-1")
+	w.bundles.signature = nil
+
+	got := w.run(t)
+	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || got.Status.Rights == nil || !got.Status.Rights.Applied {
+		t.Fatalf("phase %s, rights %+v", got.Status.Phase, got.Status.Rights)
+	}
+	if store.has("group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki") || store.has("cluster:c1", "operated_by", "tenant:demo") {
+		t.Errorf("the store after the restore: %v", store.tuples)
+	}
+	if got.Status.Rights.Provenance != backup.ProvenanceUnsigned || !strings.Contains(strings.Join(got.Status.Notes, "\n"), "the bundle is not signed") {
+		t.Errorf("the result does not say why: %+v %v", got.Status.Rights, got.Status.Notes)
 	}
 }
 

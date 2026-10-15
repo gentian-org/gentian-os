@@ -130,22 +130,69 @@ func BucketLookup(style gentianov1alpha1.S3AddressingStyle) minio.BucketLookupTy
 
 // Manifest reads a bundle's manifest and opens it with the key.
 func (s *Store) Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key Key) (*bundle.Manifest, error) {
+	m, _, err := s.SignedManifest(ctx, ref, key)
+	return m, err
+}
+
+// Signed is a manifest as it was read, for its signature to be checked
+// against: the decrypted bytes the manifest was parsed from, and the
+// bundle's signature (bundle.SignatureFile), nil when it holds none.
+type Signed struct {
+	Plain     []byte
+	Signature *bundle.ManifestSignature
+}
+
+// signatureLimit bounds the signature as it is read: three short fields.
+const signatureLimit = 64 << 10
+
+// SignedManifest reads a bundle's manifest, opens it with the key, and
+// reads its signature beside it. The manifest and the bytes checked are
+// one read, so what is checked is what is planned from.
+//
+// A signature that is not there is an unsigned bundle. One that is there
+// and does not parse is returned as one that names no key, which the check
+// reports as a signature it cannot read.
+func (s *Store) SignedManifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key Key) (*bundle.Manifest, *Signed, error) {
 	if ref.Bucket == "" || ref.Prefix == "" {
-		return nil, errors.New("bundle.bucket and bundle.prefix are required")
+		return nil, nil, errors.New("bundle.bucket and bundle.prefix are required")
 	}
 	ids, err := key.Identities()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	mc, err := s.Minio(ctx, &ref)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cipher, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+"manifest.json"+backup.EncryptedSuffix, 16<<20)
 	if err != nil {
-		return nil, fmt.Errorf("the bundle has no manifest; an export that did not finish has none: %w", err)
+		return nil, nil, fmt.Errorf("the bundle has no manifest; an export that did not finish has none: %w", err)
 	}
-	return OpenManifest(cipher, ids)
+	m, plain, err := OpenManifestBytes(cipher, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	signed := &Signed{Plain: plain}
+	raw, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+bundle.SignatureFile, signatureLimit)
+	switch {
+	case err != nil && minio.ToErrorResponse(err).Code == "NoSuchKey":
+	case err != nil:
+		return nil, nil, fmt.Errorf("the bundle's signature could not be read: %w", err)
+	default:
+		signed.Signature = ParseSignature(raw)
+	}
+	return m, signed, nil
+}
+
+// ParseSignature reads a signature file. One that does not parse is a
+// signature that names nothing, never no signature: a bundle that carries
+// a damaged one is not read as an unsigned one.
+func ParseSignature(raw []byte) *bundle.ManifestSignature {
+	var sig bundle.ManifestSignature
+	if json.Unmarshal(raw, &sig) != nil {
+		return &bundle.ManifestSignature{}
+	}
+	return &sig
 }
 
 // appSecretsLimit bounds an app's secrets artefact as it is read: a handful
@@ -198,16 +245,26 @@ func (s *Store) AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, 
 // OpenManifest decrypts and reads a manifest, and refuses one of a format
 // this build does not read.
 func OpenManifest(cipher []byte, ids []age.Identity) (*bundle.Manifest, error) {
-	plain, err := age.Decrypt(bytes.NewReader(cipher), ids...)
+	m, _, err := OpenManifestBytes(cipher, ids)
+	return m, err
+}
+
+// OpenManifestBytes is OpenManifest, and the decrypted bytes it read.
+func OpenManifestBytes(cipher []byte, ids []age.Identity) (*bundle.Manifest, []byte, error) {
+	r, err := age.Decrypt(bytes.NewReader(cipher), ids...)
 	if err != nil {
-		return nil, fmt.Errorf("the manifest could not be opened with that key: %w", err)
+		return nil, nil, fmt.Errorf("the manifest could not be opened with that key: %w", err)
+	}
+	plain, err := io.ReadAll(io.LimitReader(r, 16<<20))
+	if err != nil {
+		return nil, nil, fmt.Errorf("the manifest could not be opened with that key: %w", err)
 	}
 	var m bundle.Manifest
-	if err := json.NewDecoder(plain).Decode(&m); err != nil {
-		return nil, fmt.Errorf("the manifest does not parse: %w", err)
+	if err := json.Unmarshal(plain, &m); err != nil {
+		return nil, nil, fmt.Errorf("the manifest does not parse: %w", err)
 	}
 	if m.SchemaVersion < bundle.OldestReadableSchemaVersion || m.SchemaVersion > bundle.SchemaVersion {
-		return nil, fmt.Errorf("the bundle's manifest is of format %d and this platform reads formats %d to %d; "+
+		return nil, nil, fmt.Errorf("the bundle's manifest is of format %d and this platform reads formats %d to %d; "+
 			"a bundle written by a newer platform has to be restored by one at least as new",
 			m.SchemaVersion, bundle.OldestReadableSchemaVersion, bundle.SchemaVersion)
 	}
@@ -215,11 +272,11 @@ func OpenManifest(cipher []byte, ids []age.Identity) (*bundle.Manifest, error) {
 	// platform keeps, and where, this one cannot know. An older line, or
 	// none recorded, is read as far as it can be; the restore says so.
 	if line, ok := backup.ParseVersionLine(m.OperatorVersion); ok && line.Compare(backup.ThisVersionLine()) > 0 {
-		return nil, fmt.Errorf("the bundle was written by platform version %s and this platform is version %s; "+
+		return nil, nil, fmt.Errorf("the bundle was written by platform version %s and this platform is version %s; "+
 			"a bundle written by a newer platform has to be restored by one at least as new",
 			line, backup.PlatformVersionLine)
 	}
-	return &m, nil
+	return &m, plain, nil
 }
 
 // ObjectPrefix is the key prefix of a bundle's objects, ending in a slash.

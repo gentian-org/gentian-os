@@ -106,6 +106,30 @@ type TenantExportReconciler struct {
 	// own secrets, which it encrypts and no Job is handed. Without it an
 	// export of an app that has such secrets stored fails and says so.
 	Bundles BundleWriter
+
+	// SigningKey is the cluster's bundle signing key, read when a manifest
+	// is written and when a restore checks one. Nil, or an error, and the
+	// bundle is written unsigned: a restore of it then brings back no right
+	// that was granted in the tenant, and the export says so.
+	SigningKey func() (*backup.SigningKey, error)
+}
+
+// bundleSigningKey is the cluster's bundle signing key, or nil and why not.
+func (r *TenantExportReconciler) bundleSigningKey() (*backup.SigningKey, string) {
+	if r.SigningKey == nil {
+		return nil, backup.ErrNoSigningKey.Error()
+	}
+	key, err := r.SigningKey()
+	if err != nil {
+		return nil, err.Error()
+	}
+	return key, ""
+}
+
+// clusterUID is the cluster's random id, as its Cluster claim states it;
+// "" when it states none.
+func (r *TenantExportReconciler) clusterUID(ctx context.Context) string {
+	return clusterConfigValueOr(ctx, r.Client, clusterConfigUIDKey, "")
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create;update;patch;delete
@@ -996,7 +1020,8 @@ func (r *TenantExportReconciler) complete(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	unit, err := r.manifestUnitWith(export, tenant, encryption, rights, archived)
+	key, unsigned := r.bundleSigningKey()
+	unit, err := r.manifestUnitWith(export, tenant, encryption, rights, archived, signing{key: key, clusterUID: r.clusterUID(ctx)})
 	if err != nil {
 		return r.fail(ctx, export, "ManifestFailed", err.Error())
 	}
@@ -1025,6 +1050,11 @@ func (r *TenantExportReconciler) complete(
 	// hold something the tenant has is not to be read as "all of it".
 	if len(export.Status.NotIncluded) > 0 {
 		captured += "; NOT in the bundle: " + strings.Join(export.Status.NotIncluded, "; ")
+	}
+	// An unsigned bundle restores, and brings back none of the rights
+	// granted in the tenant: said here, where it can still be put right.
+	if key == nil {
+		captured += "; the bundle is NOT signed (" + unsigned + "): a restore of it brings back no right that was granted in the tenant"
 	}
 	// A profile may declare secrets its data is welded to
 	// (spec.backup.boundSecrets). Of the vault a bundle carries the secrets
@@ -1142,7 +1172,14 @@ func (r *TenantExportReconciler) manifestUnit(
 	encryption backup.Encryption,
 	rights *bundle.ManifestRights,
 ) (captureUnit, error) {
-	return r.manifestUnitWith(export, tenant, encryption, rights, nil)
+	return r.manifestUnitWith(export, tenant, encryption, rights, nil, signing{})
+}
+
+// signing is what a manifest is signed with: the cluster's key, nil for an
+// unsigned bundle, and the cluster's id, which the manifest records.
+type signing struct {
+	key        *backup.SigningKey
+	clusterUID string
 }
 
 // manifestUnitWith is manifestUnit with the archived mailboxes the bundle
@@ -1153,6 +1190,7 @@ func (r *TenantExportReconciler) manifestUnitWith(
 	encryption backup.Encryption,
 	rights *bundle.ManifestRights,
 	archived []bundle.ArchivedMailbox,
+	sign signing,
 ) (captureUnit, error) {
 	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
 	params.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "manifest")
@@ -1161,7 +1199,8 @@ func (r *TenantExportReconciler) manifestUnitWith(
 	manifest := r.buildManifest(export, tenant)
 	manifest.Rights = rights
 	manifest.ArchivedMailboxes = archived
-	job, err := backup.ManifestJob(params, manifest, info)
+	manifest.ClusterUID = sign.clusterUID
+	job, err := backup.ManifestJob(params, manifest, info, sign.key)
 	if err != nil {
 		return captureUnit{}, err
 	}

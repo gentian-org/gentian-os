@@ -1213,6 +1213,11 @@ spec:
                     # tenant is reachable at is derived from this, so the two disagreeing
                     # is not cosmetic.
                     tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
+                    # The cluster's random id, which the installer gave it once
+                    # and the deployments repository keeps. The operator records
+                    # it in every bundle it signs and compares it on a restore;
+                    # empty on a claim that carries none.
+                    cluster.uid: {{ dig "clusterUID" "" $spec | quote }}
                     # The tenant that may put a website on the main address,
                     # or "" for the mode's default. The operator reads it with
                     # the mode, since the two decide one thing together.

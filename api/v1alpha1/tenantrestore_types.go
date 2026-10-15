@@ -135,6 +135,16 @@ type RestoreRights struct {
 	// +optional
 	// +listType=atomic
 	NotBrought []string `json:"notBrought,omitempty"`
+	// Provenance is whether the bundle was written on this cluster, which
+	// decides whether what was granted in its tenant comes back: Proven
+	// (signed with this cluster's key, taken on this cluster), or why not
+	// -- NoSigningKey, Unsigned, SignedByAnotherKey, BadSignature,
+	// NoClusterID, AnotherCluster, AnotherTenant.
+	// +optional
+	Provenance string `json:"provenance,omitempty"`
+	// ProvenanceMessage says the same in a sentence.
+	// +optional
+	ProvenanceMessage string `json:"provenanceMessage,omitempty"`
 	// Applied says the store holds what Grant and Withdraw say.
 	// +optional
 	Applied bool `json:"applied,omitempty"`

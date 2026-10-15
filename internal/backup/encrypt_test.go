@@ -116,7 +116,7 @@ func containerByName(job *batchv1.Job, name string) *corev1.Container {
 // other order leaves a window where plaintext is uploadable.
 func TestEncryptionRunsBeforeUploadForEveryArtefact(t *testing.T) {
 	p := encryptedParams(recipientEncryption())
-	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"}, NewBundleInfo("demo", "nightly", "now", p.Encryption))
+	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"}, NewBundleInfo("demo", "nightly", "now", p.Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}

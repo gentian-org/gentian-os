@@ -727,6 +727,7 @@ seed_secrets_remaining() {
     seed_secrets
     seed_repository_credentials
     seed_usage_statistics_key
+    seed_bundle_signing_key
     seed_internal_ca
     seed_object_store_signing_keys
 }
@@ -877,6 +878,58 @@ seed_usage_statistics_key() {
         return 0
     fi
     success "Usage statistics report signing key stored."
+}
+
+# =============================================================================
+# seed_bundle_signing_key — the key this cluster signs its bundles with
+# =============================================================================
+# 32 random bytes, as hex, at gentian-os/kernel/backup/signing. The operator
+# derives an Ed25519 key pair from them (internal/backup/signature.go), signs
+# every bundle's manifest with it, and checks a bundle it restores with it:
+# only a bundle this cluster signed, of a tenant of the same name, brings back
+# the rights granted in the tenant (docs/design/security.md).
+#
+# Its own key, not the director's git signing key: that one signs commits to
+# the deployments repository and is the director's, and a key that signs two
+# kinds of thing is a key whose signature on one can be passed off as the
+# other.
+#
+# Written once and never replaced: a new key makes every earlier bundle read
+# as another cluster's. An existing value is left alone, including by a run
+# that cannot read it (kv put -cas=0). A run from a recovery kit brings the
+# kit's key (BUNDLE_SIGNING_SEED), so a cluster rebuilt from the kit keeps it
+# and its bundles still hold. The value travels on stdin, never as an
+# argument.
+# =============================================================================
+seed_bundle_signing_key() {
+    local path="gentian-os/kernel/backup/signing" have dir from="at random"
+    have="$(bao kv get -mount=secret -field=signing_seed "${path}" 2>/dev/null || true)"
+    if [[ -n "${have}" ]]; then
+        if [[ -n "${BUNDLE_SIGNING_SEED:-}" && "${have}" != "${BUNDLE_SIGNING_SEED}" ]]; then
+            warn "The vault holds a bundle signing key other than the recovery kit's; the vault's is kept."
+            warn "  Bundles the kit's cluster signed read as another cluster's here."
+        fi
+        info "Bundle signing key already in the vault; left as it is."
+        return 0
+    fi
+    dir="$(mktemp -d)" || return 1
+    chmod 700 "${dir}"
+    if [[ "${BUNDLE_SIGNING_SEED:-}" =~ ^[0-9a-f]{64}$ ]]; then
+        (umask 077; printf '%s' "${BUNDLE_SIGNING_SEED}" > "${dir}/seed")
+        from="from the recovery kit"
+    else
+        [[ -n "${BUNDLE_SIGNING_SEED:-}" ]] && warn "The recovery kit's bundle signing key is not 64 hex characters; a new one is made."
+        (umask 077; openssl rand -hex 32 | tr -d '\n' > "${dir}/seed")
+    fi
+    if [[ ! -s "${dir}/seed" ]] || ! jq -n --rawfile s "${dir}/seed" '{signing_seed: $s}' | _seed_once "${path}"; then
+        rm -rf "${dir}"
+        warn "The bundle signing key could not be written to the vault at ${path}."
+        warn "  Bundles are written unsigned until it is, and a restore of one brings"
+        warn "  back no right that was granted in the tenant. Run this step again."
+        return 0
+    fi
+    rm -rf "${dir}"
+    success "Bundle signing key stored at ${path} (${from})."
 }
 
 # =============================================================================
@@ -1908,11 +1961,13 @@ _claim_catalogue_section() {
 # section is removing the fields the schema no longer has
 # (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants). The same
 # pass removes the one field the schema lost outside this section
-# (_claim_drop_external_dns), whatever the claim says of the catalogue.
+# (_claim_drop_external_dns), whatever the claim says of the catalogue, and
+# gives a claim that has no cluster id one (ensure_claim_cluster_uid).
 ensure_claim_catalogue_section() {
     local claim="$1"
     [[ -f "${claim}" ]] || return 0
     _claim_drop_external_dns "${claim}"
+    ensure_claim_cluster_uid "${claim}"
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
         _claim_drop_catalogue_access "${claim}"
         _claim_drop_catalogue_tenants "${claim}"
@@ -1945,6 +2000,43 @@ ensure_claim_catalogue_section() {
     info "  Catalogue: $(gentian_catalogue_url)"
     info "  $(gentian_catalogue_reason)"
     info "  To run without a store, set 'catalogue: {}' under spec."
+}
+
+# gentian_new_cluster_uid — a cluster's random id: 32 hex characters.
+gentian_new_cluster_uid() {
+    openssl rand -hex 16
+}
+
+# ensure_claim_cluster_uid <claim file>
+#
+# A claim written before clusters had an id is given one, once: right below
+# spec.kernelDomain, where a new claim has it. A claim that has one keeps it
+# whatever it is -- it is what every bundle the cluster signed records, and a
+# reinstall from the same deployments repository finds it there. A claim
+# whose kernelDomain line is not where a scaffolded one has it is left alone
+# and the line to add is named.
+ensure_claim_cluster_uid() {
+    local claim="$1" uid
+    [[ -f "${claim}" ]] || return 0
+    yq_get '.spec.clusterUID' "${claim}" >/dev/null 2>&1 && return 0
+    if ! grep -qE '^  kernelDomain:' "${claim}"; then
+        warn "claims/cluster.yaml has no spec.clusterUID, and no kernelDomain line at spec's indent"
+        warn "  to put one below. Add it by hand, under spec:"
+        warn "    clusterUID: $(gentian_new_cluster_uid)"
+        return 0
+    fi
+    uid="$(gentian_new_cluster_uid)"
+    awk -v uid="${uid}" '
+        { print }
+        !done && /^  kernelDomain:/ {
+            print "  # This cluster'"'"'s random id, made once and never changed. A restore brings"
+            print "  # back the rights granted in a tenant only from a bundle this cluster"
+            print "  # signed and took; changing it makes every earlier bundle another cluster'"'"'s."
+            print "  clusterUID: " uid
+            done = 1
+        }' "${claim}" > "${claim}.uid" && cat "${claim}.uid" > "${claim}"
+    rm -f "${claim}.uid"
+    info "claims/cluster.yaml had no cluster id: spec.clusterUID ${uid} was added."
 }
 
 # preview_claim_catalogue_section <claim file> — what
@@ -2304,6 +2396,10 @@ metadata:
   namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   kernelDomain: ${domain}
+  # This cluster's random id, made once and never changed. A restore brings
+  # back the rights granted in a tenant only from a bundle this cluster
+  # signed and took; changing it makes every earlier bundle another cluster's.
+  clusterUID: $(gentian_new_cluster_uid)
   # Who administers this cluster, by the Keycloak group they are in. The
   # director reads this file from git -- not the object in the cluster -- so
   # the assignment is written here rather than left to the schema's default,

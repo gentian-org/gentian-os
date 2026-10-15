@@ -782,7 +782,7 @@ the code does.
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
-| A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths; a bundle is not signed (§6.4). Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
+| A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artefacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today For an app the app Composition installs, the granted rules are a policy of their own, `granted-egress-<app>`, selecting the app's release; the Composition's own policies carry none. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
@@ -1630,17 +1630,55 @@ A bundle of format 3 or older holds no secrets and restores as before: no
 stored secret is changed, and the result says that what an app encrypted is
 readable only where its secrets are the ones the data was written with.
 
-**A bundle is not signed.** age encrypts to a public key and says nothing of
-who encrypted. Anyone who knows a cluster's backup recipient, which is in
-every bundle's `bundle-info.json`, can make a bundle that a restore opens. A
-restore of it replaces the tenant's data, as it always could, and now also
-sets the secrets of the apps it restores to values its author chose — a
-session-signing key, for one, which outlasts the next restore of good data.
-A restore is run by a tenant's or the cluster's administrator, names the
-tenant it confirms (`confirmTenant`), and writes only the paths above;
-checking a bundle's origin is on the roadmap
+**The manifest is signed, and decides the rights.** The cluster signs each
+bundle's manifest (`internal/backup/signature.go`). The signature,
+`manifest.json.sig` beside `bundle-info.json` and in the clear, covers the
+manifest as `manifest.json` holds it, so it covers the tenant's name, the
+cluster's id (`clusterUid`) and the rights. The id is `spec.clusterUID` of
+the Cluster claim: 32 random hex characters the installer writes once into
+the deployments repository, so a reinstall from that repository keeps it; it
+reaches the operator as `cluster.uid` of `gentian-cluster-config`. A restore
+checks the signature with this cluster's key, never with a key the bundle
+names.
+
+The rights granted in a tenant, a person's (`user:<id>`) among them since a
+restored person keeps their id, come back only when the signature holds,
+the bundle's cluster id is this cluster's, and the tenant restored into has
+the bundle's tenant's name: into a tenant made new as into the one it was
+taken of. From any other bundle (unsigned, which every bundle written
+before this is; signed by another key; of another cluster id or another
+tenant name) what was withdrawn is withdrawn, an entry naming a person is
+not written either way, and nothing granted comes back. Each entry left is
+named, `status.rights.provenance` says why, and a signature that does not
+hold (`BadSignature`) is said apart in the notes. An export that could not
+sign says so in its result.
+
+The artefacts are not covered: the manifest names them and holds no digest
+of them. Anyone who knows a cluster's backup recipient, which is in every
+`bundle-info.json`, can still make a bundle that a restore opens, and a
+restore of it replaces the tenant's data and sets the secrets of the apps it
+restores to values its author chose. With a manifest of their own it brings
+back no granted right; with one this cluster signed for this tenant it brings
+back the rights this cluster recorded. A restore is run by a tenant's or the
+cluster's administrator, names the tenant it confirms (`confirmTenant`), and
+writes only the paths above; checking the artefacts is on the roadmap
 ([1.41](../roadmap.md)). Until then, restore only bundles whose origin is
 known.
+
+**The bundle signing key.** Ed25519, derived from 32 random bytes the
+installer writes once to `gentian-os/kernel/backup/signing` (`signing_seed`,
+on stdin, never replaced). It is not the director's git signing key: that
+one signs commits to the deployments repository, and a key that signs two
+kinds of thing lets a signature on one pass for the other. It is read by
+`eso-read`, as every kernel path is, which materialises it as the Secret
+`gentian-os-bundle-signing-key` in the operator's namespace, mounted into
+the operator alone; by whoever can read Secrets there, the operator among
+them; by the `operator-write` and `cluster-admin` vault policies; and by the
+holder of the recovery kit, which carries it (`BUNDLE_SIGNING_SEED`) so that
+a cluster rebuilt from the kit signs as before and its bundles still hold.
+Whoever holds it can make a bundle that brings rights into a tenant of that
+name on this cluster, which a platform administrator can grant there anyway.
+Replacing it: [operations.md](operations.md).
 
 ## 7. Write-Once Protection
 

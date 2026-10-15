@@ -32,7 +32,9 @@ check() {
         return "${CHECK_MISSING}"
     fi
     local p
-    for p in dns/cloudflare repositories/deployments; do
+    # backup/signing too: a cluster installed before bundles were signed has
+    # the other two, and would otherwise never be given its signing key.
+    for p in dns/cloudflare repositories/deployments backup/signing; do
         [[ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/secret/data/gentian-os/kernel/${p}")" == "200" ]] || return 1
     done
 }

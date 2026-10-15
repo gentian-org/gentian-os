@@ -1183,9 +1183,11 @@ import (§12a) sets it; a restore into the tenant the bundle was taken of
 leaves it out. With it, the data of an app the bundle holds as uninstalled
 with its data kept is brought with stores made for it; without it such data
 is put back only where the tenant still holds it, so an app purged since
-stays purged. And the access rights the bundle records as granted are not
-granted but named in the restore's result. The same holds without the field
-when the bundle was taken of a tenant of another name or on another cluster.
+stays purged. The access rights the bundle records as granted, a person's
+among them, are granted with or without the field only from a bundle this
+cluster signed, taken on it, of a tenant of the name restored into; from any
+other they are named in the result, and `status.rights.provenance` says why
+([security.md §6.4](design/security.md)).
 
 ### What it does, in order
 
@@ -1307,8 +1309,9 @@ gentian:gentian-imports/<prefix>`). App grants are not in a bundle: they are
 declared in git, and a tenant imported into another cluster has them to set
 again. An import brings the data of apps that were uninstalled with their
 data kept, as uninstalled apps, when this cluster has their definitions. It
-grants no access right that was granted in the tenant the bundle was taken
-of: each is named in `notes`, to be granted again here.
+grants the access rights granted in the tenant the bundle was taken of only
+when the bundle is this cluster's own, of a tenant of the same name; any
+other bundle's are each named in `notes`, to be granted again here.
 
 ## 13. Backup Policy
 
@@ -1518,6 +1521,13 @@ tampered key name, a file that is not a kit, and a missing identity are each
 refused rather than partially applied. A salt that comes back wrong by one byte
 reproduces a whole cluster of wrong passwords, and the symptom is an admin
 login that fails for no visible reason.
+
+The kit also carries the cluster's bundle signing key (`BUNDLE_SIGNING_SEED`),
+and the export seeds one on a cluster that has none. A cluster rebuilt with
+`--recover` from the kit and the same deployments repository keeps the key
+and its id (`spec.clusterUID` of the Cluster claim), so the bundles it wrote
+before still bring back the rights granted in their tenants
+([security.md §6.4](design/security.md)).
 
 Storing the kit in the cluster it protects defeats it. It belongs wherever the
 organisation keeps break-glass material, beside the backup identity.

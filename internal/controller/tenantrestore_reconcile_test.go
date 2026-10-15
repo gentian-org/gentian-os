@@ -35,9 +35,13 @@ import (
 // fakeBundles is the object store as a restore reads it.
 type fakeBundles struct {
 	manifest *backup.Manifest
-	err      error
-	keys     []bundlestore.Key
-	removed  []string
+	// plain and signature are the manifest as read and its signature, nil
+	// for an unsigned bundle.
+	plain     []byte
+	signature *bundle.ManifestSignature
+	err       error
+	keys      []bundlestore.Key
+	removed   []string
 	// objects are the artefacts the operator wrote itself, as it wrote
 	// them: ciphertext, by path.
 	objects map[string][]byte
@@ -66,9 +70,12 @@ func (f *fakeBundles) AppSecrets(_ context.Context, ref gentianov1alpha1.BundleR
 	return backup.OpenAppSecrets(cipher, ids)
 }
 
-func (f *fakeBundles) Manifest(_ context.Context, _ gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, error) {
+func (f *fakeBundles) SignedManifest(_ context.Context, _ gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, *bundlestore.Signed, error) {
 	f.keys = append(f.keys, key)
-	return f.manifest, f.err
+	if f.err != nil {
+		return nil, nil, f.err
+	}
+	return f.manifest, &bundlestore.Signed{Plain: f.plain, Signature: f.signature}, nil
 }
 
 func (f *fakeBundles) RemoveImported(_ context.Context, ref gentianov1alpha1.BundleRef) error {

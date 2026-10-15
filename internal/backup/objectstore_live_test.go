@@ -522,7 +522,7 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 			mp := p
 			mp.Name = "tx-manifest-" + string(mode)
 			manifest, err := ManifestJob(mp, &Manifest{SchemaVersion: ManifestSchemaVersion, Tenant: "demo"},
-				NewBundleInfo("demo", p.Prefix, "now", p.Encryption))
+				NewBundleInfo("demo", p.Prefix, "now", p.Encryption), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

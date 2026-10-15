@@ -38,6 +38,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -469,6 +470,12 @@ func main() {
 		// An app's own secrets go into a bundle from the operator's memory,
 		// encrypted there: this is how it writes them.
 		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
+		// The cluster's bundle signing key, a file its Secret is mounted
+		// as: read each time, so that it is found without a restart once
+		// the Secret exists. A restore checks bundles with it too.
+		SigningKey: func() (*backup.SigningKey, error) {
+			return backup.SigningKeyFromFile(envOrDefault("BUNDLE_SIGNING_KEY_FILE", "/etc/gentian/bundle-signing/signing_seed"))
+		},
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")

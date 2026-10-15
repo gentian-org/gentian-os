@@ -296,6 +296,9 @@ type planTarget struct {
 	// whether the operator has a store to write to.
 	cluster    string
 	haveRights bool
+	// provenance is whether the bundle was written on this cluster, which
+	// decides whether the rights granted in its tenant come back.
+	provenance backup.Provenance
 }
 
 // plannedApp is one app that will be restored.
@@ -492,7 +495,7 @@ func planRestore(
 				plan.notes = append(plan.notes, note)
 			}
 		case bundle.ArtefactRights:
-			plan.rights = rightsPlan(m, tenant, target.cluster, target.intoNewTenant, target.haveRights)
+			plan.rights = rightsPlan(m, tenant, target.cluster, target.provenance, target.haveRights)
 		default:
 			// A kind added to the list and not here is a kind a bundle
 			// would hold and no restore put back.

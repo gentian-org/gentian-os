@@ -190,6 +190,17 @@ spec:
                   description: >
                     Cluster-wide platform DNS suffix, e.g. "platform.example.com".
                     All kernel services are reachable under this domain.
+                clusterUID:
+                  type: string
+                  pattern: '^[0-9a-f]{32}$'
+                  description: >
+                    This cluster's random id: 32 hex characters the installer
+                    writes here once and never changes. Unlike the cluster's
+                    name, no two clusters share it. The operator records it in
+                    every bundle it signs, and a restore brings back the rights
+                    granted in a tenant only from a bundle signed by this
+                    cluster and taken on a cluster of this id. Changing it makes
+                    every earlier bundle read as another cluster's.
                 platformRoles:
                   type: object
                   # So the schema's per-role defaults materialise: a property's

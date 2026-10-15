@@ -640,8 +640,14 @@ manifest says by what and where it was written: `operatorVersion`, the
 platform's version line (`0.5`); `domain`, the tenant's domain, its custom one
 where a `TenantDomain` bound it, and `customDomain`, that one alone;
 `kernelDomain`, the cluster's own domain, under which its sign-in issuer is;
-and `cluster`, the cluster's id in its deployments repository. A bundle without
-them reads as before. A manifest of a
+and `cluster`, the cluster's id in its deployments repository; and
+`clusterUid`, the cluster's random id (`spec.clusterUID` of its Cluster
+claim). A bundle without them reads as before. Beside the manifest,
+`manifest.json.sig` (JSON: `algorithm` `ed25519`, `publicKey`, `signature`,
+base64) is the cluster's signature over `gentian-os bundle manifest v1\n`
+followed by the decrypted manifest without its final newline; a bundle
+without it is unsigned, and a reader that ignores it reads the bundle as
+before. A manifest of a
 format newer than the platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`
@@ -691,10 +697,22 @@ mailboxes, and then the tenant's records.
 writes into the manifest the ones its projection would not write, and the
 defaults the store no longer holds; no Job reads the store. A restore writes
 them after the realm is back and after the projection has attached the
-tenant. Into a tenant made new (`spec.intoNewTenant`, or a bundle of a tenant
-of another name or cluster) the granted ones are not written and are named in
-`status.rights.notBrought` and in the notes; the withdrawn ones are withdrawn,
-under the new tenant's names.
+tenant. The withdrawn ones are withdrawn, under the restored tenant's names.
+The granted ones, and any entry naming a person, are written only from a
+bundle this cluster signed, taken on a cluster of this cluster's id, of a
+tenant of the name restored into ([security.md §6.4](security.md)); from any
+other they are named in `status.rights.notBrought` and in the notes, and
+`status.rights.provenance` says why: `NoSigningKey`, `Unsigned`,
+`SignedByAnotherKey`, `BadSignature`, `NoClusterID`, `AnotherCluster` or
+`AnotherTenant`.
+
+**Replacing the bundle signing key.** The key is never replaced by the
+installer. To replace it, delete `gentian-os/kernel/backup/signing` in the
+vault, run `./install.sh --step B-08 --force`, which seeds a new one, and export a
+new recovery kit. Every bundle signed before then reads as signed by another
+key: it still restores, with what was withdrawn withdrawn and no granted
+right brought back. Changing `spec.clusterUID` has the same effect on every
+earlier bundle.
 
 **What no restore brings back** is the checklist in
 [data-lifecycle.md](data-lifecycle.md) §5, and is said on every result

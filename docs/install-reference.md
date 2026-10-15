@@ -810,6 +810,29 @@ the key is only ever written at generation. Supply it once from the kit:
 bao kv put -mount=secret gentian-os/kernel/backup/identity identity=@identity.txt
 ```
 
+### The bundle signing key and the cluster's id
+
+The cluster signs every bundle's manifest, and a restore brings back the
+rights granted in a tenant only from a bundle it signed, taken on it, of a
+tenant of the same name ([security.md §6.4](design/security.md)). Two values
+make that work, each written once and never replaced:
+
+- **The signing key**: 32 random bytes B-08 writes to
+  `gentian-os/kernel/backup/signing` (`signing_seed`), or the recovery kit's
+  under `--recover`. `--export-recovery-kit` seeds it on a cluster that has
+  none and carries it. The operator reads it through the ExternalSecret
+  `gentian-os-bundle-signing-key`; until it is there, bundles are written
+  unsigned and the export says so.
+- **The cluster's id**: `spec.clusterUID` in
+  `clusters/<cluster>/kernel/claims/cluster.yaml`, 32 random hex characters.
+  Step 0 writes it into a new claim, and into an existing one that has none,
+  and commits it; a reinstall from the same repository keeps it. Unlike
+  `GENTIAN_DEPLOYMENTS_CLUSTER_ID`, which defaults to a name many clusters
+  share, no other cluster has it.
+
+Replacing either makes every earlier bundle restore without its granted
+rights ([operations.md](design/operations.md)).
+
 ---
 
 ## 5. Installing on an internal domain

@@ -443,7 +443,7 @@ func TestAnExportCarriesAnAppsOwnSecretsEncryptedAndNowhereElse(t *testing.T) {
 	manifest, _ := json.Marshal(m)
 	status, _ := json.Marshal(w.export.Status)
 	job, err := backup.ManifestJob(backup.JobParams{Name: "j", Namespace: "n", Bucket: "b", Prefix: "p", Encryption: passphraseEncryption}, m,
-		backup.NewBundleInfo("demo", "nightly", "now", passphraseEncryption))
+		backup.NewBundleInfo("demo", "nightly", "now", passphraseEncryption), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

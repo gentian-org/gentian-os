@@ -860,6 +860,19 @@ usageStatistics:
     openbaoPath: gentian-os/kernel/usage-statistics
     property: signing_seed
 
+# The key this cluster signs its bundles' manifests with, so that a restore
+# can tell a bundle this cluster wrote from any other: only such a bundle,
+# of a tenant of the same name, brings back the rights granted in the
+# tenant (docs/design/security.md). 32 random bytes the installer writes to
+# the vault once; the recovery kit carries them. The operator reads the
+# Secret below as an optional file: until it exists, bundles are written
+# unsigned and say so.
+bundleSigning:
+  signingKey:
+    secretName: gentian-os-bundle-signing-key
+    openbaoPath: gentian-os/kernel/backup/signing
+    property: signing_seed
+
 # LLM serving support. Fallback only: the operator decides from the claim's
 # llm.enabled (read via the gentian-cluster-config ConfigMap) and consults
 # this — as the LLM_SUPPORT env var — only while that ConfigMap does not

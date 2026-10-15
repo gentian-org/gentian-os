@@ -362,6 +362,7 @@ spec:
       apiVersion: v1
       data:
         certificates.trustAnchorSecret: ""
+        cluster.uid: ""
         eso.namespace: kernel-secrets
         eso.serviceAccount: external-secrets
         identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth
