@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
@@ -52,25 +53,28 @@ func restoreHookEnv(
 	entry := appStatus(&restore.Status.Apps, appName)
 	pairs := map[string][]string{}
 	sourceTenant := plainValue(restore.Status.SourceTenant)
+	var engines []string
+	ownedRole := ""
 	for _, a := range entry.Artefacts {
 		var kind string
 		switch a.Kind {
 		case bundle.ArtefactPostgresOwned, bundle.ArtefactMariaDBOwned:
 			// The databases the app made itself, by the names the restore's
-			// Job reported; and its login, whose databases they are.
+			// Job reported; the PostgreSQL archive names the login they
+			// were made by.
 			for _, p := range a.Databases {
 				from, to, _ := strings.Cut(p, "=")
 				pairs["DATABASES"] = append(pairs["DATABASES"], plainValue(from)+"="+plainValue(to))
 			}
-			from, to := "", ""
 			if a.Kind == bundle.ArtefactPostgresOwned {
-				from, to = a.Name, backup.PostgresRole(tenant.Name, appName)
-			} else if sourceTenant != "" {
-				from, to = backup.MariaDBUser(sourceTenant, appName), backup.MariaDBUser(tenant.Name, appName)
+				ownedRole = a.Name
+				engines = append(engines, bundle.ArtefactPostgres)
+			} else {
+				engines = append(engines, bundle.ArtefactMariaDB)
 			}
-			pairs["ROLES"] = append(pairs["ROLES"], plainValue(from)+"="+plainValue(to))
 			continue
 		case bundle.ArtefactPostgres, bundle.ArtefactMariaDB:
+			engines = append(engines, a.Kind)
 			kind = "DATABASES"
 		case bundle.ArtefactS3:
 			kind = "BUCKETS"
@@ -81,6 +85,7 @@ func restoreHookEnv(
 		}
 		pairs[kind] = append(pairs[kind], plainValue(a.Name)+"="+plainValue(a.Target))
 	}
+	pairs["ROLES"] = restoreRolePairs(engines, ownedRole, sourceTenant, tenant.Name, appName)
 	vars := [][2]string{
 		{"APP", appName},
 		{"SOURCE_TENANT", sourceTenant},
@@ -105,4 +110,39 @@ func restoreHookEnv(
 		env = append(env, RestoreEnvPrefix+v[0]+"="+v[1])
 	}
 	return env
+}
+
+// restoreRolePairs is the app's database login, "<login in the bundle>=<login
+// here>", once for each engine the bundle held a database of for it: the login
+// is made new on every restore, whether or not the app made databases of its
+// own. The old PostgreSQL role is the one the archive of those databases
+// names where there is one, else the platform's name for it in the source
+// tenant; the old MariaDB user is always the latter. Where the bundle does
+// not record its tenant, an old login it does not name is left out, not
+// guessed.
+func restoreRolePairs(engines []string, ownedRole, sourceTenant, targetTenant, appName string) []string {
+	var roles []string
+	for _, kind := range engines {
+		from, to := "", ""
+		switch kind {
+		case bundle.ArtefactPostgres:
+			from, to = ownedRole, backup.PostgresRole(targetTenant, appName)
+			if from == "" && sourceTenant != "" {
+				from = backup.PostgresRole(sourceTenant, appName)
+			}
+		case bundle.ArtefactMariaDB:
+			if sourceTenant != "" {
+				from = backup.MariaDBUser(sourceTenant, appName)
+			}
+			to = backup.MariaDBUser(targetTenant, appName)
+		}
+		if from == "" {
+			continue
+		}
+		pair := plainValue(from) + "=" + plainValue(to)
+		if !slices.Contains(roles, pair) {
+			roles = append(roles, pair)
+		}
+	}
+	return roles
 }

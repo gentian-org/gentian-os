@@ -149,3 +149,51 @@ func TestPostRestoreCommandsAreToldTheOldAndNewDatabaseLogin(t *testing.T) {
 		t.Errorf("ROLES = %q", got)
 	}
 }
+
+// The login is made new on every restore, so an app that made no databases
+// of its own is told it all the same, once; and where the bundle does not
+// say whose it was, the old login is left out rather than guessed.
+func TestPostRestoreCommandsAreToldTheLoginOfAnAppWithNoDatabasesOfItsOwn(t *testing.T) {
+	apps := []gentianov1alpha1.AppExportStatus{
+		{Name: "wiki", Artefacts: []gentianov1alpha1.BundleArtefact{
+			{Kind: bundle.ArtefactPostgres, Name: "old-co_wiki", Target: "new_wiki"},
+		}},
+		{Name: "shop-app", Artefacts: []gentianov1alpha1.BundleArtefact{
+			{Kind: bundle.ArtefactMariaDB, Name: "old_co_shop_app", Target: "new_shop_app"},
+		}},
+		{Name: "notes", Artefacts: []gentianov1alpha1.BundleArtefact{
+			{Kind: bundle.ArtefactPostgres, Name: "old_notes", Target: "new_notes"},
+			{Kind: bundle.ArtefactPostgresOwned, Name: "old_notes_role", Target: "new_notes"},
+		}},
+		{Name: "files", Artefacts: []gentianov1alpha1.BundleArtefact{
+			{Kind: bundle.ArtefactVolume, Name: "files-data", Target: "files-data"},
+		}},
+	}
+	tenant := planTenant("new")
+	roles := func(sourceTenant, app string) string {
+		restore := &gentianov1alpha1.TenantRestore{Status: gentianov1alpha1.TenantRestoreStatus{SourceTenant: sourceTenant, Apps: apps}}
+		for _, kv := range restoreHookEnv(restore, tenant, app, nil, nil) {
+			if v, ok := strings.CutPrefix(kv, RestoreEnvPrefix+"ROLES="); ok {
+				return v
+			}
+		}
+		t.Fatalf("no ROLES for %s", app)
+		return ""
+	}
+	for _, c := range []struct{ source, app, want string }{
+		{"old-co", "wiki", "old-co_wiki=new_wiki"},
+		{"old-co", "shop-app", "old_co_shop_app=new_shop_app"},
+		// The archive's role, and only once.
+		{"old-co", "notes", "old_notes_role=new_notes"},
+		{"", "notes", "old_notes_role=new_notes"},
+		// No tenant recorded and no archive naming the role.
+		{"", "wiki", ""},
+		{"", "shop-app", ""},
+		// No database at all.
+		{"old-co", "files", ""},
+	} {
+		if got := roles(c.source, c.app); got != c.want {
+			t.Errorf("source %q, %s: ROLES = %q, want %q", c.source, c.app, got, c.want)
+		}
+	}
+}

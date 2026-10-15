@@ -382,7 +382,8 @@ there, so each command is run with what it needs to know, and no secret: `GENTIA
 `CLUSTER` and the app's `CHART_VERSION` (a source value the bundle does not record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
 `GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>` — the
 databases include those the app made itself, as far as the 4 KiB a restore Job reports holds their
-names — and `GENTIAN_RESTORE_ROLES`, the app's database login the same way. A name that is not a
+names — and `GENTIAN_RESTORE_ROLES`, the app's database login the same way, whether or not it made
+databases of its own (left out of a bundle that records neither its tenant nor the role). A name that is not a
 plain one is passed as empty. The database's host is a Service name of the platform's, the same on every cluster of a version line, and is not passed. A new
 credential the command reads from the app's own Secrets, as the app does. The container needs
 `env(1)`, which the platform runs the command through. Each command, as each `quiesce` command, has
