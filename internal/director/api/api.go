@@ -31,11 +31,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
@@ -1454,6 +1456,11 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 // now. A setting the claim does not carry is absent rather than empty,
 // because "unset, so the schema's default applies" and "set to nothing" are
 // different answers.
+//
+// The answer also says which platform this is: its version line, the one a
+// bundle is measured against on import, and the commit the image was built
+// from when the build recorded one. The director ships in the operator's
+// image, so its own build is the operator's.
 func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call) {
 	values, err := s.cfg.Repo.ClusterSettingValues(r.Context())
 	if err != nil {
@@ -1477,7 +1484,30 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 		}
 		out = append(out, entry)
 	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "settings": out})
+	answer := map[string]any{
+		"cluster":             s.cfg.Cluster,
+		"settings":            out,
+		"platformVersionLine": backup.PlatformVersionLine,
+	}
+	if commit := buildCommit(); commit != "" {
+		answer["build"] = commit
+	}
+	s.json(w, http.StatusOK, answer)
+}
+
+// buildCommit is the commit this binary was built from, or "" when the build
+// recorded none (sources built without their git history).
+func buildCommit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+	return ""
 }
 
 func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {

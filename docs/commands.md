@@ -1298,7 +1298,10 @@ and `notes`, and `outsideGuarantee` when the bundle is of an older platform
 version line, or records none, or the tenant's domain here is another (the
 command prints it). A custom domain the tenant had is not bound by the
 import; the message says to declare it again (`tenants domain <name>
-<domain>`). A bundle of a newer version line is refused.
+<domain>`). A bundle of a newer version line is refused. The cluster's own
+version line is in the answer to `GET /v1/clusters/{c}/settings` (whoever may
+audit the cluster): `platformVersionLine`, with `build`, the commit the
+operator's image was built from, when the build recorded one.
 
 The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A
