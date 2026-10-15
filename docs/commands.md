@@ -1102,6 +1102,8 @@ export RCLONE_CONFIG_EXT_TYPE=s3 RCLONE_CONFIG_EXT_PROVIDER=Other \
   RCLONE_CONFIG_EXT_ENDPOINT=https://sos-ch-dk-2.exo.io RCLONE_CONFIG_EXT_REGION=ch-dk-2 \
   RCLONE_CONFIG_EXT_ACCESS_KEY_ID="$ak" RCLONE_CONFIG_EXT_SECRET_ACCESS_KEY="$sk" \
   RCLONE_S3_NO_CHECK_BUCKET=true
+# a bundle with status.bundle.addressingStyle: virtualHost also needs
+#   export RCLONE_CONFIG_EXT_FORCE_PATH_STYLE=false
 rclone lsf ext:<bucket>/<prefix>/
 rclone cat ext:<bucket>/<prefix>/bundle-info.json
 ```
@@ -1222,6 +1224,7 @@ kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt
 kubectl gentian tenants import acme-nightly.gentian --passphrase          # prompts
 kubectl gentian tenants import acme-nightly.gentian --identity-file k.txt --name acme2
 kubectl gentian tenants import --bucket acme-gentian-backup --prefix nightly-20261001 --identity-file k.txt
+kubectl gentian tenants import --bucket b --prefix p --endpoint https://s3.example.org --addressing-style virtualHost --identity-file k.txt
 ```
 
 What happens: the file is uploaded to the cluster's own storage; the director
@@ -1356,6 +1359,28 @@ for the cost of twelve more bundles. With nothing set, nothing is deleted.
 what already exists, so restore and cleanup read each bundle's own endpoint
 rather than the policy's current answer — last month's bundles stay reachable
 after a tenant moves its storage.
+
+**`addressingStyle`** says how a request names the bucket at the endpoint:
+`path` (`https://host/bucket/key`, the default when unset) or `virtualHost`
+(`https://bucket.host/key`), for a provider that serves a bucket only by its
+own host name. Anything else is refused by the schema, and by the director
+before it commits. A manual export's `mode: custom` destination takes the same
+field. Each bundle records the style it was written with
+(`status.bundle.addressingStyle`), and its restore, download and deletion use
+it.
+
+```yaml
+  destination:
+    endpoint: https://s3.example.org
+    bucket: gentian-bundles
+    addressingStyle: virtualHost
+```
+
+**Leaving the cluster.** A backup's or a restore's steps in the tenant's
+namespace (a volume's capture and restore) may reach the destination's
+endpoint and nothing else outside the cluster, and only while the run lasts:
+its port, and its address when the endpoint names an address rather than a
+host name. A run to the platform's own storage gets no way out.
 
 ### Object Lock
 

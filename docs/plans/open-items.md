@@ -363,6 +363,23 @@ Carried over from before, and still not shown:
   provider-helm, the pod under the Kyverno baseline, the NetworkPolicy under
   Calico (the master's address names a Service, the filer is reached at the
   pod), and an app writing to its bucket.
+- Four follow-ups to it, decided by the owner and built on `test-cb`, never
+  run on a cluster: (2) an app's S3 key pair reaches the Job that makes its
+  identity in a Secret of the Job's name that the Job owns, never in a Job
+  spec, the provisioning ConfigMap or a composed Object; (3) the object
+  store's administrator is `s3-admin`, its key derived under `s3` (new
+  installs); (4) export and restore pods leave the cluster only to the
+  external destination of their own run, on its port, at its address when
+  the endpoint names one, and not at all for the platform's storage; (5) an
+  external destination's `addressingStyle` (`path`, the default, or
+  `virtualHost`), recorded on each bundle and used by the Jobs (rclone's
+  `force_path_style`), the operator's reads (minio-go's bucket lookup), the
+  director, `kubectl gentian tenants import` and `recovery.sh`. Proven in
+  local containers: (2) and (3) by `make test-object-storage-lab`; (5) the
+  Jobs' remote against SeaweedFS with `-s3.domainName`, which serves both
+  styles. *Needs a cluster:* the bucket Job's pod waiting for its Secret and
+  starting once the operator has made it, the Secret collected with the Job,
+  and the per-run NetworkPolicy under Calico.
 
 ## 3. Known defects, open
 

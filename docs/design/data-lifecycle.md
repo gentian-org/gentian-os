@@ -357,6 +357,13 @@ and mailboxes are in a backup; mailboxes are destroyed with the tenant; the
 rights that follow from nothing else are in a backup; a removed person's
 mailbox is archived or deleted, as whoever removed them chose.
 
+An external destination: a bundle records its endpoint, region, credential
+and addressing style (`path`, the default, or `virtualHost`), and its
+restore and deletion use them, whatever the policy says later. The steps of
+such a run that are in the tenant's namespace are given a way out to that
+destination alone while it runs; a run whose bundle stays in the platform's
+storage is given none.
+
 What only a cluster can confirm: that each step's pod starts in its namespace
 and reaches the object store through the network policies, the mailbox steps
 beside the mail server's volume among them; that the realm
