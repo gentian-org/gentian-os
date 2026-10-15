@@ -43,8 +43,6 @@ spec:
         destinations:
         - namespace: tenant-*
           server: https://kubernetes.default.svc
-        - namespace: kernel-gitops
-          server: https://kubernetes.default.svc
         sourceRepos:
         - https://github.com/gentian-org/gentian-os
         - https://github.com/gentian-org/gentian-apps

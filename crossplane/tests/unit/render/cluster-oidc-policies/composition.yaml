@@ -1078,10 +1078,11 @@ spec:
                       {{- range (default list (dig "argocd" "sourceRepos" list $spec)) }}
                       - {{ . | quote }}
                       {{- end }}
+                    # Tenant namespaces only. The Argo CD namespace was listed
+                    # too; it is a kernel namespace, which the admission
+                    # policies leave alone, and no tenant app deploys there.
                     destinations:
                       - namespace: "tenant-*"
-                        server: "https://kubernetes.default.svc"
-                      - namespace: {{ $argoNs }}
                         server: "https://kubernetes.default.svc"
                     # No ClusterIssuer: a tenant app that could write one could
                     # replace the internal CA gentian-ca, which every cluster
