@@ -2221,10 +2221,10 @@ components:
         recommend:
           type: object
           description: How many reviews said they would recommend the app, and how many said not; reviews that did not say are in neither.
-          required: [yes, no]
+          required: ["yes", "no"]
           properties:
-            yes: {type: integer, minimum: 0}
-            no: {type: integer, minimum: 0}
+            "yes": {type: integer, minimum: 0}
+            "no": {type: integer, minimum: 0}
         scores:
           type: object
           description: The mean of each score over the reviews that gave it.
