@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.0"
+  version: "1.1"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -593,12 +593,26 @@ paths:
         reviews (no `reviews` in `features`) answers an empty list and a
         summary with `count` 0.
 
-        This version of the API has no operation that writes a review.
+        `companySize` and `industry` narrow both: the summary is then over
+        the reviews whose author's company is of that size or in that
+        industry, and so are the items. A review whose author has stated no
+        company is in no narrowed answer. Reviews are written with
+        `PUT /v1/apps/{catalogue}/{app}/reviews/mine`.
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
         - $ref: "#/components/parameters/IfNoneMatch"
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
+        - name: companySize
+          in: query
+          description: Only reviews by people whose company is of this size.
+          schema:
+            $ref: "#/components/schemas/CompanySize"
+        - name: industry
+          in: query
+          description: Only reviews by people whose company is in this industry.
+          schema:
+            $ref: "#/components/schemas/Industry"
       responses:
         "200":
           description: One page of reviews, and the summary of all of them.
@@ -662,6 +676,158 @@ paths:
           $ref: "#/components/responses/Internal"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}/reviews/mine:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    get:
+      tags: [catalogue]
+      operationId: getMyReview
+      summary: The signed-in person's review of an app
+      description: |
+        One review per person and entry. `404` when they have written none.
+      security:
+        - storeToken: [store.read]
+      responses:
+        "200":
+          description: Their review.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [catalogue]
+      operationId: putMyReview
+      summary: Write or replace the signed-in person's review
+      description: |
+        Writes the review, or replaces the one the person wrote before; it
+        is dated anew. Only the person's own review is touched.
+
+        Refused with `403`:
+        * `review-not-acquired` where the store reviews only what a tenant
+          acquired (`reviewing.requireAcquisition` in `GET /v1/meta`) and no
+          tenant this person signed in for has a `confirmed` acquisition of
+          the entry;
+        * `tenant-refused`, as every signed-in call, while the store does
+          not serve the tenant in the token.
+
+        Refused with `409` and code `company-missing` while the account has
+        no company (`PUT /v1/account/company`): a review is shown with its
+        author's company size and industry.
+
+        `scores.support` and `scores.value` are for an entry of edition
+        `ee` and are refused (`400`) on any other.
+      security:
+        - storeToken: [store.review]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewRequest"
+            examples:
+              review:
+                value:
+                  recommend: true
+                  scores: {features: 4, easeOfUse: 5, easeOfSetup: 3, support: null, value: null}
+                  title: Does what we need
+                  text: Running it for forty people since spring. Upgrades have been uneventful.
+                  version: 31.0.4
+      responses:
+        "200":
+          description: The review as it is now shown.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/CompanyMissing"
+    delete:
+      tags: [catalogue]
+      operationId: deleteMyReview
+      summary: Withdraw the signed-in person's review
+      security:
+        - storeToken: [store.review]
+      responses:
+        "204":
+          description: Withdrawn, or there was none.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /v1/account/company:
+    get:
+      tags: [account]
+      operationId: getCompany
+      summary: The company the signed-in person is with
+      description: |
+        `404` until they have said. The App Store app asks for it once, at
+        the first sign-in that finds none.
+      security:
+        - storeToken: [store.read]
+      responses:
+        "200":
+          description: Their company.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [account]
+      operationId: putCompany
+      summary: Say which company the signed-in person is with
+      description: |
+        The company of the person's account, whichever tenant they sign in
+        for. Its size and industry are shown with their reviews and filter
+        them; its name is not shown with a review.
+      security:
+        - storeToken: [store.account]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Company"
+            examples:
+              company:
+                value: {name: Acme AG, size: 10-49, industry: information-communication}
+      responses:
+        "200":
+          description: The company as recorded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
   /v1/apps/{catalogue}/{app}/reports:
     parameters:
       - $ref: "#/components/parameters/Catalogue"
@@ -1391,7 +1557,9 @@ components:
       description: |
         Either the store does not serve the tenant in the token
         (`tenant-refused`, with `reason`), or the token lacks the scope the
-        operation needs (`insufficient-scope`).
+        operation needs (`insufficient-scope`), or a review is asked of an
+        entry no tenant of the person's acquired where the store requires
+        that (`review-not-acquired`).
       content:
         application/problem+json:
           schema:
@@ -1423,6 +1591,20 @@ components:
                 title: Not found
                 status: 404
                 detail: The store lists no app gentian/nextcloud-base-xx.
+    CompanyMissing:
+      description: The account has said no company yet (`PUT /v1/account/company`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            company:
+              value:
+                type: urn:gentian:store:problem:company-missing
+                code: company-missing
+                title: Say which company you are with first
+                status: 409
+                detail: A review is shown with its author's company size and industry.
     NotAcquirable:
       description: The app or the version named exists and cannot be acquired by this tenant.
       content:
@@ -1584,11 +1766,41 @@ components:
           description: The origins a `checkoutUrl` is on. A client opens a checkout address on one of these and refuses any other.
           items:
             type: string
+        companySizes:
+          type: array
+          description: The company sizes, in order, each with its name in the language of the request.
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: {$ref: "#/components/schemas/CompanySize"}
+              name: {type: string, maxLength: 80}
+        industries:
+          type: array
+          description: The industries, in the order of NACE, each with its name in the language of the request and its NACE section letter.
+          items:
+            type: object
+            required: [id, name, nace]
+            properties:
+              id: {$ref: "#/components/schemas/Industry"}
+              name: {type: string, maxLength: 80}
+              nace: {type: string, pattern: "^[A-U]$"}
+        reviewing:
+          type: object
+          description: The store's rules for writing a review.
+          required: [requireAcquisition]
+          properties:
+            requireAcquisition:
+              type: boolean
+              description: A review may be written only of an entry a tenant the person signed in for has acquired.
         features:
           type: array
           description: |
             What this store carries beyond the minimum. Open: a client
             ignores values it does not know. `reviews`: apps have reviews.
+            `review-writing`: a signed-in person may write one
+            (`PUT /v1/apps/{catalogue}/{app}/reviews/mine`). `company`: the
+            account has a company (`/v1/account/company`).
             `reports`: apps have evaluations and reports. `checkout`: an
             acquisition may answer `202` with a checkout address.
           items:
@@ -1708,7 +1920,8 @@ components:
             What the link leads to. Open; a client shows `label`, or the
             address, for a value it does not know. Values: `homepage`,
             `documentation`, `source`, `support`, `license`, `privacy`,
-            `terms`, `subscription`.
+            `terms`, `subscription`, `donate` -- where to give money to
+            the people who build the app, on an entry that is not sold.
         label:
           type: [string, "null"]
           description: What to call it. Plain text.
@@ -2005,6 +2218,23 @@ components:
           description: The mean rating, 1 to 5, to one decimal; `null` when `count` is 0.
           minimum: 1
           maximum: 5
+        recommend:
+          type: object
+          description: How many reviews said they would recommend the app, and how many said not; reviews that did not say are in neither.
+          required: [yes, no]
+          properties:
+            yes: {type: integer, minimum: 0}
+            no: {type: integer, minimum: 0}
+        scores:
+          type: object
+          description: The mean of each score over the reviews that gave it.
+          required: [features, easeOfUse, easeOfSetup, support, value]
+          properties:
+            features: {$ref: "#/components/schemas/ScoreSummary"}
+            easeOfUse: {$ref: "#/components/schemas/ScoreSummary"}
+            easeOfSetup: {$ref: "#/components/schemas/ScoreSummary"}
+            support: {$ref: "#/components/schemas/ScoreSummary"}
+            value: {$ref: "#/components/schemas/ScoreSummary"}
         distribution:
           type: object
           description: How many reviews gave each rating. Keys `"1"` to `"5"`, all present.
@@ -2016,6 +2246,94 @@ components:
             "3": {type: integer, minimum: 0}
             "4": {type: integer, minimum: 0}
             "5": {type: integer, minimum: 0}
+    CompanySize:
+      type: string
+      description: |
+        How many people work at the company: the size classes of EU
+        statistics (micro, small, medium) with large split at a thousand.
+      enum: ["1-9", "10-49", "50-249", "250-999", "1000+"]
+    Industry:
+      type: string
+      description: |
+        The company's main activity, by the sections of NACE Rev. 2, the
+        EU's classification of economic activities, which is also the list
+        Odoo's partner industries are drawn from. `GET /v1/meta` names each.
+      enum:
+        - agriculture
+        - mining
+        - manufacturing
+        - energy
+        - water-waste
+        - construction
+        - wholesale-retail
+        - transport-logistics
+        - accommodation-food
+        - information-communication
+        - finance-insurance
+        - real-estate
+        - professional-scientific
+        - administrative-support
+        - public-administration
+        - education
+        - health-social
+        - arts-entertainment
+        - other-services
+        - households
+        - extraterritorial
+    Company:
+      type: object
+      required: [name, size, industry]
+      properties:
+        name:
+          type: string
+          description: Plain text.
+          minLength: 1
+          maxLength: 120
+        size:
+          $ref: "#/components/schemas/CompanySize"
+        industry:
+          $ref: "#/components/schemas/Industry"
+    ReviewScores:
+      type: object
+      description: |
+        Stars, 1 to 5, for what a review rates. `support` (quality of
+        support) and `value` (value for money) are for an entry of edition
+        `ee`, and `null` on any other.
+      required: [features, easeOfUse, easeOfSetup, support, value]
+      properties:
+        features: {type: integer, minimum: 1, maximum: 5}
+        easeOfUse: {type: integer, minimum: 1, maximum: 5}
+        easeOfSetup: {type: integer, minimum: 1, maximum: 5}
+        support: {type: [integer, "null"], minimum: 1, maximum: 5}
+        value: {type: [integer, "null"], minimum: 1, maximum: 5}
+    ReviewRequest:
+      type: object
+      required: [recommend, scores, text]
+      properties:
+        recommend:
+          type: boolean
+          description: Would the author recommend the app to others.
+        scores:
+          $ref: "#/components/schemas/ReviewScores"
+        title:
+          type: [string, "null"]
+          maxLength: 120
+        text:
+          type: string
+          description: Plain text. May be empty.
+          maxLength: 5000
+        version:
+          type: [string, "null"]
+    ScoreSummary:
+      type: object
+      required: [average, count]
+      properties:
+        average:
+          type: [number, "null"]
+          description: The mean, 1 to 5, to one decimal; `null` when `count` is 0.
+        count:
+          type: integer
+          minimum: 0
     Review:
       type: object
       required: [id, rating, text, author, date]
@@ -2024,8 +2342,30 @@ components:
           type: string
         rating:
           type: integer
+          description: The review's overall stars. For a review written with `scores`, their mean, rounded.
           minimum: 1
           maximum: 5
+        recommend:
+          type: [boolean, "null"]
+          description: Whether the author would recommend the app; `null` on a review that did not say.
+        scores:
+          oneOf:
+            - $ref: "#/components/schemas/ReviewScores"
+            - type: "null"
+        reviewer:
+          oneOf:
+            - type: object
+              required: [size, industry]
+              properties:
+                size:
+                  $ref: "#/components/schemas/CompanySize"
+                industry:
+                  $ref: "#/components/schemas/Industry"
+            - type: "null"
+          description: The size and industry of the author's company; never its name.
+        mine:
+          type: boolean
+          description: Present and true on the signed-in person's own review.
         title:
           type: [string, "null"]
           description: Plain text.
@@ -2391,7 +2731,7 @@ components:
         name: Example Store
         issuer: https://accounts.store.example
         clientId: gentian-app-store
-        scopes: [store.read, store.acquire]
+        scopes: [store.read, store.acquire, store.review, store.account]
         defaultLanguage: en
         languages: [en, de, fr, it]
         mediaOrigins: ["https://media.store.example"]
