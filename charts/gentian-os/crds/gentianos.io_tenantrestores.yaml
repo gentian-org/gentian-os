@@ -751,6 +751,27 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                 type: object
+              source:
+                description: |-
+                  Source is where and by what the bundle was written, as its manifest
+                  records it: what a profile's post-restore commands are told beside
+                  where the restore puts the data. Empty fields are ones the bundle does
+                  not record.
+                properties:
+                  cluster:
+                    description: Cluster is the id of the cluster it was written on.
+                    maxLength: 253
+                    type: string
+                  domain:
+                    description: Domain is the tenant's domain where it was written.
+                    maxLength: 253
+                    type: string
+                  platformVersion:
+                    description: PlatformVersion is the version line of the platform
+                      that wrote it.
+                    maxLength: 64
+                    type: string
+                type: object
               sourceTenant:
                 description: |-
                   SourceTenant is the tenant the bundle was taken of, as its manifest

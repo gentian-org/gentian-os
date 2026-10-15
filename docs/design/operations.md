@@ -589,6 +589,12 @@ Each artefact is fetched from the path the manifest gives and loaded into the
 store of that kind the installed app has, by the inventory's names — which
 differ from the bundle's whenever the tenant's name or prefixes do, as when a
 bundle is restored into a tenant of another name.
+A profile's `restore.post` commands run with `GENTIAN_RESTORE_*` variables
+naming both ends: tenant, domain, platform version, cluster, the app's chart
+versions and each store's name in the bundle and here
+([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
+each app's profile rewrites what its app cached, reading credentials the
+platform made new from the app's own Secrets.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
 artefact) carries `schemaVersion`. Format 1 named each app and the kinds

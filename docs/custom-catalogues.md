@@ -364,6 +364,18 @@ it is set there. A field that is not secret (`public: true`, a publishable key) 
 every other is never shown again. The value is purged with the app and is not in a tenant's
 bundle: a restore asks for it again, as it does for every credential a person typed in.
 
+**An app whose data remembers where it ran** — its own address, a database's name, a credential it
+copied into a file — rewrites that in `spec.backup.restore.post`, the commands run in the app's pod
+after its data is put back and before it is resumed. A restore may come from another cluster or
+domain, and every credential the platform makes (database, bucket, sign-in client) is made new
+there, so each command is run with what it needs to know, and no secret: `GENTIAN_RESTORE_APP`;
+`GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT`, `DOMAIN`,
+`PLATFORM_VERSION`, `CLUSTER` and the app's `CHART_VERSION` (a source value the bundle does not
+record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
+`GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>`. A new
+credential the command reads from the app's own Secrets, as the app does. The container needs
+`env(1)`, which the platform runs the command through.
+
 **An app that verifies who is asking, and does not take the front door's headers on trust**, sets
 `exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a

@@ -13,6 +13,7 @@ package controller
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -96,6 +97,9 @@ type restorePlan struct {
 	// notes are said on the result: what of the tenant's own the bundle
 	// holds and this restore does not put back, and why.
 	notes []string
+	// source is where and by what the bundle was written, as far as its
+	// manifest says; nil when it says none of it.
+	source *gentianov1alpha1.RestoreSource
 	// outside is where this restore leaves what the platform guarantees: a
 	// bundle of its own version line, of the tenant restored into, on its
 	// domain. Empty when it is all three.
@@ -148,6 +152,33 @@ func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant) []guaran
 	return gaps
 }
 
+// restoreSource is what the manifest says of where the bundle was written,
+// each value only if it is a plain one: they come from a bundle, and are
+// recorded in the restore's status and handed to a profile's commands.
+func restoreSource(m *backup.Manifest) *gentianov1alpha1.RestoreSource {
+	source := gentianov1alpha1.RestoreSource{
+		PlatformVersion: plainValue(m.OperatorVersion),
+		Domain:          plainValue(m.Domain),
+		Cluster:         plainValue(m.Cluster),
+	}
+	if source == (gentianov1alpha1.RestoreSource{}) {
+		return nil
+	}
+	return &source
+}
+
+// plainValuePattern is a name, a domain or a version: what a bundle records
+// of where it was written and what it holds.
+var plainValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]{0,252}$`)
+
+// plainValue is s when it is a plain value, and "" when it is anything else.
+func plainValue(s string) string {
+	if plainValuePattern.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
 // outsideGuaranteeCondition is the condition's reason and message, or
 // false when the restore is the one the platform guarantees.
 func outsideGuaranteeCondition(gaps []guaranteeGap) (reason, message string, ok bool) {
@@ -196,6 +227,9 @@ type plannedApp struct {
 	// retained says the app is put back as retained: not installed, not
 	// paused, its stores made where the plan says so.
 	retained bool
+	// chartVersion is the version of the app that wrote the data, as the
+	// manifest records it.
+	chartVersion string
 }
 
 // liveApp is an app as the tenant has it now.
@@ -234,7 +268,7 @@ func planRestore(
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
 	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
-		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant)}
+		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant), source: restoreSource(m)}
 	if !m.NamesArtefacts() {
 		plan.derivation = gentianov1alpha1.RestoreNamesDerived
 	}
@@ -277,7 +311,8 @@ func planRestore(
 			plan.notRestored = append(plan.notRestored, gentianov1alpha1.RestoreOmission{App: app.Name, Reason: why})
 			continue
 		}
-		plan.apps = append(plan.apps, plannedApp{name: app.Name, artefacts: artefacts, note: note, retained: retained})
+		plan.apps = append(plan.apps, plannedApp{name: app.Name, artefacts: artefacts, note: note, retained: retained,
+			chartVersion: plainValue(app.ChartVersion)})
 	}
 
 	// An app asked for by name is restored or the restore is refused.

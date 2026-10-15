@@ -215,6 +215,13 @@ type TenantRestoreStatus struct {
 	// +optional
 	SourceTenant string `json:"sourceTenant,omitempty"`
 
+	// Source is where and by what the bundle was written, as its manifest
+	// records it: what a profile's post-restore commands are told beside
+	// where the restore puts the data. Empty fields are ones the bundle does
+	// not record.
+	// +optional
+	Source *RestoreSource `json:"source,omitempty"`
+
 	// NameDerivation says where the restore took the names of what it
 	// restores from. "manifest": the bundle's manifest names each artefact
 	// and what it was captured from (format 2 and later). "derived": the
@@ -277,6 +284,22 @@ type TenantRestoreStatus struct {
 	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// RestoreSource is where a bundle was written. None of it is secret.
+type RestoreSource struct {
+	// PlatformVersion is the version line of the platform that wrote it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	PlatformVersion string `json:"platformVersion,omitempty"`
+	// Domain is the tenant's domain where it was written.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Domain string `json:"domain,omitempty"`
+	// Cluster is the id of the cluster it was written on.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // RestoreOmission is one app a bundle holds that a restore did not put back.

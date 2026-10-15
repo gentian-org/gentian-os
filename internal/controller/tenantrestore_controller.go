@@ -377,7 +377,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 		}
 	}
 
-	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry); err != nil {
+	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry, restoreHookEnv(restore, tenant, appName, profile, r.Tenant)); err != nil {
 		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
 	}
 
@@ -448,6 +448,7 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 	tenantName, appName string,
 	spec *gentianov1alpha1.BackupSpec,
 	entry *gentianov1alpha1.AppExportStatus,
+	env []string,
 ) error {
 	post, verify := spec.RestoreCommands()
 	if len(post) == 0 && len(verify) == 0 {
@@ -461,6 +462,11 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 	}
 
 	for _, argv := range post {
+		// With the restore's context in its environment, by env(1): exec
+		// has no environment of its own to set.
+		if len(env) > 0 {
+			argv = append(append([]string{"env"}, env...), argv...)
+		}
 		if _, err := r.Tenant.execAppCommand(ctx, tenantName, appName, spec, argv); err != nil {
 			return fmt.Errorf("post-restore hook %v failed: %w", argv, err)
 		}
@@ -1050,6 +1056,7 @@ func (r *TenantRestoreReconciler) bundleKey(ctx context.Context, restore *gentia
 func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.BundleSchemaVersion = plan.schemaVersion
 	restore.Status.SourceTenant = plan.sourceTenant
+	restore.Status.Source = plan.source
 	restore.Status.NameDerivation = plan.derivation
 	restore.Status.NotRestored = plan.notRestored
 	restore.Status.Notes = restoreLimits(plan.derivation, plan.schemaVersion)
@@ -1063,6 +1070,7 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 		entry.Artefacts = app.artefacts
 		entry.Stores = artefactKinds(app.artefacts)
 		entry.Retained = app.retained
+		entry.ChartVersion = app.chartVersion
 		// Among the result's notes, not on the app's entry: the entry's
 		// message is progress and is cleared when the app is done.
 		if app.note != "" {

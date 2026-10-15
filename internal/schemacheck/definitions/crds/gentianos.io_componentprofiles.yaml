@@ -363,8 +363,12 @@ spec:
                       post:
                         description: |-
                           Post lists commands run in order once the app's data is loaded and before
-                          it is resumed — cache invalidation, re-indexing, fingerprinting. Each
-                          entry is an argv, for the same reason as BackupQuiesce.Pre.
+                          it is resumed — cache invalidation, re-indexing, fingerprinting, and
+                          rewriting what the app cached of where it ran. Each entry is an argv,
+                          for the same reason as BackupQuiesce.Pre, run through env(1) with
+                          GENTIAN_RESTORE_* variables that say where the data was written and
+                          where it is now: tenant, domain, platform version, cluster, the app's
+                          chart versions and its stores' names. None of them is a secret.
                         items:
                           items:
                             type: string
