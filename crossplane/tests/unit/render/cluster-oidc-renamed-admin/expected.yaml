@@ -39,8 +39,6 @@ spec:
         clusterResourceWhitelist:
         - group: ""
           kind: Namespace
-        - group: cert-manager.io
-          kind: ClusterIssuer
         description: Gentian OS — tenant workloads managed by Crossplane
         destinations:
         - namespace: tenant-*

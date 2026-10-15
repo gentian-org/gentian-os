@@ -1083,11 +1083,12 @@ spec:
                         server: "https://kubernetes.default.svc"
                       - namespace: {{ $argoNs }}
                         server: "https://kubernetes.default.svc"
+                    # No ClusterIssuer: a tenant app that could write one could
+                    # replace the internal CA gentian-ca, which every cluster
+                    # trusts, with an issuer of its own.
                     clusterResourceWhitelist:
                       - group: ""
                         kind: Namespace
-                      - group: "cert-manager.io"
-                        kind: ClusterIssuer
               providerConfigRef:
                 name: kubernetes
 
