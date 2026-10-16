@@ -222,6 +222,24 @@ and `TenantAppConfig` — a typo is
 silently accepted and only fails at Helm render time. A published schema makes L0 machine-checkable
 in CI, and lets an agent *discover* whether the change it wants is already an L0 knob.
 
+#### 2.1.1 Tiles
+
+A tile image is a PNG wherever it is read; an SVG is only a template rendered to PNG before
+commit, never drawn by a browser or served. A person sees, first that is set:
+
+1. the tile they uploaded themselves,
+2. the tenant's tile, chosen in the App Store,
+3. the profile's default, `spec.expose[].tile.logo`: a square 128x128 PNG as a
+   `data:image/png;base64,` URI of at most 65536 characters, rendered from a platform glyph
+   (`tile.icon`) where the app has no art of its own.
+
+The first two are the desktop's, in its own database. The App Store app stores a tenant's tile by
+calling the desktop's API in the same namespace with the person's token, at the address its
+profile asks for with `valueMapping.platform.desktopUrlKey`. Nothing about them is in Git or in
+the cluster's state: the tile catalogue the operator projects carries the profile's default only.
+The platform's glyphs are `internal/tiles/glyphs/*.svg`, rendered into
+`internal/tiles/catalogue.json` and the chart's own tiles by `scripts/tools/render-tiles.py`.
+
 ### 2.2 L1 — Drop-in
 
 Add a **file** into a directory the app already treats as an extension point: a theme, a policy

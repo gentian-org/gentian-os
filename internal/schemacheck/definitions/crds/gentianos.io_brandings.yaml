@@ -80,12 +80,18 @@ spec:
                             Src is an https URL, or the image itself as a data URL. A data URL keeps
                             the brand in the cluster's own repository and asks no third party
                             whenever a page is shown.
+
+                            A data URL is a PNG, a WebP or an icon file, never an SVG: an SVG is a
+                            document a browser runs, with scripts and fetches of its own, and a
+                            logo is pixels. An SVG logo is rendered to PNG before it is set here.
                           maxLength: 262144
-                          pattern: ^(https://[^\s"'<>]+|data:image/(png|svg\+xml|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+)$
+                          pattern: ^(https://[^\s"'<>]+|data:image/(png|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+)$
                           type: string
                         type:
-                          description: Type is the image's media type.
+                          description: 'Type is the image''s media type: one of those
+                            a data URL may carry.'
                           maxLength: 64
+                          pattern: ^(image/(png|webp|x-icon|vnd\.microsoft\.icon))?$
                           type: string
                       required:
                       - src

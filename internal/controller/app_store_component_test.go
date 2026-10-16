@@ -156,6 +156,21 @@ func TestTheAppStoreProfileRoutesAsTheAppExpects(t *testing.T) {
 	if tile.Logo == "" || tile.Logo != glyphs.Tiles["store"].DataURI {
 		t.Fatal("the tile's logo is not the store glyph of internal/tiles/catalogue.json")
 	}
+	// And the administration console's is its "settings", a PNG like every
+	// tile: both are what scripts/tools/render-tiles.py writes.
+	console := renderShippedProfile(t, "componentprofile-admin-console.yaml", "adminConsole.enabled=true")
+	var consoleLogo string
+	for _, e := range console.Spec.Expose {
+		if e.Tile != nil {
+			consoleLogo = e.Tile.Logo
+		}
+	}
+	if consoleLogo == "" || consoleLogo != glyphs.Tiles["settings"].DataURI {
+		t.Fatal("the administration console's logo is not the settings glyph of internal/tiles/catalogue.json")
+	}
+	if !strings.HasPrefix(tile.Logo, "data:image/png;base64,") {
+		t.Fatal("the App Store's logo is not a PNG")
+	}
 	// The callback's rule is a path prefix on segment boundaries, like every
 	// rule of an exposure: /oauth/callback and what is below it. The edge's
 	// own callback is under /oauth2/, which every route behind a session
@@ -247,7 +262,7 @@ func TestTheAppStoreTileAsksTheInstallRightOnTheTenant(t *testing.T) {
 func appStoreValues(t *testing.T, tenancyMode, tenantName string, reporting bool, claim *unstructured.Unstructured) map[string]interface{} {
 	t.Helper()
 	t.Setenv("GENTIAN_NS_CONTROL", "kernel-control")
-	b := fake.NewClientBuilder().WithScheme(appStoreScheme(t))
+	b := fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(shippedDesktopProfile(t))
 	if claim != nil {
 		b = b.WithObjects(claim)
 	}
@@ -281,8 +296,12 @@ func TestTheAppStoreIsToldEveryFactItsChartReads(t *testing.T) {
 		},
 		"gateway":       map[string]interface{}{"enabled": false},
 		"networkPolicy": map[string]interface{}{"create": false},
-		"api":           map[string]interface{}{"env": map[string]interface{}{"ENVIRONMENT": "production"}},
-		"director":      map[string]interface{}{"url": "http://gentian-os-director.kernel-control.svc.cluster.local:8080", "cluster": "c1"},
+		// The desktop's API in the same namespace, where a tile the tenant
+		// chose is stored.
+		"api": map[string]interface{}{"env": map[string]interface{}{
+			"ENVIRONMENT": "production", "DESKTOP_API_URL": "http://desktop-gentian-portal-api:8000",
+		}},
+		"director": map[string]interface{}{"url": "http://gentian-os-director.kernel-control.svc.cluster.local:8080", "cluster": "c1"},
 		"custodian":     map[string]interface{}{"url": "http://gentian-os-custodian.kernel-control.svc.cluster.local:9444"},
 		"usher":         map[string]interface{}{"url": "http://gentian-os-usher.kernel-control.svc.cluster.local:8080"},
 		"platform": map[string]interface{}{
@@ -871,5 +890,82 @@ func TestAStoreAddressThatIsTheAppsOwnHostIsNoStore(t *testing.T) {
 		p.Update(event.UpdateEvent{ObjectOld: acmeTenantFixture(), ObjectNew: relabelled}) ||
 		!p.Create(event.CreateEvent{Object: moved}) || !p.Delete(event.DeleteEvent{Object: moved}) {
 		t.Error("tenantDomainChanged lets through something other than a tenant appearing, going or changing its domain")
+	}
+}
+
+// The App Store app reaches the desktop's API in its own namespace, and only
+// that: its pods may leave for the desktop's pods on the API's port, and the
+// desktop's pods admit its pods on that port. Both policies are the App
+// Store app's, and a profile of another tier that named the key gets neither.
+func TestTheAppStoreReachesTheDesktopAPIAndNothingElseOfIt(t *testing.T) {
+	scheme := appStoreScheme(t)
+	ctx := context.Background()
+	profile := shippedAppStoreProfile(t)
+	comp := tileFixtureComponent("app-store", "tenant-acme", "app-store")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shippedDesktopProfile(t), comp.DeepCopy()).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme}
+	live := &gentianov1alpha1.Component{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(comp), live); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensureDesktopAccess(ctx, live, profile); err != nil {
+		t.Fatal(err)
+	}
+	get := func(name string) *networkingv1.NetworkPolicy {
+		np := &networkingv1.NetworkPolicy{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "tenant-acme"}, np); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(np.OwnerReferences) != 1 || np.OwnerReferences[0].Name != "app-store" {
+			t.Fatalf("%s is not the App Store app's: %+v", name, np.OwnerReferences)
+		}
+		return np
+	}
+	appStorePods := map[string]string{componentInstanceLabel: "tenant-acme-app-store"}
+	desktopPods := map[string]string{componentInstanceLabel: "tenant-acme-desktop"}
+	onePort := func(name string, ports []networkingv1.NetworkPolicyPort) {
+		if len(ports) != 1 || ports[0].Port.IntValue() != 8000 || *ports[0].Protocol != corev1.ProtocolTCP {
+			t.Fatalf("%s: ports = %+v, want TCP 8000 only", name, ports)
+		}
+	}
+
+	out := get("desktop-api-from-app-store")
+	if fmt.Sprint(out.Spec.PodSelector.MatchLabels) != fmt.Sprint(appStorePods) ||
+		fmt.Sprint(out.Spec.PolicyTypes) != "[Egress]" || len(out.Spec.Egress) != 1 {
+		t.Fatalf("egress policy = %+v", out.Spec)
+	}
+	to := out.Spec.Egress[0].To
+	if len(to) != 1 || to[0].NamespaceSelector != nil || to[0].PodSelector == nil ||
+		fmt.Sprint(to[0].PodSelector.MatchLabels) != fmt.Sprint(desktopPods) {
+		t.Fatalf("egress peer = %+v, want the desktop's pods in the same namespace", to)
+	}
+	onePort("egress", out.Spec.Egress[0].Ports)
+
+	in := get("desktop-api-admits-app-store")
+	if fmt.Sprint(in.Spec.PodSelector.MatchLabels) != fmt.Sprint(desktopPods) ||
+		fmt.Sprint(in.Spec.PolicyTypes) != "[Ingress]" || len(in.Spec.Ingress) != 1 {
+		t.Fatalf("ingress policy = %+v", in.Spec)
+	}
+	from := in.Spec.Ingress[0].From
+	if len(from) != 1 || from[0].NamespaceSelector != nil || from[0].PodSelector == nil ||
+		fmt.Sprint(from[0].PodSelector.MatchLabels) != fmt.Sprint(appStorePods) {
+		t.Fatalf("ingress peer = %+v, want the App Store app's pods in the same namespace", from)
+	}
+	onePort("ingress", in.Spec.Ingress[0].Ports)
+
+	// A profile of another tier that named the key: the API server refuses
+	// it, and the reconciler does not rely on that. What was opened is closed.
+	other := profile.DeepCopy()
+	other.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	if err := r.ensureDesktopAccess(ctx, live, other); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"desktop-api-from-app-store", "desktop-api-admits-app-store"} {
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "tenant-acme"}, &networkingv1.NetworkPolicy{}); err == nil {
+			t.Errorf("%s is still there for a certified profile", name)
+		}
+	}
+	if url, err := r.desktopURL(ctx, live, other); err != nil || url != "" {
+		t.Fatalf("a certified profile was told the desktop: %q (%v)", url, err)
 	}
 }

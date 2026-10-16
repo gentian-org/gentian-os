@@ -185,7 +185,7 @@ func TestComponentProfileRules(t *testing.T) {
     surface: gateway
     authMode: oidc
     backend: {service: x, port: 80}
-    tile: {displayName: Files, logo: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+", relation: can_use}
+    tile: {displayName: Files, logo: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==", relation: can_use}
 `
 	app := "  classes: [app]\n  launch: none\n  trustTier: certified"
 	cases := []struct{ name, spec, want string }{
@@ -202,9 +202,9 @@ func TestComponentProfileRules(t *testing.T) {
 
 		// A service may have a console. What it may not have is a console on
 		// the perimeter, or a tile asking about an object it does not have.
-		{"a service with a console", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+\", relation: can_operate_system, object: cluster}}\n", ""},
+		{"a service with a console", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_operate_system, object: cluster}}\n", ""},
 		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
-		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+\", relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
+		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
 		{"a service given to every tenant", "  classes: [service]\n  launch: none\n  trustTier: platform\n  defaultForTenants: true\n", "defaultForTenants is for class app"},
 
 		// Launch: a person must be able to reach what they installed.
@@ -212,6 +212,10 @@ func TestComponentProfileRules(t *testing.T) {
 		{"a tile, and launch says so", "  classes: [app]\n  launch: tile\n  trustTier: certified" + tile, ""},
 		{"launch tile with no tile", "  classes: [app]\n  launch: tile\n  trustTier: certified" + gateway, "launch tile needs a tile"},
 		{"a tile the profile does not own up to", "  classes: [app]\n  launch: none\n  trustTier: certified" + tile, "a tile means launch tile"},
+		// A tile is a PNG. An SVG is a document a browser runs, and a PNG
+		// media type over bytes that are not one is not a PNG either.
+		{"an SVG tile", "  classes: [app]\n  launch: tile\n  trustTier: certified" + strings.Replace(tile, "data:image/png;base64,iVBORw0KGgo", "data:image/svg+xml;base64,PHN2Zy8+", 1), "logo"},
+		{"a PNG media type over an SVG", "  classes: [app]\n  launch: tile\n  trustTier: certified" + strings.Replace(tile, "iVBORw0KGgo", "PHN2Zy8+", 1), "logo"},
 		{"opened by another component", "  classes: [app]\n  launch: from\n  launchFrom: file-store\n  trustTier: certified" + gateway, ""},
 		{"launch from with nothing named", "  classes: [app]\n  launch: from\n  trustTier: certified" + gateway, "launch from needs launchFrom"},
 		{"launchFrom without launch from", "  classes: [app]\n  launch: none\n  launchFrom: file-store\n  trustTier: certified" + gateway, "launchFrom is meaningless"},
@@ -303,7 +307,7 @@ spec:
     api:
       runtime: redirect
       baseUrl: "https://example.com"
-      tile: {displayName: Billing, logo: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+", relation: can_administer, object: tenant}
+      tile: {displayName: Billing, logo: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==", relation: can_administer, object: tenant}
 `
 	apiNoTile := `
   package:

@@ -66,7 +66,7 @@ spec:
       backend: {service: probe, port: 8080}
       tile:
         displayName: Probe
-        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+
+        logo: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==
         path: /
         relation: can_launch
 `

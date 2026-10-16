@@ -152,7 +152,7 @@ type PrivilegedRoleSpec struct {
 	Name string `json:"name"`
 }
 
-// TileSpec configures a desktop tile icon (52×52 SVG).
+// TileSpec configures a tile icon: a square PNG, 128x128.
 // Set icon (catalogue path) or logo (custom data URI). image is source-repo only
 // and must be inlined to logo before the profile is applied to a cluster.
 type TileSpec struct {
@@ -161,12 +161,15 @@ type TileSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 	Icon string `json:"icon,omitempty"`
 
-	// Logo is a custom tile as a data URI (path 1). Mutually exclusive with icon.
+	// Logo is a custom tile as a PNG data URI (path 1). Mutually exclusive
+	// with icon. PNG only: an SVG is only ever the template a PNG is rendered
+	// from, never what is drawn.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	// +kubebuilder:validation:MaxLength=65536
+	// +kubebuilder:validation:Pattern=`^data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*=*$`
 	Logo string `json:"logo,omitempty"`
 
-	// Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
+	// Image is a profile-relative PNG path used in git only (e.g. assets/tile.png).
 	// Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
 	// before commit — profiles live in that repository, and so does the script.
 	// +optional
@@ -1028,6 +1031,21 @@ type PlatformValueMapping struct {
 	// platform-trust profile may name it.
 	// +optional
 	StoreURLKey string `json:"storeUrlKey,omitempty"`
+
+	// DesktopURLKey receives the in-cluster address of the API of the
+	// desktop in the component's own namespace, from the desktop profile's
+	// "api" entry: http://<its Service>:<its port>. The component calls it
+	// with the person's own token, and the desktop decides; what the App
+	// Store app stores there is a tile the tenant chose.
+	//
+	// Like the URL keys above it is more than a fact. A tenant's namespace is
+	// closed between pods too, so naming this key is what opens the
+	// component's pods a way to the desktop's pods on that one port, and the
+	// desktop's pods admit them on it. Nothing else of the desktop is opened,
+	// and no other component. That is why only a platform-trust profile may
+	// name it.
+	// +optional
+	DesktopURLKey string `json:"desktopUrlKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.

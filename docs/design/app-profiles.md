@@ -105,15 +105,19 @@ spec:
         displayName: "Projects"
         displayNames: { de_DE: "Projekte" }
         description: "Plan and track work"
-        image: assets/tile.svg                 # the author's copy, in git
-        logo: data:image/svg+xml;base64,…      # what the cluster reads
+        image: assets/tile.png                 # the author's copy, in git
+        logo: data:image/png;base64,…          # what the cluster reads
         path: /                                # optional: where the tile leads
         relation: can_launch                   # what the person must hold
         object: app                            # app (default) | tenant | cluster
 ```
 
-- `logo` is required and inline: every component brings its own SVG.
-  `gentian-apps/scripts/sync-profile-tile.py` writes it from `image`.
+- `logo` is required and inline: every component brings its own default
+  tile, a square PNG of 128x128 (at most 65536 characters as a data URI).
+  `gentian-apps/scripts/sync-profile-tile.py` writes it from `image`. The
+  schema admits PNG and nothing else; an SVG is only a template rendered to
+  PNG before commit. What a person sees in its place is the desktop's to
+  decide ([app-customization.md](../app-customization.md#211-tiles)).
 - `relation` is required. A tile is shown to a person who holds that relation
   on the object: the component's own app object by default, the tenant for an
   administration tile (`can_administer`), the cluster for a service's console.
@@ -126,7 +130,9 @@ The operator projects the tiles of every installed Component whose route
 exists into one ConfigMap in `kernel-control`
 (`internal/controller/tile_projection_reconciler.go`). The usher reads it and
 answers, for the signed-in person, the tiles whose relation they hold. The
-desktop shows that answer and opens what is clicked.
+desktop shows that answer and opens what is clicked. The projection carries
+each tile's default image and nothing else: no tile chosen in a tenant or by a
+person passes through the cluster's state.
 
 ### 6.3 CRD
 

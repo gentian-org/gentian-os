@@ -158,7 +158,7 @@ spec:
       backend: { service: "openproject-ce", port: 8080 }
       tile:
         displayName: "Projects"
-        logo: data:image/svg+xml;base64,…
+        logo: data:image/png;base64,…
         relation: can_launch
 ```
 

@@ -460,11 +460,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
 	mergeValues(values, r.platformValues(profile, tenant, zone))
-	// And the two that are this component's own: the host it answers on and
-	// where the store is, for a profile that asked for either.
+	// And those that are this component's own: the host it answers on, where
+	// the store is and where the desktop's API is, for a profile that asked.
 	placed, err := r.placementValues(ctx, comp, profile, zone)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("read where the App Store is: %w", err)
+		return ctrl.Result{}, err
 	}
 	mergeValues(values, placed)
 	// The namespace is closed by default; the component's pods may reach
@@ -476,6 +476,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	} else if err := r.ensureGrantedEgress(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("granted egress: %w", err)
+	}
+	// The way to the desktop's API, for a component that asked where it is.
+	if err := r.ensureDesktopAccess(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("desktop access: %w", err)
 	}
 
 	// The package is exactly one of chart, composition, api or addon, and what

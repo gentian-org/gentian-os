@@ -13,7 +13,7 @@ SPDX-License-Identifier: MPL-2.0
 //
 // It is its own package, and not part of internal/tiles, because that one is
 // the portal's icon set. The two share a word and nothing else, and the
-// director should not carry an embedded SVG catalogue to read a list of
+// director should not carry an embedded glyph catalogue to read a list of
 // links.
 //
 // The catalogue used to be a list compiled into the director, which meant the
@@ -67,11 +67,12 @@ type Tile struct {
 	DisplayName  string            `json:"displayName"`
 	DisplayNames map[string]string `json:"displayNames,omitempty"`
 	Description  string            `json:"description,omitempty"`
-	// Icon is what the portal draws, and it is one of two things: an SVG as a
-	// data URI, which is what every component ships and what a tile from a
+	// Icon is the tile's default image, and it is one of two things: a PNG as
+	// a data URI, which is what every component ships and what a tile from a
 	// ComponentProfile always carries, or a name out of the portal's own set,
 	// which only the kernel's own consoles use. The portal tells them apart by
-	// the data: prefix.
+	// the data: prefix. A tile the tenant chose, or one the person uploaded,
+	// is the desktop's own and takes its place there; it is not written here.
 	Icon string `json:"icon"`
 
 	// URL is where the tile leads, complete and absolute.
