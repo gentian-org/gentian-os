@@ -13,6 +13,7 @@ package netpolicy_test
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -60,6 +61,24 @@ func TestAGrantedContractOpensBothSides(t *testing.T) {
 	}
 	if out.Name == in.Name {
 		t.Fatal("the two policies share a name")
+	}
+}
+
+// A provider that names where it answers the contract is reached there and
+// nowhere else of its pods: both sides are to that one port.
+func TestAContractWithAnEndpointOpensItsPortOnly(t *testing.T) {
+	binding, grant := contractFixture()
+	if got := netpolicy.ContractNetworkPolicies("acme", binding, grant, nil); len(got[0].Spec.Egress[0].Ports) != 0 ||
+		len(got[1].Spec.Ingress[0].Ports) != 0 {
+		t.Fatal("a contract without an endpoint is limited to a port")
+	}
+	binding.Spec.Endpoint = &gentianov1alpha1.ContractEndpoint{Service: "chaperone-api", Port: 8000}
+	policies := netpolicy.ContractNetworkPolicies("acme", binding, grant, nil)
+	for _, ports := range [][]networkingv1.NetworkPolicyPort{policies[0].Spec.Egress[0].Ports, policies[1].Spec.Ingress[0].Ports} {
+		if len(ports) != 1 || ports[0].Port == nil || ports[0].Port.IntValue() != 8000 ||
+			ports[0].Protocol == nil || *ports[0].Protocol != corev1.ProtocolTCP {
+			t.Fatalf("ports = %+v, want TCP 8000 only", ports)
+		}
 	}
 }
 

@@ -1702,6 +1702,37 @@ type ContractRef struct {
 	// Protocol is the technical protocol used (e.g., "http-json", "webdav").
 	// +optional
 	Protocol string `json:"protocol,omitempty"`
+
+	// Endpoint is where this component answers the contract in the tenant's
+	// namespace. The platform knows nothing of what is asked there; it only
+	// tells a granted consumer the address, and opens the way to that one
+	// port. Without it a granted consumer is told no address, and the way is
+	// to the provider's pods as a whole.
+	// +optional
+	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+}
+
+// ContractEndpoint is the Service and port a provider answers a contract on.
+type ContractEndpoint struct {
+	// Service is the provider's Service, in the namespace it is installed in.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z]([-a-z0-9]*[a-z0-9])?$`
+	Service string `json:"service"`
+
+	// Port is the Service's port, and must be the port the provider's pods
+	// listen on: a network policy matches the port a pod listens on, and
+	// the way it opens is to this port and no other.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Path is appended to the address the consumer is told, for an API
+	// served below the root.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	Path string `json:"path,omitempty"`
 }
 
 // IntegrationRef identifies an optional integration contract this app can consume.

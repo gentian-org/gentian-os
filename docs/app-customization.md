@@ -340,8 +340,11 @@ consumer (`PUT /v1/tenants/{t}/grants/{app}` at the director, `{"consume": [{"co
 companion's pods may reach the target's, and the target's admit them. Withdrawing the grant takes
 both away. The operator grants nothing by itself and never changes a grant, so a grant narrower
 than the declaration is what holds; the binding's `Granted` condition names what was asked for and
-not granted. That is all the platform does for a contract today: the path is to the target's pods as
-a whole, the granted capabilities are recorded and not enforced, and the target is not told which
+not granted. A target that names where it answers the contract (`spec.provides[].endpoint`: its
+Service, the port its pods listen on, a path) is reached on that port only, and the companion is
+told the address under `valueMapping.integrations.<contract>.endpointKey`; both can take the
+contract's shared password under `passwordKey`. Otherwise the path is to the target's pods as a
+whole. The granted capabilities are recorded and not enforced, and the target is not told which
 app is calling. What a consumer may do there is the target's to check.
 
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a

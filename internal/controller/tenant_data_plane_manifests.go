@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -195,6 +196,21 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 		}
 		objects = append(objects, ib)
 	}
+	if r.Seeder != nil {
+		// A component that maps a contract's credentials has them whether
+		// or not the other side is installed: a provider holds the password
+		// its consumers present before any of them is, and a consumer is
+		// told an empty endpoint while no provider is.
+		mapped, err := r.mappedContracts(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		for _, contract := range mapped {
+			if _, err := r.Seeder.SeedContract(ctx, tenant.Name, contract); err != nil {
+				return nil, fmt.Errorf("seed contract %s: %w", contract, err)
+			}
+		}
+	}
 
 	edgeObjects, err := r.buildTenantEdgeObjects(ctx, tenant)
 	if err != nil {
@@ -203,6 +219,32 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	objects = append(objects, edgeObjects...)
 
 	return objects, nil
+}
+
+// mappedContracts are the contracts the tenant's installed components map
+// under package.valueMapping.integrations, sorted.
+func (r *TenantReconciler) mappedContracts(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	seen := map[string]struct{}{}
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.ComponentProfile{}
+		if err := r.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
+		}
+		if m := profile.Spec.Package.ValueMapping; m != nil {
+			for contract := range m.Integrations {
+				seen[contract] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for contract := range seen {
+		out = append(out, contract)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // collectDesiredIntegrationBindings returns IntegrationBinding CRs that should
@@ -235,8 +277,12 @@ func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context
 			if providerApp == "" {
 				continue
 			}
+			endpoint, err := r.providedEndpoint(ctx, providerApp, integration.Contract)
+			if err != nil {
+				return nil, err
+			}
 			name := integrationBindingName(tenant.Name, app.Profile, integration.Contract)
-			ib := buildIntegrationBinding(name, nsName, tenant.Name, app.Profile, providerApp, integration)
+			ib := buildIntegrationBinding(name, nsName, tenant.Name, app.Profile, providerApp, integration, endpoint)
 			ib.SetGroupVersionKind(gentianov1alpha1.GroupVersion.WithKind("IntegrationBinding"))
 			out = append(out, ib)
 		}

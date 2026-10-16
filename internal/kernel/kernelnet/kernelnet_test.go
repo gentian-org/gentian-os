@@ -395,6 +395,7 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/gateway_tunnel.go": {{"kernel-edge", 10443}},
 	// A tenant's app to another app of the same tenant.
 	"internal/controller/integration_binding_controller.go": {},
+	"internal/controller/integration_reconciler.go":         {},
 	// The mail servers', in the mail namespaces.
 	"internal/controller/keycloak_tenant_smtp.go": {},
 	"internal/controller/mail_reconciler.go":      {{"kernel-authentication", 8080}},
