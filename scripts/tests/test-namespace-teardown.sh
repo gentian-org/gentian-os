@@ -77,7 +77,7 @@ obj_json() {   # <ref-file>
     group=""; [[ "${kind}" == *.* ]] && { group="${kind#*.}"; kind="${kind%%.*}"; }
     api="v1"; [[ -n "${group}" ]] && api="${group}/v1"
     ts="$(sed -n 's/^ts=//p' "${f}")"
-    jq -n --arg a "${api}" --arg k "${kind^}" --arg n "${name}" --arg t "${ts}" \
+    jq -n --arg a "${api}" --arg k "${kind}" --arg n "${name}" --arg t "${ts}" \
         '{apiVersion:$a, kind:$k, metadata:{name:$n, creationTimestamp:$t}}'
 }
 ref_file() {   # <kubectl ref kind/name> -> file
@@ -134,7 +134,7 @@ case "${verb}" in
     patch)
         f="$(ref_file "${args[0]}")"
         [[ -f "${f}" ]] || exit 1
-        sed -i '/^fin$/d' "${f}"
+        { grep -vx fin "${f}" || true; } > "${f}.new"; mv "${f}.new" "${f}"
         grep -qx deleting "${f}" && ! grep -qx immortal "${f}" && rm -f "${f}"
         exit 0 ;;
     replace)
