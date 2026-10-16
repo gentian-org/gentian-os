@@ -53,6 +53,9 @@ cat > "${SANDBOX}/bin/kubectl" <<'STUB'
 case "$*" in
     "config current-context") echo test ;;
     "get deploy -A -l app.kubernetes.io/component=director"*) echo "kernel-control director" ;;
+    # And one usher beside it, which answers what the cluster holds.
+    "get deploy -A -l app.kubernetes.io/component=usher"*) echo "kernel-control usher" ;;
+    "get deploy usher -n kernel-control -o jsonpath="*) echo 8080 ;;
     "get deploy director -n kernel-control -o json")
         echo '{"spec":{"template":{"spec":{"containers":[{"env":[
             {"name":"DIRECTOR_ISSUER_BASE_URL","value":"https://id.k.example"},
@@ -371,6 +374,25 @@ is "organizations remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/tenan
 fresh; reply GET /v1/tenants/customers/brokered-from 200 '{"brokeredFrom":[{"name":"abc","displayName":"ABC AG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}]}'
 gentian tenants organizations customers
 has "organizations lists the sign-in alias" "${OUT}" "sign-in alias org-abc"
+
+# An app waiting on a privilege: what it waits for, then one PUT that answers
+# it with the person's reason.
+fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"profile":"aluvian-commerce","name":"aluvian-commerce","pendingPrivileges":["egress/intake"]}]}'
+gentian apps approve aluvian-commerce --tenant team
+has "apps approve without a request lists what the app waits for" "${OUT}" "  egress/intake"
+is "... and asks nothing to change" "$(writes)" ""
+fresh; reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve aluvian-commerce egress/intake --tenant team --reason "reads the website's order requests"
+is "apps approve sends one PUT with the reason" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake { "reason": "reads the website'"'"'s order requests"}'
+has "... and says it is committed" "${OUT}" "Approved egress/intake for aluvian-commerce in team: committed (01234567)"
+fresh
+gentian apps approve aluvian-commerce egress/intake --tenant team --reason "ok"
+refused "an approval without a reason of ten characters is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
+refused "a request of no known kind is a usage error"
 
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true

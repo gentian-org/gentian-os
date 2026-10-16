@@ -67,6 +67,10 @@
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
+#   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
+#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
+#                                                             approve one request: egress (the tenant's administrator),
+#                                                             podSecurity or clusterRoles (the cluster's security officer)
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
 #                                                               of their own Authorization header behind sign-in
@@ -2053,8 +2057,79 @@ cmd_apps() {
                 echo "installing ${app} again finds it, and 'kubectl gentian apps uninstall ${app} --tenant ${t} --purge' destroys it."
             fi
             ;;
-        *) die "usage: kubectl gentian apps list|install|uninstall ..." ;;
+        approve) cmd_apps_approve "$@" ;;
+        *) die "usage: kubectl gentian apps list|install|uninstall|approve ..." ;;
     esac
+}
+
+# kubectl gentian apps approve <app> [<kind>/<name>] --tenant <t> --reason "<why>" [--expires <RFC 3339>]
+#
+# An app whose profile asks for more than the default posture waits until a
+# person answers each request (the Component reads "waiting for approval of
+# <kind>/<name>"). This is the answer: one commit through the director, with
+# the approver taken from the session and the reason in their words. Who may
+# answer is the director's to decide by the kind: an egress request is the
+# tenant administrator's, a podSecurity or clusterRoles one the cluster's
+# security officer's. Without a request named, it lists what the app is
+# waiting for, as the cluster has it.
+cmd_apps_approve() {
+    local usage_text app="" privilege="" reason="" expires="" t answer kind name
+    usage_text='usage: kubectl gentian apps approve <app> --tenant <tenant>
+       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            --reason) reason="${2:-}"; shift 2 || die "--reason needs a value" ;;
+            --expires) expires="${2:-}"; shift 2 || die "--expires needs a value" ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${app}" ]]; then app="$1"
+                elif [[ -z "${privilege}" ]]; then privilege="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${app}" && -n "${t:-}" ]] || die "${usage_text}"
+    _label "an app" "${app}"
+    _label "a tenant" "${t}"
+    need curl jq
+
+    if [[ -z "${privilege}" ]]; then
+        answer="$(_call_usher GET "/v1/tenants/${t}/apps/status")" || exit 1
+        local pending
+        pending="$(jq -r --arg a "${app}" '.apps[]? | select(.name == $a or .profile == $a) | .pendingPrivileges[]?' <<<"${answer}")"
+        if [[ -z "${pending}" ]]; then
+            echo "${app} in ${t} is waiting for no approval."
+            return 0
+        fi
+        echo "${app} in ${t} is waiting for these approvals:"
+        local p
+        while IFS= read -r p; do printf '  %s\n' "${p}"; done <<<"${pending}"
+        echo "Approve one with:"
+        echo "  kubectl gentian apps approve ${app} <kind>/<name> --tenant ${t} --reason \"<why, in your words>\""
+        return 0
+    fi
+
+    kind="${privilege%%/*}"
+    name="${privilege#*/}"
+    case "${kind}" in
+        egress|podSecurity|clusterRoles) ;;
+        *) die "the request is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles: not '${privilege}'" ;;
+    esac
+    [[ "${privilege}" == */* && -n "${name}" && "${name}" != */* ]] ||
+        die "the request is <kind>/<name>, as the app's state names it: not '${privilege}'"
+    _label "a request" "${name}"
+    reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what a reviewer reads in the commit."
+
+    answer="$(_call PUT "/v1/tenants/${t}/privileges/${app}/${kind}/${name}" \
+        "$(jq -n --arg r "${reason}" --arg e "${expires}" '{reason: $r} + (if $e == "" then {} else {expiresAt: $e} end)')")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "${privilege} of ${app} in ${t} is approved already; nothing was committed."
+        return 0
+    fi
+    echo "Approved ${privilege} for ${app} in ${t}: committed ($(_committed "${answer}")). The app goes on once the platform has it."
 }
 
 cmd_resources() {

@@ -495,6 +495,26 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
+### What an app asks for beyond the default
+
+An app whose profile asks for more than a tenant's apps get by default -- a
+way out to an address (`egress`), a relaxed pod security (`podSecurity`),
+cluster roles (`clusterRoles`) -- waits until a person answers each request;
+its component reads `waiting for approval of <kind>/<name>`. The answer is a
+commit through the director, with you as the approver and your reason in it.
+An `egress` request is the tenant administrator's to answer; the other two
+are the cluster's security officer's. The Admin Console's Apps page offers
+the same as a button.
+
+```bash
+kubectl gentian apps approve aluvian-commerce --tenant team     # what it waits for
+kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
+  --reason "reads the website's and the store's order requests over https"
+```
+
+`--expires <RFC 3339>` bounds the approval. Removing the entry from the
+tenant's `privileges.yaml` in git withdraws it, and the app waits again.
+
 ### What a tenant has on the internet
 
 An entry of a profile that the public reaches (`surface: perimeter`) answers
