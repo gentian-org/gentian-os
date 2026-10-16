@@ -47,7 +47,7 @@ steps within it. Five phases, in this order:
 | **B** | `secrets` | B-01 … B-10 | The kernel bootstrap Applications, the transit seal and OpenBao, Crossplane providers and definitions, the seeded credentials, the deployment signing keys |
 | **C** | `platform` | C-01 … C-05 | The Cluster claim, the ApplicationSets, the wildcard certificate, the credential catalogue, the repository hand-off |
 | **D** | `applications` | D-01 … D-05 | The operator and the director, the kernel hostnames resolving, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
-| **E** | `handover` | E-01 … E-04 | The recovery kit, then revoking the installer's own credential; on a single-tenancy cluster, the user tenant after that |
+| **E** | `handover` | E-01 … E-05 | The recovery kit, then revoking the installer's own credential; on a single-tenancy cluster, the user tenant after that; last, the catalogue and every tenant declared in git synced (`E-05`), which before the platform admin's first sign-in stays outstanding |
 
 `./install.sh --explain` prints every step with what it provides and what it
 mutates, straight from the step files, so it cannot drift from what runs.

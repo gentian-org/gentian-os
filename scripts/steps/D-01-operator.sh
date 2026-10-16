@@ -78,6 +78,10 @@ apply() {
             { error "${d} has not finished rolling out to ${GENTIAN_OS_IMAGE_TAG:-its build} after 5m."; return 1; }
     done
     success "the operator is running in $(ns_kernel control)$([[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]] && echo ", build ${GENTIAN_OS_IMAGE_TAG}")"
+    # The gentianos.io CRDs exist from here on. The catalogue and the tenants
+    # tried to sync at C-02 and failed for want of them; ask again now, so
+    # the profiles are there before the platform tenant (D-03). E-05 verifies.
+    resync_operator_kind_apps "${ns}"
 }
 
 destroy() {

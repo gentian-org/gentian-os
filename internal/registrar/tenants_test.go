@@ -13,6 +13,7 @@ package registrar_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/registrar"
 )
@@ -223,5 +225,79 @@ func TestAnUnreadableClaimIsAnErrorNotADefault(t *testing.T) {
 	}).Build()
 	if got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background()); err == nil {
 		t.Fatalf("got %v and no error", got)
+	}
+}
+
+func application(name, phase, sync, message string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{
+		"sync":           map[string]any{"status": sync},
+		"operationState": map[string]any{"phase": phase, "message": message},
+	}}}
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+	u.SetName(name)
+	u.SetNamespace(layout.Namespace(layout.GitOps))
+	return u
+}
+
+// A tenant the cluster does not have is on its way -- unless Argo CD's last
+// sync of its Application failed, and then it is said to have failed, with
+// Argo CD's message. A fresh install's tenant Application failed on the
+// Tenant CRD that did not exist yet, gave up, and the console went on saying
+// the cluster was creating the tenant.
+func TestATenantWhoseSyncFailedIsSaidToHaveFailed(t *testing.T) {
+	const crdGone = `one or more synchronization tasks are not valid: Tenant.gentianos.io "" not found (retried 10 times).`
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		application("tenant-broken", "Failed", "OutOfSync", crdGone),
+		application("tenant-erred", "Error", "Unknown", "comparison error"),
+		application("tenant-retrying", "Running", "OutOfSync", "Retrying attempt #3"),
+		application("tenant-settled", "Failed", "Synced", "an older failure"),
+	).Build()
+	tenants := &registrar.ClusterTenants{Client: reader, Applications: reader, ApplicationNamespace: layout.Namespace(layout.GitOps)}
+
+	for name, want := range map[string]string{"broken": crdGone, "erred": "comparison error"} {
+		_, err := tenants.Tenant(context.Background(), name)
+		var failed *registrar.TenantSyncFailed
+		if !errors.As(err, &failed) || failed.Message != want || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want a failed sync saying %q", name, err, want)
+		}
+		if !errors.Is(err, registrar.ErrTenantNotFound) {
+			t.Errorf("%s: %v is not ErrTenantNotFound, so nothing waiting for the tenant goes on waiting", name, err)
+		}
+	}
+	for _, name := range []string{"retrying", "settled", "nowhere"} {
+		_, err := tenants.Tenant(context.Background(), name)
+		var failed *registrar.TenantSyncFailed
+		if errors.As(err, &failed) || !errors.Is(err, registrar.ErrTenantNotFound) {
+			t.Errorf("%s: %v, want a tenant on its way (ErrTenantNotFound)", name, err)
+		}
+	}
+
+	// With no Application reader, every missing tenant is on its way.
+	plain := &registrar.ClusterTenants{Client: reader}
+	if _, err := plain.Tenant(context.Background(), "broken"); !errors.Is(err, registrar.ErrTenantNotFound) || strings.Contains(err.Error(), "failed") {
+		t.Errorf("no Application reader: %v", err)
+	}
+}
+
+// The activation of such a tenant's administrator answers that the creation
+// failed, with Argo CD's message -- not 404, which a console waits out as a
+// tenant the cluster is creating. One still on its way stays 404.
+func TestActivatingTheAdministratorOfATenantThatFailedSaysSo(t *testing.T) {
+	const denied = `admission webhook "vtenant.gentianos.io" denied the request`
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		application("tenant-demo", "Failed", "OutOfSync", denied),
+	).Build()
+	tenants := &registrar.ClusterTenants{Client: reader, Applications: reader, ApplicationNamespace: layout.Namespace(layout.GitOps)}
+	h := startWithTenants(t, newFakeIdentity("demo"), nil, tenants, nil)
+	alice := h.token(t, "gentian", "alice")
+
+	status, body := h.do(t, http.MethodPost, "/v1/clusters/"+dt.Cluster+"/tenants/demo/actions/activate-admin", alice, "")
+	if msg, _ := body["error"].(string); status != http.StatusFailedDependency || !strings.Contains(msg, denied) || !strings.Contains(msg, "tenant-demo") {
+		t.Fatalf("a tenant whose sync failed: %d %v, want 424 with Argo CD's message", status, body)
+	}
+
+	status, body = h.do(t, http.MethodPost, "/v1/clusters/"+dt.Cluster+"/tenants/other/actions/activate-admin", alice, "")
+	if status != http.StatusNotFound {
+		t.Fatalf("a tenant on its way: %d %v, want 404", status, body)
 	}
 }
