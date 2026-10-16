@@ -1,0 +1,37 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  annotations:
+    gentianos.io/catalogue-origin: cluster/private
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+          # From a catalogue of the whole cluster: its client's tokens name the
+          # service they are handed to.
+          audiences:
+            - store

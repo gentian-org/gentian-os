@@ -1245,6 +1245,65 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+
+            {{- /* ── names the client's access tokens carry in aud ────────────
+                 requires.services.identity.oidc.audiences: a service the app
+                 hands its tokens to accepts one only when its audience names
+                 that service, and nothing in the realm puts the name there
+                 unless a mapper on this client does. One custom-audience
+                 mapper per name -- a custom audience, as for the director in
+                 tenant-default, because what is named is a service and need
+                 not be a client of this realm, and Keycloak drops a client
+                 audience whose client does not exist.
+
+                 A grant, so held to what the definition holds it to, and not
+                 left to that alone: only for a profile from a catalogue of the
+                 whole cluster (the operator holds an install of one from a
+                 tenant's own catalogue and says why), a name that is one DNS
+                 label, and none beginning with "gentian", which is how the
+                 platform's own services are named.
+
+                 deletionPolicy: Delete, unlike the mappers of a client that
+                 goes as a whole: the client stays when a profile stops naming
+                 an audience, and the mapper is what has to go then. On an
+                 uninstall the realm removes it with the client, and the
+                 provider then finds it gone.
+
+                 All five config keys and no external-name, for the reasons
+                 given at director-audience in tenant-default. */}}
+            {{- $origin := dig "metadata" "annotations" "gentianos.io/catalogue-origin" "" $profile }}
+            {{- if hasPrefix "cluster/" $origin }}
+            {{- range $aud := (default list $oidcCl.audiences) }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-audience-{{ $aud }}
+              name: {{ $tenant }}-{{ $app }}-oidc-audience-{{ $aud }}
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "audience-%s" $aud | quote }}
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $aud | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if hasKey $oidcPackDefaultScopes $oidcPackKey }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1

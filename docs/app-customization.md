@@ -112,6 +112,29 @@ elsewhere it is accepted and does nothing, so an app keeps a fallback (an app
 password) for those clusters. Who checks what:
 [security.md §2.16](design/security.md).
 
+**Naming the service a token is for.** A Keycloak access token names the
+client it was issued to in `azp`, and nothing in `aud` unless a mapper puts it
+there. An app that hands its tokens to a service which checks for its own name
+-- a store that accepts only a token whose audience includes `store` --
+declares that name:
+
+```yaml
+spec:
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: gentian-app-store
+          audiences: [store]
+```
+
+Each name is put in the client's access tokens (and the introspection answer),
+not in its ID tokens, and taken off when the profile stops naming it. A name is
+one DNS label and may not begin with `gentian`, the platform's own services'
+prefix. It is a grant -- the service accepts every token that names it -- so
+it is given only to a profile from a catalogue of the whole cluster; an install
+of one from a tenant's own catalogue is held (`TokenAudiencesRefused`).
+
 **Language models are a need like the others.** An app that calls models
 declares the platform's model gateway, and only an app that declares it is
 given a key there, the gateway's address and a network path to it:

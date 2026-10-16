@@ -410,6 +410,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInSidecarRefused, noSignIn, 0)
 	}
+	// Audiences on the app's sign-in tokens: a grant, held for the same
+	// reason and at the same point as the sidecar (token_audiences.go).
+	if refusal := tokenAudiencesRefusal(profile); refusal != "" {
+		if r.Recorder != nil && !componentReports(comp, reasonTokenAudiencesRefused, refusal) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonTokenAudiencesRefused, refusal)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonTokenAudiencesRefused, refusal, 0)
+	}
 	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {
 		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &values); err != nil {

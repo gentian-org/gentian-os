@@ -1405,6 +1405,37 @@ spec:
                                   - PUBLIC
                                   - CONFIDENTIAL
                                   type: string
+                                audiences:
+                                  description: |-
+                                    Audiences are names the access tokens of this client carry in aud,
+                                    beside what Keycloak puts there itself: the name a service the app
+                                    hands its tokens to checks for. A store that accepts a token only when
+                                    its audience includes "store" is the reason it exists.
+
+                                    It is a grant: a service that checks for a name accepts every token
+                                    that carries it. So it is honoured only for a profile from a catalogue
+                                    of the whole cluster, and the operator holds the install of one from a
+                                    tenant's own catalogue; and no name may begin with "gentian", which is
+                                    how the platform's own services are named. Each name is put in the
+                                    access token alone, not in the ID token, by a mapper on this client
+                                    that goes when the name is no longer declared.
+                                  items:
+                                    description: |-
+                                      TokenAudience is a name an app's access tokens carry in aud: one DNS label,
+                                      and none of the platform's own (see OIDCClientSpec.Audiences).
+                                    maxLength: 63
+                                    minLength: 1
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                    x-kubernetes-validations:
+                                    - message: 'an audience may not begin with gentian:
+                                        the platform''s own services are named so,
+                                        and a token naming one would be accepted by
+                                        it'
+                                      rule: '!self.startsWith(''gentian'')'
+                                  maxItems: 8
+                                  type: array
+                                  x-kubernetes-list-type: set
                                 backchannelLogout:
                                   description: |-
                                     BackchannelLogout says where in the app the realm tells it that a
@@ -3142,6 +3173,36 @@ spec:
                                 - PUBLIC
                                 - CONFIDENTIAL
                                 type: string
+                              audiences:
+                                description: |-
+                                  Audiences are names the access tokens of this client carry in aud,
+                                  beside what Keycloak puts there itself: the name a service the app
+                                  hands its tokens to checks for. A store that accepts a token only when
+                                  its audience includes "store" is the reason it exists.
+
+                                  It is a grant: a service that checks for a name accepts every token
+                                  that carries it. So it is honoured only for a profile from a catalogue
+                                  of the whole cluster, and the operator holds the install of one from a
+                                  tenant's own catalogue; and no name may begin with "gentian", which is
+                                  how the platform's own services are named. Each name is put in the
+                                  access token alone, not in the ID token, by a mapper on this client
+                                  that goes when the name is no longer declared.
+                                items:
+                                  description: |-
+                                    TokenAudience is a name an app's access tokens carry in aud: one DNS label,
+                                    and none of the platform's own (see OIDCClientSpec.Audiences).
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                  x-kubernetes-validations:
+                                  - message: 'an audience may not begin with gentian:
+                                      the platform''s own services are named so, and
+                                      a token naming one would be accepted by it'
+                                    rule: '!self.startsWith(''gentian'')'
+                                maxItems: 8
+                                type: array
+                                x-kubernetes-list-type: set
                               backchannelLogout:
                                 description: |-
                                   BackchannelLogout says where in the app the realm tells it that a

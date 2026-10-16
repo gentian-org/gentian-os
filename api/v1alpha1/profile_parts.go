@@ -540,11 +540,37 @@ type OIDCClientSpec struct {
 	// +optional
 	DirectAccessGrantsEnabled bool `json:"directAccessGrantsEnabled,omitempty"`
 
+	// Audiences are names the access tokens of this client carry in aud,
+	// beside what Keycloak puts there itself: the name a service the app
+	// hands its tokens to checks for. A store that accepts a token only when
+	// its audience includes "store" is the reason it exists.
+	//
+	// It is a grant: a service that checks for a name accepts every token
+	// that carries it. So it is honoured only for a profile from a catalogue
+	// of the whole cluster, and the operator holds the install of one from a
+	// tenant's own catalogue; and no name may begin with "gentian", which is
+	// how the platform's own services are named. Each name is put in the
+	// access token alone, not in the ID token, by a mapper on this client
+	// that goes when the name is no longer declared.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	Audiences []TokenAudience `json:"audiences,omitempty"`
+
 	// OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
 }
+
+// TokenAudience is a name an app's access tokens carry in aud: one DNS label,
+// and none of the platform's own (see OIDCClientSpec.Audiences).
+//
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="an audience may not begin with gentian: the platform's own services are named so, and a token naming one would be accepted by it"
+type TokenAudience string
 
 // BackchannelLogoutSpec declares where an app with its own OIDC client is
 // told that a person signed out.
