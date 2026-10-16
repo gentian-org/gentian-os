@@ -92,6 +92,9 @@ type Effective struct {
 	Endpoint string
 	Bucket   string
 	Region   string
+	// AddressingStyle is how a bucket is named in requests to Endpoint;
+	// empty is path.
+	AddressingStyle gentianov1alpha1.S3AddressingStyle
 
 	// CredentialName is the CredentialRequirement the destination's keys come
 	// from, and CredentialSecret the Secret ESO materialises from it. Both are
@@ -135,13 +138,13 @@ func ApplyExportDestination(
 		// Everything that addresses somewhere else is cleared together. Half a
 		// destination -- an external endpoint with the platform's credential,
 		// say -- addresses no storage that exists.
-		eff.Endpoint, eff.Region = "", ""
+		eff.Endpoint, eff.Region, eff.AddressingStyle = "", "", ""
 		eff.CredentialName, eff.CredentialSecret = "", ""
 		eff.Bucket = BackupBucket(tenant)
 		eff.Overridden = true
 
 	case gentianov1alpha1.ExportDestinationCustom:
-		eff.Endpoint, eff.Region = d.Endpoint, d.Region
+		eff.Endpoint, eff.Region, eff.AddressingStyle = d.Endpoint, d.Region, d.AddressingStyle
 		if d.Bucket != "" {
 			eff.Bucket = d.Bucket
 		}
@@ -189,7 +192,7 @@ func ResolveEffective(
 		if d := p.Spec.Destination; d.IsSet() {
 			// Wholesale, not field by field: half of one endpoint's settings
 			// and half of another's addresses no storage that exists.
-			eff.Endpoint, eff.Region = d.Endpoint, d.Region
+			eff.Endpoint, eff.Region, eff.AddressingStyle = d.Endpoint, d.Region, d.AddressingStyle
 			eff.CredentialName, eff.CredentialSecret = "", ""
 			if d.NeedsCredential() {
 				eff.CredentialName = DestinationCredentialName(p.Spec.Scope, p.Spec.Tenant)

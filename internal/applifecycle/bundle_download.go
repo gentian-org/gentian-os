@@ -58,7 +58,12 @@ func (s *Service) StreamBundle(ctx context.Context, tenantName, name string, w i
 	if export.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || export.Status.Bundle == nil {
 		return errBundleNotReady
 	}
-	bundle := export.Status.Bundle
+	return s.streamRef(ctx, export.Status.Bundle, w)
+}
+
+// streamRef writes the bundle at ref to w as a tar whose entries are the
+// artefact names under its prefix.
+func (s *Service) streamRef(ctx context.Context, bundle *gentianov1alpha1.BundleRef, w io.Writer) error {
 	mc, err := s.bundleClient(ctx, bundle)
 	if err != nil {
 		return err

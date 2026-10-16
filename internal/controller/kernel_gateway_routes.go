@@ -155,6 +155,11 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err := r.ensureRegistrarVouchingKeys(ctx); err != nil {
 		return fmt.Errorf("ensure registrar vouching keys: %w", err)
 	}
+	// And the director's list of the components that commission
+	// organizations, from the same Secrets and the tenants that name them.
+	if err := r.ensureDirectorCommissionKeys(ctx); err != nil {
+		return fmt.Errorf("ensure director commission keys: %w", err)
+	}
 	expected := make(map[string]struct{}, len(specs))
 	expectedPolicies := map[string]struct{}{}
 	for _, spec := range specs {

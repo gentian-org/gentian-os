@@ -26,7 +26,7 @@ func buildOIDCPackScript(
 	pack oidc.Pack,
 	templates map[string]oidc.MapperTemplate,
 	redirectURIs []string,
-	clientSecret string,
+	withSecret bool,
 	entitlementGroup string,
 ) string {
 	if pack.ServiceClient {
@@ -46,7 +46,7 @@ func buildOIDCPackScript(
 	}
 
 	secretClause := ""
-	if clientSecret != "" {
+	if withSecret {
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
@@ -86,7 +86,7 @@ if echo "${EXISTING}" | grep -q '"id"'; then
 else
   kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
-    -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
+    -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false,`+keycloak.PlatformMarkerShellJSON+`%s}"
   EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
   echo "client ${CLIENT_ID} created"
@@ -156,8 +156,9 @@ echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 // scope and an empty role in every tenant realm and suggest, in the Keycloak
 // admin UI, that users can be entitled to a mail server.
 //
-// The client secret comes from the OIDC_CLIENT_SECRET env the Job carries, never
-// from an argument, so it stays out of the rendered script and out of Job specs.
+// The client secret comes from the OIDC_CLIENT_SECRET env the Job reads from
+// the Secret it owns, never from an argument, so it stays out of the rendered
+// script and out of Job specs.
 func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) string {
 	fullScope := "false"
 	if pack.FullScopeAllowed {
@@ -170,7 +171,8 @@ func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) st
 	body := `{\"clientId\":\"${CLIENT_ID}\",\"protocol\":\"openid-connect\",\"publicClient\":false,` +
 		`\"standardFlowEnabled\":false,\"implicitFlowEnabled\":false,\"directAccessGrantsEnabled\":false,` +
 		`\"serviceAccountsEnabled\":false,\"redirectUris\":[],\"webOrigins\":[],` +
-		`\"fullScopeAllowed\":` + fullScope + `,\"secret\":\"${OIDC_CLIENT_SECRET}\"}`
+		`\"fullScopeAllowed\":` + fullScope + `,\"secret\":\"${OIDC_CLIENT_SECRET}\",` +
+		keycloak.PlatformMarkerShellJSON + `}`
 
 	return keycloak.ShellJSONIDExtractor() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 REALM=%q

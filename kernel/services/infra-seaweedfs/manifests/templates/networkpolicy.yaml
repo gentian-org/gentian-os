@@ -41,10 +41,13 @@
                         person downloading it and writes an imported one
                         (internal/bundlestore, applifecycle/bundle_*.go).
 
-  The master's and the filer's gRPC ports check nothing: whoever reaches them
-  can make and delete buckets and identities and read every object. They are
-  what the platform's Jobs administer the store through (weed shell), and are
-  admitted from those Jobs' pods alone, by the label they carry,
+  The master's and the filer's gRPC ports accept a connection only with a
+  certificate of the internal CA whose common name is the pod's own or the
+  administering Jobs' (templates/certificates.yaml); whoever holds the
+  latter can make and delete buckets and identities and read every object.
+  They are what the platform's Jobs administer the store through (weed
+  shell), and are admitted from those Jobs' pods alone, by the label they
+  carry,
   gentianos.io/object-store-shell=true, in this namespace: the bucket Job
   (s3-bucket-<tenant>-<app>), the destroy Job (s3-delete-<tenant>-<unit>) and
   the restore of an app's bucket, whose first step makes the bucket and its
@@ -53,7 +56,10 @@
   reached on the pod, whatever Service the master's address names.
 
   Every other port is closed: the master's and the filer's HTTP ports, the
-  volume server's, and the S3 gateway's gRPC port. The pod's components
+  volume server's, and the S3 gateway's gRPC port. This policy is the only
+  guard of the master's HTTP port; the volume server and the filer's HTTP
+  port refuse a write or a read without a token signed with the vault's
+  keys (templates/externalsecret.yaml). The pod's components
   reach one another inside the pod. The kubelet's probes use the master's
   HTTP port; traffic from a pod's own node is not subject to a
   NetworkPolicy.

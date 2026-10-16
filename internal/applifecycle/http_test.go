@@ -380,7 +380,6 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 		{"GET", "/v1/tenants/demo"},
 		{"GET", "/v1/tenants/demo/apps"},
 		{"GET", "/v1/tenants/demo/backups/b1/download"},
-		{"GET", "/v1/tenants/demo/restores/r1"},
 		{"POST", "/v1/tenants/demo/actions/backup"},
 		{"POST", "/v1/tenants/demo/actions/delete-backup"},
 		{"POST", "/v1/tenants/demo/actions/restore"},

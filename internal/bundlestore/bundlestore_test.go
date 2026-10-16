@@ -14,13 +14,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"filippo.io/age"
+	"github.com/minio/minio-go/v7"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 func sealed(t *testing.T, recipient age.Recipient, manifest any) []byte {
@@ -131,6 +134,45 @@ func TestOnlyAnUploadedBundleIsRemoved(t *testing.T) {
 		// say no.
 		if err := (&Store{}).RemoveImported(context.Background(), ref); err == nil || !strings.Contains(err.Error(), "not an uploaded bundle") {
 			t.Errorf("%+v: err = %v, want a refusal", ref, err)
+		}
+	}
+}
+
+// The operator's own reads and deletions address a bundle as the Jobs wrote
+// it: path unless it records virtualHost, never minio-go's guess.
+func TestBucketLookupFollowsTheBundle(t *testing.T) {
+	for style, want := range map[gentianov1alpha1.S3AddressingStyle]minio.BucketLookupType{
+		"":                                       minio.BucketLookupPath,
+		gentianov1alpha1.S3AddressingPath:        minio.BucketLookupPath,
+		gentianov1alpha1.S3AddressingVirtualHost: minio.BucketLookupDNS,
+	} {
+		if got := BucketLookup(style); got != want {
+			t.Errorf("%q: %v, want %v", style, got, want)
+		}
+	}
+}
+
+// A bundle of a newer version line is refused like a newer format; one of an
+// older line, or one that records none, reads -- the restore says how far it
+// is from the round trip the platform guarantees.
+func TestOpenManifestRefusesANewerVersionLine(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := Key{Identity: id.String()}.Identities()
+	if err != nil {
+		t.Fatal(err)
+	}
+	this := backup.ThisVersionLine()
+	newer := fmt.Sprintf("%d.%d", this.Major, this.Minor+1)
+	_, err = OpenManifest(sealed(t, id.Recipient(), bundle.Manifest{SchemaVersion: bundle.SchemaVersion, OperatorVersion: newer}), ids)
+	if err == nil || !strings.Contains(err.Error(), "platform version "+newer) {
+		t.Errorf("a bundle of line %s: err = %v, want a refusal that names it", newer, err)
+	}
+	for _, line := range []string{"", "0.4", backup.PlatformVersionLine, "not a version"} {
+		if _, err := OpenManifest(sealed(t, id.Recipient(), bundle.Manifest{SchemaVersion: bundle.SchemaVersion, OperatorVersion: line}), ids); err != nil {
+			t.Errorf("a bundle of line %q is refused: %v", line, err)
 		}
 	}
 }

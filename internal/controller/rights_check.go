@@ -59,6 +59,16 @@ func wantsRightsCheck(profile *gentianov1alpha1.ComponentProfile) bool {
 	return services != nil && (services.Rights != nil || services.Vouching != nil)
 }
 
+// holdsComponentKey reports whether the component is given a key of its own
+// at all: one that asks the rights check, one that vouches, and one that
+// commissions organizations, which presents the key at the director
+// (organizations.go). The key is one per component whatever it is for; what
+// it opens is decided where it is presented, by the lists the operator
+// writes for each purpose.
+func holdsComponentKey(profile *gentianov1alpha1.ComponentProfile) bool {
+	return wantsRightsCheck(profile) || wantsOrganizations(profile)
+}
+
 func rightsCheckURL(bouncerService string) string {
 	return fmt.Sprintf("http://%s.%s.svc:%d/v1/check", bouncerService, servicesNamespace, rightsCheckPort)
 }
@@ -73,7 +83,7 @@ func rightsCheckURL(bouncerService string) string {
 // is worth nothing meanwhile: the bouncer's table lists a key only while the
 // profile declares the requirement (rightsCheckers).
 func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
-	if !wantsRightsCheck(profile) {
+	if !holdsComponentKey(profile) {
 		return nil
 	}
 	key := types.NamespacedName{Name: rightsCheckSecretName(comp.Name), Namespace: comp.Namespace}
@@ -84,11 +94,18 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 	}
 	found := err == nil
 	url := rightsCheckURL(r.bouncerService())
+	// The director's address, for a component that commissions
+	// organizations there; absent for any other.
+	director := ""
+	if wantsOrganizations(profile) {
+		director = r.directorURL()
+	}
 	if found {
 		if !metav1.IsControlledBy(existing, comp) {
 			return fmt.Errorf("secret %s exists and is not this component's", key.Name)
 		}
 		if len(existing.Data[rightsCheckKeyKey]) > 0 && string(existing.Data[rightsCheckURLKey]) == url &&
+			string(existing.Data[componentDirectorURLKey]) == director &&
 			existing.Labels[rightsCheckerLabel] == "true" {
 			return nil
 		}
@@ -110,6 +127,9 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 			rightsCheckURLKey: []byte(url),
 			rightsCheckKeyKey: []byte(secret),
 		},
+	}
+	if director != "" {
+		desired.Data[componentDirectorURLKey] = []byte(director)
 	}
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err

@@ -254,20 +254,25 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
-func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret, entitlementGroup string) *batchv1.Job {
+// makeOIDCPackJob creates a Job that makes or updates an app's OIDC client,
+// with its pack's scope, mappers and role, in the tenant's realm.
+//
+// When withSecret is set (Seeder enabled, confidential client) the Job gives
+// the client the secret the vault holds for the app. The pod reads it from
+// the Secret of the Job's name, which the Job owns (jobSecret); it is in no
+// Job spec, no ConfigMap and no composed Object.
+func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, withSecret bool, entitlementGroup string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+	jobName := clientJobName(tenant.Name, cfg.profileName)
 	container := keycloakContainer("provision-oidc-pack",
-		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret, entitlementGroup))
-	if clientSecret != "" {
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "OIDC_CLIENT_SECRET",
-			Value: clientSecret,
-		})
+		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, withSecret, entitlementGroup))
+	if withSecret {
+		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      clientJobName(tenant.Name, cfg.profileName),
+			Name:      jobName,
 			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,

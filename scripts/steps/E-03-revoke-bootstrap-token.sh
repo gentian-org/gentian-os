@@ -150,7 +150,7 @@ _bao_reachable() {
     fi
     if BAO_ADDR="$(OPENBAO_NAMESPACE="$(ns_kernel secrets)" gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https)"; then
         export BAO_ADDR
-        export VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+        openbao_cli_trust
         return 0
     fi
     return 1

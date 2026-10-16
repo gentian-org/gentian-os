@@ -11,23 +11,28 @@ SPDX-License-Identifier: MPL-2.0
 package tiles
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
-
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
+// The catalogue is the platform's glyphs, each a PNG rendered from its
+// template in glyphs/ by scripts/tools/render-tiles.py. The templates are
+// not embedded: nothing draws or serves an SVG.
+//
 //go:embed catalogue.json
 var catalogueJSON []byte
 
 const (
 	defaultIconID = "app"
-	dataURIPrefix = "data:image/svg+xml;base64,"
+	dataURIPrefix = "data:image/png;base64,"
 )
+
+// pngSignature is the eight bytes every PNG begins with.
+var pngSignature = []byte("\x89PNG\r\n\x1a\n")
 
 type catalogue struct {
 	Version int                      `json:"version"`
@@ -83,51 +88,12 @@ func ResolveIcon(iconID string) (string, error) {
 	return tile.DataURI, nil
 }
 
-// ResolveLogo picks the portal tile logo using profile and optional per-tile overrides.
-// Priority: portal tile spec > profile tile spec > default catalogue icon.
-func ResolveLogo(
-	profileTile *gentianov1alpha1.TileSpec,
-	portalTile *gentianov1alpha1.TileSpec,
-) (string, error) {
-	if uri, ok := resolveTileSpec(portalTile); ok {
-		return uri, nil
+// EncodeCustomLogo converts the bytes of a PNG into a Gentian tile data URI.
+// Anything that is not a PNG is refused: an SVG is only ever the template a
+// tile is rendered from (scripts/tools/render-tiles.py), never the tile.
+func EncodeCustomLogo(png []byte) (string, error) {
+	if !bytes.HasPrefix(png, pngSignature) {
+		return "", fmt.Errorf("a tile is a PNG, and this is not one")
 	}
-	if uri, ok := resolveTileSpec(profileTile); ok {
-		return uri, nil
-	}
-	return ResolveIcon(defaultIconID)
-}
-
-func resolveTileSpec(spec *gentianov1alpha1.TileSpec) (string, bool) {
-	if spec == nil {
-		return "", false
-	}
-	if spec.Logo != "" {
-		return normalizeDataURI(spec.Logo), true
-	}
-	if spec.Icon != "" {
-		uri, err := ResolveIcon(spec.Icon)
-		if err != nil {
-			return "", false
-		}
-		return uri, true
-	}
-	return "", false
-}
-
-func normalizeDataURI(value string) string {
-	if strings.HasPrefix(value, dataURIPrefix) {
-		return value
-	}
-	return dataURIPrefix + strings.TrimPrefix(value, dataURIPrefix)
-}
-
-// LogoBase64 returns the base64 payload without the data URI prefix for portal tile jobs.
-func LogoBase64(dataURI string) string {
-	return strings.TrimPrefix(dataURI, dataURIPrefix)
-}
-
-// EncodeCustomLogo converts raw SVG bytes into a Gentian tile data URI.
-func EncodeCustomLogo(svg []byte) string {
-	return dataURIPrefix + base64.StdEncoding.EncodeToString(svg)
+	return dataURIPrefix + base64.StdEncoding.EncodeToString(png), nil
 }

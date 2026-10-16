@@ -26,6 +26,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -732,6 +733,12 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	settings, _ := body["settings"].([]any)
 	if len(settings) == 0 {
 		t.Fatal("the catalogue is empty; a console has nothing to render")
+	}
+	// Which platform this is travels with the settings: the version line an
+	// import measures a bundle against, so a console can say what a bundle
+	// of another line will need before it is uploaded.
+	if body["platformVersionLine"] != backup.PlatformVersionLine {
+		t.Fatalf("platformVersionLine = %v, want %s", body["platformVersionLine"], backup.PlatformVersionLine)
 	}
 	// A setting the claim does not carry is answered with the default the
 	// schema will apply, so "unset" can be rendered as what it means rather

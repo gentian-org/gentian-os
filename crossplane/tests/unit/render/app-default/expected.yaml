@@ -58,11 +58,9 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     attributes:
-      gentianOdooModules:
-      - account
-      - crm
-      gentianSingle:
-      - one
+      gentianOdooModules: account##crm
+      gentianSingle: one
+      gentianos.io/managed-by: platform
     name: gentian:tenant:demo:app:demo-app
     realmId: demo
   providerConfigRef:
@@ -199,6 +197,8 @@ spec:
       name: render-demo-app-fixture-oidc-client-creds
       namespace: kernel-provisioning
     directAccessGrantsEnabled: false
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     name: Demo App
     realmId: demo
@@ -354,6 +354,7 @@ spec:
           name: demo-app-sensitive-values
           namespace: tenant-demo
     skipCRDs: true
+    skipCreateNamespace: true
     values:
       global:
         imagePullSecrets:
@@ -366,5 +367,5 @@ spec:
     wait: true
     waitTimeout: 10m
   providerConfigRef:
-    name: kubernetes
+    name: tenant-apps
   rollbackLimit: 3

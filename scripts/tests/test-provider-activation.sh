@@ -85,6 +85,17 @@ case "${verb}" in
                 exit 0 ;;
             providerconfig.*) exit 0 ;;
             managed) exit 0 ;;
+            # Crossplane's own Deployments, available when ${STATE}/objects
+            # names them as deployment/<name>.
+            deployment)
+                grep -qxF "deployment/${name}" "${STATE}/objects" 2>/dev/null && printf '1'
+                exit 0 ;;
+            # The cluster's CA, and the tenant-apps kubeconfig as last
+            # written (${STATE}/kubeconfig, base64).
+            configmap) [[ "${name}" == kube-root-ca.crt ]] && printf 'CA' ; exit 0 ;;
+            secret)
+                [[ "${jsonpath}" == *kubeconfig* ]] && cat "${STATE}/kubeconfig" 2>/dev/null
+                exit 0 ;;
         esac
         exit 0 ;;
     apply)
@@ -165,6 +176,7 @@ installed_release() {
     printf '[{"name":"crossplane","namespace":"%s","status":"deployed","chart":"crossplane-%s","app_version":"%s"}]' \
         "${ns}" "${version}" "${version}" > "${STATE}/helm-installed"
     echo "compositeresourcedefinitions.apiextensions.crossplane.io" >> "${STATE}/crds"
+    printf '%s\n' deployment/crossplane deployment/crossplane-rbac-manager >> "${STATE}/objects"
 }
 new_state; installed_release
 out="$(run A-04-crossplane 'check; echo "rc=$?"')"
@@ -217,10 +229,15 @@ if [[ "${out}" == *"rc=0"* && -n "${policy_line}" && -n "${providers_line}" ]] &
 else
     bad "B-05: the activation policy is applied before the providers" "${out}$(cat "${STATE}/calls.log")"
 fi
-if [[ "$(grep -c -- 'kubectl apply -f -' "${STATE}/calls.log")" == "3" ]]; then
-    ok "B-05: then the providers, their RBAC and their ProviderConfigs"
+if [[ "$(grep -c -- 'kubectl apply -f -' "${STATE}/calls.log")" == "4" ]]; then
+    ok "B-05: then the providers, their RBAC, the tenant-apps kubeconfig and their ProviderConfigs"
 else
-    bad "B-05: then the providers, their RBAC and their ProviderConfigs" "$(cat "${STATE}/calls.log")"
+    bad "B-05: then the providers, their RBAC, the tenant-apps kubeconfig and their ProviderConfigs" "$(cat "${STATE}/calls.log")"
+fi
+if grep -qF -- 'kubectl create secret generic provider-helm-tenant-apps' "${STATE}/calls.log"; then
+    ok "B-05: the tenant-apps kubeconfig is written"
+else
+    bad "B-05: the tenant-apps kubeconfig is written" "$(cat "${STATE}/calls.log")"
 fi
 if grep -qF -- "annotate managedresourceactivationpolicies.apiextensions.crossplane.io gentian-platform --overwrite gentianos.io/source-sha=$(activation_sha)" "${STATE}/calls.log"; then
     ok "B-05: the file's checksum is recorded on the policy"
@@ -259,12 +276,21 @@ fi
 # check()
 new_state; all_crds
 echo "mrap/gentian-platform" >> "${STATE}/objects"; activation_sha > "${STATE}/sha"
+run B-05-crossplane-providers '_b05_tenant_apps_kubeconfig' | base64 | tr -d '\n' > "${STATE}/kubeconfig"
 out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
 if [[ "${out}" == *"rc=0"* ]]; then
     ok "B-05 check: policy from this checkout, every type established: satisfied"
 else
     bad "B-05 check: policy from this checkout, every type established: satisfied" "${out}"
 fi
+echo "c3RhbGUK" > "${STATE}/kubeconfig"
+out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
+if [[ "${out}" == *"rc=1"* ]]; then
+    ok "B-05 check: a tenant-apps kubeconfig that is not this cluster's is not"
+else
+    bad "B-05 check: a tenant-apps kubeconfig that is not this cluster's is not" "${out}"
+fi
+run B-05-crossplane-providers '_b05_tenant_apps_kubeconfig' | base64 | tr -d '\n' > "${STATE}/kubeconfig"
 echo "0000000000000000" > "${STATE}/sha"
 out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
 if [[ "${out}" == *"rc=1"* ]]; then

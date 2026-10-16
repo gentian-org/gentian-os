@@ -71,39 +71,62 @@ type Inspection struct {
 }
 
 // UploadBundle lays a .gentian tar out under a fresh prefix in the import
-// bucket and returns where it went.
-func (s *Service) UploadBundle(ctx context.Context, body io.Reader) (*gentianov1alpha1.BundleRef, error) {
+// bucket and returns where it went. tenant is the tenant whose administrator
+// uploads it, empty for the cluster's: a tenant's upload is recorded as its
+// own and refused past its limits (bundlestore.MaxTenantUpload,
+// MaxTenantImports), by the sizes the tar's own headers give before each
+// file is stored, and what was stored of a refused one is removed.
+func (s *Service) UploadBundle(ctx context.Context, body io.Reader, tenant string) (*gentianov1alpha1.BundleRef, error) {
 	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
 	if err != nil {
 		return nil, err
 	}
-	if err := mc.MakeBucket(ctx, importBucket, minio.MakeBucketOptions{}); err != nil {
-		if exists, eerr := mc.BucketExists(ctx, importBucket); eerr != nil || !exists {
-			return nil, fmt.Errorf("import bucket: %w", err)
+	if err := bundlestore.EnsureBucket(ctx, mc); err != nil {
+		return nil, err
+	}
+	imports := bundlestore.ImportsOf(mc)
+	allowance := int64(-1)
+	if tenant != "" {
+		if allowance, err = imports.TenantAllowance(ctx, tenant); err != nil {
+			return nil, err
 		}
 	}
-	prefix := time.Now().UTC().Format("20060102-150405") + "-" + uuid.NewString()[:8]
+	now := time.Now().UTC()
+	prefix := now.Format("20060102-150405") + "-" + uuid.NewString()[:8]
+	if err := imports.PutRecord(ctx, prefix, bundlestore.Record{Tenant: tenant, Kind: "upload", At: now}); err != nil {
+		return nil, err
+	}
+	discard := func(cause error) error {
+		if rerr := imports.Remove(context.WithoutCancel(ctx), prefix); rerr != nil {
+			return fmt.Errorf("%w (and what was stored of it could not be removed: %v)", cause, rerr)
+		}
+		return cause
+	}
 	tr := tar.NewReader(body)
 	var count int
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("the upload is not a bundle (tar): %w", err)
+			return nil, discard(fmt.Errorf("the upload is not a bundle (tar): %w", err))
 		}
 		name := strings.TrimPrefix(hdr.Name, "./")
 		if hdr.Typeflag != tar.TypeReg || name == "" || strings.Contains(name, "..") {
 			continue
 		}
+		if total += hdr.Size; allowance >= 0 && total > allowance {
+			return nil, discard(bundlestore.TooLarge(total, allowance))
+		}
 		if _, err := mc.PutObject(ctx, importBucket, prefix+"/"+name, tr, hdr.Size, minio.PutObjectOptions{}); err != nil {
-			return nil, fmt.Errorf("storing %s: %w", name, err)
+			return nil, discard(fmt.Errorf("storing %s: %w", name, err))
 		}
 		count++
 	}
 	if count == 0 {
-		return nil, errors.New("the upload holds no files")
+		return nil, discard(errors.New("the upload holds no files"))
 	}
 	return &gentianov1alpha1.BundleRef{Bucket: importBucket, Prefix: prefix}, nil
 }
@@ -137,11 +160,35 @@ func (s *Service) InspectBundle(ctx context.Context, bundle gentianov1alpha1.Bun
 	return out, nil
 }
 
+// BackupBundle is where one of the tenant's own backups was written: its
+// TenantExport's record, which names the destination it went to and the
+// credential that opens it. Only a backup that finished has one.
+func (s *Service) BackupBundle(ctx context.Context, tenantName, backupName string) (*gentianov1alpha1.BundleRef, error) {
+	var export gentianov1alpha1.TenantExport
+	if err := s.client.Get(ctx, types.NamespacedName{Name: backupName, Namespace: layout.Tenant(tenantName)}, &export); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("backup %q not found for tenant %q", backupName, tenantName)
+		}
+		return nil, err
+	}
+	if export.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || export.Status.Bundle == nil {
+		return nil, errBundleNotReady
+	}
+	return export.Status.Bundle, nil
+}
+
 // RestoreRequest starts a restore of a bundle into an existing tenant.
 type RestoreRequest struct {
-	Bundle     gentianov1alpha1.BundleRef `json:"bundle"`
-	Decryption Decryption                 `json:"decryption"`
-	Apps       []string                   `json:"apps,omitempty"`
+	Bundle gentianov1alpha1.BundleRef `json:"bundle"`
+	// Backup names one of the tenant's own backups instead of a bundle: the
+	// restore is then of that TenantExport (spec.exportRef), whose bundle is
+	// found in the tenant's own namespace and nowhere else.
+	Backup string `json:"backup,omitempty"`
+	// Source names the bundle at a source instead (bundle_sources.go): one
+	// of the cluster's, or one of the tenant's own. It is read where it is.
+	Source     *SourceRef `json:"source,omitempty"`
+	Decryption Decryption `json:"decryption"`
+	Apps       []string   `json:"apps,omitempty"`
 	// Name names the restore, for a caller that has to find it again: an
 	// import decides it before it begins, so that after a restart it can ask
 	// whether its restore was started and never starts a second. Empty names
@@ -177,6 +224,11 @@ type RestoreStatus struct {
 	Notes []string `json:"notes,omitempty"`
 	// NameDerivation is "manifest", or "derived" for a bundle of format 1.
 	NameDerivation string `json:"nameDerivation,omitempty"`
+	// OutsideGuarantee says what makes this restore other than the round
+	// trip the platform guarantees -- another version line, another domain
+	// -- when something does: the message of the
+	// restore's OutsideGuarantee condition.
+	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
 }
 
 // StartRestore writes the key into a Secret the TenantRestore names, owned
@@ -186,8 +238,29 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	if err != nil {
 		return nil, err
 	}
-	if req.Bundle.Bucket == "" || req.Bundle.Prefix == "" {
-		return nil, errors.New("bundle.bucket and bundle.prefix are required")
+	if req.Source != nil {
+		if req.Bundle.Bucket != "" || req.Bundle.Prefix != "" || req.Backup != "" {
+			return nil, errors.New("name a backup, a bundle or a source, one of them")
+		}
+		if req.Source.Tenant != "" && req.Source.Tenant != tenantName {
+			return nil, fmt.Errorf("a source of tenant %s is restored into tenant %s alone", req.Source.Tenant, req.Source.Tenant)
+		}
+		ref, err := s.ResolveSource(ctx, *req.Source)
+		if err != nil {
+			return nil, err
+		}
+		req.Bundle = ref
+	}
+	byBackup := req.Backup != ""
+	switch {
+	case byBackup && (req.Bundle.Bucket != "" || req.Bundle.Prefix != ""):
+		return nil, errors.New("name a backup or a bundle, not both")
+	case byBackup:
+		if _, err := s.BackupBundle(ctx, tenantName, req.Backup); err != nil {
+			return nil, err
+		}
+	case req.Bundle.Bucket == "" || req.Bundle.Prefix == "":
+		return nil, errors.New("bundle.bucket and bundle.prefix, or backup, are required")
 	}
 	if _, err := req.Decryption.identities(); err != nil {
 		return nil, err
@@ -205,11 +278,15 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 			Labels:      map[string]string{"gentianos.io/tenant": tenantName},
 			Annotations: map[string]string{"gentianos.io/requested-by": actor}},
 		Spec: gentianov1alpha1.TenantRestoreSpec{
-			Bundle:        &req.Bundle,
 			Apps:          req.Apps,
 			ConfirmTenant: tenantName,
 			IntoNewTenant: req.IntoNewTenant,
 		},
+	}
+	if byBackup {
+		restore.Spec.ExportRef = req.Backup
+	} else {
+		restore.Spec.Bundle = &req.Bundle
 	}
 	if err := s.client.Create(ctx, restore); err != nil {
 		return nil, fmt.Errorf("create restore: %w", err)
@@ -260,6 +337,12 @@ func restoreStatus(r *gentianov1alpha1.TenantRestore, tenant string) *RestoreSta
 		Complete:              r.Status.Complete, NotRestored: r.Status.NotRestored,
 		Notes: r.Status.Notes, NameDerivation: r.Status.NameDerivation}
 	for _, c := range r.Status.Conditions {
+		if c.Type == "OutsideGuarantee" {
+			if c.Status == metav1.ConditionTrue {
+				out.OutsideGuarantee = c.Message
+			}
+			continue
+		}
 		if c.Message != "" {
 			out.Message = c.Message
 		}
@@ -277,15 +360,22 @@ func (h *HTTPServer) registerImportRoutes(mux router) {
 	mux.HandleFunc("POST /v1/bundles", h.handleBundleUpload)
 	mux.HandleFunc("POST /v1/bundles/inspect", h.handleBundleInspect)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/restore", h.handleRestore)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/restores/{name}", h.handleRestoreStatus)
+	// Where a restore stands is state, and the usher's to answer as well.
+	mux.Read("GET /v1/tenants/{tenant}/restores/{name}", h.handleRestoreStatus)
 }
 
 func (h *HTTPServer) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 	// An upload is as large as the bundle; the server's read deadline is for
 	// requests that fit in memory.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
-	ref, err := h.Service.UploadBundle(r.Context(), r.Body)
-	if err != nil {
+	// tenant is the tenant whose administrator uploads, which the director
+	// sets from its route: the upload counts towards that tenant's limits.
+	ref, err := h.Service.UploadBundle(r.Context(), r.Body, r.URL.Query().Get("tenant"))
+	switch {
+	case errors.Is(err, bundlestore.ErrImportLimit):
+		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	case err != nil:
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -294,12 +384,39 @@ func (h *HTTPServer) handleBundleUpload(w http.ResponseWriter, r *http.Request) 
 
 func (h *HTTPServer) handleBundleInspect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Bundle     gentianov1alpha1.BundleRef `json:"bundle"`
-		Decryption Decryption                 `json:"decryption"`
+		Bundle gentianov1alpha1.BundleRef `json:"bundle"`
+		// Tenant and Backup name one of a tenant's own backups instead of a
+		// bundle, which is then the one its TenantExport records.
+		Tenant string `json:"tenant,omitempty"`
+		Backup string `json:"backup,omitempty"`
+		// Source names a bundle at a source instead; the inspection answers
+		// with the bundle it resolved to.
+		Source     *SourceRef `json:"source,omitempty"`
+		Decryption Decryption `json:"decryption"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
+	}
+	if body.Source != nil && body.Backup != "" {
+		writeErr(w, http.StatusBadRequest, errors.New("name a backup or a source, not both"))
+		return
+	}
+	if body.Source != nil {
+		ref, err := h.Service.ResolveSource(r.Context(), *body.Source)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		body.Bundle = ref
+	}
+	if body.Backup != "" {
+		ref, err := h.Service.BackupBundle(r.Context(), body.Tenant, body.Backup)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		body.Bundle = *ref
 	}
 	out, err := h.Service.InspectBundle(r.Context(), body.Bundle, body.Decryption)
 	if err != nil {

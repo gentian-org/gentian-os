@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 37 more'
+      gentian-cluster-config, and 39 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -39,13 +39,9 @@ spec:
         clusterResourceWhitelist:
         - group: ""
           kind: Namespace
-        - group: cert-manager.io
-          kind: ClusterIssuer
         description: Gentian OS — tenant workloads managed by Crossplane
         destinations:
         - namespace: tenant-*
-          server: https://kubernetes.default.svc
-        - namespace: kernel-gitops
           server: https://kubernetes.default.svc
         sourceRepos:
         - https://github.com/gentian-org/gentian-os
@@ -95,7 +91,7 @@ spec:
                   name: external-secrets
                   namespace: kernel-secrets
             caProvider:
-              key: tls.crt
+              key: ca.crt
               name: openbao-tls
               namespace: kernel-secrets
               type: Secret
@@ -126,6 +122,7 @@ spec:
       apiVersion: v1
       data:
         certificates.trustAnchorSecret: ""
+        cluster.uid: ""
         eso.namespace: kernel-secrets
         eso.serviceAccount: external-secrets
         identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth
@@ -189,6 +186,8 @@ spec:
       namespace: system-mail
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     realmId: kernel
@@ -484,6 +483,8 @@ spec:
       name: openbao-oidc-client
       namespace: kernel-secrets
     directAccessGrantsEnabled: false
+    extraConfig:
+      gentianos.io/managed-by: platform
     name: OpenBao
     realmId: kernel
     serviceAccountsEnabled: false
@@ -635,7 +636,7 @@ spec:
     chart:
       name: seaweedfs
       repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
-      version: 4.48.0
+      version: 4.48.0-gentian.1
     namespace: system-s3
     valuesFrom:
     - configMapKeyRef:
@@ -813,6 +814,36 @@ spec:
     - tenant-admin
     tokenTtl: 1800
     userClaim: preferred_username
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-cert-manager-gentian-ca
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-cert-manager-gentian-ca
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    audience: vault://gentian-ca
+    backend: kubernetes
+    boundServiceAccountNames:
+    - gentian-ca-issuer
+    boundServiceAccountNamespaces:
+    - kernel-edge
+    roleName: cert-manager-gentian-ca
+    tokenPolicies:
+    - cert-manager-gentian-ca
+    tokenTtl: 600
   providerConfigRef:
     name: openbao
 ---
@@ -1226,6 +1257,29 @@ apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-policy-cert-manager-gentian-ca
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-cert-manager-gentian-ca
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: cert-manager-gentian-ca
+    policy: |
+      path "pki-internal/sign/gentian-ca" { capabilities = ["update"] }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-policy-cluster-admin
   labels:
     crossplane.io/composite: dev-cluster
@@ -1324,6 +1378,16 @@ spec:
         capabilities = ["deny"]
       }
       path "secret/metadata/gentian-os/kernel/backup/identity" {
+        capabilities = ["deny"]
+      }
+      # The bundle signing key likewise: it says which bundles this
+      # cluster wrote, and the operator reads it from the vault
+      # itself. As a Secret it would sign for anyone able to read
+      # one.
+      path "secret/data/gentian-os/kernel/backup/signing" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/backup/signing" {
         capabilities = ["deny"]
       }
       path "secret/data/gentian-os/tenants/+/apps/*" {

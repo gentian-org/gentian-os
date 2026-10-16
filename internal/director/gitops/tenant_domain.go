@@ -98,19 +98,35 @@ func (g *GitOps) SetTenantDomain(ctx context.Context, tenant, domain string, met
 	if err := g.refuseDomainBinding(ctx, tenant); err != nil {
 		return Result{}, err
 	}
+	if holder, err := g.checkCustomDomain(ctx, tenant, domain); err != nil {
+		return Result{}, err
+	} else if holder != "" {
+		return Result{}, fmt.Errorf("%w: %s is tenant %s's", ErrInvalidDomain, domain, holder)
+	}
+	return g.writeTenantFile(ctx, tenant, TenantDomainFile, renderTenantDomain(tenant, domain), listResource,
+		fmt.Sprintf("Tenant %s: custom domain %s", tenant, domain), meta)
+}
+
+// checkCustomDomain refuses a domain no tenant may be bound to: one that is
+// not a hostname, one on the kernel domain -- the operator would refuse it,
+// and the tenant is there already -- and one a tenant other than this one
+// holds, since two tenants on one domain would claim the same hosts: that
+// one is answered as the tenant that holds it. domain is lower-case and
+// trimmed.
+func (g *GitOps) checkCustomDomain(ctx context.Context, tenant, domain string) (string, error) {
 	if len(domain) > 253 || !hostnamePattern.MatchString(domain) {
-		return Result{}, fmt.Errorf("%w: %q is not a hostname", ErrInvalidDomain, domain)
+		return "", fmt.Errorf("%w: %q is not a hostname", ErrInvalidDomain, domain)
 	}
 	kernel, err := g.KernelDomain(ctx)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 	if domain == kernel || strings.HasSuffix(domain, "."+kernel) {
-		return Result{}, fmt.Errorf("%w: %s is on the kernel domain, where every tenant already is", ErrInvalidDomain, domain)
+		return "", fmt.Errorf("%w: %s is on the kernel domain, where every tenant already is", ErrInvalidDomain, domain)
 	}
 	names, err := g.Tenants(ctx)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 	for _, other := range names {
 		if other == tenant {
@@ -121,11 +137,40 @@ func (g *GitOps) SetTenantDomain(ctx context.Context, tenant, domain string, met
 			continue
 		}
 		if held, err := tenantCustomDomain(file); err == nil && held == domain {
-			return Result{}, fmt.Errorf("%w: %s is tenant %s's", ErrInvalidDomain, domain, other)
+			return other, nil
 		}
 	}
-	return g.writeTenantFile(ctx, tenant, TenantDomainFile, renderTenantDomain(tenant, domain), listResource,
-		fmt.Sprintf("Tenant %s: custom domain %s", tenant, domain), meta)
+	return "", nil
+}
+
+// ErrDomainHeld is a custom domain an import would keep that another tenant
+// of this cluster is bound to.
+var ErrDomainHeld = errors.New("custom domain held by another tenant")
+
+// CheckImportedDomain is whether a tenant imported from a bundle may be bound
+// again to the custom domain it had, by the rules a bind is under
+// (SetTenantDomain): not on a single-tenancy cluster, a hostname, not on the
+// kernel domain, and not another tenant's -- that one is ErrDomainHeld. It
+// answers the domain as it would be declared. The tenant does not exist yet,
+// so it cannot be the platform tenant: an import of a name the cluster has is
+// refused before this.
+func (g *GitOps) CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	settings, err := g.ClusterSettingValues(ctx)
+	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
+		return "", err
+	}
+	if gentianov1alpha1.NormalizeTenancyMode(settings["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle {
+		return "", errSingleTenancyDomain()
+	}
+	holder, err := g.checkCustomDomain(ctx, tenant, domain)
+	if err != nil {
+		return "", err
+	}
+	if holder != "" {
+		return "", fmt.Errorf("%w: %s is bound to tenant %s on this cluster", ErrDomainHeld, domain, holder)
+	}
+	return domain, nil
 }
 
 // renderTenantDomain is the object a reviewer reads in the commit.

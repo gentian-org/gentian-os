@@ -13,6 +13,8 @@ package netpolicy
 import (
 	"testing"
 
+	networkingv1 "k8s.io/api/networking/v1"
+
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -40,10 +42,17 @@ func TestExportJobNetworkPolicyIsScopedToExportPods(t *testing.T) {
 			}
 		}
 	}
-	// A volume's capture and restore run here and reach a bundle destination
-	// a backup policy names, wherever its endpoint is.
-	if !internet {
-		t.Error("missing internet egress to an external bundle destination")
+	// No way out of the cluster: a run whose bundle is at an external
+	// destination is given its own (ExportDestinationNetworkPolicy).
+	if internet {
+		t.Error("export pods are given internet egress by the tenant's policy")
+	}
+	for _, rule := range np.Spec.Egress {
+		for _, to := range rule.To {
+			if to.IPBlock != nil {
+				t.Errorf("export pods are given egress to %s", to.IPBlock.CIDR)
+			}
+		}
 	}
 	want := map[string]bool{layout.System("postgresql"): false, layout.System("mariadb"): false, layout.System("s3"): false}
 	for _, ns := range namespaces {
@@ -56,6 +65,92 @@ func TestExportJobNetworkPolicyIsScopedToExportPods(t *testing.T) {
 	for ns, seen := range want {
 		if !seen {
 			t.Errorf("missing egress to %q", ns)
+		}
+	}
+}
+
+// A run's way out is to its destination's port, and to its address when the
+// endpoint names one; the platform's own storage is given none.
+func TestExportDestinationNetworkPolicyIsTheDestinationAlone(t *testing.T) {
+	for _, c := range []struct {
+		endpoint string
+		cidr     string
+		port     int
+	}{
+		{"https://sos-ch-gva-2.exo.io", "0.0.0.0/0", 443},
+		{"https://s3.example.org:9000", "0.0.0.0/0", 9000},
+		{"http://s3.example.org", "0.0.0.0/0", 80},
+		{"https://203.0.113.7", "203.0.113.7/32", 443},
+		{"http://203.0.113.7:8333/bucket", "203.0.113.7/32", 8333},
+		{"https://[2001:db8::7]:9000", "2001:db8::7/128", 9000},
+	} {
+		np, err := ExportDestinationNetworkPolicy("demo", "tenant-demo", "p", "run", "nightly", c.endpoint)
+		if err != nil || np == nil {
+			t.Fatalf("%s: %v", c.endpoint, err)
+		}
+		if sel := np.Spec.PodSelector.MatchLabels; sel["run"] != "nightly" || sel[meta.ComponentLabel] != "tenant-export" {
+			t.Errorf("%s: selects %v, not the run's export pods", c.endpoint, sel)
+		}
+		if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+			t.Errorf("%s: policy types %v", c.endpoint, np.Spec.PolicyTypes)
+		}
+		if len(np.Spec.Egress) != 1 || len(np.Spec.Egress[0].To) != 1 || len(np.Spec.Egress[0].Ports) != 1 {
+			t.Fatalf("%s: egress %+v, want one peer on one port", c.endpoint, np.Spec.Egress)
+		}
+		if got := np.Spec.Egress[0].To[0].IPBlock; got == nil || got.CIDR != c.cidr || len(got.Except) != 0 {
+			t.Errorf("%s: to %+v, want %s", c.endpoint, got, c.cidr)
+		}
+		if got := np.Spec.Egress[0].Ports[0].Port.IntValue(); got != c.port {
+			t.Errorf("%s: port %d, want %d", c.endpoint, got, c.port)
+		}
+		if np.Labels[meta.NetPolicyTypeLabel] != meta.NetPolicyExportDestination {
+			t.Errorf("%s: labelled %v", c.endpoint, np.Labels)
+		}
+	}
+	if np, err := ExportDestinationNetworkPolicy("demo", "tenant-demo", "p", "run", "nightly", ""); np != nil || err != nil {
+		t.Errorf("the platform's own storage is given a way out: %v, %v", np, err)
+	}
+	for _, bad := range []string{"s3.example.org", "ftp://s3.example.org", "https://s3.example.org:0", "https://s3.example.org:99999"} {
+		if _, err := ExportDestinationNetworkPolicy("demo", "tenant-demo", "p", "run", "nightly", bad); err == nil {
+			t.Errorf("%q is taken for a destination", bad)
+		}
+	}
+}
+
+// A fetch's pod runs where egress is otherwise open; its policy is the whole
+// of where it may go: the source's address and port, the object store's
+// namespace, and DNS.
+func TestAFetchIsConfinedToItsSourceTheStoreAndDNS(t *testing.T) {
+	np, err := BundleFetchNetworkPolicy("system-s3", "gentian-fetch-source-f", "gentianos.io/bundle-fetch", "f", "https://198.51.100.4:8443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if np.Spec.PodSelector.MatchLabels["gentianos.io/bundle-fetch"] != "f" || len(np.Spec.PodSelector.MatchLabels) != 1 {
+		t.Errorf("selects %v", np.Spec.PodSelector.MatchLabels)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+		t.Errorf("policy types %v", np.Spec.PolicyTypes)
+	}
+	if len(np.Spec.Egress) != 3 {
+		t.Fatalf("rules %+v", np.Spec.Egress)
+	}
+	out := np.Spec.Egress[0]
+	if out.To[0].IPBlock.CIDR != "198.51.100.4/32" || out.Ports[0].Port.IntValue() != 8443 {
+		t.Errorf("the way out is %+v", out)
+	}
+	if ns := np.Spec.Egress[1].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; ns != "system-s3" {
+		t.Errorf("the store's namespace is %q", ns)
+	}
+
+	inside, err := BundleFetchNetworkPolicy("system-s3", "p", "k", "f", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range inside.Spec.Egress {
+		for _, to := range rule.To {
+			if to.IPBlock != nil {
+				t.Errorf("a fetch inside the cluster may reach %s", to.IPBlock.CIDR)
+			}
 		}
 	}
 }

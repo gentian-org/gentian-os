@@ -119,10 +119,24 @@ def _placeholder_logo():
     import base64
     for root in (pathlib.Path(__file__).resolve().parents[2],
                  pathlib.Path.home() / "develop" / "gentian-apps"):
-        svg = root / "apps" / "_template" / "profile" / "assets" / "tile.svg"
-        if svg.is_file():
-            return "data:image/svg+xml;base64," + base64.b64encode(svg.read_bytes()).decode()
+        png = root / "apps" / "_template" / "profile" / "assets" / "tile.png"
+        if png.is_file():
+            return "data:image/png;base64," + base64.b64encode(png.read_bytes()).decode()
     return ""
+
+
+# A tile is a PNG. An old profile's SVG is rendered to one with the tool that
+# renders the platform's glyphs, so the converted profile is admissible.
+def _png_logo(logo):
+    if not logo.startswith("data:image/svg+xml;base64,"):
+        return logo
+    import base64
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "render_tiles", pathlib.Path(__file__).resolve().parent / "render-tiles.py")
+    render_tiles = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(render_tiles)
+    return render_tiles.render(base64.b64decode(logo.split(",", 1)[1]))
 
 
 PLACEHOLDER_LOGO = _placeholder_logo()
@@ -212,14 +226,15 @@ def tile_from_portal(pt, review, profile_name, profile_tile=None):
     tile = {"displayName": label}
     if translations:
         tile["displayNames"] = translations
-    # The tile's image is the SVG the component ships. AppProfile kept it in
+    # The tile's image is the one the component ships. AppProfile kept it in
     # two places: spec.tile for the whole profile, and an optional override on
-    # the portal tile itself. The override wins, exactly as it did.
+    # the portal tile itself. The override wins, exactly as it did; the result
+    # is the profile's one default tile.
     art = pt.get("tile") or profile_tile or {}
     if art.get("logo"):
-        tile["logo"] = art["logo"]
+        tile["logo"] = _png_logo(art["logo"])
         if art.get("image"):
-            tile["image"] = art["image"]
+            tile["image"] = re.sub(r"\.svg$", ".png", art["image"])
     elif art.get("image"):
         tile["image"] = art["image"]
         review.note(f"tile/{pt.get('name')}: the profile names {art['image']} but never inlined it; run "
@@ -230,10 +245,10 @@ def tile_from_portal(pt, review, profile_name, profile_tile=None):
         # leaving a component that cannot be installed at all; it is meant to
         # look unfinished, and the review line says to replace it.
         tile["logo"] = PLACEHOLDER_LOGO
-        tile["image"] = "assets/tile.svg"
+        tile["image"] = "assets/tile.png"
         was = f" The old profile named the built-in glyph {art['icon']!r}." if art.get("icon") else ""
-        review.note(f"tile/{pt.get('name')}: no SVG, so the placeholder was used.{was} Draw this "
-                    "component's own art into assets/tile.svg and re-run "
+        review.note(f"tile/{pt.get('name')}: no image, so the placeholder was used.{was} Put this "
+                    "component's own art, a 128x128 PNG, into assets/tile.png and re-run "
                     "gentian-apps' scripts/sync-profile-tile.py")
     path = tile_path(pt.get("linkSuffix"))
     if path:

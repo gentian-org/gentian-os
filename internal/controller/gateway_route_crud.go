@@ -54,10 +54,15 @@ func ensureHTTPRouteResource(ctx context.Context, c client.Client, desired *gate
 			break
 		}
 	}
-	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsStale {
+	// Except the restore hold's, which goes when the desired route is not
+	// held (restore_hold.go).
+	_, heldNow := existing.Annotations[restoreHoldAnnotation]
+	_, heldDesired := desired.Annotations[restoreHoldAnnotation]
+	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsStale && heldNow == heldDesired {
 		return nil
 	}
 	patch := client.MergeFrom(existing.DeepCopy())
+	syncRestoreHoldAnnotation(existing, desired)
 	existing.Spec = desired.Spec
 	if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
 		existing.Labels = desired.Labels

@@ -511,6 +511,11 @@ cloudflare:
 # OpenBao / Vault integration
 openbao:
   address: "https://openbao.kernel-secrets.svc.cluster.local:8200"
+  # The Secret, in the operator's namespace, holding the vault's CA
+  # certificate (ca.crt of openbao-ca) the operator verifies the vault
+  # against. The installer keeps this copy (B-01). Empty turns verification
+  # off unless trustAnchorSecret is set: development only.
+  caSecret: openbao-ca-bundle
   authPath: "kubernetes"
   # Kubernetes auth role used by the operator to log in to OpenBao for the
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
@@ -576,7 +581,7 @@ metrics:
 # Off by default. It is the only component that can write credentials.
 # The cluster's trust anchor, when a public CA did not sign its certificates.
 #
-# Set to the Secret holding the anchor (cert-manager's gentian-root-ca-tls under
+# Set to the Secret holding the anchor (gentian-root-ca-tls, the internal CA's certificate, under
 # self-signed and private-ca), empty when certificates are publicly trusted. The
 # operator talks to Keycloak and OpenBao over kernel hostnames, so without this
 # it fails exactly as a tenant app does — and it fails at login, which makes it

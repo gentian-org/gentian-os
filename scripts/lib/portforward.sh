@@ -83,7 +83,7 @@ gentian_cleanup_port_forwards() {
         # wait, when every forward this started is long dead.
         [[ -n "${_gentian_pf_pid}" ]] && { kill "${_gentian_pf_pid}" 2>/dev/null || true; }
     done < "${_GENTIAN_PF_PIDFILE}"
-    rm -f "${_GENTIAN_PF_PIDFILE}" "${_GENTIAN_PF_CACHE}"
+    rm -f "${_GENTIAN_PF_PIDFILE}" "${_GENTIAN_PF_CACHE}" "${_GENTIAN_PF_CACHE}.openbao-ca.crt"
     unset _gentian_pf_pid
     return 0
 }

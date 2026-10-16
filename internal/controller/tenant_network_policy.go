@@ -160,7 +160,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	}
 	for i := range existingList.Items {
 		np := &existingList.Items[i]
-		if np.Labels[meta.NetPolicyTypeLabel] == "" {
+		// A run's way to its external destination is the run's, removed
+		// when it ends (discardRunDestinationEgress), not the tenant's.
+		if t := np.Labels[meta.NetPolicyTypeLabel]; t == "" || t == meta.NetPolicyExportDestination {
 			continue
 		}
 		if _, keep := desiredNames[np.Name]; keep {

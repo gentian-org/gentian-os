@@ -152,7 +152,7 @@ type PrivilegedRoleSpec struct {
 	Name string `json:"name"`
 }
 
-// TileSpec configures a desktop tile icon (52×52 SVG).
+// TileSpec configures a tile icon: a square PNG, 128x128.
 // Set icon (catalogue path) or logo (custom data URI). image is source-repo only
 // and must be inlined to logo before the profile is applied to a cluster.
 type TileSpec struct {
@@ -161,12 +161,15 @@ type TileSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 	Icon string `json:"icon,omitempty"`
 
-	// Logo is a custom tile as a data URI (path 1). Mutually exclusive with icon.
+	// Logo is a custom tile as a PNG data URI (path 1). Mutually exclusive
+	// with icon. PNG only: an SVG is only ever the template a PNG is rendered
+	// from, never what is drawn.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	// +kubebuilder:validation:MaxLength=65536
+	// +kubebuilder:validation:Pattern=`^data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*=*$`
 	Logo string `json:"logo,omitempty"`
 
-	// Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
+	// Image is a profile-relative PNG path used in git only (e.g. assets/tile.png).
 	// Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
 	// before commit — profiles live in that repository, and so does the script.
 	// +optional
@@ -230,7 +233,31 @@ type ServiceRequirements struct {
 	// answers with a token of that person for one app.
 	// +optional
 	Vouching *VouchingRequirement `json:"vouching,omitempty"`
+
+	// Organizations declares that the component commissions the sign-in of
+	// outside realms' people into a tenant's realm, as organizations
+	// (Tenant spec.brokeredFrom). See OrganizationsRequirement.
+	// +optional
+	Organizations *OrganizationsRequirement `json:"organizations,omitempty"`
 }
+
+// OrganizationsRequirement declares that a component asks the director to add
+// an outside realm to a tenant's realm, as an organization, or to take one
+// away. Being present is the declaration.
+//
+// It is half of a grant. The other half is the tenant whose realm is
+// changed: it names the component in spec.organizationCommissioners, which
+// only an administrator writes. With both, the component's own key (the
+// Secret rights-check-<component>, RIGHTS_CHECK_KEY, as for
+// requires.services.rights) admits it at the director for that tenant's
+// spec.brokeredFrom and nothing else; the Secret also carries the director's
+// address (DIRECTOR_URL), and the component is given a network path to it.
+//
+// What it adds lets an outside realm's people sign in to that tenant. They
+// hold no group and no role there by it, but the realm trusts the outside
+// realm for who they are. So the declaration alone admits nothing: what
+// admits the component is the administrator naming it on the tenant.
+type OrganizationsRequirement struct{}
 
 // VouchingRequirement declares that a component vouches for people at the
 // tenant's realm (RFC 7523, the JWT authorization grant).
@@ -1004,6 +1031,21 @@ type PlatformValueMapping struct {
 	// platform-trust profile may name it.
 	// +optional
 	StoreURLKey string `json:"storeUrlKey,omitempty"`
+
+	// DesktopURLKey receives the in-cluster address of the API of the
+	// desktop in the component's own namespace, from the desktop profile's
+	// "api" entry: http://<its Service>:<its port>. The component calls it
+	// with the person's own token, and the desktop decides; what the App
+	// Store app stores there is a tile the tenant chose.
+	//
+	// Like the URL keys above it is more than a fact. A tenant's namespace is
+	// closed between pods too, so naming this key is what opens the
+	// component's pods a way to the desktop's pods on that one port, and the
+	// desktop's pods admit them on it. Nothing else of the desktop is opened,
+	// and no other component. That is why only a platform-trust profile may
+	// name it.
+	// +optional
+	DesktopURLKey string `json:"desktopUrlKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.
@@ -1356,8 +1398,12 @@ type BackupBoundSecret struct {
 // BackupRestore declares what runs after an app's data is put back.
 type BackupRestore struct {
 	// Post lists commands run in order once the app's data is loaded and before
-	// it is resumed — cache invalidation, re-indexing, fingerprinting. Each
-	// entry is an argv, for the same reason as BackupQuiesce.Pre.
+	// it is resumed — cache invalidation, re-indexing, fingerprinting, and
+	// rewriting what the app cached of where it ran. Each entry is an argv,
+	// for the same reason as BackupQuiesce.Pre, run through env(1) with
+	// GENTIAN_RESTORE_* variables that say where the data was written and
+	// where it is now: tenant, domain, platform version, cluster, the app's
+	// chart versions and its stores' names. None of them is a secret.
 	// +optional
 	Post [][]string `json:"post,omitempty"`
 
@@ -1366,6 +1412,18 @@ type BackupRestore struct {
 	// was written, not that the app can read it.
 	// +optional
 	Verify []string `json:"verify,omitempty"`
+
+	// DomainBound says the app's data cannot be moved to another domain: it
+	// names the tenant's domain in a way the app refuses to run with another
+	// (a server name baked into every id it stores, for one). When the domain
+	// a restore puts a bundle onto is not the one the bundle was taken on,
+	// this app's data is not restored: the app stays as it is installed
+	// there, and the restore names it among the apps it did not put back,
+	// with that reason. On the same domain it is restored as any app is. A
+	// bundle that does not say its domain is restored as on the same one,
+	// and the restore says it could not tell.
+	// +optional
+	DomainBound bool `json:"domainBound,omitempty"`
 }
 
 // QuiesceMode returns how this app's writes should be paused, resolving the
@@ -1437,6 +1495,12 @@ func (b *BackupSpec) RestoreCommands() (post [][]string, verify []string) {
 		return nil, nil
 	}
 	return b.Restore.Post, b.Restore.Verify
+}
+
+// IsDomainBound reports whether this app's data cannot be restored onto
+// another domain than the one it was written on (BackupRestore.DomainBound).
+func (b *BackupSpec) IsDomainBound() bool {
+	return b != nil && b.Restore != nil && b.Restore.DomainBound
 }
 
 // AppPostInstallJob configures a Kubernetes Job the app-default composition

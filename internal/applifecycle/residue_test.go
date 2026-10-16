@@ -832,7 +832,12 @@ func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T)
 	}
 	sort.Strings(deletable)
 	want := []string{
-		"appgrants", "apps", "backuppolicies", "componentprofiles", "components", "credentialrequirements",
+		"appgrants", "apps", "backuppolicies",
+		// bundlesources: a source git no longer declares, which the director
+		// asks to have deleted once it has committed the removal; the
+		// cluster's declarations are synced without pruning.
+		"bundlesources",
+		"componentprofiles", "components", "credentialrequirements",
 		// mailboxremovals: the record of what became of a removed person's
 		// mailbox. The operator removes one when the mailbox it is about is
 		// gone and the record has been readable for a while, and with a

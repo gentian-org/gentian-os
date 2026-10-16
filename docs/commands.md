@@ -106,6 +106,28 @@ a tenant whose apps serve the public, not for a workspace
 kubectl gentian tenants create customers --display-name "Customers" --self-sign-up
 ```
 
+And where else the tenant's people may sign in with their account here — a
+realm of another cluster that brokers this one (`--brokered-to`, repeatable,
+`spec.brokeredTo`): a client per realm, trusting that realm's published keys,
+with no secret ([identity-brokering.md](identity-brokering.md)):
+
+```bash
+kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
+```
+
+The other half, on the cluster whose tenant those people sign in to: each
+realm of another cluster becomes an organization of the tenant's realm, with
+an identity provider `org-<name>` (`spec.brokeredFrom`, `can_configure` on
+the cluster; the domain is the one its people's addresses are of, under the
+issuer's cluster):
+
+```bash
+kubectl gentian tenants organizations customers      # list them
+kubectl gentian tenants organizations customers add acme --display-name "ACME AG" \
+  --issuer https://id.gentian.cloud/auth/realms/acme --client-id broker-to-aluvian --domain acme.gentian.cloud
+kubectl gentian tenants organizations customers remove acme
+```
+
 Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,
 `spec.catalogue.delegated`), committed by the director as you
 (`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/perimeter-delegation` and
@@ -1102,6 +1124,8 @@ export RCLONE_CONFIG_EXT_TYPE=s3 RCLONE_CONFIG_EXT_PROVIDER=Other \
   RCLONE_CONFIG_EXT_ENDPOINT=https://sos-ch-dk-2.exo.io RCLONE_CONFIG_EXT_REGION=ch-dk-2 \
   RCLONE_CONFIG_EXT_ACCESS_KEY_ID="$ak" RCLONE_CONFIG_EXT_SECRET_ACCESS_KEY="$sk" \
   RCLONE_S3_NO_CHECK_BUCKET=true
+# a bundle with status.bundle.addressingStyle: virtualHost also needs
+#   export RCLONE_CONFIG_EXT_FORCE_PATH_STYLE=false
 rclone lsf ext:<bucket>/<prefix>/
 rclone cat ext:<bucket>/<prefix>/bundle-info.json
 ```
@@ -1159,9 +1183,41 @@ import (§12a) sets it; a restore into the tenant the bundle was taken of
 leaves it out. With it, the data of an app the bundle holds as uninstalled
 with its data kept is brought with stores made for it; without it such data
 is put back only where the tenant still holds it, so an app purged since
-stays purged. And the access rights the bundle records as granted are not
-granted but named in the restore's result. The same holds without the field
-when the bundle was taken of a tenant of another name or on another cluster.
+stays purged. The access rights the bundle records as granted, a person's
+among them, are granted with or without the field only from a bundle this
+cluster signed and taken on it; from any
+other they are named in the result, and `status.rights.provenance` says why
+([security.md §6.4](design/security.md)).
+
+### From a console, or directly against the director
+
+A console restores through the director, as the
+person signed in. The tenant's administrators restore their own tenant; the
+cluster's administrator any tenant:
+
+```
+POST /v1/tenants/{t}/bundles                        body: the .gentian bytes -> {bundle}
+POST /v1/tenants/{t}/bundles/inspect                {backup | bundle | source, decryption} -> manifest
+POST /v1/tenants/{t}/actions/restore                {backup | bundle | source, decryption, apps?} -> 202 {name, ...}
+POST /v1/clusters/{c}/tenants/{t}/bundles/inspect   the same, as the cluster's administrator
+POST /v1/clusters/{c}/tenants/{t}/actions/restore   the same, as the cluster's administrator
+GET  /v1/tenants/{t}/restores/{name}                the status (the usher)
+```
+
+The tenant routes ask `can_set_policy` on the tenant, the cluster routes
+`can_configure` on the cluster; the cluster's administrator uploads at
+`POST /v1/clusters/{c}/bundles`. `backup` is the name of one of the tenant's
+backups, wherever its policy wrote it; `bundle` is what an upload answered,
+and nothing else: a reference with an endpoint or a credential of its own is
+refused. `source` is a bundle where the tenant's backups are written that the
+cluster may no longer list as a backup, `{"name": "storage"|"destination",
+"prefix": "..."}`, as `GET /v1/tenants/{t}/bundle-sources/{name}/bundles`
+lists them (§12a). The director opens the manifest with the key first and refuses a
+bundle of another tenant with `422` (bringing one here is an import, §12a).
+The key goes to the operator in the request and into a Secret the restore
+owns; it is never committed or logged. The platform's version line, which
+a console compares a bundle's with, is in `GET /v1/tenants/{t}/me`
+(`platformVersionLine`) for whoever may enter the tenant.
 
 ### What it does, in order
 
@@ -1169,7 +1225,9 @@ when the bundle was taken of a tenant of another name or on another cluster.
    bundle exists and is `Ready`, decryption key present. Nothing is touched
    until all of these pass.
 2. **Plan** — the operator opens the bundle's manifest with the key and
-   decides, against the tenant as it stands, what it puts back. Only apps the
+   decides, against the tenant as it stands, what it puts back. A bundle of
+   another tenant is refused (`OtherTenant`): a restore does not rename;
+   rename the bundle with a tool that rewrites it first. Only apps the
    manifest lists are touched. An app is restored whole or not at all; one
    that is not installed, runs an older build than wrote the data (unless
    `spec.skipVersionCheck`), or has a store the bundle's does not match, is
@@ -1220,8 +1278,9 @@ produced, or a bucket prefix the cluster can reach.
 ```bash
 kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt
 kubectl gentian tenants import acme-nightly.gentian --passphrase          # prompts
-kubectl gentian tenants import acme-nightly.gentian --identity-file k.txt --name acme2
 kubectl gentian tenants import --bucket acme-gentian-backup --prefix nightly-20261001 --identity-file k.txt
+kubectl gentian tenants import --bucket b --prefix p --endpoint https://s3.example.org --addressing-style virtualHost --identity-file k.txt
+kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt --drop-custom-domain
 ```
 
 What happens: the file is uploaded to the cluster's own storage; the director
@@ -1235,20 +1294,25 @@ A platform component of an earlier release that this one no longer has
 the reason, and its data is not restored.
 It commits the tenant from the manifest's settings (deletionPolicy Retain,
 whatever the bundle said), waits until the operator reports the tenant Ready
-with its apps up, and starts a `TenantRestore`. The command follows the
+with its apps up, and starts a `TenantRestore`. An app that asks for a
+credential only a person can provide waits for it, since no bundle carries
+one; the status names the app and the credential, which is set under
+Credentials in the tenant's Admin Console. The wait ends after two hours. The command follows the
 import and prints each phase: `declared`, `provisioning`, `restoring`,
 `ready`.
 
-The new tenant's realm, database prefix and bucket prefix follow from its own
-name, whatever the bundle states. With `--name acme2` beside `acme`, nothing
-of `acme` is touched. A tenant whose realm or prefixes are already another
-tenant's is refused with `409`, on import and on create.
+The tenant is made under the name the bundle carries; an import does not
+rename, and a request that names another is refused with `422`. A bundle
+meant for another name is rewritten into it, by a tool that does so, first. Its realm,
+database prefix and bucket prefix follow from that name, whatever the bundle
+states. A tenant whose realm or prefixes are already another tenant's is
+refused with `409`, on import and on create.
 
 The import is recorded in git beside the tenant (`import.json`) until it has
 finished, so it survives a restart of the director. The record holds no key.
 If the director restarts before the restore has started, the status says
-`awaiting-key`: run the same command again, with the same bundle, name and
-key, and the import goes on. If the restore was already running, nothing is
+`awaiting-key`: run the same command again, with the same bundle and key,
+and the import goes on. If the restore was already running, nothing is
 needed.
 
 Directly against the director:
@@ -1256,15 +1320,69 @@ Directly against the director:
 ```
 POST /v1/clusters/{c}/bundles                 body: the .gentian bytes -> {bundle}
 POST /v1/clusters/{c}/bundles/inspect         {bundle, decryption} -> manifest
-POST /v1/clusters/{c}/tenants/import          {bundle, decryption, name?} -> 202 status
+POST /v1/clusters/{c}/tenants/import          {bundle, decryption, keepCustomDomain?} -> 202 status
 GET  /v1/clusters/{c}/tenants/{t}/import      the status
 ```
+
+**A bundle in storage outside the cluster** is read from a *bundle source*
+the cluster's administrator declares, never with an address and keys typed
+at the import. The address is a commit (`BundleSource`, in
+`clusters/<c>/kernel/claims/bundle-source-<name>.yaml`); the keys are set at
+the custodian as `bundle-source-<name>` (Admin Console, Credentials), stored
+at `gentian-os/kernel/backup/sources/<name>`, and read only by the platform.
+Reading needs only `s3:ListBucket` and `s3:GetObject`. A tenant's own sources
+are where its backups go: `storage` (its bucket here) and `destination` (its
+backup policy's, when it names one).
+
+```
+GET    /v1/clusters/{c}/bundle-sources                          declared, with whether the keys are there
+PUT    /v1/clusters/{c}/bundle-sources/{name}                   {endpoint, bucket, prefix?, region?, addressingStyle?, description?}
+DELETE /v1/clusters/{c}/bundle-sources/{name}                   removed from git and from the cluster
+GET    /v1/clusters/{c}/bundle-sources/{name}/bundles           [{prefix, info}]: each bundle's plaintext header
+POST   /v1/clusters/{c}/bundle-sources/{name}/actions/fetch     {prefix} -> {name, bundle}: copied into gentian-imports
+GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's own (also POST .../{name}/actions/fetch)
+GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
+GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
+GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
+POST   /v1/tenants/{t}/bundle-sources/{name}/actions/fetch      {prefix}: the tenant's administrator's fetch
+GET    /v1/tenants/{t}/bundle-fetches/{f}                       a fetch made on the tenant's route
+GET    /v1/tenants/{t}/bundles/{prefix}/download                its copy, or the tenant's upload
+```
+
+A tenant's administrator fetches from the tenant's own sources alone, only a
+bundle whose header names the tenant (`422` otherwise), and the copy counts
+towards the tenant's limits in `gentian-imports`, as its uploads do: one
+bundle at most 20 GiB, 50 GiB at once (`413`). Everything there goes once
+it is restored or imported, or after seven days (data-lifecycle.md §4).
+
+All of the cluster's are `can_configure`. An import names a bundle at a
+source instead of a bucket: `{"source": {"name": "old", "prefix":
+"nightly-20261001"}, "decryption": ...}`, read where it is. A fetched bundle
+is in `gentian-imports` like an upload, for a console that rewrites it before
+importing it.
 
 `decryption` is `{"passphrase": "..."}` or `{"identity": "AGE-SECRET-KEY-1..."}`.
 The key is written into a Secret the restore owns and goes with it. Members
 come back without credentials (no bundle carries them); the status says
 `passwordResetRequired`, and carries the restore's `complete`, `notRestored`
-and `notes`.
+and `notes`, and `outsideGuarantee` when the bundle is of an older platform
+version line, or records none, or the tenant's domain here is another (the
+command prints it). A bundle of a newer version line is refused. The cluster's own
+version line is in the answer to `GET /v1/clusters/{c}/settings` (whoever may
+audit the cluster): `platformVersionLine`, with `build`, the commit the
+operator's image was built from, when the build recorded one.
+
+A custom domain the bundle's tenant had (`customDomain` in the manifest
+`inspect` answers) is kept by default: the `TenantDomain` is committed with
+the tenant, under the rules and the right (`can_configure` on the cluster) of
+`tenants domain`, and the restore starts only once the operator has put the
+tenant on it, so nothing is moved. A domain this cluster has bound to another
+tenant is refused with `409`, one that cannot be bound here (on the kernel
+domain, a single-tenancy cluster) with `422`; both before anything is written.
+The status carries `customDomain`; pointing its DNS at the cluster is yours.
+`keepCustomDomain: false` (`--drop-custom-domain`) makes the tenant at
+`<tenant>.<kernel-domain>` instead: a move, as above, after which the domain
+can be declared again with `tenants domain <name> <domain>`.
 
 The uploaded file is kept in the cluster's `gentian-imports` bucket until a
 restore of it has run to its end, restored or failed, and is then removed. A
@@ -1275,8 +1393,9 @@ gentian:gentian-imports/<prefix>`). App grants are not in a bundle: they are
 declared in git, and a tenant imported into another cluster has them to set
 again. An import brings the data of apps that were uninstalled with their
 data kept, as uninstalled apps, when this cluster has their definitions. It
-grants no access right that was granted in the tenant the bundle was taken
-of: each is named in `notes`, to be granted again here.
+grants the access rights granted in the tenant the bundle was taken of only
+when the bundle is this cluster's own, of a tenant of the same name; any
+other bundle's are each named in `notes`, to be granted again here.
 
 ## 13. Backup Policy
 
@@ -1356,6 +1475,28 @@ for the cost of twelve more bundles. With nothing set, nothing is deleted.
 what already exists, so restore and cleanup read each bundle's own endpoint
 rather than the policy's current answer — last month's bundles stay reachable
 after a tenant moves its storage.
+
+**`addressingStyle`** says how a request names the bucket at the endpoint:
+`path` (`https://host/bucket/key`, the default when unset) or `virtualHost`
+(`https://bucket.host/key`), for a provider that serves a bucket only by its
+own host name. Anything else is refused by the schema, and by the director
+before it commits. A manual export's `mode: custom` destination takes the same
+field. Each bundle records the style it was written with
+(`status.bundle.addressingStyle`), and its restore, download and deletion use
+it.
+
+```yaml
+  destination:
+    endpoint: https://s3.example.org
+    bucket: gentian-bundles
+    addressingStyle: virtualHost
+```
+
+**Leaving the cluster.** A backup's or a restore's steps in the tenant's
+namespace (a volume's capture and restore) may reach the destination's
+endpoint and nothing else outside the cluster, and only while the run lasts:
+its port, and its address when the endpoint names an address rather than a
+host name. A run to the platform's own storage gets no way out.
 
 ### Object Lock
 
@@ -1464,6 +1605,13 @@ tampered key name, a file that is not a kit, and a missing identity are each
 refused rather than partially applied. A salt that comes back wrong by one byte
 reproduces a whole cluster of wrong passwords, and the symptom is an admin
 login that fails for no visible reason.
+
+The kit also carries the cluster's bundle signing key (`BUNDLE_SIGNING_SEED`),
+and the export seeds one on a cluster that has none. A cluster rebuilt with
+`--recover` from the kit and the same deployments repository keeps the key
+and its id (`spec.clusterUID` of the Cluster claim), so the bundles it wrote
+before still bring back the rights granted in their tenants
+([security.md §6.4](design/security.md)).
 
 Storing the kit in the cluster it protects defeats it. It belongs wherever the
 organisation keeps break-glass material, beside the backup identity.

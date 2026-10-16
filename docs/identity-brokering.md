@@ -103,6 +103,85 @@ shows the button (or, to go straight to the source, add
 `&kc_idp_hint=<alias>` to a sign-in URL of the target); after signing in at the source, they are back in the
 target, in the group.
 
+## The source on another cluster, commissioned with the tenant
+
+When the source realm is a tenant of *this* cluster and the target is on
+another — a hosted tenant whose people sign in to their provider's
+customer realm — step 1 need not be done by hand. The tenant is created with
+the target named:
+
+```bash
+kubectl gentian tenants create acme \
+  --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
+```
+
+The platform makes the client `broker-to-aluvian` in the tenant's realm. It
+has no secret: the target authenticates with a JWT signed by its own realm
+key, which the client checks against the keys the target publishes
+(`jwks`). In the target, step 2 is then done with *Client authentication*
+set to **JWT signed with private key** instead of a client secret, and
+*Client ID* `broker-to-aluvian`. Nothing secret crosses between the clusters.
+
+## The target on this cluster: organizations, declared
+
+The other half, when the *target* is a tenant of this cluster, need not be
+done by hand either, and is then in git rather than only in Keycloak. Each
+source realm becomes an **organization** of the target's realm, with an
+identity provider `org-<name>` linked to it (Tenant `spec.brokeredFrom`,
+written by the director as `brokered-from.yaml` beside the tenant):
+
+```bash
+kubectl gentian tenants organizations customers add acme \
+  --display-name "ACME AG" \
+  --issuer https://id.gentian.cloud/auth/realms/acme \
+  --client-id broker-to-aluvian \
+  --domain acme.gentian.cloud
+```
+
+- **Domain.** The organization's domain is the domain of its people's
+  addresses. It has to be the issuer's cluster domain (the issuer is
+  `id.<cluster domain>`) or one below it, such as `<tenant>.<cluster
+  domain>`, and never this cluster's own. Keycloak sends a person who gives
+  an address of that domain to the organization's provider.
+- **Authentication.** The provider signs a JWT with the target realm's key
+  (*JWT signed with private key*); the source's `broker-to-<name>` client
+  checks it against the target's published keys. No secret.
+- **Rights.** None. The provider maps nothing and does not trust the address
+  it is given: an arrival is a member of the organization, with no group of
+  the realm, and an address that is already an account here is linked only
+  once its owner proves it. Groups are still given by hand (step 3).
+- **Login page.** The provider is hidden there. A page sends people to it
+  with `kc_idp_hint=org-<name>`, or Keycloak does when they give their
+  address.
+- **The realm.** Keycloak's organizations are switched on only in a realm
+  that has at least one such entry.
+
+`kubectl gentian tenants organizations <tenant>` lists them, `… remove
+<name>` takes one away, and with it the organization and its provider.
+Adding and removing take `can_configure` on the cluster.
+
+### Commissioned by a component
+
+A component can do the same with a key of its own, for instance a shop
+that links each customer's cluster to its customer realm once the cluster
+is made. Both halves of the grant are needed:
+
+1. its profile declares `requires.services.organizations: {}`;
+2. the target tenant names it, in git, by hand:
+
+   ```yaml
+   spec:
+     organizationCommissioners:
+       - tenant: team            # where the component runs
+         profile: aluvian-commerce
+   ```
+
+The operator then lists the component's key for that tenant, and the
+component calls the director with it: `PUT`, `DELETE` and `GET` on
+`/v1/tenants/<tenant>/brokered-from[/<name>]`, at `DIRECTOR_URL` with the
+bearer `RIGHTS_CHECK_KEY`, both from its Secret `rights-check-<component>`.
+The commit names the component. The key opens nothing else.
+
 ## Removing it
 
 Delete the identity provider in the target, and the client in the source.

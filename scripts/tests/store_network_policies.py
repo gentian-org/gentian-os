@@ -177,7 +177,7 @@ def engine(store, apps):
 
     # The release the Cluster composition composes: which package, at which
     # version, with which ConfigMaps of the engine's chart as its values.
-    entry = re.search(r'\(dict\s+"fn"\s+"%s"\s+"chart"\s+"([a-z]+)"\s+"version"\s+"([0-9.]+)"\s+"values"\s+\(list ([^)]*)\)' % store,
+    entry = re.search(r'\(dict\s+"fn"\s+"%s"\s+"chart"\s+"([a-z]+)"\s+"version"\s+"([0-9A-Za-z.+-]+)"\s+"values"\s+\(list ([^)]*)\)' % store,
                       COMPOSITION.read_text())
     if not entry:
         raise Failure(f"the Cluster composition composes no release for {store}")

@@ -60,13 +60,14 @@ func liveFrom(tenant *gentianov1alpha1.Tenant, profiles map[string]*gentianov1al
 	}
 }
 
-// wikiManifest is a format 2 manifest of tenant "old": wiki with a database,
-// the databases its role owns, a bucket and a volume; and notes, a second
-// app.
+// wikiManifest is a format 2 manifest of tenant "demo", taken where the
+// tenant's realm and prefixes were "old" (spec.isolation): wiki with a
+// database, the databases its role owns, a bucket and a volume; and notes, a
+// second app.
 func wikiManifest() *backup.Manifest {
 	return &backup.Manifest{
 		SchemaVersion: 2,
-		Tenant:        "old",
+		Tenant:        "demo",
 		Identity:      &backup.ManifestIdentity{Realm: "old", Path: backup.IdentityArtefact},
 		Shell:         &backup.ManifestStore{Kind: bundle.ArtefactPostgres, Name: "old_shell", Path: backup.PostgresArtefact("old_shell")},
 		Apps: []backup.ManifestApp{
@@ -84,8 +85,8 @@ func wikiManifest() *backup.Manifest {
 }
 
 // The bundle says what is restored and where each artefact is; the tenant
-// says where each goes. A bundle brought in under another tenant's name
-// keeps its own artefact names and lands in the new tenant's stores.
+// says where each goes. A bundle taken where the tenant's prefixes were
+// others keeps its own artefact names and lands in the tenant's stores here.
 func TestARestoreGoesByTheBundlesManifest(t *testing.T) {
 	// The tenant has wiki, notes, and drive -- which the bundle does not hold.
 	tenant := planTenant("demo", "wiki", "notes", "drive")
@@ -253,12 +254,12 @@ func TestAStoreTheBundleDoesNotCoverIsLeftAndSaid(t *testing.T) {
 }
 
 // A format 1 manifest names apps and kinds only. It still restores, by the
-// names of the tenant it was taken of, and the result says the names were
-// derived.
+// names the tenant had where it was taken, and the result says the names
+// were derived.
 func TestAFormat1BundleRestoresByDerivationAndSaysSo(t *testing.T) {
 	old := &backup.Manifest{
 		SchemaVersion: 1,
-		Tenant:        "old",
+		Tenant:        "demo",
 		TenantSpec: &gentianov1alpha1.TenantSpec{Isolation: &gentianov1alpha1.TenantIsolation{
 			DatabasePrefix: "o_", S3Prefix: "o-",
 		}},
@@ -331,6 +332,35 @@ func TestAManifestPathThatLeavesTheBundleRefusesTheRestore(t *testing.T) {
 	}
 	if err := validBundleRef(&gentianov1alpha1.BundleRef{Bucket: "gentian-imports", Prefix: "20261007-101500-1a2b3c4d"}); err != nil {
 		t.Errorf("an upload's own prefix is refused: %v", err)
+	}
+}
+
+// A bundle is restored only into the tenant of its own name. One of another
+// is refused, naming it only where its name is a plain one; one that does
+// not say whose it is restores as this tenant's.
+func TestABundleOfAnotherTenantIsRefused(t *testing.T) {
+	tenant := planTenant("demo", "wiki", "notes")
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{
+		"wiki":  chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
+		"notes": chartProfile("notes", "1.0.0", "", false),
+	}
+	live := liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}})
+	for was, says := range map[string]string{
+		"old":             "the bundle is of tenant old and this is tenant demo: a restore does not rename",
+		"bad name; rm -r": "the bundle is of another tenant and this is tenant demo",
+	} {
+		m := wikiManifest()
+		m.Tenant = was
+		_, err := planRestore(m, tenant, nil, false, targetOf(tenant), live)
+		var refused *errRestoreRefused
+		if !errors.As(err, &refused) || refused.reason != "OtherTenant" || !strings.Contains(err.Error(), says) {
+			t.Errorf("%q: err = %v", was, err)
+		}
+	}
+	m := wikiManifest()
+	m.Tenant = ""
+	if _, err := planRestore(m, tenant, nil, false, targetOf(tenant), live); err != nil {
+		t.Errorf("a bundle that does not say whose it is: %v", err)
 	}
 }
 

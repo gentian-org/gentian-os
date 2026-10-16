@@ -12,11 +12,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -38,11 +40,13 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/usage"
@@ -255,13 +259,17 @@ func main() {
 		Client:      mgr.GetClient(),
 		// Needed by the deletion path, which has to tell "gone" apart from "not
 		// in the cache yet" before it acts on a Tenant being deleted.
-		APIReader:                mgr.GetAPIReader(),
-		Exec:                     appExecer,
-		Scheme:                   mgr.GetScheme(),
-		Seeder:                   buildSeeder(),
-		WithoutVault:             withoutVault(),
-		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:              tenancyMode,
+		APIReader:    mgr.GetAPIReader(),
+		Exec:         appExecer,
+		Scheme:       mgr.GetScheme(),
+		Seeder:       buildSeeder(),
+		WithoutVault: withoutVault(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  tenancyMode,
+		// The id the cluster has in its deployments repository: what a
+		// bundle records as the cluster it was taken on, and what the
+		// rights store names the cluster by.
+		ClusterID:                os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
 		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
@@ -329,6 +337,24 @@ func main() {
 		setupLog.Info("usage sampler enabled",
 			"interval", sampler.Interval, "retention", sampler.Retention,
 			"actualSource", sampler.Actual != nil)
+	}
+
+	// Perimeter traffic: what each tenant's public entries carry, per path and
+	// by response class, from the counters the edge's Envoy keeps anyway.
+	// Kept in each tenant's own database beside its usage, so it needs the
+	// same; off with the usage sampler, or on its own.
+	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" && os.Getenv("PERIMETER_TRAFFIC_ENABLED") != "false" {
+		traffic := &perimetertraffic.Sampler{
+			Client:    mgr.GetAPIReader(),
+			Interval:  envDuration("PERIMETER_TRAFFIC_INTERVAL", 5*time.Minute),
+			Retention: envDuration("PERIMETER_TRAFFIC_RETENTION", 90*24*time.Hour),
+		}
+		if err := mgr.Add(traffic); err != nil {
+			setupLog.Error(err, "unable to add the perimeter traffic sampler to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("perimeter traffic sampler enabled",
+			"interval", traffic.Interval, "retention", traffic.Retention)
 	}
 
 	if err := (&controller.KeycloakPlatformReconciler{
@@ -405,6 +431,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The account a tenant's apps are installed as, bound in each tenant
+	// namespace (internal/controller/tenant_apps_helm.go).
+	if err := (&controller.TenantAppsHelmReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantAppsHelm")
+		os.Exit(1)
+	}
+
 	if err := (&controller.BrandingReconciler{Definitions: held, Client: mgr.GetClient(), KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM"))}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Branding")
 		os.Exit(1)
@@ -446,6 +479,9 @@ func main() {
 		// An app's own secrets go into a bundle from the operator's memory,
 		// encrypted there: this is how it writes them.
 		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
+		// The cluster's bundle signing key, read from the vault with the
+		// operator's own identity. A restore checks bundles with it too.
+		SigningKey: bundleSigningKey(),
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")
@@ -478,6 +514,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
 		os.Exit(1)
 	}
+	// Nothing stays in the import bucket longer than a week, used or not.
+	if err := mgr.Add(&bundlestore.Sweeper{
+		Store:  &bundlestore.Store{Client: mgr.GetClient()},
+		Client: mgr.GetClient(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the import bucket sweep")
+		os.Exit(1)
+	}
 
 	if err := (&controller.TenantExportScheduleReconciler{
 		Definitions: held,
@@ -497,6 +541,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.BundleSourceReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BundleSource")
+		os.Exit(1)
+	}
+	if err := (&controller.BundleFetchReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BundleFetch")
+		os.Exit(1)
+	}
+
 	// The authorization graph's structure: which tenants this cluster has and
 	// which group holds which role over it.
 	//
@@ -511,7 +568,6 @@ func main() {
 		// carries and a restore puts back: read and written by the operator,
 		// which is the store's one writer.
 		tenantReconciler.Rights = graph
-		tenantReconciler.ClusterID = os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 		if err := (&controller.AuthzProjectionReconciler{
 			Client:  mgr.GetClient(),
 			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
@@ -745,6 +801,38 @@ func buildSeeder() *secrets.Seeder {
 	setupLog.Info("secret seeder enabled",
 		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil, "secretMode", configured)
 	return secrets.NewSeeder(kv, deriver).WithMode(mode)
+}
+
+// bundleSigningKey reads the cluster's bundle signing key from the vault
+// with the operator's own identity, each time a manifest is written or
+// checked, so that a key written after the operator started is found. The
+// key last read is kept: a vault that does not answer for a moment does not
+// make a bundle unsigned.
+func bundleSigningKey() func() (*backup.SigningKey, error) {
+	baoAddr := os.Getenv("BAO_ADDR")
+	if baoAddr == "" {
+		return func() (*backup.SigningKey, error) { return nil, backup.ErrNoSigningKey }
+	}
+	kv := secrets.NewKVClient(baoAddr, envOrDefault("BAO_ROLE", "gentian-os-operator"), "")
+	absent := func(err error) bool { return errors.Is(err, secrets.ErrNotFound) }
+	var (
+		mu   sync.Mutex
+		last *backup.SigningKey
+	)
+	return func() (*backup.SigningKey, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		key, err := backup.SigningKeyFromVault(ctx, kv.Get, absent)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case err == nil:
+			last = key
+		case last != nil && !errors.Is(err, backup.ErrNoSigningKey):
+			return last, nil
+		}
+		return key, err
+	}
 }
 
 // withoutVault is the operator's statement that it runs without a vault:

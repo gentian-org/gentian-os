@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -130,7 +131,8 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 		binDir = v
 	}
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{envoyGatewayCRDs},
+		// And the Gateway API's HTTPRoute, for a route the operator holds.
+		CRDDirectoryPaths:     []string{envoyGatewayCRDs, filepath.Join("..", "..", "config", "crd", "gateway.networking.k8s.io_httproutes.yaml")},
 		BinaryAssetsDirectory: binDir,
 		ErrorIfCRDPathMissing: true,
 	}
@@ -259,6 +261,31 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 	} {
 		spec, _, _ := unstructured.NestedMap(proxy.Object, "spec")
 		create("the edge EnvoyProxy", proxy.GroupVersionKind(), spec)
+	}
+
+	// The restore hold's answer, and a route held for a restore: its rules
+	// point at that answer and send nowhere.
+	create("the restore hold's answer", httpRouteFilterGVK, restoreHoldFilterSpec())
+	held := buildExposureRoute(
+		&gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "files", Namespace: servicesNamespace}},
+		"files-web", "files.acme.example", zone,
+		&gentianov1alpha1.ExposureSpec{Name: "web", AuthMode: gentianov1alpha1.AuthModeOIDC, Paths: []string{"/apps", "/remote.php"},
+			Backend: gentianov1alpha1.BackendRef{Service: "files", Port: 8080}},
+		routeAuthz{relation: "can_use", object: "app:acme/files"}, "k.example", []string{"desktop.acme.example"})
+	// This zone is drawn without its listener; any name will do here.
+	section := gatewayv1.SectionName("https-acme")
+	held.Spec.ParentRefs[0].SectionName = &section
+	if err := holdRoute(held); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := runtime.DefaultUnstructuredConverter.ToUnstructured(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := &unstructured.Unstructured{Object: raw}
+	route.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("HTTPRoute"))
+	if err := c.Create(ctx, route, client.FieldValidation(metav1.FieldValidationStrict)); err != nil {
+		t.Errorf("a held route is not a valid HTTPRoute: %v", err)
 	}
 
 	// And the check checks: a field the release does not have is refused.

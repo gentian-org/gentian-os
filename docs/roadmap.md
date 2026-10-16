@@ -859,10 +859,10 @@ mappers and flow, nor the broker client is made any more
   every artefact in it, and a restore refuses a bundle whose signature is
   not by a key the cluster was told to accept.
 * **Backlog Items**:
-  - `[ ]` Record each artefact's digest in the manifest, the secrets' included, and sign the manifest at export.
-  - `[ ]` Decide the signing key, where its private half is kept, and how another cluster's key is accepted for an import.
-  - `[ ]` Have a restore verify the signature and each digest before it changes anything, and say so in its result.
-  - `[ ]` Decide what happens to bundles written before signing: refused, or restored with an explicit setting.
+  - `[~]` Record each artefact's digest in the manifest, the secrets' included, and sign the manifest at export. *(The manifest is signed with the cluster's own key and records the cluster's id; no digest yet.)*
+  - `[~]` Decide the signing key, where its private half is kept, and how another cluster's key is accepted for an import. *(Each cluster's own Ed25519 key at `gentian-os/kernel/backup/signing`, in the recovery kit; no other cluster's key is accepted.)*
+  - `[~]` Have a restore verify the signature and each digest before it changes anything, and say so in its result. *(The signature is verified and decides only whether granted rights come back, `status.rights.provenance`.)*
+  - `[~]` Decide what happens to bundles written before signing: refused, or restored with an explicit setting. *(For the rights: restored, with no granted right brought back.)*
 
 ## 2. Platform, Infrastructure & Lifecycle
 

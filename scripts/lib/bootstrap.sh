@@ -48,7 +48,7 @@ bootstrap_openbao_for_crossplane() {
     # everything after it. Keeping both in sync removes the shell's freedom
     # to disagree with what was just resolved.
     export BAO_ADDR="${VAULT_ADDR}"
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
     if ! _resolve_bao_token; then
         error "Cannot configure the vault without an OpenBao token."
@@ -135,7 +135,7 @@ POLICY
             | jq -r '.token // empty' 2>/dev/null || true)
         if [[ -n "${existing_token}" ]]; then
             local http_code
-            http_code=$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            http_code=$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                 -H "X-Vault-Token: ${existing_token}" \
                 "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
             if [[ "${http_code}" == "200" ]]; then
@@ -371,12 +371,12 @@ create_crossplane_secrets() {
             '{auth_password:$a}')"
 
     # ── storage/s3 (the object store's administrator) ─────────────────────────
-    # Derived under the name it was first derived under, "minio": the path
-    # moved with the server, the value did not.
+    # Derived under "s3", the store's own name, as its path is; the
+    # administrator's access key id is s3-admin, as in seed-openbao.sh.
     _kv_secret "gentian-os-kernel-storage-s3" \
         "$(jq -nc \
-            --arg a "minio" \
-            --arg b "$(_derive minio root_password)" \
+            --arg a "s3-admin" \
+            --arg b "$(_derive s3 root_password)" \
             '{root_user:$a,root_password:$b}')"
 
     # ── identity/keycloak-bootstrap (Suze Keycloak admin password) ─────────────
@@ -727,6 +727,208 @@ seed_secrets_remaining() {
     seed_secrets
     seed_repository_credentials
     seed_usage_statistics_key
+    seed_bundle_signing_key
+    seed_internal_ca
+    seed_object_store_signing_keys
+}
+
+# _seed_once <kv path> — write the JSON object on stdin to the path, only if
+# the path has never been written. `kv put -cas=0` is that test, made by the
+# vault itself, so a path this run merely failed to read is not replaced.
+# The values travel on stdin, never as arguments a process listing shows.
+_seed_once() {
+    bao kv put -mount=secret -cas=0 "$1" - >/dev/null 2>&1
+}
+
+# =============================================================================
+# seed_internal_ca — the cluster's internal CA, gentian-ca, in the vault
+# =============================================================================
+# OpenBao's PKI engine at pki-internal holds the CA, and its key never leaves
+# it: the root is generated inside the vault (root/generate/internal), and
+# cert-manager asks the vault to sign (kernel/manifests/cert-manager/
+# internal-ca.yaml). Made once and never replaced: every certificate the
+# cluster issues in-cluster chains to it, and a new one would be an anchor
+# nothing trusts yet. The recovery kit, which opens the vault, reaches it with
+# everything else the vault holds.
+#
+# The role gentian-ca says what may be signed: the object store's names, and
+# on a self-signed cluster, where gentian-ca is the anchor of the public
+# names too, the kernel domain and the names under it. Rewritten on every
+# run, so it follows the issuer mode. Certificates live at most 90 days,
+# cert-manager's default; cert-manager renews them at two thirds of that, so
+# a sealed vault leaves about 30 days before the first one expires.
+#
+# A self-signed cluster that predates this had its CA made by cert-manager,
+# and clients may have been told to trust it. That CA is imported instead of
+# generating one, from the Secret cert-manager wrote -- recognised by the
+# Certificate that wrote it, so a Secret somebody supplied for private-ca is
+# never read -- and the Secret is then written again without its key.
+#
+# The CA's certificate is written to gentian-root-ca-tls in cert-manager's
+# namespace, ca.crt and tls.crt and no key: the anchor a self-signed cluster
+# hands to its clients (certificates.trustAnchorSecret).
+#
+# A private-ca cluster seeds nothing: gentian-ca is the person's own CA.
+# =============================================================================
+INTERNAL_CA_MOUNT="pki-internal"
+
+# _internal_ca_role — write the role gentian-ca for this cluster's issuer mode.
+_internal_ca_role() {
+    local s3; s3="$(ns_system s3)"
+    local svc="seaweedfs-all-in-one"
+    local names="seaweedfs-server,seaweedfs-shell,${svc},${svc}.${s3},${svc}.${s3}.svc,${svc}.${s3}.svc.cluster.local"
+    local subdomains=false wildcard=false
+    if [[ "$(gentian_issuer_mode)" == "self-signed" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        names="${names},${KERNEL_DOMAIN}"
+        subdomains=true
+        wildcard=true
+    fi
+    bao write "${INTERNAL_CA_MOUNT}/roles/gentian-ca" \
+        allowed_domains="${names}" allow_bare_domains=true \
+        allow_subdomains="${subdomains}" allow_wildcard_certificates="${wildcard}" \
+        allow_glob_domains=false allow_localhost=false allow_any_name=false \
+        allow_ip_sans=false allowed_uri_sans="" allowed_other_sans="" \
+        enforce_hostnames=true server_flag=true client_flag=true \
+        key_type=ec key_bits=256 ttl=2160h max_ttl=2160h \
+        no_store=true require_cn=false >/dev/null
+}
+
+# _internal_ca_legacy <dir> — the CA cert-manager made on this cluster, as
+# <dir>/ca.crt and <dir>/ca.key, when there is one.
+_internal_ca_legacy() {
+    local dir="$1" ns="$2"
+    kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null |
+        jq -e 'select(.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca")
+               | select(.data["tls.key"] != null)' > "${dir}/secret.json" 2>/dev/null || return 1
+    (umask 077
+     jq -r '.data["tls.crt"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.crt"
+     jq -r '.data["tls.key"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.key")
+    rm -f "${dir}/secret.json"
+    openssl x509 -noout -in "${dir}/ca.crt" >/dev/null 2>&1 && [[ -s "${dir}/ca.key" ]]
+}
+
+# _internal_ca_publish <ns> — the CA's certificate, without a key, as
+# gentian-root-ca-tls. Only over a Secret that is this one's, or the one
+# cert-manager's CA wrote; a Secret of that name somebody else made is left.
+_internal_ca_publish() {
+    local ns="$1" cur crt
+    crt="$(bao read -field=certificate "${INTERNAL_CA_MOUNT}/cert/ca" 2>/dev/null)" || return 1
+    [[ -n "${crt}" ]] || return 1
+    cur="$(kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null || true)"
+    if [[ -n "${cur}" ]]; then
+        if jq -e '.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca"' \
+            <<< "${cur}" >/dev/null 2>&1; then
+            # Its type says it holds a key, and a type cannot be changed.
+            kubectl delete secret gentian-root-ca-tls -n "${ns}" >/dev/null || return 1
+        elif ! jq -e '.metadata.labels["gentianos.io/issuer-role"] == "internal-ca"' \
+            <<< "${cur}" >/dev/null 2>&1; then
+            warn "${ns}/gentian-root-ca-tls is not the internal CA's; left as it is."
+            return 0
+        fi
+    fi
+    jq -n --arg c "${crt}" --arg ns "${ns}" '{
+        apiVersion: "v1", kind: "Secret", type: "Opaque",
+        metadata: {name: "gentian-root-ca-tls", namespace: $ns,
+                   labels: {"app.kubernetes.io/managed-by": "gentian-install",
+                            "app.kubernetes.io/part-of": "gentian-os",
+                            "gentianos.io/issuer-role": "internal-ca"}},
+        stringData: {"ca.crt": ($c + "\n"), "tls.crt": ($c + "\n")}}' |
+        kubectl apply -f - >/dev/null
+}
+
+seed_internal_ca() {
+    local mount="${INTERNAL_CA_MOUNT}" default dir ns made
+    if [[ "$(gentian_issuer_mode)" == "private-ca" ]]; then
+        info "issuerMode is private-ca: gentian-ca is your own CA, and the vault holds none."
+        return 0
+    fi
+    if ! bao secrets list -format=json 2>/dev/null | jq -e --arg m "${mount}/" '.[$m]' >/dev/null 2>&1; then
+        if ! bao secrets enable -path="${mount}" -max-lease-ttl=87600h \
+            -description="gentian-ca, the cluster's internal CA" pki >/dev/null; then
+            error "The vault's PKI engine could not be enabled at ${mount}/."
+            return 1
+        fi
+    fi
+    bao secrets tune -max-lease-ttl=87600h "${mount}" >/dev/null || return 1
+
+    # Only an answer that there is no CA is a reason to make one: a vault
+    # that is sealed, unreachable or refuses fails here instead.
+    if ! default="$(bao read -format=json "${mount}/config/issuers" 2>/dev/null | jq -er '.data.default')"; then
+        error "Could not read the internal CA from the vault at ${mount}/; nothing was changed."
+        return 1
+    fi
+    ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}")"
+    if [[ -n "${default}" ]]; then
+        info "Internal CA already in the vault; left as it is."
+    else
+        dir="$(mktemp -d)" || return 1
+        chmod 700 "${dir}"
+        if _internal_ca_legacy "${dir}" "${ns}"; then
+            # Certificate and key on stdin, never in an argument.
+            local imported
+            imported="$(cat "${dir}/ca.crt" "${dir}/ca.key" |
+                bao write -format=json "${mount}/issuers/import/bundle" pem_bundle=- 2>/dev/null |
+                jq -r '.data.imported_issuers[0] // empty')"
+            rm -rf "${dir}"
+            if [[ -z "${imported}" ]] ||
+                ! bao write "${mount}/config/issuers" default="${imported}" >/dev/null; then
+                error "The CA cert-manager made on this cluster could not be imported into ${mount}/."
+                return 1
+            fi
+            made="imported the CA cert-manager made on this cluster before"
+        else
+            rm -rf "${dir}"
+            if ! bao write "${mount}/root/generate/internal" \
+                common_name=gentian-root-ca organization=gentian-os \
+                key_type=ec key_bits=256 ttl=87600h max_path_length=0 \
+                issuer_name=gentian-root-ca key_name=gentian-root-ca >/dev/null; then
+                error "The vault could not generate the internal CA at ${mount}/."
+                return 1
+            fi
+            made="generated in the vault"
+        fi
+        success "Internal CA ${made}, at ${mount}/."
+    fi
+    if ! _internal_ca_role; then
+        error "The internal CA's role ${mount}/roles/gentian-ca could not be written."
+        return 1
+    fi
+    _internal_ca_publish "${ns}" ||
+        warn "The internal CA's certificate could not be written to ${ns}/gentian-root-ca-tls."
+}
+
+# =============================================================================
+# seed_object_store_signing_keys — the keys the object store signs tokens with
+# =============================================================================
+# Random, written once, beside the store's administrator
+# (kernel/services/infra-seaweedfs/manifests/templates/externalsecret.yaml
+# says what each one signs). Not derived from the master password: nothing
+# else the cluster holds should reproduce them. Rotating one is writing a new
+# value here and restarting the store (docs/design/operations.md).
+# =============================================================================
+seed_object_store_signing_keys() {
+    local path="gentian-os/kernel/storage/s3/jwt" dir key ok=1
+    if [[ -n "$(bao kv get -mount=secret -field=signing_key "${path}" 2>/dev/null || true)" ]]; then
+        info "Object store signing keys already in the vault; left as they are."
+        return 0
+    fi
+    # Through files, not arguments: a value in an argument list is in the
+    # process table for as long as the command runs.
+    dir="$(mktemp -d)" || return 1
+    chmod 700 "${dir}"
+    for key in signing_key signing_read_key filer_signing_key filer_signing_read_key; do
+        (umask 077; openssl rand -hex 32 | tr -d '\n' > "${dir}/${key}") || ok=0
+    done
+    if (( ok == 0 )) || ! jq -n --rawfile a "${dir}/signing_key" --rawfile b "${dir}/signing_read_key" \
+        --rawfile c "${dir}/filer_signing_key" --rawfile d "${dir}/filer_signing_read_key" \
+        '{signing_key: $a, signing_read_key: $b, filer_signing_key: $c, filer_signing_read_key: $d}' |
+        _seed_once "${path}"; then
+        rm -rf "${dir}"
+        error "The object store's signing keys could not be written to the vault at ${path}."
+        return 1
+    fi
+    rm -rf "${dir}"
+    success "Object store signing keys stored at ${path}."
 }
 
 # =============================================================================
@@ -772,6 +974,58 @@ seed_usage_statistics_key() {
         return 0
     fi
     success "Usage statistics report signing key stored."
+}
+
+# =============================================================================
+# seed_bundle_signing_key — the key this cluster signs its bundles with
+# =============================================================================
+# 32 random bytes, as hex, at gentian-os/kernel/backup/signing. The operator
+# derives an Ed25519 key pair from them (internal/backup/signature.go), signs
+# every bundle's manifest with it, and checks a bundle it restores with it:
+# only a bundle this cluster signed, of a tenant of the same name, brings back
+# the rights granted in the tenant (docs/design/security.md).
+#
+# Its own key, not the director's git signing key: that one signs commits to
+# the deployments repository and is the director's, and a key that signs two
+# kinds of thing is a key whose signature on one can be passed off as the
+# other.
+#
+# Written once and never replaced: a new key makes every earlier bundle read
+# as another cluster's. An existing value is left alone, including by a run
+# that cannot read it (kv put -cas=0). A run from a recovery kit brings the
+# kit's key (BUNDLE_SIGNING_SEED), so a cluster rebuilt from the kit keeps it
+# and its bundles still hold. The value travels on stdin, never as an
+# argument.
+# =============================================================================
+seed_bundle_signing_key() {
+    local path="gentian-os/kernel/backup/signing" have dir from="at random"
+    have="$(bao kv get -mount=secret -field=signing_seed "${path}" 2>/dev/null || true)"
+    if [[ -n "${have}" ]]; then
+        if [[ -n "${BUNDLE_SIGNING_SEED:-}" && "${have}" != "${BUNDLE_SIGNING_SEED}" ]]; then
+            warn "The vault holds a bundle signing key other than the recovery kit's; the vault's is kept."
+            warn "  Bundles the kit's cluster signed read as another cluster's here."
+        fi
+        info "Bundle signing key already in the vault; left as it is."
+        return 0
+    fi
+    dir="$(mktemp -d)" || return 1
+    chmod 700 "${dir}"
+    if [[ "${BUNDLE_SIGNING_SEED:-}" =~ ^[0-9a-f]{64}$ ]]; then
+        (umask 077; printf '%s' "${BUNDLE_SIGNING_SEED}" > "${dir}/seed")
+        from="from the recovery kit"
+    else
+        [[ -n "${BUNDLE_SIGNING_SEED:-}" ]] && warn "The recovery kit's bundle signing key is not 64 hex characters; a new one is made."
+        (umask 077; openssl rand -hex 32 | tr -d '\n' > "${dir}/seed")
+    fi
+    if [[ ! -s "${dir}/seed" ]] || ! jq -n --rawfile s "${dir}/seed" '{signing_seed: $s}' | _seed_once "${path}"; then
+        rm -rf "${dir}"
+        warn "The bundle signing key could not be written to the vault at ${path}."
+        warn "  Bundles are written unsigned until it is, and a restore of one brings"
+        warn "  back no right that was granted in the tenant. Run this step again."
+        return 0
+    fi
+    rm -rf "${dir}"
+    success "Bundle signing key stored at ${path} (${from})."
 }
 
 # =============================================================================
@@ -963,7 +1217,8 @@ resync_credential_consumers() {
     done <<< "$(kubectl get clusterissuers.cert-manager.io -o json 2>/dev/null | jq -r '
         .items[]
         | select([(.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length == 0)
-        | [.spec.acme.solvers[]? | .. | objects | to_entries[] | select(.key | test("SecretRef$")) | .value.name // empty] | .[]' 2>/dev/null | sort -u || true)"
+        | ([.spec.acme.solvers[]? | .. | objects | to_entries[] | select(.key | test("SecretRef$")) | .value.name // empty]
+           + [.spec.ca.secretName // empty]) | .[]' 2>/dev/null | sort -u || true)"
 
     count=0
     while read -r name; do
@@ -1802,11 +2057,13 @@ _claim_catalogue_section() {
 # section is removing the fields the schema no longer has
 # (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants). The same
 # pass removes the one field the schema lost outside this section
-# (_claim_drop_external_dns), whatever the claim says of the catalogue.
+# (_claim_drop_external_dns), whatever the claim says of the catalogue, and
+# gives a claim that has no cluster id one (ensure_claim_cluster_uid).
 ensure_claim_catalogue_section() {
     local claim="$1"
     [[ -f "${claim}" ]] || return 0
     _claim_drop_external_dns "${claim}"
+    ensure_claim_cluster_uid "${claim}"
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
         _claim_drop_catalogue_access "${claim}"
         _claim_drop_catalogue_tenants "${claim}"
@@ -1839,6 +2096,43 @@ ensure_claim_catalogue_section() {
     info "  Catalogue: $(gentian_catalogue_url)"
     info "  $(gentian_catalogue_reason)"
     info "  To run without a store, set 'catalogue: {}' under spec."
+}
+
+# gentian_new_cluster_uid — a cluster's random id: 32 hex characters.
+gentian_new_cluster_uid() {
+    openssl rand -hex 16
+}
+
+# ensure_claim_cluster_uid <claim file>
+#
+# A claim written before clusters had an id is given one, once: right below
+# spec.kernelDomain, where a new claim has it. A claim that has one keeps it
+# whatever it is -- it is what every bundle the cluster signed records, and a
+# reinstall from the same deployments repository finds it there. A claim
+# whose kernelDomain line is not where a scaffolded one has it is left alone
+# and the line to add is named.
+ensure_claim_cluster_uid() {
+    local claim="$1" uid
+    [[ -f "${claim}" ]] || return 0
+    yq_get '.spec.clusterUID' "${claim}" >/dev/null 2>&1 && return 0
+    if ! grep -qE '^  kernelDomain:' "${claim}"; then
+        warn "claims/cluster.yaml has no spec.clusterUID, and no kernelDomain line at spec's indent"
+        warn "  to put one below. Add it by hand, under spec:"
+        warn "    clusterUID: $(gentian_new_cluster_uid)"
+        return 0
+    fi
+    uid="$(gentian_new_cluster_uid)"
+    awk -v uid="${uid}" '
+        { print }
+        !done && /^  kernelDomain:/ {
+            print "  # This cluster'"'"'s random id, made once and never changed. A restore brings"
+            print "  # back the rights granted in a tenant only from a bundle this cluster"
+            print "  # signed and took; changing it makes every earlier bundle another cluster'"'"'s."
+            print "  clusterUID: " uid
+            done = 1
+        }' "${claim}" > "${claim}.uid" && cat "${claim}.uid" > "${claim}"
+    rm -f "${claim}.uid"
+    info "claims/cluster.yaml had no cluster id: spec.clusterUID ${uid} was added."
 }
 
 # preview_claim_catalogue_section <claim file> — what
@@ -2198,6 +2492,10 @@ metadata:
   namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   kernelDomain: ${domain}
+  # This cluster's random id, made once and never changed. A restore brings
+  # back the rights granted in a tenant only from a bundle this cluster
+  # signed and took; changing it makes every earlier bundle another cluster's.
+  clusterUID: $(gentian_new_cluster_uid)
   # Who administers this cluster, by the Keycloak group they are in. The
   # director reads this file from git -- not the object in the cluster -- so
   # the assignment is written here rather than left to the schema's default,

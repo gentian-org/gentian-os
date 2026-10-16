@@ -75,6 +75,9 @@ G_LLM_DB='2f40aa6bab967a2933f237973a6acb2bf865b42abbd2164334bf3f7f1dd49a2b'
 G_LLM_REDIS='8d2d2a6f65188b05868a89869b4e13d41009986f1c14d388b4c525f90e154828'
 G_LLM_VLLM='c5f9f7c721693e191ccf846244813ddbbc0ab3e07cb7f53c3b73955a478c2594'
 G_LLM_UI='027beca492940e1be343d2c5999e6dddf44d4dbdfa2b45916ae3425034b5de22'
+# The object store's administrator, derived under "s3" (it was "minio" until
+# SeaweedFS replaced MinIO: written down anew, deliberately, for new installs).
+G_S3='8e31a98eec91207d0f00d4d840666cba64ca03abc9b3afba556824c64f39efb7'
 
 # -----------------------------------------------------------------------------
 # A stand-in for the vault: KV v2 reads and writes under /v1/secret/data/, kept
@@ -188,6 +191,8 @@ if seed derived derived; then
         '[[ "$(held derived database/postgresql postgres_password)" == "${G_PG}" && "$(held derived database/cnpg superuser_password)" == "${G_CNPG}" ]]' "${first}"
     check "derived: the model gateway's keys are the written-down values" \
         '[[ "$(held derived llm litellm_master_key)" == "${G_LLM_MASTER}" && "$(held derived llm litellm_db_password)" == "${G_LLM_DB}" && "$(held derived llm litellm_redis_password)" == "${G_LLM_REDIS}" && "$(held derived llm vllm_api_key)" == "${G_LLM_VLLM}" && "$(held derived llm litellm_ui_password)" == "${G_LLM_UI}" ]]' "${first}"
+    check "derived: the object store's administrator is s3-admin with the written-down value" \
+        '[[ "$(held derived storage/s3 root_user)" == "s3-admin" && "$(held derived storage/s3 root_password)" == "${G_S3}" ]]' "${first}"
     check "derived: nothing generated is empty" '! grep -q "=$" <<<"${first}"' "${first}"
     seed derived derived
     check "derived: a second run changes nothing" '[[ "$(generated derived)" == "${first}" ]]' "$(generated derived)"
@@ -203,7 +208,7 @@ if seed random random; then
     first="$(generated random)"
     check "random: nothing generated is empty" '! grep -q "=$" <<<"${first}"' "${first}"
     check "random: no value is the derived one" \
-        '! grep -qF -e "${G_PG}" -e "${G_CNPG}" -e "${G_LLM_DB}" -e "${G_LLM_REDIS}" -e "${G_LLM_VLLM}" -e "${G_LLM_UI}" -e "${G_LLM_MASTER#sk-}" <<<"${first}"' "${first}"
+        '! grep -qF -e "${G_PG}" -e "${G_CNPG}" -e "${G_LLM_DB}" -e "${G_LLM_REDIS}" -e "${G_LLM_VLLM}" -e "${G_LLM_UI}" -e "${G_S3}" -e "${G_LLM_MASTER#sk-}" <<<"${first}"' "${first}"
     check "random: the model gateway's master key carries its prefix" \
         '[[ "$(held random llm litellm_master_key)" == sk-* ]]'
     check "random: no two values are the same" \
@@ -282,6 +287,15 @@ check "the kernel realm's mail login is the written-down value in both modes, ho
 check "derived: _derive gives the written-down value" '[[ "$(lib derived "_derive postgres postgres_user")" == "${G_PG}" ]]'
 check "random: _derive gives a value of its own on each call" \
     '[[ "$(lib random "_derive postgres postgres_user")" != "${G_PG}" && "$(lib random "_derive a b")" != "$(lib random "_derive a b")" ]]'
+# What the installer hands the composition to seed the object store's
+# administrator from: s3-admin and the value derived under "s3".
+fresh
+VAULT_UP='' lib derived 'CROSSPLANE_NAMESPACE=xp-test
+    kubectl() { local a; for a; do [[ "${a}" == --from-literal=data.json=* ]] && printf "%s %s\n" "$4" "${a#--from-literal=data.json=}" >> "${K8S}/applied"; done; return 0; }
+    create_crossplane_secrets' >/dev/null
+s3_seed="$(awk '$1 == "gentian-os-kernel-storage-s3" { print $2 }' "${SB}/k8s/applied" 2>/dev/null)"
+check "derived: the installer seeds the object store's administrator as s3-admin with the written-down value" \
+    '[[ "$(jq -r .root_user <<<"${s3_seed}")" == "s3-admin" && "$(jq -r .root_password <<<"${s3_seed}")" == "${G_S3}" ]]' "${s3_seed}"
 
 fresh
 a="$(lib random "_headlamp_derive_secret")"

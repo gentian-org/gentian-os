@@ -3,7 +3,7 @@
 # phase: handover
 # requires: D-03-portal-login
 # provides: nothing at install time — tenants are created after installation
-# mutates: Tenant, Component and App CRs, on teardown only
+# mutates: Tenant, Component and App CRs, and the finalizer of the RoleBinding gentian-tenant-apps-helm in tenant namespaces, on teardown only
 
 # The one destroy-only step, carried over from v4 unchanged in intent.
 #
@@ -143,5 +143,18 @@ destroy() {
                 fi
                 sleep 2
             done
+        done
+
+    # The binding of the account tenant apps are installed as holds its
+    # namespace until no Release installs into it, and the operator lets it
+    # go. With the operator gone nothing would, and the namespace would stay
+    # Terminating.
+    kubectl get rolebindings.rbac.authorization.k8s.io -A --no-headers \
+        --field-selector metadata.name=gentian-tenant-apps-helm \
+        -o custom-columns='NS:.metadata.namespace' 2>/dev/null |
+        while read -r ns; do
+            [[ -n "$ns" ]] || continue
+            kubectl patch rolebinding gentian-tenant-apps-helm -n "$ns" --type=merge \
+                -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
         done
 }

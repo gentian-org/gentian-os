@@ -70,3 +70,102 @@ func TestSignUpReachesTheXTenantOnlyWhereATenantSaysSo(t *testing.T) {
 		t.Error("tenant-default.yaml does not read signUp.enabled")
 	}
 }
+
+// An outside realm a tenant's people sign in at reaches the XTenant only
+// where the tenant names one, and the XRD and the Composition carry it.
+func TestBrokeredToReachesTheXTenantOnlyWhereATenantNamesOne(t *testing.T) {
+	r := &TenantReconciler{
+		Client:       fake.NewClientBuilder().WithScheme(appStoreScheme(t)).Build(),
+		KernelDomain: "k.example", TenancyMode: "multi",
+	}
+	plain := &gentianov1alpha1.Tenant{}
+	plain.Name = "acme"
+	plain.Spec.DisplayName = "Acme"
+	xr, err := r.buildXTenant(context.Background(), plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := xr.Object["spec"].(map[string]interface{})
+	if _, stated := spec["brokeredTo"]; stated {
+		t.Fatalf("a tenant that names no outside realm projects one: %v", spec["brokeredTo"])
+	}
+
+	named := plain.DeepCopy()
+	named.Spec.BrokeredTo = []gentianov1alpha1.TenantBrokeredTo{{
+		Name:        "aluvian",
+		RedirectURI: "https://id.aluvian.example/auth/realms/customers/broker/acme/endpoint",
+		JWKSURL:     "https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs",
+	}}
+	xr, err = r.buildXTenant(context.Background(), named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ = xr.Object["spec"].(map[string]interface{})
+	list, _ := spec["brokeredTo"].([]interface{})
+	if len(list) != 1 || list[0].(map[string]interface{})["jwksURL"] != named.Spec.BrokeredTo[0].JWKSURL {
+		t.Fatalf("brokeredTo is not projected: %v", spec["brokeredTo"])
+	}
+
+	xrd, err := os.ReadFile("../../crossplane/xrds/tenant.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(xrd), "brokeredTo:") {
+		t.Error("crossplane/xrds/tenant.yaml does not declare brokeredTo")
+	}
+	composition, err := os.ReadFile("../../crossplane/compositions/tenant-default.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(composition), `dig "brokeredTo" list $spec`) {
+		t.Error("tenant-default.yaml does not read brokeredTo")
+	}
+}
+
+// The outside realms whose people sign in as organizations reach the XTenant
+// only where a tenant has one, and the composition reads them: a tenant
+// without composes as it did, its realm's organizations off. The tenants
+// that commission them are the operator's to read and never projected.
+func TestBrokeredFromReachesTheXTenantOnlyWhereATenantHasOne(t *testing.T) {
+	r := &TenantReconciler{
+		Client:       fake.NewClientBuilder().WithScheme(appStoreScheme(t)).Build(),
+		KernelDomain: "k.example", TenancyMode: "multi",
+	}
+	plain := &gentianov1alpha1.Tenant{}
+	plain.Name = "customers"
+	plain.Spec.DisplayName = "Customers"
+	plain.Spec.OrganizationCommissioners = []gentianov1alpha1.TenantComponentRef{{Tenant: "team", Profile: "shop"}}
+	xr, err := r.buildXTenant(context.Background(), plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := xr.Object["spec"].(map[string]interface{})
+	for _, field := range []string{"brokeredFrom", "organizationCommissioners"} {
+		if _, stated := spec[field]; stated {
+			t.Fatalf("%s is projected for a tenant without outside realms: %v", field, spec[field])
+		}
+	}
+
+	named := plain.DeepCopy()
+	named.Spec.BrokeredFrom = []gentianov1alpha1.TenantBrokeredFrom{{
+		Name: "abc", DisplayName: "ABC AG", Issuer: "https://id.abc.example/auth/realms/main",
+		ClientID: "broker-to-aluvian", Domain: "abc.example",
+	}}
+	xr, err = r.buildXTenant(context.Background(), named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ = xr.Object["spec"].(map[string]interface{})
+	list, _ := spec["brokeredFrom"].([]interface{})
+	if len(list) != 1 || list[0].(map[string]interface{})["domain"] != "abc.example" ||
+		list[0].(map[string]interface{})["clientID"] != "broker-to-aluvian" {
+		t.Fatalf("brokeredFrom is not projected: %v", spec["brokeredFrom"])
+	}
+	composition, err := os.ReadFile("../../crossplane/compositions/tenant-default.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(composition), `dig "brokeredFrom" list $spec`) {
+		t.Error("tenant-default.yaml does not read brokeredFrom")
+	}
+}

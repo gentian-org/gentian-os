@@ -224,3 +224,76 @@ ns_kernel_policies_sync() {
     # What an earlier file had and this one has not.
     _ns_kernel_policies_remove "${KERNEL_NETWORK_POLICY_LABEL}-digest!=${digest}"
 }
+
+# =============================================================================
+# What a namespace holds — every namespaced kind, not a list kept by hand
+# =============================================================================
+#
+# A namespace object and its contents are separate keys in the datastore.
+# Removing the namespace (its finalizer forced through /finalize) while objects
+# are still stored leaves those objects in place, invisible until a namespace of
+# the same name is created again and they reappear in it: a purge on MicroK8s
+# left forty of kernel-edge's objects — cert-manager's Deployments, its Helm
+# release record, letsencrypt keys — inside the namespace A-01 recreated the
+# next morning. So whatever removes a namespace, or vouches for one, asks this.
+
+# Every kind that is namespaced and can be listed and deleted. Discovery that
+# fails for one group (an aggregated API whose service is gone) still prints
+# the rest and exits non-zero, so the output is taken whatever the exit code:
+# an aggregated API stores nothing in the datastore, so nothing of it can be
+# left behind. events.events.k8s.io is the same objects as core events.
+ns_namespaced_kinds() {
+    { kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s 2>/dev/null || true; } \
+        | { grep -vx 'events.events.k8s.io' || true; }
+}
+
+# One line per object: "<kind>[.<group>]/<name><TAB><creationTimestamp>" — the
+# reference is one kubectl get/patch/delete takes as it is. Asked for all kinds
+# in one call, and kind by kind when that call fails (a CRD removed between
+# discovery and the list makes the whole call fail). Works for a namespace that
+# no longer exists, which is exactly where objects left behind are found.
+# Returns 2 when discovery returned no kinds at all: nothing can be vouched for.
+# shellcheck disable=SC2016 # jq's own variables
+_NS_OBJECTS_JQ='.items[]? |
+    ((.kind | ascii_downcase)
+     + (if (.apiVersion | contains("/")) then "." + (.apiVersion | split("/")[0]) else "" end)
+     + "/" + .metadata.name) + "\t" + (.metadata.creationTimestamp // "")'
+
+ns_objects() {
+    local ns="${1:?ns_objects <namespace>}" kinds kind out
+    kinds="$(ns_namespaced_kinds)"
+    [[ -n "${kinds}" ]] || return 2
+    if out="$(kubectl get "$(printf '%s\n' "${kinds}" | paste -sd, -)" -n "${ns}" \
+            --ignore-not-found -o json --request-timeout=60s 2>/dev/null)"; then
+        printf '%s' "${out}" | jq -r "${_NS_OBJECTS_JQ}" 2>/dev/null || true
+        return 0
+    fi
+    for kind in ${kinds}; do
+        kubectl get "${kind}" -n "${ns}" --ignore-not-found -o json --request-timeout=30s 2>/dev/null \
+            | jq -r "${_NS_OBJECTS_JQ}" 2>/dev/null || true
+    done
+    return 0
+}
+
+# ns_warn_stale_objects <namespace> — objects older than the namespace that
+# holds them. A namespace cannot contain anything created before it was, so
+# each one is a leftover of an earlier namespace of the same name whose
+# contents were never deleted. Reported with the command that removes them,
+# never removed here: they may be the only copy of something (a Helm release
+# record, a certificate's key) somebody wants to look at first.
+ns_warn_stale_objects() {
+    local ns="${1:?}" created stale count
+    created="$(kubectl get namespace "${ns}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)"
+    [[ -n "${created}" ]] || return 0
+    # RFC 3339 in UTC, so the strings order as the times do.
+    stale="$(ns_objects "${ns}" | awk -F'\t' -v c="${created}" '$2 != "" && $2 < c { print $1 }' || true)"
+    [[ -n "${stale}" ]] || return 0
+    count="$(printf '%s\n' "${stale}" | wc -l | tr -d ' ')"
+    warn "${ns} (created ${created}) holds ${count} object(s) older than itself:"
+    printf '%s\n' "${stale}" | sed 's/^/      /'
+    warn "  They are left over from an earlier ${ns} whose contents were never deleted,"
+    warn "  and the steps that follow will find them as if they were their own."
+    warn "  Remove them, then run ./install.sh again:"
+    warn "    kubectl delete -n ${ns} --wait=false $(printf '%s\n' "${stale}" | paste -sd' ' -)"
+    return 1
+}

@@ -101,9 +101,10 @@ type BackupPolicyResult struct {
 
 // BackupDestinationResult is where bundles are written.
 type BackupDestinationResult struct {
-	Endpoint string `json:"endpoint,omitempty"`
-	Bucket   string `json:"bucket,omitempty"`
-	Region   string `json:"region,omitempty"`
+	Endpoint        string `json:"endpoint,omitempty"`
+	Bucket          string `json:"bucket,omitempty"`
+	Region          string `json:"region,omitempty"`
+	AddressingStyle string `json:"addressingStyle,omitempty"`
 }
 
 // BackupRetentionResult is which bundles survive.
@@ -209,7 +210,8 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 		result.SuspendSchedule = policy.Spec.SuspendSchedule
 		result.AllowTenantOverride = policy.Spec.OverrideAllowed()
 		if d := policy.Spec.Destination; d != nil {
-			result.Destination = BackupDestinationResult{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region}
+			result.Destination = BackupDestinationResult{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region,
+				AddressingStyle: string(d.AddressingStyle)}
 		}
 		result.Retention = retentionResult(policy.Spec.Retention)
 		result.Encryption = encryptionResult(policy.Spec.Encryption)

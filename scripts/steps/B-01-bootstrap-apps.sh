@@ -3,7 +3,7 @@
 # phase: secrets
 # requires: A-06-argocd
 # provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
-# mutates: a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's self-signed Issuer and Certificate in the secrets namespace; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
+# mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signalling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp
 
 # The chart takes the namespace layout as a value and resolves every
@@ -103,6 +103,23 @@ _v5_keep_chart_version() {
         -o jsonpath='{.spec.package.chart.version}' 2>/dev/null || true
 }
 
+# _v5_installer_username -- the user name the API server knows this
+# installer by, or nothing when it cannot say.
+_v5_installer_username() {
+    kubectl auth whoami -o jsonpath='{.status.userInfo.username}' 2>/dev/null || true
+}
+
+# _v5_tier_guard_ok -- whether the namespace tier guard is in place and names
+# this installer. A run under another user has to render it again, or that
+# user could not repair a namespace's tier label.
+_v5_tier_guard_ok() {
+    local named
+    kubectl get validatingadmissionpolicybinding gentian-namespace-tier >/dev/null 2>&1 || return 1
+    named="$(kubectl get validatingadmissionpolicy gentian-namespace-tier \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/installer-username}' 2>/dev/null)" || return 1
+    [[ "${named}" == "$(_v5_installer_username)" ]]
+}
+
 _v5_render() {
     # The layout goes in as a values file under its own key; platforms.yaml
     # already is one (its top-level dnsProviders table is what the chart reads).
@@ -131,9 +148,17 @@ _v5_render() {
         [[ -n "${signing_id}" ]] && printf '  - "%s"\n' "${signing_id}" >> "${signing_values}"
     done
 
+    # Who this installer is to the API server: the one user beside the
+    # platform's own that may set a namespace's tier label
+    # (templates/namespace-tier-guard.yaml). A values file, not --set-string,
+    # which would split a name with a comma in it; a JSON string is YAML.
+    local installer_values="${tmp}/installer.yaml"
+    printf 'installer:\n  username: %s\n' \
+        "$(jq -Rn --arg u "$(_v5_installer_username)" '$u')" > "${installer_values}"
+
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-        -f "${signing_values}" \
+        -f "${signing_values}" -f "${installer_values}" \
         --set-string "dnsProvider=$(gentian_dns_provider)" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
@@ -205,6 +230,10 @@ check() {
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
     kubectl get certificate openbao-tls -n "$(ns_kernel secrets)" >/dev/null 2>&1 || return 1
+    # Signed by the vault's CA, that CA handed to cert-manager, and the vault
+    # and the custodian on the current certificates (scripts/lib/openbao.sh).
+    openbao_tls_settled || return 1
+    _v5_tier_guard_ok || return 1
     # The claim's ACME environment as rendered. App pods choose their trust
     # mount from it, and a claim moved off staging otherwise kept "true" here
     # for good: everything else this checks was still in place.
@@ -265,6 +294,7 @@ apply() {
         done
         success "${app} delivered"
     done
+    openbao_tls_settle
 }
 
 destroy() {
@@ -274,4 +304,8 @@ destroy() {
         kubectl delete application "${app}" -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     done
     kubectl delete appproject gentian -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
+    # Cluster-scoped, so no namespace takes it with it. Left behind, it would
+    # name this install's user to the next install's first step.
+    kubectl delete validatingadmissionpolicybinding gentian-namespace-tier --ignore-not-found >/dev/null 2>&1 || true
+    kubectl delete validatingadmissionpolicy gentian-namespace-tier --ignore-not-found >/dev/null 2>&1 || true
 }

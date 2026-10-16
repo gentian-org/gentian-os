@@ -271,6 +271,13 @@ spec:
             - name: DIRECTOR_GNUPGHOME
               value: /tmp/gentian-director-gnupg
             {{- end }}
+            {{- /* The components that may commission organizations
+                 (requires.services.organizations), each with the hash of
+                 the key the operator gave it and the tenants that name it
+                 (spec.organizationCommissioners). The keys themselves are
+                 in the components' Secrets and never here. */}}
+            - name: DIRECTOR_COMMISSION_KEYS
+              value: /etc/gentian/commission/keys.json
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL
@@ -351,6 +358,9 @@ spec:
             - name: operator-token
               mountPath: /var/run/secrets/gentian/operator
               readOnly: true
+            - name: commission-keys
+              mountPath: /etc/gentian/commission
+              readOnly: true
             {{- if .Values.director.signingKeySecret }}
             - name: signing-key
               mountPath: /etc/gentian/signing
@@ -367,6 +377,14 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- include "gentian-os.operatorTokenVolume" . | nindent 8 }}
+        # The operator's list of the components that commission
+        # organizations. Optional and followed rather than read once: before
+        # the operator writes it, and where nothing commissions, no component
+        # is recognised by its key and everything else works as it did.
+        - name: commission-keys
+          configMap:
+            name: director-commission-keys
+            optional: true
         {{- if .Values.director.signingKeySecret }}
         # Optional for the same reason as the git credential: B-10 writes the
         # key to the vault and External Secrets projects it, which may happen

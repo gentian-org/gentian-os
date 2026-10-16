@@ -134,25 +134,23 @@ func TestWhatTheProjectionWritesIsNotStoreOnly(t *testing.T) {
 	}
 }
 
-// An entry of one tenant under the names of another: the tenant, its apps,
-// its groups and the cluster, wherever they stand; nothing else.
+// An entry of one cluster under the names of another: the cluster, wherever
+// it stands; nothing else, the tenant least of all.
 func TestRebase(t *testing.T) {
 	cases := []struct{ in, want Tuple }{
-		{Tuple{"cluster:c1", "operated_by", "tenant:demo"}, Tuple{"cluster:c2", "operated_by", "tenant:acme"}},
-		{Tuple{"group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki"}, Tuple{"group:gentian/tenant/acme/leads#member", "admin", "app:acme/wiki"}},
-		{Tuple{"group:gentian/platform/support#member", "admin", "tenant:demo"}, Tuple{"group:gentian/platform/support#member", "admin", "tenant:acme"}},
-		// A name that only begins with the tenant's is another tenant's.
-		{Tuple{"group:gentian/tenant/demo2/admins#member", "admin", "tenant:demo2"}, Tuple{"group:gentian/tenant/demo2/admins#member", "admin", "tenant:demo2"}},
-		{Tuple{"tenant:demo", "tenant", "app:demo2/wiki"}, Tuple{"tenant:acme", "tenant", "app:demo2/wiki"}},
+		{Tuple{"cluster:c1", "operated_by", "tenant:demo"}, Tuple{"cluster:c2", "operated_by", "tenant:demo"}},
+		{Tuple{"cluster:c1#operator", "admin", "app:demo/wiki"}, Tuple{"cluster:c2#operator", "admin", "app:demo/wiki"}},
+		{Tuple{"group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki"}, Tuple{"group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki"}},
+		{Tuple{"cluster:c10", "operated_by", "tenant:demo"}, Tuple{"cluster:c10", "operated_by", "tenant:demo"}},
 	}
 	for _, c := range cases {
-		if got := Rebase(c.in, "demo", "acme", "c1", "c2"); got != c.want {
+		if got := Rebase(c.in, "c1", "c2"); got != c.want {
 			t.Errorf("Rebase(%v) = %v, want %v", c.in, got, c.want)
 		}
 	}
 	same := Tuple{"cluster:c1", "operated_by", "tenant:demo"}
-	if got := Rebase(same, "demo", "demo", "c1", "c1"); got != same {
-		t.Errorf("into the same tenant: %v", got)
+	if got := Rebase(same, "c1", "c1"); got != same {
+		t.Errorf("on the same cluster: %v", got)
 	}
 	for object, on := range map[string]bool{"tenant:acme": true, "app:acme/wiki": true, "app:acme/": false, "tenant:acme2": false, "app:acme2/wiki": false, "cluster:c1": false, "group:gentian/tenant/acme/admins": false} {
 		if got := OnTenant(Tuple{Object: object}, "acme"); got != on {

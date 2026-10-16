@@ -99,20 +99,13 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
-            {{- /* Only when there is nothing to verify against.
-
-                 This used to be an unconditional "true", which meant the
-                 trust anchor above could never take effect for OpenBao:
-                 NewKVClient installs an InsecureSkipVerify transport whenever
-                 this is set, overriding SSL_CERT_FILE. So configuring
-                 trustAnchorSecret bought TLS verification everywhere except the
-                 one connection that carries the master password.
-
-                 Left true when no anchor is configured, because OpenBao serves
-                 a self-signed certificate and the operator could not reach it
-                 at all otherwise — this is the honest default for that case,
-                 not a hidden one. */}}
-            {{- if not .Values.trustAnchorSecret }}
+            {{- if .Values.openbao.caSecret }}
+            # The vault is verified against its CA openbao-ca, whose
+            # certificate the installer copies into this namespace (B-01).
+            - name: BAO_CACERT
+              value: /etc/gentian/openbao-ca/ca.crt
+            {{- else if not .Values.trustAnchorSecret }}
+            # Development only: no CA to verify the vault against.
             - name: VAULT_SKIP_VERIFY
               value: "true"
             {{- end }}
@@ -425,8 +418,12 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if or $webhookEnabled .Values.trustAnchorSecret $usageStatisticsEnabled }}
           volumeMounts:
+            {{- if .Values.openbao.caSecret }}
+            - name: openbao-ca
+              mountPath: /etc/gentian/openbao-ca
+              readOnly: true
+            {{- end }}
             {{- if $usageStatisticsEnabled }}
             - name: usage-statistics-key
               mountPath: /etc/gentian/usage-statistics
@@ -442,7 +439,6 @@ spec:
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
             {{- end }}
-          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -455,8 +451,16 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or $webhookEnabled .Values.trustAnchorSecret $usageStatisticsEnabled }}
       volumes:
+        {{- with .Values.openbao.caSecret }}
+        # The vault's CA certificate, nothing else. Optional, so the pod
+        # starts without it; the vault is then verified against no CA and
+        # every request to it fails until the copy is there.
+        - name: openbao-ca
+          secret:
+            secretName: {{ . | quote }}
+            optional: true
+        {{- end }}
         {{- if $usageStatisticsEnabled }}
         # Optional: the pod starts while the vault path or the Secret is still
         # missing, and the operator then records that it has no key instead
@@ -477,5 +481,4 @@ spec:
           secret:
             secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
         {{- end }}
-      {{- end }}
       terminationGracePeriodSeconds: 10

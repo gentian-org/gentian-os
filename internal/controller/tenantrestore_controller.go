@@ -38,6 +38,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
@@ -70,7 +71,9 @@ type TenantRestoreReconciler struct {
 // BundleReader is the object store as a restore uses it. *bundlestore.Store
 // is one.
 type BundleReader interface {
-	Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, error)
+	// SignedManifest reads the manifest, and what its signature is checked
+	// against: the bytes it was parsed from and the bundle's signature.
+	SignedManifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, *bundlestore.Signed, error)
 	// AppSecrets reads an app's secrets artefact, at the path the manifest
 	// gives for it, and opens it with the key.
 	AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppSecrets, error)
@@ -235,6 +238,9 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	restore.Status.CompletedAt = ptrNow()
+	// Ended: the edge lets the apps through again (HoldsBack is false for a
+	// restore that has ended, whatever this still said).
+	restore.Status.HeldBack = nil
 	restore.Status.PasswordResetRequired = true
 	// Complete only when nothing the bundle holds was left out. What was
 	// left out was decided, and written down, before the first thing was
@@ -268,6 +274,23 @@ func (r *TenantRestoreReconciler) restoreApp(
 	}
 	spec := profileBackupSpec(profile)
 	entry := appStatus(&restore.Status.Apps, appName)
+
+	// Held back at the edge before anything of the app is changed, and until
+	// the restore has ended (restore_hold.go). Once it is paused the hold is
+	// known to be in place.
+	if entry.QuiesceStart == nil {
+		held, failure, err := r.holdBack(ctx, restore, tenant, appName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if failure != "" {
+			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+		}
+		if !held {
+			return ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore)
+		}
+		entry = appStatus(&restore.Status.Apps, appName)
+	}
 
 	// The secrets the bundle's data was written with, before anything else:
 	// the app is handed them while it still runs, and is paused only then.
@@ -340,6 +363,12 @@ func (r *TenantRestoreReconciler) restoreApp(
 		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 	}
 
+	// Started again on the restored data already: what is left is to see it
+	// roll out, and nothing above it runs a second time.
+	if entry.RolloutStart != nil {
+		return r.awaitRollout(ctx, restore, tenant, appName, logger)
+	}
+
 	used := gentianov1alpha1.BackupQuiesceMode(entry.QuiesceMode)
 	if used == "" {
 		used = quiesceModeFromMessage(entry.Message)
@@ -355,7 +384,15 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// run while users are held out, which is where they belong: the window
 	// between "data replaced" and "app serving it" is the only one in which
 	// "re-read what changed underneath you" means anything.
-	if used == gentianov1alpha1.BackupQuiesceScaleDown && restoreHooksNeedPod(spec) {
+	//
+	// An app whose maintenance command could not run was scaled down
+	// instead, and its resume command is still owed: the data put back may
+	// have been captured in maintenance mode -- an export pauses such an app
+	// by its command -- and scaling up alone brings it back still holding
+	// users out. It runs once a pod answers, after the post-restore
+	// commands, which is where the normal path runs it too.
+	owesResume := resumeCommandOwed(spec, used)
+	if used == gentianov1alpha1.BackupQuiesceScaleDown && (restoreHooksNeedPod(spec) || owesResume) {
 		if entry.QuiesceEnd == nil {
 			if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
 				return ctrl.Result{}, fmt.Errorf("resume %s before hooks: %w", appName, err)
@@ -366,19 +403,33 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 		}
 		if _, err := r.Tenant.runningPodForApp(ctx, tenant.Name, appName, spec.QuiesceContainer()); err != nil {
+			// An app that waits for a credential a person supplies has no
+			// pod until it is set, and no bundle carries one: said by name.
+			why := err.Error()
+			if awaited := credentialprobe.Text(credentialprobe.AwaitedSupplied(ctx, r.Client, tenant.Name, appName, profile)); awaited != "" {
+				why += "; the app " + awaited
+				entry.Message = "resumed; waiting for a pod to run post-restore hooks: the app " + awaited
+			}
 			// Bounded by the clock rather than by an attempt count: the count
 			// already carries the capture Jobs' failures, and a pod that has
 			// not appeared in this long is not going to.
 			if time.Since(entry.QuiesceEnd.Time) > restoreHookPodTimeout {
 				return r.failApp(ctx, restore, tenant, appName, spec,
-					fmt.Sprintf("post-restore hooks: %v", err))
+					fmt.Sprintf("post-restore hooks: %s", why))
 			}
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 		}
 	}
 
-	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry); err != nil {
+	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry, restoreHookEnv(restore, tenant, appName, profile, r.Tenant)); err != nil {
 		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
+	}
+	if owesResume && r.Tenant.Exec != nil {
+		_, resume := spec.QuiesceCommands()
+		if _, err := r.Tenant.execAppCommand(ctx, tenant.Name, appName, spec, resume); err != nil {
+			return r.failApp(ctx, restore, tenant, appName, spec,
+				fmt.Sprintf("the app was scaled down because its maintenance command could not run, and its resume command failed after the restore: %v", err))
+		}
 	}
 
 	if entry.QuiesceEnd == nil {
@@ -404,11 +455,53 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// And always where the app's own secrets were replaced: whatever of the
 	// app was not rolled by the upgrade of its release starts again here,
 	// with the values its data was written with.
-	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) {
+	//
+	// And always where the profile's commands ran on an app resumed by
+	// scaling: it was resumed before them, since they need a pod, and its
+	// pods started on the data as it was put back -- before the commands
+	// rewrote what it remembers of where it ran. They are started again on
+	// the rewritten data.
+	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) || ranRestoreCommands(r.Tenant, spec, owesResume) {
 		if err := r.Tenant.restartAppWorkloads(ctx, tenant.Name, appName); err != nil {
 			return ctrl.Result{}, fmt.Errorf("restart %s after restore: %w", appName, err)
 		}
 		logger.Info("rolled app after restore", "app", appName)
+	}
+
+	// The app is done when the pods serving it are the ones started on the
+	// restored data, rewritten: until then an old pod can still answer with
+	// what it held from before.
+	entry.RolloutStart = ptrNow()
+	entry.Message = "started again on the restored data; waiting for it to roll out"
+	if err := r.persist(ctx, restore); err != nil {
+		return ctrl.Result{}, err
+	}
+	return r.awaitRollout(ctx, restore, tenant, appName, logger)
+}
+
+// awaitRollout finishes an app once its workloads have rolled out on the
+// restored data. One that does not within restoreRolloutTimeout is finished
+// with a note: its data is back, and it stays held until the restore ends.
+func (r *TenantRestoreReconciler) awaitRollout(
+	ctx context.Context,
+	restore *gentianov1alpha1.TenantRestore,
+	tenant *gentianov1alpha1.Tenant,
+	appName string,
+	logger logr.Logger,
+) (ctrl.Result, error) {
+	entry := appStatus(&restore.Status.Apps, appName)
+	pending, err := r.Tenant.appRolloutPending(ctx, tenant.Name, appName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(pending) > 0 {
+		if time.Since(entry.RolloutStart.Time) <= restoreRolloutTimeout {
+			entry.Message = "started again on the restored data; waiting for " + strings.Join(pending, ", ") + " to roll out"
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		}
+		restore.Status.Notes = append(restore.Status.Notes, fmt.Sprintf(
+			"%s: %s did not finish rolling out on the restored data within %s; the app was held back until the restore ended",
+			appName, strings.Join(pending, ", "), restoreRolloutTimeout))
 	}
 
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
@@ -423,6 +516,35 @@ func (r *TenantRestoreReconciler) restoreApp(
 	return ctrl.Result{Requeue: true}, nil
 }
 
+// recordOwnedNames keeps, on the artefact a Job restored databases an app
+// made itself from, the names it reported putting each one back under: they
+// are known only once it has run, and the app's post-restore commands are
+// told them. A pod that is no longer there to say leaves them unrecorded.
+func (r *TenantRestoreReconciler) recordOwnedNames(ctx context.Context, entry *gentianov1alpha1.AppExportStatus, unit captureUnit, job *batchv1.Job) {
+	if unit.Kind != bundle.ArtefactPostgresOwned && unit.Kind != bundle.ArtefactMariaDBOwned {
+		return
+	}
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(job.Namespace), client.MatchingLabels{"job-name": job.Name}); err != nil {
+		return
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodSucceeded {
+			continue
+		}
+		for _, c := range pod.Status.ContainerStatuses {
+			if t := c.State.Terminated; t != nil && t.ExitCode == 0 {
+				for i := range entry.Artefacts {
+					if a := &entry.Artefacts[i]; a.Kind == unit.Kind && a.Target == unit.Name {
+						a.Databases = backup.ParseOwnedNames(t.Message)
+					}
+				}
+				return
+			}
+		}
+	}
+}
+
 // rightsProjectionWait bounds the wait for the operator's projection to
 // attach a tenant in the rights store: longer than the interval it runs on.
 const rightsProjectionWait = 15 * time.Minute
@@ -431,11 +553,38 @@ const rightsProjectionWait = 15 * time.Minute
 // its post-restore hooks can run.
 const restoreHookPodTimeout = 5 * time.Minute
 
+// restoreRolloutTimeout bounds the wait for an app to roll out on its
+// restored data.
+const restoreRolloutTimeout = 10 * time.Minute
+
 // restoreHooksNeedPod reports whether this profile has anything to exec after a
 // restore. Nothing to run means nothing to wait for a pod for.
 func restoreHooksNeedPod(spec *gentianov1alpha1.BackupSpec) bool {
 	post, verify := spec.RestoreCommands()
 	return len(post) > 0 || len(verify) > 0
+}
+
+// resumeCommandOwed reports whether an app paused for a restore by scaling
+// down still owes its profile's resume command: its profile pauses it by a
+// maintenance command, which could not run, and has a command that ends
+// maintenance.
+func resumeCommandOwed(spec *gentianov1alpha1.BackupSpec, used gentianov1alpha1.BackupQuiesceMode) bool {
+	if used != gentianov1alpha1.BackupQuiesceScaleDown {
+		return false
+	}
+	_, resume := spec.QuiesceCommands()
+	return len(resume) > 0
+}
+
+// ranRestoreCommands reports whether a restore ran any of the profile's
+// commands in the app after loading its data: its post-restore commands or
+// an owed resume command.
+func ranRestoreCommands(tr *TenantReconciler, spec *gentianov1alpha1.BackupSpec, owesResume bool) bool {
+	if tr == nil || tr.Exec == nil {
+		return false
+	}
+	post, _ := spec.RestoreCommands()
+	return len(post) > 0 || owesResume
 }
 
 // runRestoreHooks runs the profile's post-restore commands and its verification.
@@ -448,6 +597,7 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 	tenantName, appName string,
 	spec *gentianov1alpha1.BackupSpec,
 	entry *gentianov1alpha1.AppExportStatus,
+	env []string,
 ) error {
 	post, verify := spec.RestoreCommands()
 	if len(post) == 0 && len(verify) == 0 {
@@ -461,6 +611,11 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 	}
 
 	for _, argv := range post {
+		// With the restore's context in its environment, by env(1): exec
+		// has no environment of its own to set.
+		if len(env) > 0 {
+			argv = append(append([]string{"env"}, env...), argv...)
+		}
 		if _, err := r.Tenant.execAppCommand(ctx, tenantName, appName, spec, argv); err != nil {
 			return fmt.Errorf("post-restore hook %v failed: %w", argv, err)
 		}
@@ -537,13 +692,14 @@ func (r *TenantRestoreReconciler) restoreUnits(
 		case bundle.ArtefactS3:
 			// The bucket's user and policy, by the code install provisions
 			// them with and the key pair the vault holds for the app.
-			provision, err := r.Tenant.objectStorageProvisioner(ctx, tenant, appName, "provision-bucket")
+			// The key pair reaches the step in a Secret the Job owns.
+			p.Name = name("s3r")
+			provision, key, err := r.Tenant.objectStorageProvisioner(ctx, tenant, appName, "provision-bucket", p.Name)
 			if err != nil {
 				return nil, err
 			}
-			p.Name = name("s3r")
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
-				Job: backup.S3RestoreJob(p, d, a.Path, a.Target, provision)})
+				Job: backup.S3RestoreJob(p, d, a.Path, a.Target, provision), Key: key})
 		case bundle.ArtefactVolume:
 			p = volParams
 			p.Name = name(fmt.Sprintf("vr%d", volumes))
@@ -582,9 +738,28 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 		case bundle.ArtefactIdentity:
 			p, unitD := r.placeRestoreUnit(restore, params, d, identityNamespace)
 			p.Name = exportJobName(tenant.Name, restore.Name, backupTenantComponent, "realmr")
+			// The people's addresses follow the tenant's mail domain, from
+			// the one the bundle was taken on to this tenant's, and so do the
+			// addresses of a client the tenant made, with the cluster's
+			// domain beside it; where the bundle does not say its own, they
+			// are left as they are.
+			source := backup.RealmSource{}
+			if r.Tenant != nil {
+				if was, now := bundleDomain(restore.Status.Source, restore.Status.SourceTenant), r.Tenant.tenantEffectiveDomain(tenant); domainMoved(was, now) {
+					source.MailDomain, source.TargetMailDomain = was, now
+					source.Domain, source.TargetDomain = was, now
+				}
+				if s := restore.Status.Source; s != nil && domainMoved(s.KernelDomain, r.Tenant.KernelDomain) {
+					source.KernelDomain, source.TargetKernelDomain = s.KernelDomain, r.Tenant.KernelDomain
+				}
+			}
+			clients, err := r.catalogueClients(ctx)
+			if err != nil {
+				return nil, err
+			}
+			source.PlatformClients = clients
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
-				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target,
-					backup.RealmSource{Tenant: restore.Status.SourceTenant, Realm: a.Name})})
+				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target, source)})
 		case bundle.ArtefactPostgres:
 			_, namespace := r.Reconciler.desktopDatabase(tenant)
 			p, unitD := r.placeRestoreUnit(restore, params, d, namespace)
@@ -624,6 +799,32 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 		}
 	}
 	return units, nil
+}
+
+// catalogueClients are the clientIds the platform gives the clients it makes
+// for apps: each profile's identity.oidc.clientId and identity.saml.entityId.
+// A realm import knows by them, in a bundle taken before the platform marked
+// its clients, which of the bundle's clients are the platform's
+// (backup.RealmSource.PlatformClients).
+func (r *TenantRestoreReconciler) catalogueClients(ctx context.Context) ([]string, error) {
+	profiles := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profiles); err != nil {
+		return nil, fmt.Errorf("list the catalogue's profiles: %w", err)
+	}
+	var names []string
+	for i := range profiles.Items {
+		s := profiles.Items[i].Services()
+		if s == nil || s.Identity == nil {
+			continue
+		}
+		if s.Identity.OIDC != nil && s.Identity.OIDC.ClientID != "" {
+			names = append(names, s.Identity.OIDC.ClientID)
+		}
+		if s.Identity.SAML != nil && s.Identity.SAML.EntityID != "" {
+			names = append(names, s.Identity.SAML.EntityID)
+		}
+	}
+	return names, nil
 }
 
 func (r *TenantRestoreReconciler) restoreTenantWide(
@@ -774,6 +975,13 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 		if err := r.Create(ctx, unit.Job); err != nil && !apierrors.IsAlreadyExists(err) {
 			return false, fmt.Errorf("create restore Job %s: %w", unit.JobName, err)
 		}
+		// The Job as made, with the UID its Secret is owned by; a Job made
+		// by an earlier pass is handed its Secret below on the next.
+		if unit.Key != nil && unit.Job.UID != "" {
+			if err := ensureObjectStoreKeySecret(ctx, r.Client, unit.Job, *unit.Key); err != nil {
+				return false, err
+			}
+		}
 		return false, nil
 	case err != nil:
 		return false, err
@@ -788,7 +996,13 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 
 	if jobIsComplete(existing) {
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
+		r.recordOwnedNames(ctx, entry, unit, existing)
 		return true, nil
+	}
+	if unit.Key != nil && existing.DeletionTimestamp == nil {
+		if err := ensureObjectStoreKeySecret(ctx, r.Client, existing, *unit.Key); err != nil {
+			return false, err
+		}
 	}
 	// The first reason is kept, and read while there is a pod to read it from.
 	if entry.LastFailure == "" && r.Reconciler != nil {
@@ -833,10 +1047,11 @@ func (r *TenantRestoreReconciler) jobParams(
 		// The bundle's own record of where it was written, never the policy's
 		// current answer. A tenant that moved its destination last week must
 		// still be able to restore what it wrote the week before.
-		Endpoint:     bundle.Endpoint,
-		Region:       bundle.Region,
-		ScratchLimit: exportScratchLimit,
-		BackoffLimit: exportCaptureBackoffLimit,
+		Endpoint:        bundle.Endpoint,
+		Region:          bundle.Region,
+		AddressingStyle: bundle.AddressingStyle,
+		ScratchLimit:    exportScratchLimit,
+		BackoffLimit:    exportCaptureBackoffLimit,
 	}
 	if bundle.CredentialSecret != "" {
 		p.UploadCredentialsSecret = bundle.CredentialSecret
@@ -923,7 +1138,7 @@ func (r *TenantRestoreReconciler) plan(
 	if err != nil {
 		return nil, refuseRestore("DecryptionUnavailable", "%v", err)
 	}
-	manifest, err := r.Bundles.Manifest(ctx, *ref, key)
+	manifest, signed, err := r.Bundles.SignedManifest(ctx, *ref, key)
 	if err != nil {
 		return nil, refuseRestore("BundleUnusable", "the bundle's manifest could not be read, so what the bundle holds is not known: %v. Nothing was changed", err)
 	}
@@ -975,6 +1190,7 @@ func (r *TenantRestoreReconciler) plan(
 	if err != nil {
 		return nil, err
 	}
+	target.provenance = r.provenance(ctx, manifest, signed)
 	return planRestore(manifest, tenant, restore.Spec.Apps, restore.Spec.SkipVersionCheck, target, live)
 }
 
@@ -992,10 +1208,29 @@ func (r *TenantRestoreReconciler) planTarget(ctx context.Context, tenant *gentia
 			target.mailDomain = boxes.Domain
 		}
 		target.noMailboxes = why
+		target.domain = r.Tenant.tenantEffectiveDomain(tenant)
+		target.kernelDomain = r.Tenant.KernelDomain
 		target.cluster = r.Tenant.ClusterID
 		target.haveRights = r.Tenant.Rights != nil && r.Tenant.ClusterID != ""
 	}
 	return target, nil
+}
+
+// provenance is whether the bundle was written on this cluster: signed with
+// its key and taken on it (backup.CheckProvenance).
+func (r *TenantRestoreReconciler) provenance(ctx context.Context, m *backup.Manifest, signed *bundlestore.Signed) backup.Provenance {
+	var key *backup.SigningKey
+	uid := ""
+	if r.Reconciler != nil {
+		key, _ = r.Reconciler.bundleSigningKey()
+		uid = r.Reconciler.clusterUID(ctx)
+	}
+	var plain []byte
+	var sig *bundle.ManifestSignature
+	if signed != nil {
+		plain, sig = signed.Plain, signed.Signature
+	}
+	return backup.CheckProvenance(plain, m, sig, key, uid)
 }
 
 // bundleKey reads the key material the restore names, to open the manifest
@@ -1036,6 +1271,7 @@ func (r *TenantRestoreReconciler) bundleKey(ctx context.Context, restore *gentia
 func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.BundleSchemaVersion = plan.schemaVersion
 	restore.Status.SourceTenant = plan.sourceTenant
+	restore.Status.Source = plan.source
 	restore.Status.NameDerivation = plan.derivation
 	restore.Status.NotRestored = plan.notRestored
 	restore.Status.Notes = restoreLimits(plan.derivation, plan.schemaVersion)
@@ -1049,6 +1285,7 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 		entry.Artefacts = app.artefacts
 		entry.Stores = artefactKinds(app.artefacts)
 		entry.Retained = app.retained
+		entry.ChartVersion = app.chartVersion
 		// Among the result's notes, not on the app's entry: the entry's
 		// message is progress and is cleared when the app is done.
 		if app.note != "" {
@@ -1064,14 +1301,26 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.ArchivedMailboxes = plan.archivedMailboxes
 	restore.Status.Rights = plan.rights
 	if plan.rights != nil {
+		// Where the bundle comes from decides whether what was granted
+		// comes back; a signature that does not hold is said apart.
+		switch {
+		case plan.rights.Provenance == backup.ProvenanceBadSignature:
+			restore.Status.Notes = append(restore.Status.Notes, "The bundle's signature does NOT hold: "+
+				plan.rights.ProvenanceMessage+". No right granted in the tenant it was taken of was brought back.")
+		case plan.rights.Provenance != backup.ProvenanceProven && plan.rights.Provenance != "":
+			restore.Status.Notes = append(restore.Status.Notes, "No right granted in the tenant the bundle was taken of was brought back: "+
+				plan.rights.ProvenanceMessage+".")
+		}
 		for _, left := range plan.rights.NotBrought {
 			restore.Status.Notes = append(restore.Status.Notes, "A right the bundle holds was NOT brought: "+left+".")
 		}
 	}
-	if plan.sourceTenant != "" && plan.sourceTenant != tenantNameFromNamespace(restore.Namespace) {
-		restore.Status.Notes = append(restore.Status.Notes, "The bundle is of tenant "+plan.sourceTenant+
-			", not of this one. Every store is restored under this tenant's own names: a database an app made for itself is put back under this tenant's database name, "+
-			"the platform's groups under this tenant's, with their members. The bundle's sign-in clients are not imported; this tenant's own were made when its apps were installed.")
+	// Where this restore leaves the round trip the platform guarantees: a
+	// condition, so that it is read before the notes, and the same sentence
+	// among them.
+	if reason, message, ok := outsideGuaranteeCondition(plan.outside); ok {
+		setRestoreCondition(restore, conditionOutsideGuarantee, metav1.ConditionTrue, reason, message)
+		restore.Status.Notes = append(restore.Status.Notes, message)
 	}
 }
 
@@ -1337,6 +1586,7 @@ func (r *TenantRestoreReconciler) fail(
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	restore.Status.CompletedAt = ptrNow()
+	restore.Status.HeldBack = nil
 	// A restore that began and failed is not complete, and says so in the
 	// field a reader looks at: the apps still Pending in status.apps are the
 	// ones it never reached.

@@ -54,6 +54,13 @@ case "${all}" in
         esac ;;
     *"get application"*)   [[ "${all}" == *"sync.status"* ]] && printf 'Synced Healthy' ;;
     *"get configmap gentian-kernel-services"*) printf 'false' ;;
+    # The vault's TLS, settled: signed by its CA, which is handed out.
+    *"get certificate openbao-tls"*)
+        case "${all}" in
+            *"issuerRef"*) printf 'openbao-ca' ;;
+            *"Ready"*)     printf 'True' ;;
+        esac ;;
+    *"get secret"*"{.data."*) printf 'Q0E=' ;;
     *"get deployment"*)
         case "${all}" in
             *"containers[0].image"*) printf 'ghcr.io/gentian-org/gentian-os:%s' "${RUNNING:-}" ;;

@@ -24,6 +24,12 @@ apply() {
     for ns in $(ns_kernel_all); do
         success "${ns}  $(ns_labels "${ns}" | tr ' ' '  ')"
     done
+    # Objects older than the namespace that holds them are an earlier
+    # namespace's, left in the datastore when it was removed over them.
+    # Named, with the command that removes them, and never removed here.
+    for ns in $(ns_kernel_all); do
+        ns_warn_stale_objects "${ns}" || true
+    done
 
     # Who may reach a pod of each of them, with the namespace itself: the
     # rules are there before the first pod is. Every later step runs under
@@ -37,16 +43,17 @@ apply() {
 }
 
 destroy() {
-    # Last in reverse order, so everything inside has already gone -- except
-    # what still carries a finalizer whose controller an earlier step removed.
-    # _delete_namespace waits, then strips those, so a namespace left
-    # Terminating cannot block the next install's first write into it.
-    local ns
+    # Last in reverse order, so most of what was inside has already gone.
+    # _delete_namespace deletes the rest, strips the finalizers of what will
+    # not go, and finalizes the namespace only once it is empty. Called for a
+    # namespace that no longer exists as well: objects stored under a removed
+    # namespace are exactly what it finds and deletes there.
+    local ns rc=0
     for ns in $(ns_kernel_all); do
-        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
-        _delete_namespace "${ns}"
+        _delete_namespace "${ns}" || rc=1
     done
     _a01_remove_orphaned_webhooks
+    return "${rc}"
 }
 
 # Admission webhooks whose service lived in a namespace this purge removed.

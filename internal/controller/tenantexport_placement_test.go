@@ -55,6 +55,36 @@ func adminSecrets() []adminSecret {
 	}
 }
 
+// shellSecrets are what a pod that administers the object store with weed
+// shell reads beside the store, besides its administrator's Secret: the
+// client certificate cert-manager keeps and the signing keys External
+// Secrets materialises, each made by the template named.
+func shellSecrets() []adminSecret {
+	return []adminSecret{
+		{backup.ObjectStoreClientTLSSecret, s3Namespace, "kernel/services/infra-seaweedfs/manifests/templates/certificates.yaml",
+			map[string]string{"tls.crt": "CRT", "tls.key": "KEY", "ca.crt": "CA"}},
+		{backup.ObjectStoreSigningSecret, s3Namespace, "kernel/services/infra-seaweedfs/manifests/templates/externalsecret.yaml",
+			map[string]string{"filer_signing_key": "FILER-SIGNING-KEY"}},
+	}
+}
+
+func TestTheObjectStoreShellSecretsAreMadeBesideTheStore(t *testing.T) {
+	for _, s := range shellSecrets() {
+		raw, err := os.ReadFile(filepath.Join("..", "..", s.chart))
+		if err != nil {
+			t.Fatalf("%s: %v", s.name, err)
+		}
+		if !bytes.Contains(raw, []byte(s.name+"\n")) {
+			t.Errorf("%s does not make a Secret named %s", s.chart, s.name)
+		}
+		for key := range s.data {
+			if key != "tls.crt" && key != "tls.key" && key != "ca.crt" && !bytes.Contains(raw, []byte(key)) {
+				t.Errorf("%s does not give %s the key %s", s.chart, s.name, key)
+			}
+		}
+	}
+}
+
 // The fixture is the charts': each administrator Secret is made by the chart
 // of its own service, which the layout installs into that service's
 // namespace and no other.
@@ -148,7 +178,7 @@ func newPlacementWorld(t *testing.T, external bool) *placementWorld {
 	// The cluster runs its own mail server: the tenant has mailboxes, and a
 	// unit beside the server's volume.
 	objects = append(objects, mailCluster()...)
-	for _, s := range adminSecrets() {
+	for _, s := range append(adminSecrets(), shellSecrets()...) {
 		data := map[string][]byte{}
 		for k, v := range s.data {
 			data[k] = []byte(v)

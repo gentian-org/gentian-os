@@ -69,7 +69,7 @@ func TestATenantAdoptingTheKernelRealmProvisionsOnlyItsOwnGroups(t *testing.T) {
 	tenant.Name = "platform"
 	tenant.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
 
-	jobs, err := r.buildIdentityProvisioningJobs(context.Background(), tenant, keycloakRealmName(tenant))
+	jobs, _, err := r.buildIdentityProvisioningJobs(context.Background(), tenant, keycloakRealmName(tenant))
 	if err != nil {
 		t.Fatalf("buildIdentityProvisioningJobs: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestATenantAdoptingTheKernelRealmProvisionsOnlyItsOwnGroups(t *testing.T) {
 	// And an ordinary tenant still gets its realm and administrator.
 	plain := &gentianov1alpha1.Tenant{}
 	plain.Name = "acme"
-	jobs, err = r.buildIdentityProvisioningJobs(context.Background(), plain, keycloakRealmName(plain))
+	jobs, _, err = r.buildIdentityProvisioningJobs(context.Background(), plain, keycloakRealmName(plain))
 	if err != nil {
 		t.Fatalf("buildIdentityProvisioningJobs(acme): %v", err)
 	}

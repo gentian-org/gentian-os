@@ -141,6 +141,11 @@ Two different secrets, and confusing them wastes the worst hour of the year:
   anything. It lives in the kit, in OpenBao at
   `gentian-os/kernel/backup/identity` when the cluster escrows it (the
   default), and on the QR code the kit export prints.
+- **The bundle signing key** (`BUNDLE_SIGNING_SEED` in the kit) proves a
+  bundle is this cluster's. Rebuilt with the kit and the same deployments
+  repository, the cluster keeps it, and restores of its earlier bundles bring
+  back the rights granted in their tenants; without it they bring back only
+  what was withdrawn.
 
 ---
 

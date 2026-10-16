@@ -125,6 +125,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:demo:app:demo-app
     realmId: demo
   providerConfigRef:
@@ -336,6 +338,7 @@ spec:
           name: demo-app-sensitive-values
           namespace: tenant-demo
     skipCRDs: true
+    skipCreateNamespace: true
     values:
       global:
         imagePullSecrets:
@@ -348,7 +351,7 @@ spec:
     wait: true
     waitTimeout: 10m
   providerConfigRef:
-    name: kubernetes
+    name: tenant-apps
   rollbackLimit: 3
 ---
 apiVersion: group.keycloak.crossplane.io/v1alpha1
@@ -466,6 +469,8 @@ spec:
     clientSignatureRequired: false
     enabled: true
     encryptAssertions: false
+    extraConfig:
+      gentianos.io/managed-by: platform
     forceNameIdFormat: true
     forcePostBinding: true
     frontChannelLogout: false

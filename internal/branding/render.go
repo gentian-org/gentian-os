@@ -53,9 +53,10 @@ type Files struct {
 	Binary map[string][]byte
 }
 
-// iconExtensions maps the data URL media types BrandIcon admits.
+// iconExtensions maps the data URL media types BrandIcon admits. No SVG: a
+// logo is published as pixels, never as a document a browser runs.
 var iconExtensions = map[string]string{
-	"image/png": "png", "image/svg+xml": "svg", "image/webp": "webp",
+	"image/png": "png", "image/webp": "webp",
 	"image/x-icon": "ico", "image/vnd.microsoft.icon": "ico",
 }
 

@@ -277,7 +277,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 		// A display name with a quote and a newline is the shape that breaks
 		// naive here-doc embedding.
 		Apps: []ManifestApp{{Name: "app\"one", ChartVersion: "1.0.0"}},
-	}, NewBundleInfo("demo", "nightly", "now", params().Encryption))
+	}, NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 // creates it. Every one of them, because any can be the first to run.
 func TestBundleWritersCreateTheirOwnBucket(t *testing.T) {
 	manifest, err := ManifestJob(params(), &Manifest{Tenant: "demo"},
-		NewBundleInfo("demo", "nightly", "now", params().Encryption))
+		NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 		"realm-export":  RealmExportJob(p, "demo"),
 		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
 		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "key-secret")),
 		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
@@ -488,7 +488,7 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 		"realm-export":  RealmExportJob(p, "demo"),
 		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
 		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "key-secret")),
 		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
@@ -550,7 +550,7 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 	p.UploadCredentialsSecret = "backup-destination-corp"
 
 	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"},
-		NewBundleInfo("demo", "nightly", "now", p.Encryption))
+		NewBundleInfo("demo", "nightly", "now", p.Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -774,5 +774,40 @@ func TestJobsWithoutAVolumeAreNotPinned(t *testing.T) {
 	}
 	if sel := PostgresDumpJob(p, "demo_docmost").Spec.Template.Spec.NodeSelector; sel != nil {
 		t.Errorf("a database dump was pinned to %v", sel)
+	}
+}
+
+// The bundle's addressing style reaches rclone: path unless the destination
+// says virtualHost, and the platform's own store always path.
+func TestTheAddressingStyleReachesRclone(t *testing.T) {
+	styleOf := func(p JobParams) (string, string) {
+		job := BundleDeleteJob(p)
+		c := job.Spec.Template.Spec.Containers[0]
+		style := ""
+		for _, e := range c.Env {
+			if e.Name == "S3_ADDRESSING_STYLE" {
+				style = e.Value
+			}
+		}
+		return style, strings.Join(append(append([]string{}, c.Command...), c.Args...), "\n")
+	}
+	p := params()
+	p.Endpoint, p.UploadCredentialsSecret = "https://s3.example.org", "backup-destination-cluster"
+	p.AddressingStyle = gentianov1alpha1.S3AddressingVirtualHost
+	style, script := styleOf(p)
+	if style != "virtualHost" {
+		t.Errorf("S3_ADDRESSING_STYLE = %q, want virtualHost", style)
+	}
+	if !strings.Contains(script, `if [ "${S3_ADDRESSING_STYLE:-path}" = virtualHost ]; then export RCLONE_CONFIG_BUNDLE_FORCE_PATH_STYLE=false; else export RCLONE_CONFIG_BUNDLE_FORCE_PATH_STYLE=true; fi`) {
+		t.Errorf("the remote does not follow S3_ADDRESSING_STYLE:\n%s", script)
+	}
+	for name, p := range map[string]JobParams{
+		"path":     func() JobParams { q := p; q.AddressingStyle = gentianov1alpha1.S3AddressingPath; return q }(),
+		"empty":    func() JobParams { q := p; q.AddressingStyle = ""; return q }(),
+		"platform": params(),
+	} {
+		if style, _ := styleOf(p); style != "" {
+			t.Errorf("%s: S3_ADDRESSING_STYLE = %q, want none (path)", name, style)
+		}
 	}
 }

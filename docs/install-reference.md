@@ -810,6 +810,29 @@ the key is only ever written at generation. Supply it once from the kit:
 bao kv put -mount=secret gentian-os/kernel/backup/identity identity=@identity.txt
 ```
 
+### The bundle signing key and the cluster's id
+
+The cluster signs every bundle's manifest, and a restore brings back the
+rights granted in a tenant only from a bundle it signed, taken on it, of a
+tenant of the same name ([security.md §6.4](design/security.md)). Two values
+make that work, each written once and never replaced:
+
+- **The signing key**: 32 random bytes B-08 writes to
+  `gentian-os/kernel/backup/signing` (`signing_seed`), or the recovery kit's
+  under `--recover`. `--export-recovery-kit` seeds it on a cluster that has
+  none and carries it. The operator reads it from the vault itself (External
+  Secrets is denied the path); until it is there, bundles are written
+  unsigned and the export says so.
+- **The cluster's id**: `spec.clusterUID` in
+  `clusters/<cluster>/kernel/claims/cluster.yaml`, 32 random hex characters.
+  Step 0 writes it into a new claim, and into an existing one that has none,
+  and commits it; a reinstall from the same repository keeps it. Unlike
+  `GENTIAN_DEPLOYMENTS_CLUSTER_ID`, which defaults to a name many clusters
+  share, no other cluster has it.
+
+Replacing either makes every earlier bundle restore without its granted
+rights ([operations.md](design/operations.md)).
+
 ---
 
 ## 5. Installing on an internal domain
@@ -841,8 +864,20 @@ CA in its trust store:
 
 ```bash
 kubectl get secret gentian-root-ca-tls -n kernel-edge \
-  -o jsonpath='{.data.tls\.crt}' | base64 -d > gentian-root-ca.crt
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > gentian-root-ca.crt
 ```
+
+Whatever the mode, `A-09` also gives every cluster the internal CA
+`gentian-ca`, for TLS between the platform's own components: a ClusterIssuer
+that asks the vault's PKI engine (`pki-internal`) to sign. `B-08` generates
+the CA in the vault once, or on a self-signed cluster imports the one
+cert-manager made before; its key never leaves the vault, and
+`gentian-root-ca-tls` holds only its certificate. It issues nothing public on
+an `acme-*` cluster; on a `self-signed` one it is the CA above; on
+`private-ca` `gentian-ca` is your CA and the vault has no part in it. Until
+`B-08` has made the CA and `C-01` has composed cert-manager's role at the
+vault, the issuer is not Ready; while the vault is sealed it renews nothing.
+See [design/security.md](design/security.md) §12.4.
 
 The other modes are `acme-dns01` (the default; public DNS, wildcards),
 `acme-http01` (public DNS, no wildcards) and `private-ca` (you supply the CA).

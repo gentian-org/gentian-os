@@ -189,26 +189,16 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 
 func plain(t Tuple) Tuple { return Tuple{User: t.User, Relation: t.Relation, Object: t.Object} }
 
-// Rebase is an entry recorded for one tenant on one cluster, under the
-// names of another: what an entry of a bundle is in the tenant the bundle
-// is restored into.
-//
-// The tenant, its apps and its groups are named for the tenant, and the
-// cluster for the cluster: tenant:<t>, app:<t>/<profile>,
-// group:gentian/tenant/<t>/..., cluster:<c>. Each is rewritten wherever it
-// stands, as who holds the relation and as what it is held on. Everything
-// else is left as it is.
-func Rebase(t Tuple, fromTenant, toTenant, fromCluster, toCluster string) Tuple {
+// Rebase is an entry recorded on one cluster under the names of another:
+// what an entry of a bundle is on the cluster the bundle is restored on. A
+// bundle is restored only into the tenant of its own name, so the tenant,
+// its apps and its groups keep theirs; the cluster, cluster:<c>, is
+// rewritten wherever it stands, as who holds the relation and as what it is
+// held on. Everything else is left as it is.
+func Rebase(t Tuple, fromCluster, toCluster string) Tuple {
 	rename := func(id string) string {
 		id, relation, _ := strings.Cut(id, "#")
-		switch {
-		case id == Tenant(fromTenant):
-			id = Tenant(toTenant)
-		case strings.HasPrefix(id, "app:"+fromTenant+"/"):
-			id = "app:" + toTenant + "/" + strings.TrimPrefix(id, "app:"+fromTenant+"/")
-		case strings.HasPrefix(id, "group:gentian/tenant/"+fromTenant+"/"):
-			id = "group:gentian/tenant/" + toTenant + "/" + strings.TrimPrefix(id, "group:gentian/tenant/"+fromTenant+"/")
-		case fromCluster != "" && id == Cluster(fromCluster):
+		if fromCluster != "" && id == Cluster(fromCluster) {
 			id = Cluster(toCluster)
 		}
 		if relation != "" {

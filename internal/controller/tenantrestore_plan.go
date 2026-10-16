@@ -13,6 +13,7 @@ package controller
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -48,8 +49,10 @@ import (
 //     ComponentProfile is not on the cluster; when the build installed is
 //     older than the one that wrote the data, or cannot be compared with it
 //     (unless spec.skipVersionCheck); when the bundle holds a store of a kind
-//     or engine the installed app does not have; or when it holds a volume
-//     claim the tenant does not have, or has as another app's.
+//     or engine the installed app does not have; when it holds a volume
+//     claim the tenant does not have, or has as another app's; or when its
+//     profile binds its data to the domain (spec.backup.restore.domainBound)
+//     and the bundle was taken on another.
 //  3. Every app not restored is named, with the reason, in
 //     status.notRestored, and the restore ends with status.complete false.
 //     Nothing the bundle holds is dropped without saying so.
@@ -70,7 +73,8 @@ import (
 // Where an artefact is, and what it was captured from, is the manifest's to
 // say (format 2). Where it goes is the tenant's: the database, bucket or
 // claim of that kind the installed app has, by the inventory's names -- which
-// differ from the bundle's whenever the tenant's name or prefixes do.
+// differ from the bundle's wherever the tenant's database or bucket prefix
+// here is not the one it had where the bundle was taken.
 
 // restorePlan is what one restore will do.
 type restorePlan struct {
@@ -96,6 +100,194 @@ type restorePlan struct {
 	// notes are said on the result: what of the tenant's own the bundle
 	// holds and this restore does not put back, and why.
 	notes []string
+	// source is where and by what the bundle was written, as far as its
+	// manifest says; nil when it says none of it.
+	source *gentianov1alpha1.RestoreSource
+	// outside is where this restore leaves what the platform guarantees: a
+	// bundle of its own version line, of the tenant restored into, on its
+	// domain. Empty when it is all three.
+	outside []guaranteeGap
+}
+
+// guaranteeGap is one way a restore differs from the one the platform
+// guarantees, as the reason of the OutsideGuarantee condition and a sentence.
+type guaranteeGap struct {
+	reason string
+	text   string
+}
+
+// The reasons of the OutsideGuarantee condition. One that names several is
+// outsideGuaranteeSeveral.
+const (
+	conditionOutsideGuarantee = "OutsideGuarantee"
+	outsideGuaranteeVersion   = "OtherVersion"
+	outsideGuaranteeDomain    = "OtherDomain"
+	outsideGuaranteeSeveral   = "SeveralDifferences"
+)
+
+// guaranteeGaps compares where the bundle was written with where it is
+// restored. What the platform guarantees is a round trip: a bundle restored
+// by a platform of the version line that wrote it, into the tenant it was
+// taken of. Anything else is restored as far as it can be and said; a newer
+// line's bundle never gets here (bundlestore.OpenManifest refuses it).
+func guaranteeGaps(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, domain string) []guaranteeGap {
+	var gaps []guaranteeGap
+	this := backup.ThisVersionLine()
+	switch line, ok := backup.ParseVersionLine(m.OperatorVersion); {
+	case m.OperatorVersion == "":
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
+			"the bundle does not say which platform version wrote it, so it is older than the bundles that do; "+
+				"this platform (version %s) restores it as far as it reads it and converts nothing", backup.PlatformVersionLine)})
+	case !ok:
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
+			"the bundle names a platform version that is not one; this platform (version %s) restores it as far as it reads it and converts nothing",
+			backup.PlatformVersionLine)})
+	case line.Compare(this) < 0:
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeVersion, fmt.Sprintf(
+			"the bundle was written by platform version %s and this platform is version %s; it is restored as far as this platform reads it, "+
+				"and what the newer version keeps differently is not converted", line, this)})
+	}
+	// Another domain is a move the platform supports, and still not the
+	// round trip: the apps' data names the old one.
+	// What the bundle says is said back only where it is a plain name.
+	if was := bundleDomain(restoreSource(m), m.Tenant); domainMoved(was, domain) {
+		text := fmt.Sprintf("the bundle was taken on the domain %s and the tenant is on %s here: addresses, links and mail addresses "+
+			"the apps' data stores still name %s, as far as each app's own post-restore commands do not rewrite them", was, domain, was)
+		if custom := plainValue(m.CustomDomain); custom != "" && !strings.EqualFold(custom, tenant.Status.Domain) {
+			text += fmt.Sprintf(". %s was a custom domain, bound by a TenantDomain, which a bundle does not declare: declare it again "+
+				"(kubectl gentian tenants domain %s %s) for the tenant to answer there", custom, tenant.Name, custom)
+		}
+		gaps = append(gaps, guaranteeGap{outsideGuaranteeDomain, text})
+	}
+	return gaps
+}
+
+// bundleDomain is the tenant's domain where the bundle was taken, which is
+// its mail domain too (mailDomain), as the platform computed it there
+// (Tenant.EffectiveDomain): the one the bundle records; else the custom
+// domain it records as bound; else <tenant>.<kernel domain>, except for the
+// tenant that may be the one user tenant of a single-tenancy cluster, whose
+// domain is the kernel domain itself and whose tenancy a bundle does not
+// record. "" when the bundle does not say enough: a bundle written before it
+// recorded its domain.
+func bundleDomain(source *gentianov1alpha1.RestoreSource, tenant string) string {
+	if source == nil {
+		return ""
+	}
+	switch tenant = plainValue(tenant); {
+	case source.Domain != "":
+		return source.Domain
+	case source.CustomDomain != "":
+		return source.CustomDomain
+	case source.KernelDomain != "" && tenant != "" && tenant != gentianov1alpha1.SingleUserTenantName:
+		return tenant + "." + source.KernelDomain
+	}
+	return ""
+}
+
+// domainMoved is whether a bundle taken on the domain was is restored onto
+// another, now. Either unknown ("") is not a move: what cannot be told is
+// gone ahead with as on the same domain, and said where it matters.
+func domainMoved(was, now string) bool {
+	return was != "" && now != "" && !strings.EqualFold(was, now)
+}
+
+// domainBoundReason is why the data of an app bound to its domain
+// (spec.backup.restore.domainBound) is not restored onto another.
+func domainBoundReason(was, now string) string {
+	return fmt.Sprintf("names the domain its data was written on throughout that data (its profile sets spec.backup.restore.domainBound), "+
+		"and the bundle was taken on %s while the tenant is on %s here: its data was NOT restored, because the app does not run with it on another domain. "+
+		"The app stays as it is installed here, without the bundle's data", was, now)
+}
+
+// domainBoundUnknownNote is said of such an app restored from a bundle whose
+// domain, or the tenant's here, cannot be told.
+const domainBoundUnknownNote = "its profile binds its data to the domain it was written on (spec.backup.restore.domainBound), " +
+	"and the bundle does not say which domain it was taken on, or the tenant's domain here is not known: its data was restored as onto the same domain. " +
+	"If the domain was another one, the app does not start with it"
+
+// mailRewriteNote says what a realm restore does with the people's addresses,
+// from where the bundle was taken (was) to where it is restored (now); ""
+// when there is nothing to say, the domain being the same.
+func mailRewriteNote(was, now string) string {
+	switch {
+	case now == "":
+		return ""
+	case was == "":
+		return "The bundle does not say which domain it was taken on, so the people's e-mail addresses were put back as the bundle holds them: " +
+			"an address at the old domain was NOT changed to " + now + ", and a person who signs in by it does not reach a mailbox here until it is."
+	case domainMoved(was, now):
+		return "The people's e-mail addresses at " + was + " were changed to the same name at " + now + ", the tenant's mail domain here, " +
+			"and so was each username that was such an address; addresses at any other domain are as the bundle holds them."
+	}
+	return ""
+}
+
+// clientAddressNote says where a realm restore makes a sign-in client the
+// tenant made, from the tenant's domain and the cluster's where the bundle
+// was taken (was, wasKernel) to here (now, nowKernel); "" when there is
+// nothing to say.
+func clientAddressNote(was, now, wasKernel, nowKernel string) string {
+	switch {
+	case now == "":
+		return ""
+	case was == "":
+		return "The bundle does not say which domain it was taken on, so a sign-in client the tenant made that is not in the realm here was made at the addresses the bundle recorded."
+	case domainMoved(was, now):
+		note := "A sign-in client the tenant made that is not in the realm here was made with its addresses at " + was + " moved to " + now
+		if domainMoved(wasKernel, nowKernel) {
+			note += ", and those at " + wasKernel + " to " + nowKernel
+		}
+		return note + "; the platform's own clients are made by the platform, not from the bundle."
+	}
+	return ""
+}
+
+// restoreSource is what the manifest says of where the bundle was written,
+// each value only if it is a plain one: they come from a bundle, and are
+// recorded in the restore's status and handed to a profile's commands.
+func restoreSource(m *backup.Manifest) *gentianov1alpha1.RestoreSource {
+	source := gentianov1alpha1.RestoreSource{
+		PlatformVersion: plainValue(m.OperatorVersion),
+		Domain:          plainValue(m.Domain),
+		CustomDomain:    plainValue(m.CustomDomain),
+		KernelDomain:    plainValue(m.KernelDomain),
+		Cluster:         plainValue(m.Cluster),
+	}
+	if source == (gentianov1alpha1.RestoreSource{}) {
+		return nil
+	}
+	return &source
+}
+
+// plainValuePattern is a name, a domain or a version: what a bundle records
+// of where it was written and what it holds.
+var plainValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]{0,252}$`)
+
+// plainValue is s when it is a plain value, and "" when it is anything else.
+func plainValue(s string) string {
+	if plainValuePattern.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// outsideGuaranteeCondition is the condition's reason and message, or
+// false when the restore is the one the platform guarantees.
+func outsideGuaranteeCondition(gaps []guaranteeGap) (reason, message string, ok bool) {
+	if len(gaps) == 0 {
+		return "", "", false
+	}
+	reason = gaps[0].reason
+	texts := make([]string, 0, len(gaps))
+	for _, g := range gaps {
+		if g.reason != reason {
+			reason = outsideGuaranteeSeveral
+		}
+		texts = append(texts, g.text)
+	}
+	return reason, "This restore is outside what the platform guarantees, a bundle restored into the tenant it was taken of, " +
+		"on the same domain, by the platform version that wrote it: " + strings.Join(texts, "; ") + ".", true
 }
 
 // planTarget is the tenant restored into, as far as the plan needs to know
@@ -112,10 +304,17 @@ type planTarget struct {
 	// where it is empty.
 	mailDomain  string
 	noMailboxes string
+	// domain is the tenant's domain here, as it is when the plan is made;
+	// "" when it is not known. kernelDomain is the cluster's.
+	domain       string
+	kernelDomain string
 	// cluster is this cluster's id in the rights store, and haveRights
 	// whether the operator has a store to write to.
 	cluster    string
 	haveRights bool
+	// provenance is whether the bundle was written on this cluster, which
+	// decides whether the rights granted in its tenant come back.
+	provenance backup.Provenance
 }
 
 // plannedApp is one app that will be restored.
@@ -128,6 +327,9 @@ type plannedApp struct {
 	// retained says the app is put back as retained: not installed, not
 	// paused, its stores made where the plan says so.
 	retained bool
+	// chartVersion is the version of the app that wrote the data, as the
+	// manifest records it.
+	chartVersion string
 }
 
 // liveApp is an app as the tenant has it now.
@@ -156,6 +358,21 @@ func refuseRestore(reason, format string, args ...any) error {
 	return &errRestoreRefused{reason: reason, message: fmt.Sprintf(format, args...)}
 }
 
+// otherTenantRefusal refuses a bundle taken of another tenant. A restore
+// puts a tenant's bundle back into the tenant of that name and renames
+// nothing: a bundle meant for another name is rewritten into it, by a tool
+// that does so, before it is restored. The bundle's name is said only where
+// it is a plain one.
+func otherTenantRefusal(was, tenant string) error {
+	of := "another tenant"
+	if plain := plainValue(was); plain != "" {
+		of = "tenant " + plain
+	}
+	return refuseRestore("OtherTenant",
+		"the bundle is of %s and this is tenant %s: a restore does not rename; rename the bundle with a tool that rewrites it first. Nothing was changed",
+		of, tenant)
+}
+
 // planRestore decides what a restore does, and changes nothing.
 func planRestore(
 	m *backup.Manifest,
@@ -165,18 +382,27 @@ func planRestore(
 	target planTarget,
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
+	if m.Tenant != tenant.Name && m.Tenant != "" {
+		return nil, otherTenantRefusal(m.Tenant, tenant.Name)
+	}
 	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
-		notIncluded: m.NotIncluded, sourceTenant: m.Tenant}
+		notIncluded: m.NotIncluded, sourceTenant: m.Tenant, outside: guaranteeGaps(m, tenant, target.domain), source: restoreSource(m)}
 	if !m.NamesArtefacts() {
 		plan.derivation = gentianov1alpha1.RestoreNamesDerived
 	}
-	// The tenant the bundle was taken of, for the names a format 1 manifest
-	// does not give: its artefacts are filed under that tenant's names.
+	// The tenant the bundle was taken of -- this one, under the names it
+	// had there -- for the names a format 1 manifest does not give: its
+	// artefacts are filed under those names.
 	source := &gentianov1alpha1.Tenant{}
-	source.Name = m.Tenant
+	source.Name = tenant.Name
 	if m.TenantSpec != nil {
 		source.Spec = *m.TenantSpec
 	}
+
+	// The domain the bundle was taken on, and the one restored onto: an app
+	// bound to its domain is restored only where they are the same.
+	wasDomain := bundleDomain(plan.source, m.Tenant)
+	var domainBound []string
 
 	held := map[string]bool{}
 	for _, app := range m.Apps {
@@ -193,6 +419,12 @@ func planRestore(
 		}
 		var artefacts []gentianov1alpha1.BundleArtefact
 		var note, why string
+		bound := profileBackupSpec(now.profile).IsDomainBound()
+		if bound && domainMoved(wasDomain, target.domain) {
+			plan.notRestored = append(plan.notRestored, gentianov1alpha1.RestoreOmission{App: app.Name, Reason: domainBoundReason(wasDomain, target.domain)})
+			domainBound = append(domainBound, app.Name)
+			continue
+		}
 		retained := app.Retained && !now.installed
 		if retained {
 			artefacts, note, why, err = planRetained(tenant, app, now, target.intoNewTenant)
@@ -209,7 +441,21 @@ func planRestore(
 			plan.notRestored = append(plan.notRestored, gentianov1alpha1.RestoreOmission{App: app.Name, Reason: why})
 			continue
 		}
-		plan.apps = append(plan.apps, plannedApp{name: app.Name, artefacts: artefacts, note: note, retained: retained})
+		if bound && (wasDomain == "" || target.domain == "") {
+			note = joinNotes(note, domainBoundUnknownNote)
+		}
+		plan.apps = append(plan.apps, plannedApp{name: app.Name, artefacts: artefacts, note: note, retained: retained,
+			chartVersion: plainValue(app.ChartVersion)})
+	}
+
+	// The move to another domain says whose data it left out.
+	if len(domainBound) > 0 {
+		for i := range plan.outside {
+			if plan.outside[i].reason == outsideGuaranteeDomain {
+				plan.outside[i].text += fmt.Sprintf(". The data of %s, which names the old domain in a way the app does not run with on another, was NOT restored",
+					strings.Join(domainBound, ", "))
+			}
+		}
 	}
 
 	// An app asked for by name is restored or the restore is refused.
@@ -280,8 +526,18 @@ func planRestore(
 			plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
 				Kind: kind, Name: m.Identity.Realm, Path: m.Identity.Path, Target: keycloakRealmName(tenant),
 			})
+			if note := mailRewriteNote(wasDomain, target.domain); note != "" {
+				plan.notes = append(plan.notes, note)
+			}
+			wasKernel := ""
+			if plan.source != nil {
+				wasKernel = plan.source.KernelDomain
+			}
+			if note := clientAddressNote(wasDomain, target.domain, wasKernel, target.kernelDomain); note != "" {
+				plan.notes = append(plan.notes, note)
+			}
 		case bundle.ArtefactRights:
-			plan.rights = rightsPlan(m, tenant, target.cluster, target.intoNewTenant, target.haveRights)
+			plan.rights = rightsPlan(m, tenant, target.cluster, target.provenance, target.haveRights)
 		default:
 			// A kind added to the list and not here is a kind a bundle
 			// would hold and no restore put back.

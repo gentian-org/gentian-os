@@ -223,7 +223,7 @@ spec:
                   name: external-secrets
                   namespace: kernel-secrets
             caProvider:
-              key: tls.crt
+              key: ca.crt
               name: openbao-tls
               namespace: kernel-secrets
               type: Secret
@@ -330,6 +330,8 @@ spec:
       namespace: system-mail
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     realmId: user
@@ -370,6 +372,8 @@ spec:
       namespace: kernel-edge
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     name: Acme Cloud edge (token exchange)
@@ -466,6 +470,8 @@ spec:
       namespace: kernel-edge
     directAccessGrantsEnabled: false
     enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
     fullScopeAllowed: false
     implicitFlowEnabled: false
     name: Acme Cloud edge (user zone)
@@ -614,6 +620,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:user:admins
     realmId: user
   providerConfigRef:
@@ -637,6 +645,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:user:app-admins
     realmId: user
   providerConfigRef:
@@ -660,6 +670,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:user:members
     realmId: user
   providerConfigRef:
@@ -683,6 +695,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
     name: gentian:tenant:user:perimeter
     realmId: user
   providerConfigRef:

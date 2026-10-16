@@ -31,11 +31,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
@@ -71,6 +73,10 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
+	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
+	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
@@ -118,6 +124,9 @@ type Repository interface {
 	SetPlatformClusterRoles(ctx context.Context, roles []gitops.ClusterRoleAllowance, meta gitops.Meta) (gitops.Result, error)
 	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
 	RemoveRepository(ctx context.Context, tenant, name, confirm string, meta gitops.Meta) (gitops.Result, error)
+	BundleSources(ctx context.Context) ([]gitops.DeclaredBundleSource, error)
+	DeclareBundleSource(ctx context.Context, name string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
+	RemoveBundleSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -166,6 +175,9 @@ type Config struct {
 	// Nil leaves those routes unregistered: a director with no operator to
 	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
+	// CommissionKeys are the components that may commission organizations,
+	// as the operator lists them (brokered_from.go). Nil recognises none.
+	CommissionKeys *CommissionKeys
 }
 
 // Server is the director's API.
@@ -504,6 +516,29 @@ func (s *Server) routes() {
 			s.action("POST /v1/clusters/{c}/actions/remove-catalogue-residue", "can_configure", s.clusterObject, s.removeCatalogueResidue)
 			s.guarded("POST /v1/clusters/{c}/tenants/import", "can_configure", s.clusterObject, s.importTenant)
 			s.guarded("GET /v1/clusters/{c}/tenants/{t}/import", "can_configure", s.clusterObject, s.importStatus)
+			// A restore into an existing tenant, for the cluster's
+			// administrator: the right an import needs, because a restore
+			// replaces a tenant's data as an import makes it. The tenant's
+			// own administrators restore under /v1/tenants (restore.go).
+			s.guarded("POST /v1/clusters/{c}/tenants/{t}/bundles/inspect", "can_configure", s.clusterObject, s.inspectTenantBundle)
+			s.action("POST /v1/clusters/{c}/tenants/{t}/actions/restore", "can_configure", s.clusterObject, s.restoreTenant)
+			// Where a bundle is read from besides an upload (bundle_sources.go):
+			// the cluster's declared sources, storage outside it whose address
+			// is a commit and whose keys are the custodian's; and, for the
+			// cluster's administrator, each tenant's own. can_configure, the
+			// right an import needs. A fetch copies one bundle into the
+			// import storage, from where it is downloaded, inspected,
+			// imported or restored as an upload is.
+			s.guarded("GET /v1/clusters/{c}/bundle-sources", "can_configure", s.clusterObject, s.listClusterSources)
+			s.guarded("PUT /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.declareClusterSource)
+			s.guarded("DELETE /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.removeClusterSource)
+			s.guarded("GET /v1/clusters/{c}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.clusterSourceBundles)
+			s.action("POST /v1/clusters/{c}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromClusterSource)
+			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources", "can_configure", s.clusterObject, s.tenantSources)
+			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.tenantSourceBundles)
+			s.action("POST /v1/clusters/{c}/tenants/{t}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromTenantSource)
+			s.guarded("GET /v1/clusters/{c}/bundle-fetches/{f}", "can_configure", s.clusterObject, s.bundleFetch)
+			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/download", "can_configure", s.clusterObject, s.importedBundleDownload)
 		}
 		// Who the caller is at cluster scope: which of the cluster's verbs
 		// they hold. Identified, not guarded: a person with no cluster
@@ -521,6 +556,14 @@ func (s *Server) routes() {
 		}
 		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
+
+	// A tenant's outside realms: read by whoever may see the tenant, written
+	// by the cluster's administrators and by a component the tenant names
+	// (brokered_from.go).
+	s.commissioned("GET /v1/tenants/{t}/brokered-from", "can_view", tenantObject, s.tenantBrokeredFrom)
+	s.commissioned("PUT /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.setTenantBrokeredFrom)
+	s.commissioned("DELETE /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.removeTenantBrokeredFrom)
+
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
@@ -702,6 +745,33 @@ func (s *Server) routes() {
 		// writes a bundle somebody can restore from.
 		s.action("POST /v1/tenants/{t}/actions/backup", "can_administer", tenantObject, s.startBackup)
 		s.action("POST /v1/tenants/{t}/actions/delete-backup", "can_administer", tenantObject, s.deleteBackup)
+
+		// Putting one of the tenant's bundles back into it: one of its own
+		// backups, or a bundle of it uploaded here (restore.go). The data a
+		// restore replaces is what a backup policy exists to keep, so it is
+		// can_set_policy, the relation the tenant's backup policy is written
+		// under: the tenant's administrators, and the cluster's while the
+		// tenant consents to being operated. The cluster's administrator
+		// restores under /v1/clusters as well, under the right an import
+		// needs. Uploading is the first half of restoring a bundle that is
+		// not a backup here, under the same relation.
+		s.guarded("POST /v1/tenants/{t}/bundles", "can_set_policy", tenantObject, s.uploadBundle)
+		s.guarded("POST /v1/tenants/{t}/bundles/inspect", "can_set_policy", tenantObject, s.inspectTenantBundle)
+		s.action("POST /v1/tenants/{t}/actions/restore", "can_set_policy", tenantObject, s.restoreTenant)
+		// Where the tenant's bundles are: its bucket in the cluster's storage
+		// and its backup policy's destination, listed for its recovery
+		// (bundle_sources.go). can_set_policy, the relation a restore and the
+		// backup policy are asked under. Only bundles of this tenant are
+		// listed; a destination's bucket may hold other tenants' too.
+		s.guarded("GET /v1/tenants/{t}/bundle-sources", "can_set_policy", tenantObject, s.tenantSources)
+		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
+		// Fetching one of them into the cluster's import storage, to rewrite
+		// it before it is restored: only a bundle whose header names the
+		// tenant, counted towards the tenant's limits there, and its fetch
+		// and its copy are the tenant's to read alone.
+		s.action("POST /v1/tenants/{t}/bundle-sources/{name}/actions/fetch", "can_set_policy", tenantObject, s.fetchFromOwnSource)
+		s.guarded("GET /v1/tenants/{t}/bundle-fetches/{f}", "can_set_policy", tenantObject, s.bundleFetch)
+		s.guarded("GET /v1/tenants/{t}/bundles/{prefix}/download", "can_set_policy", tenantObject, s.importedBundleDownload)
 	}
 
 	// No people, groups or realm settings here. They are the registrar's
@@ -766,6 +836,10 @@ func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 		"tenant":    r.PathValue("t"),
 		"subject":   c.meta.Subject,
 		"relations": relations,
+		// The platform's version line, which is no secret and which a
+		// tenant's administrator restoring a bundle of an older one needs to
+		// know: the cluster's settings carry it too, under can_audit.
+		"platformVersionLine": backup.PlatformVersionLine,
 	})
 }
 
@@ -1440,6 +1514,11 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 // now. A setting the claim does not carry is absent rather than empty,
 // because "unset, so the schema's default applies" and "set to nothing" are
 // different answers.
+//
+// The answer also says which platform this is: its version line, the one a
+// bundle is measured against on import, and the commit the image was built
+// from when the build recorded one. The director ships in the operator's
+// image, so its own build is the operator's.
 func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call) {
 	values, err := s.cfg.Repo.ClusterSettingValues(r.Context())
 	if err != nil {
@@ -1463,7 +1542,30 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 		}
 		out = append(out, entry)
 	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "settings": out})
+	answer := map[string]any{
+		"cluster":             s.cfg.Cluster,
+		"settings":            out,
+		"platformVersionLine": backup.PlatformVersionLine,
+	}
+	if commit := buildCommit(); commit != "" {
+		answer["build"] = commit
+	}
+	s.json(w, http.StatusOK, answer)
+}
+
+// buildCommit is the commit this binary was built from, or "" when the build
+// recorded none (sources built without their git history).
+func buildCommit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+	return ""
 }
 
 func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {
@@ -1485,8 +1587,15 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true`)
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, `+
+			`"brokeredTo": [{"name": "<name>", "redirectURI": "https://…", "jwksURL": "https://…"}]`)
 		return
+	}
+	for _, b := range body.BrokeredTo {
+		if err := gitops.ValidBrokeredTo(b); err != nil {
+			s.fail(w, r, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if !gitops.ValidName(body.Name) {
 		s.fail(w, r, http.StatusBadRequest,
@@ -1517,7 +1626,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo)}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return
@@ -1749,6 +1858,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
+	case errors.Is(err, gitops.ErrInvalidBackupPolicy):
+		s.fail(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, gitops.ErrNoPushCredential):
 		// 503, not 500: nothing is broken and the request was fine. The
 		// cluster has not been given a credential to write with, which is

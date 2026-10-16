@@ -99,6 +99,7 @@ rules:
     - apps.gentianos.io
     - backuppolicies.gentianos.io
     - brandings.gentianos.io
+    - bundlesources.gentianos.io
     - clusters.gentianos.io
     - componentprofiles.gentianos.io
     - components.gentianos.io
@@ -255,6 +256,17 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - gateway.envoyproxy.io
+    resources:
+    - httproutefilters
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
     - gateway.networking.k8s.io
     resources:
     - gatewayclasses
@@ -309,6 +321,7 @@ rules:
     - appgrants/status
     - backuppolicies/status
     - brandings/status
+    - bundlesources/status
     - components/status
     - customizations/status
     - integrationbindings/status
@@ -361,6 +374,7 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - bundlesources
     - componentprofiles
     - oidcpackcatalogs
     verbs:
@@ -449,6 +463,26 @@ rules:
     - postgresql.cnpg.io
     resources:
     - databases
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-tenant-apps-helm
+    verbs:
+    - bind
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - rolebindings
     verbs:
     - get
     - list

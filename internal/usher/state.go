@@ -64,6 +64,9 @@ func (s *Server) stateRoutes() {
 	s.guarded("GET /v1/tenants/{t}/resources", "can_view", tenantObject, s.relay("/resources"))
 	s.guarded("GET /v1/tenants/{t}/resources/plans", "can_view", tenantObject, s.resourcePlans)
 	s.guarded("GET /v1/tenants/{t}/resources/usage", "can_view", tenantObject, s.relay("/resources/usage", "from", "to", "stepSeconds"))
+	// What the tenant's public entries carried, for those who answer for the
+	// perimeter: can_expose, the relation that publishes them.
+	s.guarded("GET /v1/tenants/{t}/perimeter/traffic", "can_expose", tenantObject, s.relay("/perimeter/traffic", "from", "to", "stepSeconds"))
 	s.guarded("GET /v1/tenants/{t}/resources/report", "can_view", tenantObject, s.relay("/resources/report", "from", "to"))
 
 	// A tenant's backups: what exists, what each run did, the policy in
@@ -75,6 +78,9 @@ func (s *Server) stateRoutes() {
 	s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
 	s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.relay("/backup-policy"))
 	s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.relay("/backup-schedules"))
+	// Where one restore stands. The director starts it and answers with its
+	// name; what it did is read here, like a backup's.
+	s.guarded("GET /v1/tenants/{t}/restores/{name}", "can_view", tenantObject, s.tenantRestore)
 
 	// What one tenant's apps consume from each other, and the notices
 	// published to its people.
@@ -126,6 +132,10 @@ func (s *Server) relayCluster(path string) func(http.ResponseWriter, *http.Reque
 
 func (s *Server) appResidue(w http.ResponseWriter, r *http.Request, c call) {
 	s.relayed(w, r, tenantPath(c, "/apps/"+url.PathEscape(r.PathValue("p"))+"/residue"))
+}
+
+func (s *Server) tenantRestore(w http.ResponseWriter, r *http.Request, c call) {
+	s.relayed(w, r, tenantPath(c, "/restores/"+url.PathEscape(r.PathValue("name"))))
 }
 
 func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, c call) {

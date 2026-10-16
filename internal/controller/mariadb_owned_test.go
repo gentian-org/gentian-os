@@ -41,7 +41,7 @@ func scriptOf(job *batchv1.Job, container string) string {
 func TestMariaDBProvisioningGrantsWhatTheInventorySays(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	for _, dynamic := range []bool{false, true} {
-		script := scriptOf(makeMariaDBSetupJob(tenant, "shop-ce", "pw", dynamic), "provision-db")
+		script := scriptOf(makeMariaDBSetupJob(tenant, "shop-ce", true, dynamic), "provision-db")
 		if !strings.Contains(script, backup.MariaDBSetupScript("demo_shop_ce", "demo_shop_ce", dynamic)) {
 			t.Fatalf("dynamic=%v: the setup Job does not run the inventory's script:\n%s", dynamic, script)
 		}
@@ -106,8 +106,8 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 		t.Errorf("the export does not ask which databases are the app's:\n%s", dump)
 	}
 
-	// Restore, into a tenant of another name.
-	manifest := &backup.Manifest{SchemaVersion: 2, Tenant: "old", Apps: []backup.ManifestApp{
+	// Restore, of a bundle taken where the tenant's database prefix was old_.
+	manifest := &backup.Manifest{SchemaVersion: 2, Tenant: "demo", Apps: []backup.ManifestApp{
 		{Name: "shop", ChartVersion: "2.0.0", DatabaseEngine: "mariadb", Stores: []backup.ManifestStore{
 			{Kind: bundle.ArtefactMariaDB, Name: "old_shop", Path: "mariadb/old_shop.sql.gz"},
 			{Kind: bundle.ArtefactMariaDBOwned, Name: "old_shop", Path: "mariadb/old_shop.owned.tar.gz"},

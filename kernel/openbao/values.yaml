@@ -81,10 +81,62 @@ server:
     - name: tls
       secret:
         secretName: openbao-tls
+    # Mounted over tls-reload's token path, so the API server's admission
+    # puts no service account token into that container.
+    - name: no-service-account-token
+      emptyDir:
+        medium: Memory
+        sizeLimit: 1Mi
   volumeMounts:
     - name: tls
       mountPath: /openbao/tls
       readOnly: true
+
+  # OpenBao reads its TLS files only at start and on SIGHUP, and its
+  # StatefulSet updates OnDelete because a restart seals it. tls-reload
+  # watches the mounted serving certificate and signals bao when cert-manager
+  # has renewed it, so a renewal needs nobody. It shares the pod's process
+  # namespace for that, runs as the pod's uid (the same as bao's, which is
+  # what lets it signal without any capability), and has no service account
+  # token and no API rights. A change here reaches a running vault only when
+  # its pod is next restarted (docs/design/operations.md §8.2).
+  shareProcessNamespace: true
+  extraContainers:
+    - name: tls-reload
+      image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+      command:
+        - sh
+        - -c
+        - |
+          crt=/openbao/tls/tls.crt
+          last="$(sha256sum "${crt}" 2>/dev/null)"
+          while sleep 30; do
+            now="$(sha256sum "${crt}" 2>/dev/null)" || continue
+            [ "${now}" = "${last}" ] && continue
+            if pkill -HUP -x bao; then
+              echo "tls-reload: ${crt} changed; signalled bao to load it"
+              last="${now}"
+            fi
+          done
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          memory: 16Mi
+      volumeMounts:
+        - name: tls
+          mountPath: /openbao/tls
+          readOnly: true
+        - name: no-service-account-token
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
 
 # Injector is not needed — ESO handles secret syncing
 injector:

@@ -230,12 +230,15 @@ type TenantReconciler struct {
 	Definitions *crdcheck.Holder
 	// Rights is the rights store, for the entries of it a backup carries
 	// and a restore puts back (tenant_rights.go). Nil on a cluster that runs
-	// none. ClusterID is the id the cluster has in it.
+	// none. ClusterID is the id the cluster has in it and in its deployments
+	// repository, which a bundle records as the cluster it was taken on.
 	Rights    RightsStore
 	ClusterID string
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
+	// execTimeout replaces AppCommandTimeout where a test needs a short one.
+	execTimeout time.Duration
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
@@ -1268,6 +1271,27 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	// field existed composes exactly as it did.
 	if tenant.SignUpEnabled() {
 		spec["signUp"] = map[string]interface{}{"enabled": true}
+	}
+	// The same: only where there is one, so a tenant without composes as it
+	// did.
+	if len(tenant.Spec.BrokeredTo) > 0 {
+		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo))
+		for _, b := range tenant.Spec.BrokeredTo {
+			brokered = append(brokered, map[string]interface{}{
+				"name": b.Name, "redirectURI": b.RedirectURI, "jwksURL": b.JWKSURL,
+			})
+		}
+		spec["brokeredTo"] = brokered
+	}
+	if len(tenant.Spec.BrokeredFrom) > 0 {
+		from := make([]interface{}, 0, len(tenant.Spec.BrokeredFrom))
+		for _, b := range tenant.Spec.BrokeredFrom {
+			from = append(from, map[string]interface{}{
+				"name": b.Name, "displayName": b.DisplayName, "issuer": b.Issuer,
+				"clientID": b.ClientID, "domain": b.Domain,
+			})
+		}
+		spec["brokeredFrom"] = from
 	}
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas

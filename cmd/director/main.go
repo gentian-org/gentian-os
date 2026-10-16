@@ -294,11 +294,18 @@ func run(log *slog.Logger) error {
 	// The same OpenFGA client answers both questions, and the two are
 	// separate interfaces on purpose: Check is the hot path, ViewOf is a
 	// person reviewing who holds what. Neither can write through the API.
+	// The components that may commission organizations, as the operator
+	// lists them: a mounted ConfigMap, followed for as long as this runs.
+	commissionKeys := &api.CommissionKeys{}
+	go commissionKeys.Follow(context.Background(),
+		envOr("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log)
+
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
-		Catalogue: entries,
-		StoreURL:  storeURL,
-		Cluster:   cluster,
-		Lifecycle: lc})
+		Catalogue:      entries,
+		StoreURL:       storeURL,
+		Cluster:        cluster,
+		Lifecycle:      lc,
+		CommissionKeys: commissionKeys})
 	if err != nil {
 		return err
 	}

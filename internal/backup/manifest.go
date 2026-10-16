@@ -42,7 +42,12 @@ const ManifestSchemaVersion = bundle.SchemaVersion
 // spec and its app inventory, which is not something to leave readable next to
 // an encrypted bundle. info is written in the clear beside it, and says only
 // what the bundle is and how to open it.
-func ManifestJob(p JobParams, m *Manifest, info *BundleInfo) (*batchv1.Job, error) {
+//
+// With a key, the manifest is signed (bundle.SignatureFile): the signature is
+// written beside bundle-info.json, in the clear, by the same container. It
+// is over the bytes the manifest is staged with, so it is made here and
+// nowhere else. Without one the bundle is unsigned.
+func ManifestJob(p JobParams, m *Manifest, info *BundleInfo, key *SigningKey) (*batchv1.Job, error) {
 	// Compact, so the heredocs below can never contain a line matching their
 	// own delimiter no matter what a display name holds.
 	encoded, err := json.Marshal(m)
@@ -65,11 +70,23 @@ echo "staged manifest"`, workDir, string(encoded)), nil)
 	// bundle-info.json goes up unencrypted, in the same Job, after the manifest.
 	// Someone holding only this prefix can then tell whose bundle it is and
 	// which key opens it, without being able to read a byte of the contents.
+	signature := ""
+	if key != nil {
+		encodedSig, err := json.Marshal(key.SignManifest(encoded))
+		if err != nil {
+			return nil, fmt.Errorf("encode the manifest's signature: %w", err)
+		}
+		signature = fmt.Sprintf(`
+cat <<'GENTIAN_SIGNATURE_EOF' | rclone rcat "%s:%s/%s/%s"
+%s
+GENTIAN_SIGNATURE_EOF
+echo "wrote the manifest's signature"`, bundleRemote, p.Bucket, p.Prefix, bundle.SignatureFile, string(encodedSig))
+	}
 	writeInfo := storageTools("bundle-info", "set -eu\n"+rcloneRemote(bundleRemote)+fmt.Sprintf(`
 cat <<'GENTIAN_INFO_EOF' | rclone rcat "%s:%s/%s/bundle-info.json"
 %s
 GENTIAN_INFO_EOF
-echo "wrote bundle info"`, bundleRemote, p.Bucket, p.Prefix, string(encodedInfo)), bundleEnv(p))
+echo "wrote bundle info"%s`, bundleRemote, p.Bucket, p.Prefix, string(encodedInfo), signature), bundleEnv(p))
 	writeInfo.VolumeMounts = nil
 	job.Spec.Template.Spec.Containers = append(job.Spec.Template.Spec.Containers, writeInfo)
 	return job, nil

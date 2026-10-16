@@ -57,7 +57,30 @@ type BackupDestination struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
+
+	// AddressingStyle is how a bucket is named in a request to Endpoint:
+	// path (https://host/bucket/key, the default when empty) or virtualHost
+	// (https://bucket.host/key), for a provider that serves only the
+	// latter. Recorded on every bundle written here, so that its restore and
+	// its deletion address the bucket as it was written.
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
 }
+
+// S3AddressingStyle is how a bucket is named in a request to an S3 endpoint.
+// +kubebuilder:validation:Enum=path;virtualHost
+type S3AddressingStyle string
+
+const (
+	// S3AddressingPath names the bucket in the path: https://host/bucket/key.
+	S3AddressingPath S3AddressingStyle = "path"
+	// S3AddressingVirtualHost names it in the host: https://bucket.host/key.
+	S3AddressingVirtualHost S3AddressingStyle = "virtualHost"
+)
+
+// VirtualHost reports whether requests name the bucket in the host. Empty is
+// path, the default.
+func (s S3AddressingStyle) VirtualHost() bool { return s == S3AddressingVirtualHost }
 
 // IsSet reports whether this destination asks for anything other than the
 // platform's own storage.

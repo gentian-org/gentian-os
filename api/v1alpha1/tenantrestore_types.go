@@ -37,6 +37,11 @@ type TenantRestoreSpec struct {
 
 	// Bundle locates a bundle directly, for restoring one this cluster did not
 	// produce — a migration, or a rebuild where the original export is gone.
+	//
+	// Whichever names it, the bundle must be of this tenant: one whose
+	// manifest names another tenant is refused before anything is changed. A
+	// restore does not rename; a bundle meant for another name is rewritten
+	// into it, by a tool that does so, first.
 	// +optional
 	Bundle *BundleRef `json:"bundle,omitempty"`
 
@@ -92,8 +97,8 @@ type TenantRestoreSpec struct {
 	// into another by a file. The restore names each in its result. What the
 	// bundle records as withdrawn is withdrawn here too.
 	//
-	// The same holds, whatever this says, when the bundle was taken of a
-	// tenant of another name or on another cluster.
+	// The rights are not granted either, whatever this says, when the
+	// bundle was taken on another cluster.
 	// +optional
 	IntoNewTenant bool `json:"intoNewTenant,omitempty"`
 }
@@ -135,6 +140,16 @@ type RestoreRights struct {
 	// +optional
 	// +listType=atomic
 	NotBrought []string `json:"notBrought,omitempty"`
+	// Provenance is whether the bundle was written on this cluster, which
+	// decides whether what was granted in its tenant comes back: Proven
+	// (signed with this cluster's key, taken on this cluster), or why not
+	// -- NoSigningKey, Unsigned, SignedByAnotherKey, BadSignature,
+	// NoClusterID, AnotherCluster.
+	// +optional
+	Provenance string `json:"provenance,omitempty"`
+	// ProvenanceMessage says the same in a sentence.
+	// +optional
+	ProvenanceMessage string `json:"provenanceMessage,omitempty"`
 	// Applied says the store holds what Grant and Withdraw say.
 	// +optional
 	Applied bool `json:"applied,omitempty"`
@@ -178,7 +193,11 @@ type TenantRestoreStatus struct {
 	// +optional
 	Phase TenantExportPhase `json:"phase,omitempty"`
 
-	// Conditions carry Accepted (admitted, and preflight passed) and Complete.
+	// Conditions carry Accepted (admitted, and preflight passed) and Complete,
+	// and OutsideGuarantee when the restore is not the round trip the
+	// platform guarantees -- a bundle of its own version line, on the same
+	// domain -- with what differs.
+	// Such a restore goes ahead as far as it can.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -194,6 +213,15 @@ type TenantRestoreStatus struct {
 	// +optional
 	Quiesced []string `json:"quiesced,omitempty"`
 
+	// HeldBack names the apps the edge keeps unreachable while this restore
+	// runs: each is added before anything of it is changed, and the edge
+	// answers 503 on its routes until the restore has ended (Ready or Failed)
+	// or is deleted. Read by the edge from here, so an operator restart
+	// changes nothing; emptied when the restore ends.
+	// +optional
+	// +listType=set
+	HeldBack []string `json:"heldBack,omitempty"`
+
 	// Bundle is the bundle actually used, resolved from exportRef or spec.
 	// +optional
 	Bundle *BundleRef `json:"bundle,omitempty"`
@@ -204,12 +232,17 @@ type TenantRestoreStatus struct {
 	BundleSchemaVersion int `json:"bundleSchemaVersion,omitempty"`
 
 	// SourceTenant is the tenant the bundle was taken of, as its manifest
-	// records it. When it is not the tenant restored into, the bundle's names
-	// are another tenant's: databases an app made for itself and the
-	// platform's groups are put back under this tenant's names, and the
-	// bundle's sign-in clients are not imported.
+	// records it: the tenant restored into, as a bundle of any other is
+	// refused. Empty where the manifest does not say.
 	// +optional
 	SourceTenant string `json:"sourceTenant,omitempty"`
+
+	// Source is where and by what the bundle was written, as its manifest
+	// records it: what a profile's post-restore commands are told beside
+	// where the restore puts the data. Empty fields are ones the bundle does
+	// not record.
+	// +optional
+	Source *RestoreSource `json:"source,omitempty"`
 
 	// NameDerivation says where the restore took the names of what it
 	// restores from. "manifest": the bundle's manifest names each artefact
@@ -275,6 +308,32 @@ type TenantRestoreStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
+// RestoreSource is where a bundle was written. None of it is secret.
+type RestoreSource struct {
+	// PlatformVersion is the version line of the platform that wrote it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	PlatformVersion string `json:"platformVersion,omitempty"`
+	// Domain is the tenant's domain where it was written.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Domain string `json:"domain,omitempty"`
+	// CustomDomain is the custom domain a TenantDomain bound the tenant to
+	// there. A restore does not bind it; it says to declare it again.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	CustomDomain string `json:"customDomain,omitempty"`
+	// KernelDomain is the domain of the cluster it was written on, the one
+	// its sign-in issuer is under.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	KernelDomain string `json:"kernelDomain,omitempty"`
+	// Cluster is the id of the cluster it was written on.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Cluster string `json:"cluster,omitempty"`
+}
+
 // RestoreOmission is one app a bundle holds that a restore did not put back.
 type RestoreOmission struct {
 	// App is the app's name in the bundle's manifest.
@@ -297,6 +356,7 @@ const (
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Bundle",type=string,JSONPath=`.status.bundle.prefix`
 // +kubebuilder:printcolumn:name="Paused",type=string,JSONPath=`.status.quiesced`,priority=1
+// +kubebuilder:printcolumn:name="Held back",type=string,JSONPath=`.status.heldBack`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type TenantRestore struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -317,6 +377,22 @@ type TenantRestoreList struct {
 // IsTerminal reports whether the restore has finished, either way.
 func (r *TenantRestore) IsTerminal() bool {
 	return r.Status.Phase == TenantExportPhaseReady || r.Status.Phase == TenantExportPhaseFailed
+}
+
+// HoldsBack reports whether the edge is to keep the app unreachable for this
+// restore: it names the app in status.heldBack, has not ended and is not
+// being deleted. Everything that ends a restore lifts the hold, whatever
+// status.heldBack still says.
+func (r *TenantRestore) HoldsBack(app string) bool {
+	if r.IsTerminal() || !r.DeletionTimestamp.IsZero() {
+		return false
+	}
+	for _, held := range r.Status.HeldBack {
+		if held == app {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

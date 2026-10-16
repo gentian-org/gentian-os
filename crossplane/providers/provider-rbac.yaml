@@ -30,22 +30,26 @@
 # them are RBAC, which is what makes scoping it safe: it can never be asked to
 # create a permission broader than its own.
 #
-# provider-helm: cluster-admin, and not a TODO
-# ----------------------------------------------
-# provider-helm installs Helm charts, and some ship their own ClusterRoles —
-# cert-manager's controllers among them, which need cluster-wide `secrets`
-# read to do their job. Kubernetes enforces escalation prevention: nothing can
-# create a role granting a permission it does not itself hold. So scoping
-# provider-helm means either holding the union of everything every installed
-# chart's RBAC grants — which has to be re-derived on every chart version bump
-# — or holding `escalate` on clusterroles, which permits minting any role at
-# all and is cluster-admin under a quieter name. Neither is a reduction.
+# provider-helm: cluster-admin for the kernel's charts, narrow for tenant apps
+# ---------------------------------------------------------------------------
+# provider-helm installs the kernel's charts, and some ship their own
+# ClusterRoles — cert-manager's controllers among them, which need
+# cluster-wide `secrets` read to do their job. Kubernetes enforces escalation
+# prevention: nothing can create a role granting a permission it does not
+# itself hold. So the identity that installs them stays cluster-admin; scoping
+# it needs the platform to own those charts' RBAC (docs/roadmap.md §1.16).
 #
-# The precondition for scoping this one is that the platform owns the RBAC for
-# the charts it installs (`rbac.create=false`, roles held in-repo and
-# reviewed) rather than letting each chart mint its own — a policy decision
-# about third-party software, not a provider change. See docs/roadmap.md
-# §1.16.
+# A tenant's apps are installed under another identity. Their Releases name
+# the ProviderConfig tenant-apps, whose kubeconfig (written by B-05) makes
+# provider-helm act as the ServiceAccount provider-helm-tenant-apps below:
+# every object a tenant chart renders is created, changed and deleted as that
+# account. It holds nothing cluster-wide. In a tenant namespace, and only
+# there, the operator binds it to gentian-tenant-apps-helm
+# (internal/controller/tenant_apps_helm.go), which allows the namespaced
+# kinds tenant charts render and no others: no NetworkPolicy, quota, limit,
+# route or external secret of the platform's. It is one provider process with
+# two identities, not two providers: Crossplane installs a provider's CRDs
+# once, so a second provider-helm package cannot run beside the first.
 #
 # The subjects reference the fixed ServiceAccount names pinned by the
 # DeploymentRuntimeConfigs in providers.yaml, NOT the revision-hashed defaults,
@@ -129,3 +133,50 @@ roleRef:
   kind: ClusterRole
   name: cluster-admin
   apiGroup: rbac.authorization.k8s.io
+---
+# The account tenant apps are installed as (see the header). provider-helm
+# acts as it by impersonation and uses no token of its own, so none is mounted
+# or minted for it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-helm-tenant-apps
+  namespace: kernel-provisioning
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+automountServiceAccountToken: false
+---
+# What a tenant chart may do in its own namespace: the kinds the tenant
+# charts of the catalogue render (docs/design/security.md §12.4 lists them),
+# and the reads Helm's wait needs. Bound per tenant namespace, never by a
+# ClusterRoleBinding. A chart's own Roles and RoleBindings are allowed because
+# escalation prevention holds them to a subset of this.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gentian-tenant-apps-helm
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+rules:
+  - apiGroups: ['']
+    resources: ['configmaps', 'persistentvolumeclaims', 'secrets', 'serviceaccounts', 'services']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['apps']
+    resources: ['deployments', 'statefulsets']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['batch']
+    resources: ['jobs']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['networking.k8s.io']
+    resources: ['ingresses']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['rbac.authorization.k8s.io']
+    resources: ['rolebindings', 'roles']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  # Read only: what Helm watches to tell that a release's workloads are up.
+  - apiGroups: ['']
+    resources: ['pods']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['apps']
+    resources: ['replicasets']
+    verbs: ['get', 'list', 'watch']

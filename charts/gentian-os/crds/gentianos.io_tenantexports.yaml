@@ -77,6 +77,14 @@ spec:
                   follows the tenant's BackupPolicy, which is what scheduled exports do
                   and what keeps a manual backup beside the nightly ones.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how a bucket is named in a request to Endpoint:
+                      path (the default when empty) or virtualHost (BackupDestination).
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: |-
                       Bucket holds the bundle. Empty keeps the tenant's default bucket name,
@@ -153,11 +161,11 @@ spec:
                   rule: self.mode != 'custom' || self.credentialSource != 'managed'
                     || !has(self.credentialSecretRef) || size(self.credentialSecretRef)
                     == 0
-                - message: 'endpoint, region and credentialSecretRef belong to mode:
-                    custom only'
+                - message: 'endpoint, region, addressingStyle and credentialSecretRef
+                    belong to mode: custom only'
                   rule: self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint)
                     == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef)
-                    == 0) && (!has(self.region) || size(self.region) == 0))
+                    == 0) && (!has(self.region) || size(self.region) == 0) && !has(self.addressingStyle))
               encryption:
                 description: |-
                   Encryption selects how the bundle is protected. Omitting it uses the
@@ -270,6 +278,16 @@ spec:
                             required:
                             - size
                             type: object
+                          databases:
+                            description: |-
+                              Databases are, for an archive of the databases an app made itself
+                              (postgresOwned, mariadbOwned), each database it held as
+                              "<name in the bundle>=<name here>", as the restore's Job reported
+                              them once it had put them back. Set by a restore only.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
                           kind:
                             description: |-
                               Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
@@ -330,6 +348,12 @@ spec:
                       description: Digest is the pinned digest of the app's build,
                         when the tenant pins one.
                       type: string
+                    heldBackAt:
+                      description: |-
+                        HeldBackAt is when a restore asked the edge to hold this app back
+                        (TenantRestoreStatus.HeldBack). Restore only.
+                      format: date-time
+                      type: string
                     lastFailure:
                       description: |-
                         LastFailure is what the capture container actually said, from the last
@@ -387,6 +411,13 @@ spec:
                         app's, without pausing anything; a restore puts it back as retained and
                         installs nothing.
                       type: boolean
+                    rolloutStart:
+                      description: |-
+                        RolloutStart is when a restore started this app again on the restored
+                        data, after its post-restore commands. The app is done once that
+                        rollout has finished. Restore only.
+                      format: date-time
+                      type: string
                     secrets:
                       description: |-
                         Secrets says what was done with the app's own secrets: which an
@@ -481,6 +512,16 @@ spec:
                   Bundle locates the output. It is set as soon as the destination is known,
                   before any data lands, so a failed export can still be found and removed.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how the bucket was named in requests to Endpoint
+                      when the bundle was written: path (empty) or virtualHost. Recorded for
+                      the reason Endpoint is: a restore or a deletion of this bundle
+                      addresses it as it was written, whatever the policy says today.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: |-
                       Bucket holds the tenant's bundles. It is provisioned per tenant and is

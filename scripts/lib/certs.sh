@@ -59,6 +59,16 @@ cert_manager_dns01_converged() {
     [[ "$(jq -cS . <<< "${current}")" == "$(jq -cS . <<< "${desired}")" ]]
 }
 
+# gentian_issuer_mode — certificates.issuerMode of this cluster. The claim is
+# authoritative once it exists; the env var is how the installer carries the
+# answer before C-01 has created it.
+gentian_issuer_mode() {
+    local mode
+    mode="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.items[0].spec.certificates.issuerMode}' 2>/dev/null || true)"
+    echo "${mode:-${CERT_ISSUER_MODE:-acme-dns01}}"
+}
+
 # The zone's host. Cloudflare stays the default so a cluster that never named
 # one installs exactly as it did before; every other value is an entry in
 # kernel/platforms.yaml.

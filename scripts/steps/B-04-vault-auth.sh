@@ -16,7 +16,7 @@ check() {
     token="$(kubectl get secret openbao-crossplane-token -n "${ns}" -o jsonpath='{.data.credentials}' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.token // empty' 2>/dev/null)" || return 1
     [[ -n "${token}" ]] || return 1
     addr="$(gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https 2>/dev/null)" || return 1
-    [[ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/auth/token/lookup-self")" == "200" ]]
+    [[ "$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/auth/token/lookup-self")" == "200" ]]
 }
 
 apply() {

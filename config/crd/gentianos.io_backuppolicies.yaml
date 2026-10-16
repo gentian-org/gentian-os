@@ -103,6 +103,17 @@ spec:
                   Destination is where bundles are written. Unset inherits: the cluster
                   default for a tenant policy, the platform's own storage for the cluster.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how a bucket is named in a request to Endpoint:
+                      path (https://host/bucket/key, the default when empty) or virtualHost
+                      (https://bucket.host/key), for a provider that serves only the
+                      latter. Recorded on every bundle written here, so that its restore and
+                      its deletion address the bucket as it was written.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: Bucket holds the bundles. Empty keeps the per-tenant
                       default name.

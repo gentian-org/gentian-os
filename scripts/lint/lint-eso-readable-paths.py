@@ -100,6 +100,10 @@ OPERATOR_ONLY = {
         "--export-recovery-kit. Denied to ESO in the same policy: a key that "
         "could become a Secret would be readable by whoever takes the cluster, "
         "which is the one thing escrow must not come to mean.",
+    "gentian-os/kernel/backup/signing":
+        "the cluster's bundle signing key (backup/signature.go). The operator "
+        "reads it from the vault itself; as a Secret it would sign for anyone "
+        "able to read one.",
     "gentian-os/tenants/+/backup/identity":
         "one tenant's escrowed backup key (custodian/backupidentity.go). "
         "Same reasoning one subtree down, and the reason the sibling grant on "

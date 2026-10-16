@@ -54,20 +54,36 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		job  *batchv1.Job
 		want string
 	}{
+		// The postgres role, the MariaDB user and the cache user moved
+		// once, deliberately, when the app's password left the spec:
+		// ROLE_PW, DB_PASS and REDIS_USER_PASSWORD are read from the
+		// Secret of the Job's name, which the Job owns
+		// (ensureProvisioningJobSecrets), and are written into no Job.
+		// Nothing else in these Jobs changed.
 		"postgres role": {
-			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", "pw", gentianov1alpha1.SchemaPreferenceAppSchema, true),
-			"bb0e4ee798d4956cf3fe7481f70f3ac5a4dd5f396618563d9829873937718b8d",
+			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true),
+			"0385a66d6bb2310c243039afe72b40ea776f876c4ff3be016aa13e9c56c48fdc",
 		},
-		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
+		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", true, true), "14691be0177479f93914a328cb59573120d722f67ee2d773388b791be7b10d5e"},
 		// Both bucket digests moved once when the Jobs' image became the
 		// S3 server's own, and again, deliberately, when the server became
 		// SeaweedFS: the bucket and the app's identity are made with weed
 		// shell in the server's image (kernel.DefaultSeaweedFSImage), the
 		// master's address is the one Secret value the pod reads, and the
 		// pod carries the label the store's NetworkPolicy admits it by.
-		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "203474f05780f15f3061c3e2fd5bf53548da4a5f3ca9b763a23c2f11178fd0ab"},
-		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "9ed306136ae01d209c6f12054064db4733ab99a3d140b375c6987cb24240a969"},
-		"cache user":     {makeRedisACLJob(tenant, "wiki", "pw"), "980aa4ecd34b77778b2225cbe86860dfe74dd7bd6ee0e79493bc0cfd1235d57a"},
+		// The keyed one moved once more, deliberately, when the app's key
+		// pair left the spec: APP_ACCESS_KEY and APP_SECRET_KEY are read
+		// from the Secret of the Job's name, which the Job owns
+		// (ensureProvisioningJobSecrets), and are written into no Job.
+		// Both moved again, deliberately, when the store's administration
+		// became mutual TLS: the pod mounts the client certificate
+		// (backup.ObjectStoreClientTLSSecret), weed shell reads its
+		// [grpc.client] settings from WEED_GRPC_*, and the filer's signing
+		// key, which s3.configure needs a token of, is read from the
+		// store's signing Secret.
+		"bucket":         {makeS3BucketJob(tenant, "wiki", true), "b8b6bda18925bf9da9324ce60f1e574280306f454068d0a337d44573311c28b2"},
+		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false), "56ebf6847888baa1559a5429f977c4c1bb81c6fbd8267282480dcd42419cda2a"},
+		"cache user":     {makeRedisACLJob(tenant, "wiki", true), "e69e2958d1a57f59a3e92f20f07af87036ada08858c580d218ec13c358caabeb"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {
 			t.Errorf("%s: the Job provisioning creates has changed (digest %s, pinned %s)", name, got, c.want)

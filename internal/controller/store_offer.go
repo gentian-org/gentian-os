@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
@@ -233,10 +234,11 @@ func (r *ComponentReconciler) storeEgress(ctx context.Context, profile *gentiano
 	return []networkingv1.NetworkPolicyEgressRule{storeEgressRule()}, nil
 }
 
-// placementValues are the two platform facts that are not the same for every
-// component of a zone: the host this component answers on, and where the
-// store is. Each lands where the profile's valueMapping.platform says, and a
-// profile that names neither key receives nothing and reads no claim.
+// placementValues are the platform facts that are not the same for every
+// component of a zone: the host this component answers on, where the store
+// is, and where the desktop's API is in its namespace. Each lands where the
+// profile's valueMapping.platform says, and a profile that names none of the
+// keys receives nothing and reads no claim.
 func (r *ComponentReconciler) placementValues(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, zone edgeZone) (map[string]interface{}, error) {
 	out := map[string]interface{}{}
 	m := platformMapping(profile)
@@ -251,11 +253,18 @@ func (r *ComponentReconciler) placementValues(ctx context.Context, comp *gentian
 		if wantsStore(profile) {
 			offer, err := readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("read where the App Store is: %w", err)
 			}
 			url = offer.url
 		}
 		setPath(out, m.StoreURLKey, url)
+	}
+	if m.DesktopURLKey != "" {
+		url, err := r.desktopURL(ctx, comp, profile)
+		if err != nil {
+			return nil, fmt.Errorf("read where the desktop's API is: %w", err)
+		}
+		setPath(out, m.DesktopURLKey, url)
 	}
 	return out, nil
 }

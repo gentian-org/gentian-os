@@ -361,8 +361,8 @@ func TestExportRestoreAndPurgeAgreeOnWhichDatabasesAreAnApps(t *testing.T) {
 func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 	p := JobParams{Namespace: "system-s3", Name: "j", Tenant: "demo", App: "wiki", Bucket: "b", Prefix: "p"}
 	d := Decryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, SecretName: "k", SecretKey: "identity"}
-	install := ObjectStorageProvisionContainer("create-bucket", "demo-wiki", "AK", "SK")
-	provision := ObjectStorageProvisionContainer("provision-bucket", "demo-wiki", "AK", "SK")
+	install := ObjectStorageProvisionContainer("create-bucket", "demo-wiki", "key-secret")
+	provision := ObjectStorageProvisionContainer("provision-bucket", "demo-wiki", "key-secret")
 	job := S3RestoreJob(p, d, S3Artefact("old-wiki"), "demo-wiki", provision)
 
 	inits := job.Spec.Template.Spec.InitContainers

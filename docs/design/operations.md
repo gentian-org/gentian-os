@@ -385,6 +385,59 @@ letting Argo CD roll the operator and the bouncer. In that order:
   [commands.md](../commands.md) §15 is the restore drill. A schedule records
   its last success so that it can be watched.
 
+### 8.1 The object store's certificates and keys
+
+- **Certificates renew on their own.** cert-manager reissues
+  `seaweedfs-server-tls` and `seaweedfs-shell-tls` (90 days) at two thirds
+  of their lifetime. The server reads its certificate files again every five
+  hours (weed's default, `WEED_TLS_CERT_REFRESH_INTERVAL`) and the Secret is
+  mounted whole, so no restart is needed; a Job reads its certificate when
+  it starts.
+- **While the vault is sealed** nothing of `gentian-ca` is issued or
+  renewed. A certificate's renewal starts with about 30 days left, so that is
+  how long the vault may stay sealed before the store's certificates expire.
+- **Replacing the internal CA** is a new issuer in the vault's PKI engine:
+  generate one at `pki-internal` (`bao write pki-internal/root/generate/internal
+  common_name=gentian-root-ca key_type=ec key_bits=256 ttl=87600h
+  max_path_length=0`) and make it the default (`bao write
+  pki-internal/config/issuers default=<its id>`), as the root token or an
+  administrator; then have cert-manager reissue every certificate of
+  `gentian-ca` (`cmctl renew --all` in each namespace that holds one; for the
+  store, `system-s3`). Until the server's next refresh, Jobs with a
+  certificate of the new CA are refused: restart the store (`kubectl rollout
+  restart deploy/seaweedfs-all-in-one -n system-s3`) to take the new CA at
+  once. Re-run `B-08` to write the new certificate to `gentian-root-ca-tls`;
+  on a self-signed cluster every client that trusts the old CA has to be
+  given the new one. The installer never does this itself: an existing CA is
+  left as it is.
+- **Rotating a signing key** (`gentian-os/kernel/storage/s3/jwt`) is writing
+  a new value there, re-syncing the ExternalSecret `seaweedfs-jwt` in
+  `system-s3`, and restarting the store, which reads the keys from its
+  environment at start. A token is valid for seconds, so only requests in
+  flight fail. The keys are never generated again by the installer: an
+  existing path is left as it is.
+
+### 8.2 The vault's own certificate
+
+- **The serving certificate** `openbao-tls` renews every 60 days, signed by
+  the vault's CA `openbao-ca`, which every client trusts; no client changes.
+  The vault reads its certificate only at start or on `SIGHUP`; the sidecar
+  `tls-reload` in its pod sends the signal within a minute of the renewed
+  file reaching the pod, and `B-01` (`./install.sh --only B-01`) does too.
+  The StatefulSet updates `OnDelete`, so a vault pod started before the
+  sidecar was added has none until it is next restarted, and nothing
+  restarts it for that: a restart seals it until the seal unseals it. Until
+  then run `B-01` within 30 days of a renewal, or signal it by hand
+  (`kubectl exec -n kernel-secrets openbao-0 -c openbao -- pkill -HUP -x
+  bao`).
+- **Replacing `openbao-ca`** (ten years; renewed by cert-manager with the
+  same key): delete its Secret `openbao-ca-tls` in `kernel-secrets` and the
+  Certificate is issued again with a new key; then re-run `B-01`, which
+  copies the new certificate to cert-manager's, the operator's and
+  Crossplane's namespaces, signals the vault and restarts the custodian;
+  restart the operator and provider-vault, which read it at start. External Secrets reads the CA on every
+  connection.
+
 ## 9. Data Lifecycle: Reference
 
 What creating, backing up, restoring, importing, uninstalling, purging,
@@ -417,7 +470,7 @@ In provisioning order.
 | Stored credentials | the tenant reconciler's seeder before each store; the app Composition for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
 | Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
 | Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own. |
-| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name of the tenant restored into when that is not the tenant the bundle was taken of (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
+| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name here when that is not the one in the bundle -- the tenant's database prefix differs between where the bundle was taken and here (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
 | Object storage | the bucket Job | A restore makes the bucket, its user and its policy with the code install uses, then writes the objects, removing objects the bundle does not hold. |
 | Cache user | the ACL Job | A restored cache is stale, so none is carried. |
 | Model key | the tenant reconciler, at the model gateway, where the cluster serves models | A credential, registered again at install. A tenant's deletion removes the keys, then the tenant's team. |
@@ -535,6 +588,11 @@ What a restore puts back is what the bundle says it holds. The operator reads
 the bundle's manifest with the restore's own key and makes a plan once, before
 anything is changed; the plan is in the restore's status.
 
+0. A bundle is restored only into the tenant of its own name. One whose
+   manifest names another tenant is refused before anything is changed
+   (reason `OtherTenant`): a restore does not rename, and a bundle meant for
+   another name is rewritten into it, by a tool that does so, first.
+
 1. Only an app the manifest lists is touched. An app the tenant has and the
    bundle does not is left exactly as it is.
 2. An app is restored whole or not at all. It is not restored when it is not
@@ -550,10 +608,56 @@ anything is changed; the plan is in the restore's status.
 4. With `spec.apps`, only the apps named are considered and each has to be
    restorable; otherwise the restore is refused before anything is changed.
 
+**What is guaranteed.** The platform guarantees the round trip: a bundle
+restored by a platform of the version line that wrote it (`operatorVersion`),
+into the tenant it was taken of, on the same domain. A bundle of an older
+line, or one that records none (written before the field was), is restored as
+far as this platform reads it and nothing in it is converted; one taken on
+another domain is
+restored, and the apps' data still names the old domain where their
+`restore.post` commands do not rewrite it. A custom domain is not declared by
+a restore or an import: the message names it and the command that declares
+it again. Each way the restore carries the condition `OutsideGuarantee`
+(reason `OtherVersion`, `OtherDomain` or `SeveralDifferences`),
+whose message says what differs and is
+repeated in `status.notes`. A bundle of a newer line is refused, as a newer
+format is, by the restore and by the import's inspection alike.
+
 Each artefact is fetched from the path the manifest gives and loaded into the
 store of that kind the installed app has, by the inventory's names — which
-differ from the bundle's whenever the tenant's name or prefixes do, as when a
-bundle is imported under another name.
+differ from the bundle's wherever the tenant's database or bucket prefix
+(`spec.isolation`) here is not the one it had where the bundle was taken.
+A profile's `restore.post` commands run with `GENTIAN_RESTORE_*` variables
+naming both ends: tenant, domain, the cluster's own (kernel) domain, platform
+version, cluster, the app's chart
+versions, each store's name in the bundle and here -- the databases an app
+made itself too, which the restore's Job reports in its termination message
+and the restore keeps on the artefact (`databases`) -- and the app's database
+login ([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
+each app's profile rewrites what its app cached, reading credentials the
+platform made new from the app's own Secrets. An app paused by scaling down
+is resumed before them, as they need a pod, and rolled (`rollout restart`)
+once they have run; one scaled down because its maintenance command could
+not run has its `quiesce.post` command run after them, since its data may
+have been taken in maintenance mode. Each of a profile's commands
+runs for at most 15 minutes (`AppCommandTimeout`); one still running then
+has failed, as one that exits non-zero has. An app is done once its workloads
+have rolled out on the restored data (at most 10 minutes, then a note).
+
+**Held back at the edge.** Before a restore changes anything of an app — its
+secrets, its pause — it names the app in `status.heldBack` and waits until
+every route of the app is held: its entries, its sign-in sidecar's route and
+its published surfaces in the DMZ answer `503` with `Retry-After: 60` from an
+Envoy Gateway `HTTPRouteFilter` (`restore-hold`) instead of reaching the app,
+behind the same session and bouncer as before
+([networking.md §3](../plans/networking.md)). An edge that has not held it
+within 2 minutes fails the restore with nothing of the app changed. The hold
+lasts until the restore ends, `Ready` or `Failed`, or is deleted — past the
+app's own `restore.post` and rollout and past the realm, which comes back
+last — so nobody signs in to an app before the people it matches on are back.
+It is read from the restore's status by the component reconciler, first in
+each pass, so an operator restart or a failing component does not keep a
+route held; `status.heldBack` is emptied when the restore ends.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
 artefact) carries `schemaVersion`. Format 1 named each app and the kinds
@@ -564,7 +668,7 @@ from), `path` (where in the bundle), and for a volume the Helm `release` it
 recorded — and the app's `digest`, `databaseEngine` and `releases`; the
 tenant-wide captures are no longer listed among the apps. Fields were added
 and none renamed. A format 1 bundle still restores: the names are derived from
-the tenant the manifest records and the volume claims are the ones the apps
+the tenant's prefixes the manifest records and the volume claims are the ones the apps
 have now, and the result says `nameDerivation: derived`. **Format 3** adds
 what a format 2 bundle did not hold, and again renames nothing: `retained` on
 an app that was uninstalled with its data kept when the bundle was taken, and
@@ -581,8 +685,20 @@ secrets, a JSON document of `secrets` (name to value), `extensions`
 under `secrets.derived`, key to value), with no path in it. `derived` was
 added within format 4; a document without it reads as before. A format 3 bundle has
 none and restores as before, changing no stored secret
-([security.md §6.4](security.md)). A manifest of a format newer than the
-platform reads is refused. A `postgresOwned` artefact is
+([security.md §6.4](security.md)). Also within format 4, and optional, the
+manifest says by what and where it was written: `operatorVersion`, the
+platform's version line (`0.5`); `domain`, the tenant's domain, its custom one
+where a `TenantDomain` bound it, and `customDomain`, that one alone;
+`kernelDomain`, the cluster's own domain, under which its sign-in issuer is;
+and `cluster`, the cluster's id in its deployments repository; and
+`clusterUid`, the cluster's random id (`spec.clusterUID` of its Cluster
+claim). A bundle without them reads as before. Beside the manifest,
+`manifest.json.sig` (JSON: `algorithm` `ed25519`, `publicKey`, `signature`,
+base64) is the cluster's signature over `gentian-os bundle manifest v1\n`
+followed by the decrypted manifest without its final newline; a bundle
+without it is unsigned, and a reader that ignores it reads the bundle as
+before. A manifest of a
+format newer than the platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`
 artefact is a tar.gz holding `INDEX`, the mailboxes one per line by the part
@@ -631,10 +747,21 @@ mailboxes, and then the tenant's records.
 writes into the manifest the ones its projection would not write, and the
 defaults the store no longer holds; no Job reads the store. A restore writes
 them after the realm is back and after the projection has attached the
-tenant. Into a tenant made new (`spec.intoNewTenant`, or a bundle of a tenant
-of another name or cluster) the granted ones are not written and are named in
-`status.rights.notBrought` and in the notes; the withdrawn ones are withdrawn,
-under the new tenant's names.
+tenant. The withdrawn ones are withdrawn, under this cluster's name. The
+granted ones, and any entry naming a person, are written only from a bundle
+this cluster signed, taken on a cluster of this cluster's id
+([security.md §6.4](security.md)); from any other they are named in
+`status.rights.notBrought` and in the notes, and `status.rights.provenance`
+says why: `NoSigningKey`, `Unsigned`, `SignedByAnotherKey`, `BadSignature`,
+`NoClusterID` or `AnotherCluster`.
+
+**Replacing the bundle signing key.** The key is never replaced by the
+installer. To replace it, delete `gentian-os/kernel/backup/signing` in the
+vault, run `./install.sh --step B-08 --force`, which seeds a new one, and export a
+new recovery kit. Every bundle signed before then reads as signed by another
+key: it still restores, with what was withdrawn withdrawn and no granted
+right brought back. Changing `spec.clusterUID` has the same effect on every
+earlier bundle.
 
 **What no restore brings back** is the checklist in
 [data-lifecycle.md](data-lifecycle.md) §5, and is said on every result
@@ -742,10 +869,7 @@ The gaps that matter to a person running the platform are in
 - **Files at a tenant's deletion** go with the namespace, after the stores,
   not before them.
 - **Renamed databases.** A database an app made for itself is restored under
-  another name when the bundle is of another tenant (§9.1). The app's own
-  settings may still name the old one.
-- **The realm of a bundle of another tenant.** Groups named
-  `gentian:tenant:<old>:…` are renamed to the new tenant's, with their
-  members; the bundle's clients, client roles and the old realm's default
-  role are not imported.
+  another name where the tenant's database prefix here is not the one it had
+  where the bundle was taken (§9.1). The app's own settings may still name
+  the old one, as far as its `restore.post` commands do not rewrite it.
 

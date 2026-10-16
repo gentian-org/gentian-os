@@ -42,6 +42,7 @@ _KIT_KEYS=(
     SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
     TRANSIT_UNSEAL_KEY OPENBAO_RECOVERY_KEYS OPENBAO_ROOT_TOKEN
     BACKUP_AGE_IDENTITY
+    BUNDLE_SIGNING_SEED
     GENTIAN_BREAK_GLASS_KEY
 )
 
@@ -433,6 +434,24 @@ _kit_gather() {
         _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" '.root_token' || true)}}"
 
     _kit_backup_identity || return 1
+
+    # The key the cluster signs its bundles with. In the kit so that a
+    # cluster rebuilt from it signs as this one did: its bundles still hold,
+    # and the rights granted in a tenant come back from them
+    # (seed_bundle_signing_key writes it back on --recover).
+    #
+    # A cluster handed over before bundles were signed has none, and no
+    # install step can reach its vault any more: the export, which runs as a
+    # platform administrator, seeds it then, as it makes the backup key.
+    if [[ -z "${BUNDLE_SIGNING_SEED:-}" && -n "${BAO_TOKEN:-}" ]]; then
+        BUNDLE_SIGNING_SEED="$(bao kv get -mount=secret -field=signing_seed \
+            gentian-os/kernel/backup/signing 2>/dev/null || true)"
+        if [[ -z "${BUNDLE_SIGNING_SEED}" ]]; then
+            seed_bundle_signing_key
+            BUNDLE_SIGNING_SEED="$(bao kv get -mount=secret -field=signing_seed \
+                gentian-os/kernel/backup/signing 2>/dev/null || true)"
+        fi
+    fi
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n "${CROSSPLANE_NAMESPACE:-kernel-provisioning}" \

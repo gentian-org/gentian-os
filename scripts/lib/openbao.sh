@@ -97,10 +97,10 @@ try_load_creds_from_openbao() {
         info "  OpenBao is not reachable yet — asking for the credentials instead."
         return 0
     fi
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
     # Don't bother if OpenBao is sealed/unreachable.
-    if ! curl -k -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1; then
+    if ! bao_curl -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1; then
         info "  OpenBao is not answering yet — asking for the credentials instead."
         return 0
     fi
@@ -110,7 +110,7 @@ try_load_creds_from_openbao() {
         # $1 = relative path under secret/data/gentian-os/kernel/
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
         # Missing paths (404) are normal before OpenBao is bootstrapped — must not abort install.
-        curl -k -sf --max-time 5 \
+        bao_curl -sf --max-time 5 \
             -H "X-Vault-Token: ${token}" \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
             | jq -r "$2 // empty" 2>/dev/null || true
@@ -257,20 +257,20 @@ init_openbao() {
         echo -n "."; sleep 10; waited=$((waited + 10))
     done
     echo ""
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
     local init_status
-    init_status=$(curl -k -sf "${BAO_HTTP}/v1/sys/init" | jq -r '.initialized')
+    init_status=$(bao_curl -sf "${BAO_HTTP}/v1/sys/init" | jq -r '.initialized')
 
     if [[ "$init_status" == "true" ]]; then
         success "OpenBao already initialized."
         local sealed seal_type
-        sealed=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
-        seal_type=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
+        sealed=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
+        seal_type=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
         if [[ "$sealed" == "true" && "$seal_type" == "transit" ]]; then
             warn "OpenBao sealed — waiting for transit auto-unseal..."
             sleep 15
-            sealed=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
+            sealed=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
             [[ "$sealed" == "true" ]] && { error "Auto-unseal failed."; exit 1; }
             success "Transit auto-unseal completed."
         fi
@@ -290,7 +290,7 @@ init_openbao() {
                 # on a bare 403 — so ask OpenBao first, and when it is dead say
                 # which kind of dead: revoked on purpose, or orphaned by a
                 # re-initialisation.
-                if curl -k -sf -H "X-Vault-Token: ${stored_token}" \
+                if bao_curl -sf -H "X-Vault-Token: ${stored_token}" \
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
                     info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
                     if [[ "$(kubectl get configmap gentian-handover \
@@ -320,12 +320,12 @@ init_openbao() {
     fi
 
     local seal_type_before
-    seal_type_before=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
+    seal_type_before=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
 
     if [[ "$seal_type_before" == "transit" ]]; then
         info "Initializing OpenBao with transit seal (recovery_shares=1)..."
         local init_resp
-        init_resp=$(curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
+        init_resp=$(bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
             -d '{"recovery_shares": 1, "recovery_threshold": 1}')
 
@@ -365,7 +365,7 @@ init_openbao() {
 
         info "Waiting for transit auto-unseal (up to 30 s)..."
         i=0
-        until curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -e '.sealed == false' >/dev/null 2>&1; do
+        until bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -e '.sealed == false' >/dev/null 2>&1; do
             sleep 3; i=$((i + 3))
             [[ $i -lt 30 ]] || { error "Auto-unseal timed out."; exit 1; }
         done
@@ -373,7 +373,7 @@ init_openbao() {
     else
         info "Initializing OpenBao (1-of-1 Shamir — transit unavailable)..."
         local init_resp
-        init_resp=$(curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
+        init_resp=$(bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
             -d '{"secret_shares": 1, "secret_threshold": 1}') || {
             error "OpenBao init request failed against ${BAO_HTTP}."
@@ -411,7 +411,7 @@ init_openbao() {
         warn "    ./install.sh --export-recovery-kit"
         echo ""
 
-        curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
+        bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
             -H "Content-Type: application/json" \
             -d "{\"key\": \"${unseal_key}\"}" | jq .
         export BAO_TOKEN="$root_token"
@@ -576,7 +576,7 @@ resolve_openbao_access() {
         return 1
     fi
     export BAO_ADDR
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
     _resolve_bao_token
 }
 
@@ -590,7 +590,7 @@ seed_secrets() {
         exit 1
     fi
     export BAO_ADDR
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
     if ! _resolve_bao_token; then
         error "Cannot seed kernel secrets without an OpenBao token."
@@ -685,4 +685,198 @@ seed_secrets() {
 gentian_handed_over() {
     [[ "$(kubectl get configmap gentian-handover -n "$(ns_kernel control)" \
         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]
+}
+
+# =============================================================================
+# The vault's TLS anchor (kernel/bootstrap/chart/templates/vault-tls.yaml)
+# =============================================================================
+# The serving certificate openbao-tls is signed by the CA openbao-ca, and
+# every client of the vault trusts that CA's certificate rather than the
+# serving one. Three things follow from it that a manifest cannot do, and
+# B-01 does them once the serving certificate is the CA's:
+#
+#   1. the CA's certificate, and nothing else, is copied as openbao-ca-bundle
+#      to cert-manager's namespace, where the internal CA's ClusterIssuer can
+#      read a Secret only, and to the operator's and Crossplane's, which mount
+#      it to verify the vault;
+#   2. the vault is told to load its files again (SIGHUP; it reads them only
+#      at start or on that signal). Its StatefulSet updates OnDelete, and a
+#      restart would seal it until the seal unseals it again, so a signal is
+#      what is sent. Each pod records which certificate it was told about;
+#   3. the custodian is restarted when the CA it trusts has changed: it reads
+#      ca.crt once, at start (internal/custodian/http.go loadBaoCA).
+#
+# External Secrets' stores read ca.crt on every connection and need nothing.
+#
+# On a cluster whose serving certificate was self-signed, (1)-(3) are the
+# switch: before it, ca.crt held that self-signed certificate, so the stores
+# trusted it under either key; between cert-manager re-issuing openbao-tls
+# and (2) a store's connection fails and is retried, and no Secret it made
+# is touched.
+# =============================================================================
+
+# _openbao_tls_field <secret> <key> — a field of a Secret in the secrets
+# namespace, base64 as the API server holds it.
+_openbao_tls_field() {
+    kubectl get secret "$1" -n "$(ns_kernel secrets)" \
+        -o jsonpath="{.data.${2//./\\.}}" 2>/dev/null || true
+}
+
+_openbao_tls_sha() { printf '%s' "$1" | sha256_of /dev/stdin; }
+
+# openbao_tls_from_ca — is the serving certificate the CA's, and current?
+openbao_tls_from_ca() {
+    local ns ca
+    ns="$(ns_kernel secrets)"
+    [[ "$(kubectl get certificate openbao-tls -n "${ns}" -o jsonpath='{.spec.issuerRef.name}' 2>/dev/null)" == "openbao-ca" ]] ||
+        return 1
+    [[ "$(kubectl get certificate openbao-tls -n "${ns}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return 1
+    ca="$(_openbao_tls_field openbao-ca-tls tls.crt)"
+    [[ -n "${ca}" && "${ca}" == "$(_openbao_tls_field openbao-tls ca.crt)" ]]
+}
+
+# openbao_cli_trust — make this shell's bao and bao_curl verify the vault.
+#
+# The vault's CA certificate, ca.crt of openbao-tls, is written to a file
+# and named as BAO_CACERT, with the name the serving certificate carries as
+# BAO_TLS_SERVER_NAME (the address is a ClusterIP or a port-forward, which
+# it does not carry). VAULT_* alike, for the tools that read only those.
+#
+# Before B-01 has made the CA there is no ca.crt, and nothing answers on the
+# vault's address either; only then does this leave verification off, and
+# says so.
+openbao_cli_trust() {
+    local ns ca file
+    ns="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}"
+    unset VAULT_SKIP_VERIFY BAO_SKIP_VERIFY
+    ca="$(kubectl get secret openbao-tls -n "${ns}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
+    if [[ -z "${ca}" ]]; then
+        unset BAO_CACERT VAULT_CACERT BAO_TLS_SERVER_NAME VAULT_TLS_SERVER_NAME
+        export VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+        warn "The vault's CA is not there yet (openbao-tls in ${ns}); not verifying the vault." >&2
+        return 0
+    fi
+    # Beside this run's port-forward records, and removed with them at exit
+    # (gentian_cleanup_port_forwards): a dry run leaves the host as it was.
+    file="${_GENTIAN_PF_CACHE}.openbao-ca.crt"
+    printf '%s' "${ca}" | base64 -d > "${file}"
+    export BAO_CACERT="${file}" VAULT_CACERT="${file}"
+    export BAO_TLS_SERVER_NAME="openbao.${ns}.svc" VAULT_TLS_SERVER_NAME="openbao.${ns}.svc"
+}
+
+# _openbao_ca_namespaces — where the copy openbao-ca-bundle is kept.
+_openbao_ca_namespaces() {
+    printf '%s\n' "$(gentian_cert_manager_namespace)" "$(ns_kernel control)" "$(ns_kernel provisioning)"
+}
+
+_openbao_running_pods() {
+    kubectl get pods -n "$(ns_kernel secrets)" \
+        -l app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao \
+        --field-selector=status.phase=Running -o name 2>/dev/null || true
+}
+
+_openbao_custodian() {
+    kubectl get deploy -n "$(ns_kernel control)" -l app.kubernetes.io/component=custodian \
+        -o name 2>/dev/null | head -1 || true
+}
+
+# openbao_tls_settled — (1)-(3) above are done for the certificates there now.
+openbao_tls_settled() {
+    openbao_tls_from_ca || return 1
+    local ca crt pod dep
+    ca="$(_openbao_tls_field openbao-tls ca.crt)"
+    crt="$(_openbao_tls_field openbao-tls tls.crt)"
+    local cns
+    for cns in $(_openbao_ca_namespaces); do
+        [[ "$(kubectl get secret openbao-ca-bundle -n "${cns}" \
+            -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" == "${ca}" ]] || return 1
+    done
+    for pod in $(_openbao_running_pods); do
+        [[ "$(kubectl get "${pod}" -n "$(ns_kernel secrets)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/tls-crt-sha256}' 2>/dev/null)" == \
+            "$(_openbao_tls_sha "${crt}")" ]] || return 1
+    done
+    dep="$(_openbao_custodian)"
+    if [[ -n "${dep}" ]]; then
+        [[ "$(kubectl get "${dep}" -n "$(ns_kernel control)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-ca-sha256}' 2>/dev/null)" == \
+            "$(_openbao_tls_sha "${ca}")" ]] || return 1
+    fi
+    return 0
+}
+
+# openbao_tls_settle — wait for the serving certificate to be the CA's, then
+# do (1)-(3).
+openbao_tls_settle() {
+    local t=$((SECONDS + ${OPENBAO_TLS_TIMEOUT:-180})) ca crt sha pod dep
+    info "Waiting for the vault's serving certificate to be signed by its CA openbao-ca..."
+    until openbao_tls_from_ca; do
+        if (( SECONDS > t )); then
+            error "openbao-tls in $(ns_kernel secrets) is not signed by openbao-ca yet:"
+            error "  kubectl describe certificate openbao-tls openbao-ca -n $(ns_kernel secrets)"
+            return 1
+        fi
+        sleep 3
+    done
+    ca="$(_openbao_tls_field openbao-tls ca.crt)"
+    crt="$(_openbao_tls_field openbao-tls tls.crt)"
+
+    # The certificate only; on stdin, as every Secret this installer writes.
+    local cns
+    for cns in $(_openbao_ca_namespaces); do
+        kubectl apply -n "${cns}" -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openbao-ca-bundle
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+type: Opaque
+data:
+  ca.crt: ${ca}
+YAML
+    done
+
+    # A vault whose pod is not up yet reads the files when it starts; one
+    # that is up is told to read them. On a first install the pod is
+    # usually still being scheduled when this runs.
+    t=$((SECONDS + ${OPENBAO_POD_WAIT:-120}))
+    while [[ -z "$(_openbao_running_pods)" ]] && (( SECONDS < t )); do sleep 4; done
+
+    sha="$(_openbao_tls_sha "${crt}")"
+    for pod in $(_openbao_running_pods); do
+        [[ "$(kubectl get "${pod}" -n "$(ns_kernel secrets)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/tls-crt-sha256}' 2>/dev/null)" == "${sha}" ]] &&
+            continue
+        # The kubelet updates a mounted Secret within about a minute of the
+        # Secret changing; until the file is the new one, a signal reloads
+        # the old.
+        local i
+        for i in $(seq 1 30); do
+            [[ "$(kubectl exec -n "$(ns_kernel secrets)" "${pod}" -c openbao -- \
+                cat /openbao/tls/tls.crt 2>/dev/null | base64 | tr -d '\n')" == "${crt}" ]] && break
+            sleep 4
+        done
+        if kubectl exec -n "$(ns_kernel secrets)" "${pod}" -c openbao -- pkill -HUP -x bao >/dev/null 2>&1; then
+            kubectl annotate "${pod}" -n "$(ns_kernel secrets)" --overwrite \
+                "gentianos.io/tls-crt-sha256=${sha}" >/dev/null
+            info "${pod#pod/} loaded the vault's current serving certificate."
+        else
+            warn "Could not signal ${pod#pod/} to load its serving certificate; it serves the"
+            warn "  previous one until it restarts."
+        fi
+    done
+
+    dep="$(_openbao_custodian)"
+    sha="$(_openbao_tls_sha "${ca}")"
+    if [[ -n "${dep}" && "$(kubectl get "${dep}" -n "$(ns_kernel control)" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-ca-sha256}' 2>/dev/null)" != "${sha}" ]]; then
+        kubectl rollout restart "${dep}" -n "$(ns_kernel control)" >/dev/null &&
+            kubectl annotate "${dep}" -n "$(ns_kernel control)" --overwrite \
+                "gentianos.io/openbao-ca-sha256=${sha}" >/dev/null &&
+            info "The custodian restarted to trust the vault's CA."
+    fi
+    success "The vault's TLS is signed by openbao-ca, and its clients trust that CA."
 }

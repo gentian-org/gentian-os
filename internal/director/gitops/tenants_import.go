@@ -55,6 +55,10 @@ type PendingImport struct {
 	// Skipped are the apps of the bundle's tenant the import left out of the
 	// tenant made here, each with why.
 	Skipped []SkippedApp `json:"skipped,omitempty"`
+	// CustomDomain is the bundle's custom domain, declared again with the
+	// tenant; "" when the bundle had none or the import was asked not to
+	// keep it. The restore waits until the tenant is on it.
+	CustomDomain string `json:"customDomain,omitempty"`
 }
 
 // SkippedApp is one app of a bundle's tenant an import did not give the
@@ -66,13 +70,14 @@ type SkippedApp struct {
 
 // ImportedTenant is a tenant to be made from a bundle.
 type ImportedTenant struct {
-	// Name is the tenant's name here: the bundle's, or another.
+	// Name is the tenant's name: the one the bundle carries.
 	Name string
 	// Spec is the tenant's settings as the bundle's manifest carries them.
 	Spec *gentianov1alpha1.TenantSpec
 	// Origin says which bundle, for the manifest's header.
 	Origin string
-	// Pending is recorded beside the manifest.
+	// Pending is recorded beside the manifest. Its CustomDomain, when set, is
+	// declared as the tenant's TenantDomain in the same commit.
 	Pending PendingImport
 }
 
@@ -86,10 +91,10 @@ type ImportedTenant struct {
 //   - The tenant's names. Its realm, its database prefix and its bucket
 //     prefix follow from its name here by the platform's one rule
 //     (backup.RuleIsolation), as a created tenant's do. A bundle's manifest
-//     states the names of the tenant it was taken of; copied, a tenant
-//     imported under another name beside the original pointed at the
-//     original's realm, databases and buckets, and the restore that followed
-//     replaced them. The placement of its workloads (isolation.namespace) is
+//     states the names the tenant had where it was taken, which need not be
+//     the ones the rule gives; copied, they could point at another tenant's
+//     realm, databases and buckets, and the restore that followed would
+//     replace them. The placement of its workloads (isolation.namespace) is
 //     not carried either.
 //   - deletionPolicy is Retain: a tenant that was exported while a purge was
 //     under way must not arrive with its purge; and spec.deletion is dropped
@@ -98,6 +103,11 @@ type ImportedTenant struct {
 //     or its own delegation.
 //   - spec.perimeter is dropped: whether a tenant's own administrators
 //     approve its public addresses is not the bundle's to say either.
+//
+// A custom domain the import keeps (Pending.CustomDomain) is declared in the
+// same commit, as SetTenantDomain writes it and under the rules it is under
+// (CheckImportedDomain), so that the tenant is made on that domain from its
+// first reconcile and the restore sees no move.
 func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, meta Meta) (Result, error) {
 	name := imported.Name
 	if imported.Spec == nil {
@@ -105,10 +115,22 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 	}
 	pending := imported.Pending
 	pending.Tenant = name
+	beside := map[string][]byte{}
+	if pending.CustomDomain != "" {
+		domain, err := g.CheckImportedDomain(ctx, name, pending.CustomDomain)
+		if err != nil {
+			return Result{}, err
+		}
+		pending.CustomDomain = domain
+		listed, _ := ensureListed(tenantKustomization(), TenantDomainFile, listResource)
+		beside[TenantDomainFile] = []byte(renderTenantDomain(name, domain))
+		beside["kustomization.yaml"] = []byte(listed)
+	}
 	record, err := json.MarshalIndent(pending, "", "  ")
 	if err != nil {
 		return Result{}, err
 	}
+	beside[ImportFile] = append(record, '\n')
 	manifest := func() ([]byte, error) {
 		declared := imported.Spec.DeepCopy()
 		mode := gentianov1alpha1.IsolationMode("")
@@ -132,6 +154,9 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		// registrations says nothing about this cluster's: a tenant is made
 		// with sign-up on here, deliberately, or not at all.
 		declared.SignUp = nil
+		// Nor which outside realms its people sign in at: a client that trusts
+		// another realm's keys is commissioned on this cluster, deliberately.
+		declared.BrokeredTo = nil
 		body, err := yaml.Marshal(map[string]any{
 			"apiVersion": "gentianos.io/v1alpha1",
 			"kind":       "Tenant",
@@ -154,7 +179,7 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 `, name, imported.Origin)
 		return append([]byte(header), body...), nil
 	}
-	return g.createTenant(ctx, name, manifest, map[string][]byte{ImportFile: append(record, '\n')},
+	return g.createTenant(ctx, name, manifest, beside,
 		fmt.Sprintf("Import tenant %s", name), "imported", meta)
 }
 

@@ -43,7 +43,8 @@ _oidc_bao_addr() {
     [[ -n "${token}" ]] || return 1
     BAO_ADDR="${addr}"
     BAO_TOKEN="${token}"
-    export BAO_ADDR BAO_TOKEN VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+    export BAO_ADDR BAO_TOKEN
+    openbao_cli_trust
     return 0
 }
 

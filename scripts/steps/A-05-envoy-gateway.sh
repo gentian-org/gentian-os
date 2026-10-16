@@ -18,6 +18,7 @@
 check() {
     helm_pinned_ok envoy-gateway envoy-gateway edge &&
         kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1 &&
+        helm_deployments_available edge envoy-gateway &&
         # The definitions are this release's, not ones an earlier install left.
         envoy_gateway_crds_current &&
         # The name it answers for, not merely that it is installed.

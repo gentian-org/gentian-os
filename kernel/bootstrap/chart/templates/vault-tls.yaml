@@ -1,8 +1,18 @@
 ---
-# The vault listens with TLS from the first byte; the certificate is
-# self-signed by an Issuer in its own namespace and its CA is what the
-# custodian and ESO trust. Applied directly by B-01, not through an
-# Application: it is a prerequisite of the vault's pod starting at all.
+# The vault listens with TLS from the first byte. Applied directly by B-01,
+# not through an Application: it is a prerequisite of the vault's pod
+# starting at all.
+#
+# Two stages, so that what clients trust does not move. A self-signed CA,
+# openbao-ca, valid ten years, signs the vault's serving certificate
+# openbao-tls, which cert-manager renews as usual. Everything that verifies
+# the vault trusts ca.crt -- External Secrets' stores, the custodian, and,
+# through the copies B-01 keeps as openbao-ca-bundle, the internal CA's
+# ClusterIssuer, the operator and provider-vault. The serving certificate used to be
+# self-signed itself, so the anchor changed, key and all, at every renewal.
+#
+# The CA's key stays in this namespace's Secret openbao-ca-tls, as the
+# serving key stays in openbao-tls; only certificates are copied out.
 {{- $ns := include "ns" (list . "secrets") }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
@@ -15,6 +25,40 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
+  name: openbao-ca
+  namespace: {{ $ns }}
+spec:
+  isCA: true
+  commonName: openbao-ca
+  subject:
+    organizations:
+      - gentian-os
+  secretName: openbao-ca-tls
+  # Ten years: renewing it is handing a new anchor to everything above.
+  duration: 87600h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # A renewal keeps the key, so a copy of the old certificate still
+    # verifies what the new one signs.
+    rotationPolicy: Never
+  issuerRef:
+    kind: Issuer
+    name: openbao-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: openbao-ca
+  namespace: {{ $ns }}
+spec:
+  ca:
+    secretName: openbao-ca-tls
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
   name: openbao-tls
   namespace: {{ $ns }}
 spec:
@@ -23,7 +67,10 @@ spec:
     - openbao.{{ $ns }}.svc
     - openbao
     - localhost
+  privateKey:
+    algorithm: ECDSA
+    size: 256
   issuerRef:
     kind: Issuer
-    name: openbao-selfsigned
+    name: openbao-ca
   secretName: openbao-tls

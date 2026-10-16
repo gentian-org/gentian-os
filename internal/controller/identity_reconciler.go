@@ -349,20 +349,26 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 	}
 }
 
-func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
+// makeClientJob creates a Job that makes or updates an app's OIDC client in
+// the tenant's realm.
+//
+// When withSecret is set (Seeder enabled) the Job gives the client the
+// secret the vault holds for the app. The pod reads it from the Secret of the
+// Job's name, which the Job owns (jobSecret); it is in no Job spec, no
+// ConfigMap and no composed Object. Without it Keycloak keeps or generates
+// the client's secret.
+func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, withSecret bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	redirectURI := redirectURIs[0]
+	jobName := clientJobName(tenant.Name, appName)
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
-	if clientSecret != "" {
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "OIDC_CLIENT_SECRET",
-			Value: clientSecret,
-		})
+	if withSecret {
+		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      clientJobName(tenant.Name, appName),
+			Name:      jobName,
 			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
@@ -604,13 +610,13 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}" >/dev/null
+      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false,`+keycloak.PlatformMarkerShellJSON+`}" >/dev/null
     echo "broker client ${BROKER_CLIENT_ID} updated in ${KERNEL_REALM} realm"
   else
     curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false,`+keycloak.PlatformMarkerShellJSON+`}"
     BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
       "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
 `+realmScriptBrokerIDPlaceholder+`
@@ -666,14 +672,14 @@ if echo "${EXISTING}" | grep -q '"id"'; then
     -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false,`+keycloak.PlatformMarkerShellJSON+`${SECRET_FIELD}}"
   echo "client %s updated (redirect URIs + secret)"
 else
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false,`+keycloak.PlatformMarkerShellJSON+`${SECRET_FIELD}}"
   echo "client %s created in realm %s"
 fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI, clientID, realmName, clientID, redirectURI, clientID, realmName)
 }
@@ -691,14 +697,14 @@ if echo "${EXISTING}" | grep -q '"id"'; then
     -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\"},\"protocolMappers\":[{\"name\":\"email\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"email\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"email\",\"user.attribute\":\"email\"}},{\"name\":\"firstName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"firstName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"firstName\",\"user.attribute\":\"firstName\"}},{\"name\":\"lastName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"lastName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"lastName\",\"user.attribute\":\"lastName\"}}]}"
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\",\"`+keycloak.PlatformMarkerAttribute+`\":\"`+keycloak.PlatformMarkerValue+`\"},\"protocolMappers\":[{\"name\":\"email\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"email\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"email\",\"user.attribute\":\"email\"}},{\"name\":\"firstName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"firstName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"firstName\",\"user.attribute\":\"firstName\"}},{\"name\":\"lastName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"lastName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"lastName\",\"user.attribute\":\"lastName\"}}]}"
   echo "SAML client %s updated"
 else
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\"},\"protocolMappers\":[{\"name\":\"email\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"email\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"email\",\"user.attribute\":\"email\"}},{\"name\":\"firstName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"firstName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"firstName\",\"user.attribute\":\"firstName\"}},{\"name\":\"lastName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"lastName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"lastName\",\"user.attribute\":\"lastName\"}}]}"
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\",\"`+keycloak.PlatformMarkerAttribute+`\":\"`+keycloak.PlatformMarkerValue+`\"},\"protocolMappers\":[{\"name\":\"email\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"email\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"email\",\"user.attribute\":\"email\"}},{\"name\":\"firstName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"firstName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"firstName\",\"user.attribute\":\"firstName\"}},{\"name\":\"lastName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"lastName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"lastName\",\"user.attribute\":\"lastName\"}}]}"
   echo "SAML client %s created in realm %s"
 fi`, realmName, entityID, entityID, realmName, realmName, entityID, acsURL, entityID, realmName, entityID, acsURL, entityID, realmName)
 }

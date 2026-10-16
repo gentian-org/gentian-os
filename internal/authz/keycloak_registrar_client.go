@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
@@ -176,6 +177,8 @@ func (c *KeycloakAdminClient) createRegistrarClient(ctx context.Context, token, 
 		// realm-management roles granted below, and a full scope would put
 		// every realm role into every token it mints.
 		"fullScopeAllowed": false,
+		// The platform's: a realm import never makes it from a bundle.
+		"attributes": map[string]string{keycloak.PlatformMarkerAttribute: keycloak.PlatformMarkerValue},
 	}
 	_, err := c.doAdminExpect(ctx, token, http.MethodPost,
 		"/admin/realms/"+url.PathEscape(realm)+"/clients", body,

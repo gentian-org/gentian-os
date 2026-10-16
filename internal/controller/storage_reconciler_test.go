@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -124,16 +125,31 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		t.Errorf("the bucket Job's pod lacks %s", backup.ObjectStorageShellLabel)
 	}
 
-	// The master's address comes from the s3-admin Secret; no administrator's
-	// key is needed, and none is handed to the pod.
+	// The master's address comes from the s3-admin Secret, and the filer's
+	// signing key, which s3.configure needs a token of, from the store's
+	// signing Secret; no administrator's key is needed, and none is handed
+	// to the pod.
 	secretEnvs := make(map[string]string)
 	for _, e := range container.Env {
 		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
 			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name + "/" + e.ValueFrom.SecretKeyRef.Key
 		}
 	}
-	if secretEnvs["S3_MASTER"] != "s3-admin/master" || len(secretEnvs) != 1 {
-		t.Errorf("the bucket Job reads %v from Secrets, want only S3_MASTER from s3-admin/master", secretEnvs)
+	if secretEnvs["S3_MASTER"] != "s3-admin/master" ||
+		secretEnvs["WEED_JWT_FILER_SIGNING_KEY"] != backup.ObjectStoreSigningSecret+"/filer_signing_key" || len(secretEnvs) != 2 {
+		t.Errorf("the bucket Job reads %v from Secrets, want S3_MASTER from s3-admin/master and the filer's signing key", secretEnvs)
+	}
+	// The client certificate the master and the filer accept the Job by.
+	var tls *corev1.Volume
+	for i, v := range job.Spec.Template.Spec.Volumes {
+		if v.Secret != nil && v.Secret.SecretName == backup.ObjectStoreClientTLSSecret {
+			tls = &job.Spec.Template.Spec.Volumes[i]
+		}
+	}
+	if tls == nil {
+		t.Errorf("the bucket Job's pod does not mount %s", backup.ObjectStoreClientTLSSecret)
+	} else if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].Name != tls.Name || container.VolumeMounts[0].SubPath != "" {
+		t.Errorf("the bucket container mounts %v, want the whole client certificate", container.VolumeMounts)
 	}
 
 	// BUCKET_NAME must be a non-empty literal env var.

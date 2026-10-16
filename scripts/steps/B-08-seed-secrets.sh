@@ -3,7 +3,7 @@
 # phase: secrets
 # requires: B-07-crossplane-secrets
 # provides: the kernel KV paths ESO reads — DNS provider, tunnel, mail relay, registry, the deployments repository credential
-# mutates: vault KV paths under gentian-os/kernel/
+# mutates: vault KV paths under gentian-os/kernel/; the vault's PKI engine pki-internal (the internal CA, made once, and its role gentian-ca); the Secret gentian-root-ca-tls in the cert-manager namespace (that CA's certificate, no key)
 
 # This said "requires: C-01-cluster-claim", which runs nine steps later. The
 # install was never wrong -- the driver reads the line as documentation -- but
@@ -32,9 +32,16 @@ check() {
         return "${CHECK_MISSING}"
     fi
     local p
-    for p in dns/cloudflare repositories/deployments; do
-        [[ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/secret/data/gentian-os/kernel/${p}")" == "200" ]] || return 1
+    # backup/signing too: a cluster installed before bundles were signed has
+    # the other two, and would otherwise never be given its signing key.
+    for p in dns/cloudflare repositories/deployments backup/signing; do
+        [[ "$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/secret/data/gentian-os/kernel/${p}")" == "200" ]] || return 1
     done
+    # The internal CA, wherever the vault is the one that holds it.
+    if [[ "$(gentian_issuer_mode)" != "private-ca" ]]; then
+        [[ -n "$(bao_curl -s --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/pki-internal/config/issuers" 2>/dev/null |
+            jq -r '.data.default // empty' 2>/dev/null)" ]] || return 1
+    fi
 }
 
 apply() {

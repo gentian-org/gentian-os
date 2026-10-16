@@ -27,6 +27,10 @@ spec:
       name: Paused
       priority: 1
       type: string
+    - jsonPath: .status.heldBack
+      name: Held back
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -79,7 +83,22 @@ spec:
                 description: |-
                   Bundle locates a bundle directly, for restoring one this cluster did not
                   produce — a migration, or a rebuild where the original export is gone.
+
+                  Whichever names it, the bundle must be of this tenant: one whose
+                  manifest names another tenant is refused before anything is changed. A
+                  restore does not rename; a bundle meant for another name is rewritten
+                  into it, by a tool that does so, first.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how the bucket was named in requests to Endpoint
+                      when the bundle was written: path (empty) or virtualHost. Recorded for
+                      the reason Endpoint is: a restore or a deletion of this bundle
+                      addresses it as it was written, whatever the policy says today.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: |-
                       Bucket holds the tenant's bundles. It is provisioned per tenant and is
@@ -179,8 +198,8 @@ spec:
                   into another by a file. The restore names each in its result. What the
                   bundle records as withdrawn is withdrawn here too.
 
-                  The same holds, whatever this says, when the bundle was taken of a
-                  tenant of another name or on another cluster.
+                  The rights are not granted either, whatever this says, when the
+                  bundle was taken on another cluster.
                 type: boolean
               skipVersionCheck:
                 description: |-
@@ -251,6 +270,16 @@ spec:
                             required:
                             - size
                             type: object
+                          databases:
+                            description: |-
+                              Databases are, for an archive of the databases an app made itself
+                              (postgresOwned, mariadbOwned), each database it held as
+                              "<name in the bundle>=<name here>", as the restore's Job reported
+                              them once it had put them back. Set by a restore only.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
                           kind:
                             description: |-
                               Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
@@ -311,6 +340,12 @@ spec:
                       description: Digest is the pinned digest of the app's build,
                         when the tenant pins one.
                       type: string
+                    heldBackAt:
+                      description: |-
+                        HeldBackAt is when a restore asked the edge to hold this app back
+                        (TenantRestoreStatus.HeldBack). Restore only.
+                      format: date-time
+                      type: string
                     lastFailure:
                       description: |-
                         LastFailure is what the capture container actually said, from the last
@@ -368,6 +403,13 @@ spec:
                         app's, without pausing anything; a restore puts it back as retained and
                         installs nothing.
                       type: boolean
+                    rolloutStart:
+                      description: |-
+                        RolloutStart is when a restore started this app again on the restored
+                        data, after its post-restore commands. The app is done once that
+                        rollout has finished. Restore only.
+                      format: date-time
+                      type: string
                     secrets:
                       description: |-
                         Secrets says what was done with the app's own secrets: which an
@@ -507,6 +549,16 @@ spec:
                 description: Bundle is the bundle actually used, resolved from exportRef
                   or spec.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how the bucket was named in requests to Endpoint
+                      when the bundle was written: path (empty) or virtualHost. Recorded for
+                      the reason Endpoint is: a restore or a deletion of this bundle
+                      addresses it as it was written, whatever the policy says today.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: |-
                       Bucket holds the tenant's bundles. It is provisioned per tenant and is
@@ -553,8 +605,12 @@ spec:
                 format: date-time
                 type: string
               conditions:
-                description: Conditions carry Accepted (admitted, and preflight passed)
-                  and Complete.
+                description: |-
+                  Conditions carry Accepted (admitted, and preflight passed) and Complete,
+                  and OutsideGuarantee when the restore is not the round trip the
+                  platform guarantees -- a bundle of its own version line, on the same
+                  domain -- with what differs.
+                  Such a restore goes ahead as far as it can.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -613,6 +669,17 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              heldBack:
+                description: |-
+                  HeldBack names the apps the edge keeps unreachable while this restore
+                  runs: each is added before anything of it is changed, and the edge
+                  answers 503 on its routes until the restore has ended (Ready or Failed)
+                  or is deleted. Read by the edge from here, so an operator restart
+                  changes nothing; emptied when the restore ends.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               importRemoved:
                 description: |-
                   ImportRemoved records that the uploaded bundle this restore read was
@@ -712,6 +779,17 @@ spec:
                       type: string
                     type: array
                     x-kubernetes-list-type: atomic
+                  provenance:
+                    description: |-
+                      Provenance is whether the bundle was written on this cluster, which
+                      decides whether what was granted in its tenant comes back: Proven
+                      (signed with this cluster's key, taken on this cluster), or why not
+                      -- NoSigningKey, Unsigned, SignedByAnotherKey, BadSignature,
+                      NoClusterID, AnotherCluster.
+                    type: string
+                  provenanceMessage:
+                    description: ProvenanceMessage says the same in a sentence.
+                    type: string
                   waitingSince:
                     description: |-
                       WaitingSince is when the restore began to wait for the operator to
@@ -727,13 +805,44 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                 type: object
+              source:
+                description: |-
+                  Source is where and by what the bundle was written, as its manifest
+                  records it: what a profile's post-restore commands are told beside
+                  where the restore puts the data. Empty fields are ones the bundle does
+                  not record.
+                properties:
+                  cluster:
+                    description: Cluster is the id of the cluster it was written on.
+                    maxLength: 253
+                    type: string
+                  customDomain:
+                    description: |-
+                      CustomDomain is the custom domain a TenantDomain bound the tenant to
+                      there. A restore does not bind it; it says to declare it again.
+                    maxLength: 253
+                    type: string
+                  domain:
+                    description: Domain is the tenant's domain where it was written.
+                    maxLength: 253
+                    type: string
+                  kernelDomain:
+                    description: |-
+                      KernelDomain is the domain of the cluster it was written on, the one
+                      its sign-in issuer is under.
+                    maxLength: 253
+                    type: string
+                  platformVersion:
+                    description: PlatformVersion is the version line of the platform
+                      that wrote it.
+                    maxLength: 64
+                    type: string
+                type: object
               sourceTenant:
                 description: |-
                   SourceTenant is the tenant the bundle was taken of, as its manifest
-                  records it. When it is not the tenant restored into, the bundle's names
-                  are another tenant's: databases an app made for itself and the
-                  platform's groups are put back under this tenant's names, and the
-                  bundle's sign-in clients are not imported.
+                  records it: the tenant restored into, as a bundle of any other is
+                  refused. Empty where the manifest does not say.
                 type: string
               startedAt:
                 format: date-time

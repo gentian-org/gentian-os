@@ -86,30 +86,41 @@ func (r *TenantExportReconciler) storeOnlyRights(ctx context.Context, tenant *ge
 
 // rightsPlan is what a restore does with the entries a bundle holds.
 //
-// Every entry is first put under the names of the tenant restored into
-// (authz.Rebase): the tenant, its apps, its groups and the cluster.
+// Every entry is first put under the name of the cluster restored on
+// (authz.Rebase). The tenant is the bundle's own: a restore renames none.
 //
 // What the bundle records as withdrawn is withdrawn: taking a right away
 // widens nothing.
 //
-// What it records as granted is granted only where the bundle is restored
-// into the tenant it was taken of. Into a tenant made new -- an import,
-// under any name and on any cluster -- none of it is: a right somebody
+// What it records as granted is granted only where the bundle provably
+// comes from this tenant on this cluster: signed with this cluster's key,
+// taken on a cluster of this cluster's id (backup.CheckProvenance); a bundle
+// of another tenant is refused before this. Into a tenant made new -- an
+// import -- as into the tenant it was taken of. From any other bundle --
+// unsigned, written before bundles were signed, of another cluster, or with
+// a signature that does not hold -- none of it is: a right somebody
 // granted in one tenant is not carried into another by a file, and whoever
-// may grant it there grants it again. Each such entry is named.
+// may grant it there grants it again. Each such entry is named, and the
+// reason is recorded once (Provenance).
 //
-// An entry that is not held on the tenant or one of its apps, that is not
-// an id of the store, or that names a person by an identifier of the realm
-// the bundle was taken of -- which a restored person does not keep -- is
-// never written, wherever the bundle is restored.
-func rightsPlan(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, cluster string, intoNewTenant, haveStore bool) *gentianov1alpha1.RestoreRights {
+// An entry that names a person (user:<id>) is a grant to that person,
+// withdrawn or granted, and is written only from such a bundle too: a
+// restored person keeps their id, and only this cluster's own bundle of
+// this tenant says whose that id was.
+//
+// An entry that is not held on the tenant or one of its apps, or that is
+// not an id of the store, is never written, wherever the bundle comes from.
+func rightsPlan(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, cluster string, provenance backup.Provenance, haveStore bool) *gentianov1alpha1.RestoreRights {
 	if m.Rights == nil || (len(m.Rights.Granted) == 0 && len(m.Rights.Withdrawn) == 0) {
 		return nil
 	}
-	fresh := intoNewTenant || m.Tenant != tenant.Name || (m.Rights.Cluster != "" && m.Rights.Cluster != cluster)
-	out := &gentianov1alpha1.RestoreRights{}
+	ours := ""
+	if !provenance.Proven() {
+		ours = provenance.Message
+	}
+	out := &gentianov1alpha1.RestoreRights{Provenance: provenance.Reason, ProvenanceMessage: provenance.Message}
 	usable := func(raw bundle.RightsTuple) (authz.Tuple, string) {
-		t := authz.Rebase(authz.Tuple{User: raw.User, Relation: raw.Relation, Object: raw.Object}, m.Tenant, tenant.Name, m.Rights.Cluster, cluster)
+		t := authz.Rebase(authz.Tuple{User: raw.User, Relation: raw.Relation, Object: raw.Object}, m.Rights.Cluster, cluster)
 		switch {
 		case !haveStore:
 			return t, "this cluster's operator has no rights store to write it to"
@@ -117,8 +128,8 @@ func rightsPlan(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, cluster str
 			return t, authz.WellFormed(t).Error()
 		case !authz.OnTenant(t, tenant.Name):
 			return t, "it is held on something that is neither this tenant nor one of its apps"
-		case strings.HasPrefix(t.User, "user:"):
-			return t, "it names a person by the identifier they had in the realm the bundle was taken of, which a restore does not bring back"
+		case strings.HasPrefix(t.User, "user:") && ours != "":
+			return t, "it names a person, and a person's rights come back only from this cluster's own bundle of this tenant: " + ours
 		}
 		return t, ""
 	}
@@ -132,8 +143,8 @@ func rightsPlan(m *backup.Manifest, tenant *gentianov1alpha1.Tenant, cluster str
 	}
 	for _, raw := range m.Rights.Granted {
 		t, why := usable(raw)
-		if why == "" && fresh {
-			why = "it was granted in the tenant the bundle was taken of, and a grant is not carried into a tenant made new; whoever may grant it here grants it again"
+		if why == "" && ours != "" {
+			why = "it was granted in the tenant the bundle was taken of, and a grant comes back only from this cluster's own bundle of this tenant; whoever may grant it here grants it again"
 		}
 		if why != "" {
 			out.NotBrought = append(out.NotBrought, rightsText(t)+": "+why)

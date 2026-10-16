@@ -363,6 +363,106 @@ Carried over from before, and still not shown:
   provider-helm, the pod under the Kyverno baseline, the NetworkPolicy under
   Calico (the master's address names a Service, the filer is reached at the
   pod), and an app writing to its bucket.
+- Four follow-ups to it, decided by the owner and built on `test-cb`, never
+  run on a cluster: (2) an app's S3 key pair reaches the Job that makes its
+  identity in a Secret of the Job's name that the Job owns, never in a Job
+  spec, the provisioning ConfigMap or a composed Object; (3) the object
+  store's administrator is `s3-admin`, its key derived under `s3` (new
+  installs); (4) export and restore pods leave the cluster only to the
+  external destination of their own run, on its port, at its address when
+  the endpoint names one, and not at all for the platform's storage; (5) an
+  external destination's `addressingStyle` (`path`, the default, or
+  `virtualHost`), recorded on each bundle and used by the Jobs (rclone's
+  `force_path_style`), the operator's reads (minio-go's bucket lookup), the
+  director, `kubectl gentian tenants import` and `recovery.sh`. Proven in
+  local containers: (2) and (3) by `make test-object-storage-lab`; (5) the
+  Jobs' remote against SeaweedFS with `-s3.domainName`, which serves both
+  styles. *Needs a cluster:* the bucket Job's pod waiting for its Secret and
+  starting once the operator has made it, the Secret collected with the Job,
+  and the per-run NetworkPolicy under Calico.
+- Two more, decided by the owner and built on `test-cb`, never run on a
+  cluster. (6) The internal CA `gentian-ca` on every cluster, in every issuer
+  mode (on `private-ca` it stays the person's CA), its key generated once in
+  the vault's PKI engine (`pki-internal`) and never out of it, cert-manager
+  asking the vault to sign through a role that admits the store's names
+  only (and the kernel domain on `self-signed`); the object store's gRPC mutual TLS from it (one
+  certificate for the pod, one client certificate for the `weed shell`
+  Jobs, accepted names set per component); the volume server and the
+  filer's HTTP port taking only signed tokens, the keys random at
+  `gentian-os/kernel/storage/s3/jwt`. (7) An app's PostgreSQL, MariaDB and
+  cache passwords, and the OIDC client secret the Keycloak client Jobs set,
+  reach their provisioning Jobs in Secrets the Jobs own.
+  Proven in local containers (`make test-object-storage-lab`): a weed client
+  without a certificate, with one of another CA, or with one of the CA under
+  another name, is refused by the master and the filer; the Jobs' certificate
+  works; a volume write without a token, or with one of another key, is
+  refused and the master's is taken; volume and filer reads without a token
+  are refused; a replaced CA and certificates are taken up without a
+  restart; every earlier case still passes. A-09, B-08 and B-01 by
+  `make test-internal-ca` against stubs; the engine, the role's refusals,
+  the sign-only policy, the import of a cert-manager-made CA and seed-once
+  against a local OpenBao 2.5.0; the vault taking a CA-signed certificate on
+  `SIGHUP` without sealing, likewise. *Needs a cluster:* cert-manager's
+  Kubernetes login at the vault (token audience, the token-request Role),
+  its NetworkPolicy path, gentian-ca Ready after B-08 and C-01 on each issuer
+  mode, the store's certificates issued, a self-signed cluster's existing CA
+  imported, and an existing cluster's vault moving to `openbao-ca` with its
+  stores and the custodian following. *Resolved on `test-cb`:* the sidecar
+  `tls-reload` signals the vault when `openbao-tls` renews; a vault pod
+  started before it has none until its next restart (operations.md §8.2). *Not
+  migrated:* a cluster that ran the KV-based CA (72c3807a, on no live
+  cluster) keeps that KV path and gets a new CA from the engine.
+  *Resolved on `test-cb`:* a Certificate or CertificateRequest naming
+  `gentian-ca`, or an Ingress asking the ingress-shim for it, is refused
+  outside the kernel and system namespaces (`gentian-restrict-internal-ca`),
+  and the tenant AppProject no longer allows ClusterIssuers. Shown with the
+  Kyverno CLI. *Needs a cluster:* the policy Ready, a tenant's Certificate
+  for `gentian-ca` refused, the store's certificates still issued, and the
+  live AppProject without ClusterIssuer after the claim reconciles.
+  *Resolved on `test-cb`:* the tenant AppProject deploys into `tenant-*`
+  only, no longer the Argo CD namespace; and a namespace's tier label is set
+  only by the installer, provider-kubernetes, the operator and
+  `system:masters` (`gentian-namespace-tier`, security.md §12.4). Shown
+  against an API server. *Needs a cluster:* a fresh install and a re-run
+  passing with the guard in place, tenants' and DMZ namespaces still
+  composed, and the live AppProject without the Argo CD namespace.
+  *Resolved on `test-cb`:* a tenant's chart is installed as
+  `provider-helm-tenant-apps` through the ProviderConfig `tenant-apps`,
+  with rights in tenant namespaces only (security.md §12.4). Shown against
+  an API server. *Open:* a profile bundle's own Composition (Element's,
+  Odoo's) still names the kernel's ProviderConfig, and nothing refuses it.
+  *Needs a cluster:* provider-helm honouring the kubeconfig's impersonation,
+  every catalogue app installing and upgrading under it, an existing
+  release taken over without a reinstall, and a tenant deleted with its
+  apps.
+  *Resolved on `test-cb`:* a namespace's `gentianos.io/function` is set only
+  by the installer, provider-kubernetes and `system:masters`, and its
+  `mac-waiver.gentianos.io/*` labels only by the operator and
+  `system:masters` (`gentian-namespace-tier`). Shown against an API server.
+  *Needs a cluster:* a re-run of A-01, the system namespaces composed, and a
+  waiver granted and withdrawn with the guard in place.
+
+### Added on 2026-10-16
+
+- The bundle signing key is read by the operator from the vault and denied
+  to `eso-read`; the operator, provider-vault and the installer verify the
+  vault against `openbao-ca`; the vault's pod reloads its certificate by
+  itself (`tls-reload`). Shown by unit tests and stubs. *Needs a cluster:*
+  provider-vault taking `VAULT_CACERT` as its CA (the Terraform provider's
+  fallback when the ProviderConfig names no `ca_cert_file`), `bao` honouring
+  `BAO_TLS_SERVER_NAME` over a ClusterIP and a port-forward, the operator's
+  vault login against the mounted copy, and the sidecar's signal reaching
+  `bao` in the shared process namespace.
+- An existing cluster keeps the Secret `gentian-os-bundle-signing-key`
+  after its ExternalSecret is gone (it was `deletionPolicy: Retain`); delete
+  it by hand.
+- `gentian_service_addr` still probes the vault's address with `curl -k`
+  (reachability only, no token sent).
+- The custodian still reads the vault's CA through the API from
+  `openbao-tls` in the secrets namespace rather than from the
+  `openbao-ca-bundle` copy in its own.
+- `busybox:1.36` is pinned by digest for `tls-reload` only; the image is not
+  in `lint-image-pins`' `DIGEST_REQUIRED`, since its other uses are by tag.
 
 ## 3. Known defects, open
 
@@ -410,6 +510,8 @@ was added on 2026-10-15.
 | 30 | **Nothing found sets the `uid` attribute that two packs read as the account name.** The OIDC packs of Nextcloud (both editions) and XWiki in the catalogue repository (`develop`, `03fcda7`) carry a mapper that writes the claim `gentian_username` (`opendesk_username` in one edition) from the user attribute `uid`. The registrar's invitation writes the username, the email field, the names, the groups and, where the addresses differ, the invitation address (`internal/registrar/identity/people.go`, `Invite`); it writes no `uid`. The tenant's Composition declares the attribute in the realm's user profile and writes no value; the only mappers in this repository that carry `uid` belong to the kernel identity provider in tenant realms, which is switched off. If nothing fills it, a person invited on the platform reaches these apps with an empty account-name claim: the app then falls back to another claim, or refuses the sign-in. *Confirmed in code* that the registrar does not set it; that nothing else does is *reasoned, not confirmed* (no writer was found); the effect in Nextcloud and XWiki *needs a cluster* | the catalogue repository's `profiles/nextcloud/base/*/oidc-catalog.yaml`, `profiles/xwiki/xwiki-ce/oidc-catalog.yaml` |
 | 31 | **A realm on a cluster with its own mail had a mail server without its password. Closed in the code on 2026-10-13 and shown in local containers, not yet on a cluster.** Keycloak answered an invitation with `failed to connect, no password specified?`. Two causes, both reproduced against Keycloak 26.8.0 with provider-keycloak v2.19.0. (a) The mail mode was renamed from `kernel` to `system` and two comparisons kept the old word: the installer gave the kernel realm no mail server and wrote no `keycloak-smtp-credentials`, so the operator built no mail-server Job for any tenant, and the Job's script would have handed a tenant realm the kernel realm's login. (b) That left the tenant's Composition as the only writer, and it names the password by reference to a Secret the operator wrote only after the realm existed: the provider wrote authentication on, the login and no password, and reported `Synced`. It puts that right at its next poll only if it has not restarted since; after a restart it never does, because it cannot read a password back. Now: both comparisons say `system`, the Job runs again over existing realms (version 5), the login is minted before the realm is declared, and step `D-03` reports work to do on a `system` cluster without the Secret. **An installed cluster needs** the operator's new image, the definitions (`./install.sh --only B-06`) and, with its own mail, `./install.sh --only D-03`. **Closed in the code on 2026-10-13 beside it, shown with the provider in local containers:** with a relay the Composition declared no mail server, the provider copied the live one into the resource without a password reference and wrote it back without the password two seconds after the Job; the Composition now declares the block in both modes from `spec.realmMail`, which the operator states once the password's Secret exists (Job version 6). A tenant the cluster's own mail mints no login for is declared no mail server and gets no Job. `loginWithEmailAllowed` is declared, so a realm the realm Job creates first is no longer refused its updates. The operator's image and the definitions of step `B-06` go together: the new Composition under an operator that states no `realmMail` declares no mail server. **Not established:** what the kernel realm's mail server held on the cluster when it failed the same way; by the code it had none, which fails with another message, and this is accepted as unexplained for now. **Not built:** a realm that had a mail server and is no longer stated one keeps the block the provider copied. | [mail.md §5d](../design/mail.md), `scripts/lib/portal-login-bootstrap.sh`, `internal/controller/keycloak_tenant_smtp.go`, `internal/controller/mail_apppassword.go`, `make test-realm-smtp-lab` |
 | 32 | **Every restore failed on its first step. Closed in the code on 2026-10-15, shown in local containers, not yet on a cluster.** Each restore Job's fetch step downloaded MinIO's client from `dl.min.io` when it ran; the address stopped answering when MinIO withdrew the client, and every restore of every kind -- database, bucket, volume, realm, mailboxes, desktop -- failed before it read a byte. Now the fetch, like every Job that moves a tenant's objects, runs rclone and age from the platform's storage tools image, at the operator's own tag, and downloads nothing. A bundle written before keeps restoring: the checksum beside an artefact has the format it had | `internal/backup/restore_jobs.go`, `kernel/images/storage-tools`, `make test-object-storage-lab` |
+| 33 | **An app's entitlement group whose profile carries `gentianos.io/keycloak-group-attributes` was composed with list values, which provider-keycloak v2.19.0 refuses (a Group's `attributes` is a map of strings). Closed in the code on 2026-10-16, not yet shown on a cluster.** Nine Odoo add-on profiles of the catalogue carry the annotation. `app-default.yaml` now joins a list with `##`, which the provider splits into Keycloak's list values; the render fixtures show strings | `crossplane/compositions/app-default.yaml` |
+| 34 | **`A-02`'s `destroy()` says it keeps cert-manager without `--cluster-infra`, but `A-01` then removes the edge namespace, and cert-manager with it.** The message "Keeping cert-manager (shared cluster infrastructure)" is not what happens on an uninstall or a purge; external-dns, which the same reasoning keeps, goes the same way. Found 2026-10-16 while fixing the purge that left kernel-edge's objects behind; not changed | `scripts/steps/A-02-cert-manager.sh`, `scripts/steps/A-01-namespaces.sh` |
 
 
 ## 4. Decisions waiting for the owner
@@ -1535,6 +1637,11 @@ Specified by [sovereignty-concept.md](sovereignty-concept.md).
   decisions 31 and 32): the platform keeps a "destination and key" setting
   that a manual export reads, and v0.5 does not upgrade a cluster that
   already has schedules. Whether and when the move starts is open (§4, 32).
+- **Import storage clean-up**: a bundle in `gentian-imports` is also removed
+  when the restore that read it began and failed (behaviour from before,
+  kept), not only on success; and two uploads or fetches of one tenant made
+  at the same moment are each checked against its 50 GiB total alone, so
+  together they can pass it until the sweep. *reasoned, not confirmed*
 
 ### Not this repository's
 

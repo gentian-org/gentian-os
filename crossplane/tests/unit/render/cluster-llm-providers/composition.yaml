@@ -159,7 +159,7 @@ spec:
             {{- range $e := (list
                   (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m")
                   (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m")
-                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m")
+                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0-gentian.1" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m")
                ) }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
@@ -244,6 +244,16 @@ spec:
                     capabilities = ["deny"]
                   }
                   path "{{ $kvMount }}/metadata/gentian-os/kernel/backup/identity" {
+                    capabilities = ["deny"]
+                  }
+                  # The bundle signing key likewise: it says which bundles this
+                  # cluster wrote, and the operator reads it from the vault
+                  # itself. As a Secret it would sign for anyone able to read
+                  # one.
+                  path "{{ $kvMount }}/data/gentian-os/kernel/backup/signing" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/backup/signing" {
                     capabilities = ["deny"]
                   }
                   path "{{ $kvMount }}/data/gentian-os/tenants/+/apps/*" {
@@ -676,6 +686,11 @@ spec:
                 validRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
+                {{- /* The platform's mark: a realm import makes no client
+                     carrying it from a bundle (internal/keycloak
+                     PlatformMarkerAttribute). */}}
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: {{ $obSecretName }}
                   namespace: {{ $obNs }}
@@ -792,6 +807,8 @@ spec:
               forProvider:
                 clientId: gentian-dovecot
                 realmId: {{ $realm | quote }}
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 accessType: CONFIDENTIAL
                 enabled: true
                 standardFlowEnabled: false
@@ -960,6 +977,59 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── cert-manager's identity at the vault: the internal CA ──────
+                 gentian-ca is the vault's PKI engine (pki-internal, made by
+                 the installer's B-08), and cert-manager asks it to sign
+                 (kernel/manifests/cert-manager/internal-ca.yaml). This is
+                 all it may do: sign on the one role, whose names B-08 sets.
+                 Not issue -- that would have the vault make the key and hand
+                 it over -- nor read, change or replace the CA.
+
+                 Bound to the ServiceAccount gentian-ca-issuer in the edge
+                 namespace, which nothing runs as: cert-manager requests a
+                 token for it, whose audience is vault://gentian-ca.
+
+                 Not on a private-ca cluster, where gentian-ca is the
+                 person's own CA and the vault has no part in it. */}}
+            {{- if ne (dig "certificates" "issuerMode" "acme-dns01" $spec) "private-ca" }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-cert-manager-gentian-ca
+              name: {{ $name }}-policy-cert-manager-gentian-ca
+            spec:
+              forProvider:
+                name: cert-manager-gentian-ca
+                policy: |
+                  path "pki-internal/sign/gentian-ca" { capabilities = ["update"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-cert-manager-gentian-ca
+              name: {{ $name }}-auth-role-cert-manager-gentian-ca
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: cert-manager-gentian-ca
+                boundServiceAccountNames:
+                  - gentian-ca-issuer
+                boundServiceAccountNamespaces:
+                  - kernel-edge
+                audience: vault://gentian-ca
+                tokenPolicies:
+                  - cert-manager-gentian-ca
+                tokenTtl: 600
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
             kind: AuthBackendRole
@@ -1078,16 +1148,18 @@ spec:
                       {{- range (default list (dig "argocd" "sourceRepos" list $spec)) }}
                       - {{ . | quote }}
                       {{- end }}
+                    # Tenant namespaces only. The Argo CD namespace was listed
+                    # too; it is a kernel namespace, which the admission
+                    # policies leave alone, and no tenant app deploys there.
                     destinations:
                       - namespace: "tenant-*"
                         server: "https://kubernetes.default.svc"
-                      - namespace: {{ $argoNs }}
-                        server: "https://kubernetes.default.svc"
+                    # No ClusterIssuer: a tenant app that could write one could
+                    # replace the internal CA gentian-ca, which every cluster
+                    # trusts, with an issuer of its own.
                     clusterResourceWhitelist:
                       - group: ""
                         kind: Namespace
-                      - group: "cert-manager.io"
-                        kind: ClusterIssuer
               providerConfigRef:
                 name: kubernetes
 
@@ -1211,6 +1283,11 @@ spec:
                     # tenant is reachable at is derived from this, so the two disagreeing
                     # is not cosmetic.
                     tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
+                    # The cluster's random id, which the installer gave it once
+                    # and the deployments repository keeps. The operator records
+                    # it in every bundle it signs and compares it on a restore;
+                    # empty on a claim that carries none.
+                    cluster.uid: {{ dig "clusterUID" "" $spec | quote }}
                     # The tenant that may put a website on the main address,
                     # or "" for the mode's default. The operator reads it with
                     # the mode, since the two decide one thing together.
@@ -1290,7 +1367,7 @@ spec:
                           type: Secret
                           name: openbao-tls
                           namespace: {{ $secretsNs }}
-                          key: tls.crt
+                          key: ca.crt  # the vault's CA, openbao-ca: stable across renewals
                         {{- end }}
                         auth:
                           kubernetes:

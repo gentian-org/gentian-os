@@ -15,6 +15,8 @@ import (
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -36,6 +38,12 @@ type TenantState struct {
 	Phase          string `json:"phase,omitempty"`
 	// Deleting is true once the Tenant has a deletion timestamp.
 	Deleting bool `json:"deleting"`
+	// Domain is the custom domain the operator has put the tenant on
+	// (status.domain), "" while it is at its default. DomainRefused is why a
+	// TenantDomain naming it was not taken, "" otherwise. An import that keeps
+	// a custom domain waits on these before it restores.
+	Domain        string `json:"domain,omitempty"`
+	DomainRefused string `json:"domainRefused,omitempty"`
 }
 
 func (h *HTTPServer) registerTenantRoutes(mux router) {
@@ -80,11 +88,18 @@ func (h *HTTPServer) handleTenantState(w http.ResponseWriter, r *http.Request) {
 	if policy == "" {
 		policy = string(gentianov1alpha1.DeletionPolicyRetain)
 	}
-	writeJSON(w, http.StatusOK, TenantState{
+	state := TenantState{
 		Name:           tenant.Name,
 		Exists:         true,
 		DeletionPolicy: policy,
 		Phase:          string(tenant.Status.Phase),
 		Deleting:       !tenant.DeletionTimestamp.IsZero(),
-	})
+		Domain:         tenant.Status.Domain,
+	}
+	// The condition the tenant controller sets from a TenantDomain
+	// (conditionDomainBound): False is a binding it refused.
+	if c := meta.FindStatusCondition(tenant.Status.Conditions, "DomainBound"); c != nil && c.Status == metav1.ConditionFalse {
+		state.DomainRefused = c.Message
+	}
+	writeJSON(w, http.StatusOK, state)
 }

@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -107,18 +108,23 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 const backupBucketUnit = "gentian-backup"
 
 // makeS3BucketJob builds a kernel-namespace Job that creates the per-app bucket
-// and, when accessKey/secretKey are supplied (Seeder enabled), an identity for
-// the app scoped to that bucket. The operator seeds the credential into OpenBao and
-// injects the exact key pair here, so tenant workloads never need OpenBao access
-// to provision storage (SEC-1).
-func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secretKey string) *batchv1.Job {
+// and, when withKey is set (Seeder enabled), an identity for the app scoped
+// to that bucket. The operator seeds the credential into OpenBao and hands
+// the exact key pair over in a Secret the Job owns (ensureProvisioningJobSecrets),
+// so tenant workloads never need OpenBao access to provision storage (SEC-1)
+// and the key is in no Job spec, no ConfigMap and no composed Object.
+func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+	keySecret := ""
+	if withKey {
+		keySecret = s3BucketJobName(tenant.Name, appName)
+	}
 	// The container that makes a bucket and its identity is the
 	// inventory's: a restore runs the same one before it writes a bucket's
 	// objects back.
-	container := backup.ObjectStorageProvisionContainer("create-bucket", s3BucketName(tenant, appName), accessKey, secretKey)
-	return &batchv1.Job{
+	container := backup.ObjectStorageProvisionContainer("create-bucket", s3BucketName(tenant, appName), keySecret)
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketJobName(tenant.Name, appName),
 			Namespace: s3Namespace,
@@ -132,10 +138,6 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 			TTLSecondsAfterFinished: &ttl,
 			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
-				// The object store's NetworkPolicy admits this pod to the
-				// master and the filer, which the container administers the
-				// store through, by this label.
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{backup.ObjectStorageShellLabel: "true"}},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{container},
@@ -143,6 +145,10 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 			},
 		},
 	}
+	// The container administers the store through the master and the
+	// filer, which admit this pod by its label and its client certificate.
+	backup.ObjectStoreShellPod(&job.Spec.Template)
+	return job
 }
 
 // storageEndpoint returns the object store's S3 endpoint from its
@@ -192,12 +198,32 @@ func (r *TenantReconciler) seedObjectStorage(ctx context.Context, tenant *gentia
 }
 
 // objectStorageProvisioner is the container that makes an app's bucket and
-// its identity, holding the key pair the vault holds for the app:
-// what install's bucket Job runs, for a restore to run first.
-func (r *TenantReconciler) objectStorageProvisioner(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName, name string) (corev1.Container, error) {
+// its identity, for a restore to run first in the Job named jobName, and the
+// key pair the vault holds for the app, which that Job's pod reads from the
+// Secret of the Job's name (backup.ObjectStorageKeySecret). The key pair is
+// empty, and the container makes the bucket alone, on a cluster with no
+// vault.
+func (r *TenantReconciler) objectStorageProvisioner(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName, name, jobName string) (corev1.Container, *objectStoreKey, error) {
 	accessKey, secretKey, err := r.seedObjectStorage(ctx, tenant, appName)
 	if err != nil {
-		return corev1.Container{}, err
+		return corev1.Container{}, nil, err
 	}
-	return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), accessKey, secretKey), nil
+	if accessKey == "" || secretKey == "" {
+		return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), ""), nil, nil
+	}
+	return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), jobName),
+		&objectStoreKey{accessKey: accessKey, secretKey: secretKey}, nil
+}
+
+// objectStoreKey is an app's key pair on its way to the Secret a Job that
+// provisions the app's bucket reads it from.
+type objectStoreKey struct {
+	accessKey, secretKey string
+}
+
+// ensureObjectStoreKeySecret hands a key pair to the Job that provisions a
+// bucket: the Secret of the Job's name, owned by the Job as the cluster has
+// it (ensureJobSecret).
+func ensureObjectStoreKeySecret(ctx context.Context, c client.Client, job *batchv1.Job, key objectStoreKey) error {
+	return ensureJobSecret(ctx, c, job, backup.ObjectStorageKeySecret(job, key.accessKey, key.secretKey))
 }

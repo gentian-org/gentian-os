@@ -266,7 +266,7 @@ spec:
       backend: {service: acme-notes, port: 8080}
       tile:
         displayName: Notes
-        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MiA1MiI+PHJlY3Qgd2lkdGg9IjUyIiBoZWlnaHQ9IjUyIiByeD0iMTAiIGZpbGw9IiMzNTU4YTgiLz48L3N2Zz4=
+        logo: data:image/png;base64,iVBORw0KGgo…   # a 128x128 PNG; see app-customization.md
         path: /
         relation: can_launch
 ```
@@ -362,7 +362,42 @@ receives it. The platform asks for it rather than makes it: once the app is inst
 tenant's Admin Console lists it under Credentials, grouped under the app, and the app waits until
 it is set there. A field that is not secret (`public: true`, a publishable key) is shown as typed;
 every other is never shown again. The value is purged with the app and is not in a tenant's
-bundle: a restore asks for it again, as it does for every credential a person typed in.
+bundle: a restore asks for it again, as it does for every credential a person typed in. An app
+that waits for one names it in its state (`awaitingCredentials`), and so does an import that waits
+for the app.
+
+**An app whose data remembers where it ran** — its own address, a database's name, a credential it
+copied into a file — rewrites that in `spec.backup.restore.post`, the commands run in the app's pod
+after its data is put back. An app paused by its maintenance command (`quiesce.mode: command`) runs
+them before it is resumed. One paused by scaling down is resumed first, since a command needs a pod,
+and its pods are started again once the commands have run, so that what it serves is read from the
+rewritten data; until they have, it may answer on what was put back. Where the maintenance command
+could not run and the app was scaled down instead, its `quiesce.post` command is run after the
+`restore.post` commands all the same, since the data put back may have been taken in maintenance
+mode. A restore may come from another cluster or
+domain, and every credential the platform makes (database, bucket, sign-in client) is made new
+there, so each command is run with what it needs to know, and no secret: `GENTIAN_RESTORE_APP`;
+`GENTIAN_RESTORE_SOURCE_*` and `GENTIAN_RESTORE_TARGET_*` for `TENANT` (always the same tenant: a
+restore does not rename), `DOMAIN`, `KERNEL_DOMAIN`
+(the cluster's own domain, whose sign-in issuer is `id.<kernel domain>`), `PLATFORM_VERSION`,
+`CLUSTER` and the app's `CHART_VERSION` (a source value the bundle does not record is empty); and `GENTIAN_RESTORE_DATABASES`, `GENTIAN_RESTORE_BUCKETS`,
+`GENTIAN_RESTORE_VOLUMES`, each a space-separated list of `<name in the bundle>=<name here>`, which
+differ where the tenant's database or bucket prefix differs between the two clusters — the
+databases include those the app made itself, as far as the 4 KiB a restore Job reports holds their
+names — and `GENTIAN_RESTORE_ROLES`, the app's database login the same way, whether or not it made
+databases of its own (left out of a bundle that records neither its tenant nor the role). A name that is not a
+plain one is passed as empty. The database's host is a Service name of the platform's, the same on every cluster of a version line, and is not passed. A new
+credential the command reads from the app's own Secrets, as the app does. The container needs
+`env(1)`, which the platform runs the command through. Each command, as each `quiesce` command, has
+15 minutes; one that has not finished by then has failed, and a restore fails the app on it.
+
+**An app whose data cannot move to another domain** — one that writes the tenant's domain into
+every id it stores and refuses to start under another, as a Matrix server does with its server
+name — sets `spec.backup.restore.domainBound: true`. Restored onto the domain the bundle was taken
+on, its data is put back as any app's. Onto another, it is not: the app is left as it is installed
+there (empty, in an import), and the restore names it in `status.notRestored` with the reason,
+which the `OutsideGuarantee` condition repeats. A bundle that does not record its domain is
+restored as onto the same one, and the result says it could not tell.
 
 **An app that verifies who is asking, and does not take the front door's headers on trust**, sets
 `exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with
@@ -409,6 +444,15 @@ component's to decide:
 
 So the people a component can speak for are the people who said so, for as long as nobody took it
 back.
+
+**A component that links other clusters' people to a tenant** declares
+`spec.requires.services.organizations: {}`. It asks the director to add a realm of another cluster
+to a tenant's realm as an organization, or to take one away (`PUT`, `DELETE`, `GET` on
+`/v1/tenants/<t>/brokered-from[/<name>]`, at `DIRECTOR_URL` with `RIGHTS_CHECK_KEY` as the bearer,
+both in its Secret `rights-check-<profile>`). The declaration alone opens nothing: the target
+tenant has to name the component in `spec.organizationCommissioners`, which an administrator
+writes in git. The director commits, the composition makes the organization, and the component
+holds no credential of the realm (docs/identity-brokering.md).
 
 **An adapter** turns one app's abilities into tools for a program that acts for a person. It is
 an entry of its own, never part of the app's, with `classes: [adapter]` (exclusive) and a block

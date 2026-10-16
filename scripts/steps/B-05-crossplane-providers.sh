@@ -2,8 +2,8 @@
 # step: B-05-crossplane-providers
 # phase: secrets
 # requires: B-04-vault-auth
-# provides: the activation policy naming the provider resource types the platform uses, from this checkout, and those types as established CRDs; Crossplane providers kubernetes, helm and vault with their ProviderConfigs, in the provisioning namespace
-# mutates: the ManagedResourceActivationPolicy gentian-platform, Provider packages, cluster-scoped RBAC for the providers, ProviderConfigs
+# provides: the activation policy naming the provider resource types the platform uses, from this checkout, and those types as established CRDs; Crossplane providers kubernetes, helm and vault with their ProviderConfigs, in the provisioning namespace; provider-helm's second ProviderConfig tenant-apps, acting as the narrow account tenant apps are installed as
+# mutates: the ManagedResourceActivationPolicy gentian-platform, Provider packages, cluster-scoped RBAC for the providers, the ServiceAccount provider-helm-tenant-apps and the Secret provider-helm-tenant-apps (a kubeconfig holding no credential) in the provisioning namespace, ProviderConfigs
 
 # The CRDs the three providers install, which their ProviderConfigs are
 # instances of. Named rather than discovered: a list that is written down is
@@ -109,6 +109,61 @@ _v5_providers_apply() {
     _kubectl_retry apply -f - < "${SCRIPT_DIR}/crossplane/providers/${1:?file}"
 }
 
+# The kubeconfig of provider-helm's ProviderConfig tenant-apps
+# (provider-configs.yaml): the provider pod's own token, and the API server
+# asked to act as provider-helm-tenant-apps, which holds rights only inside
+# tenant namespaces (provider-rbac.yaml). It holds no credential: the token
+# file is the pod's own and the cluster's CA is public. The CA is given as
+# data because the provider reads no file a kubeconfig names but the token.
+_B05_TENANT_APPS="provider-helm-tenant-apps"
+
+_b05_tenant_apps_kubeconfig() {
+    local ns ca
+    ns="$(ns_kernel provisioning)"
+    ca="$(kubectl get configmap kube-root-ca.crt -n "${ns}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" || return 1
+    [[ -n "${ca}" ]] || return 1
+    printf '%s\n' \
+        "apiVersion: v1" \
+        "kind: Config" \
+        "clusters:" \
+        "- name: in-cluster" \
+        "  cluster:" \
+        "    server: https://kubernetes.default.svc" \
+        "    certificate-authority-data: $(printf '%s\n' "${ca}" | base64 | tr -d '\n')" \
+        "users:" \
+        "- name: tenant-apps" \
+        "  user:" \
+        "    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token" \
+        "    as: system:serviceaccount:${ns}:${_B05_TENANT_APPS}" \
+        "contexts:" \
+        "- name: tenant-apps" \
+        "  context:" \
+        "    cluster: in-cluster" \
+        "    user: tenant-apps" \
+        "current-context: tenant-apps"
+}
+
+# Whether the Secret holds the kubeconfig as this cluster's CA has it now.
+_b05_tenant_apps_current() {
+    local want have
+    want="$(_b05_tenant_apps_kubeconfig)" || return 1
+    have="$(kubectl get secret "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d 2>/dev/null)" || return 1
+    [[ "${have}" == "${want}" ]]
+}
+
+_b05_tenant_apps_apply() {
+    local kubeconfig
+    if ! kubeconfig="$(_b05_tenant_apps_kubeconfig)"; then
+        error "No kube-root-ca.crt in $(ns_kernel provisioning): the tenant-apps kubeconfig cannot be written."
+        return 1
+    fi
+    printf '%s\n' "${kubeconfig}" |
+        kubectl create secret generic "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" \
+            --from-file=kubeconfig=/dev/stdin --dry-run=client -o yaml |
+        _kubectl_retry apply -f - >/dev/null
+}
+
 check() {
     local p pc fn crd
     _b05_activation_current || return 1
@@ -128,9 +183,13 @@ check() {
     for crd in $(_b05_activated_types); do
         _b05_crd_established "${crd}" || return 1
     done
-    for pc in providerconfig.kubernetes.crossplane.io/kubernetes providerconfig.helm.crossplane.io/kubernetes providerconfig.vault.upbound.io/openbao; do
+    for pc in providerconfig.kubernetes.crossplane.io/kubernetes providerconfig.helm.crossplane.io/kubernetes providerconfig.helm.crossplane.io/tenant-apps providerconfig.vault.upbound.io/openbao; do
         kubectl get "${pc}" >/dev/null 2>&1 || return 1
     done
+    # The narrow account tenant apps are installed as, and the kubeconfig
+    # that makes provider-helm act as it.
+    kubectl get serviceaccount "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" >/dev/null 2>&1 || return 1
+    _b05_tenant_apps_current || return 1
     return 0
 }
 
@@ -167,6 +226,7 @@ apply() {
     done
     _b05_wait_activated_types || return 1
     _v5_providers_apply provider-rbac.yaml
+    _b05_tenant_apps_apply || return 1
     _v5_providers_apply provider-configs.yaml
     # The functions the Compositions call, before B-06 applies any of them.
     # A Composition whose function is not installed yet renders nothing, and
@@ -273,6 +333,7 @@ destroy() {
     kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml" --ignore-not-found --timeout=120s >/dev/null 2>&1 \
         || warn "  Some ProviderConfigs did not delete within 2 minutes; the purge continues."
     kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" --ignore-not-found --timeout=180s >/dev/null 2>&1 || true
+    kubectl delete secret "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" --ignore-not-found >/dev/null 2>&1 || true
     _b05_remove_retired_providers
     _b05_release_terminating_provider_crds
     # Last: the policy goes after the providers whose types it activated.

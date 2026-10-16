@@ -12,6 +12,7 @@ package backup
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -290,8 +291,8 @@ var TenantOwned = []TenantRule{
 		What: "the tenant's realm", MadeBy: "the tenant's identity Job and its Composition",
 		Artefact: bundle.ArtefactIdentity,
 		Export:   "carried: configuration, people and memberships, no passwords",
-		Restore:  "groups, roles and clients put back; missing people added, enabled and without a password",
-		Import:   "the same, into the realm made for the new tenant; the platform's groups under the new tenant's names, the bundle's sign-in clients not imported",
+		Restore:  "clients, roles and groups here kept under their ids, groups given back their roles and attributes; the tenant's missing clients, roles and groups added, a client with a new secret and at this domain; the platform's never made from the bundle; missing people added, enabled and without a password",
+		Import:   "the same, into the realm made for the new tenant",
 		Retain:   "disabled",
 		Delete:   "deleted; never when it is the kernel realm, which a tenant only adopts", Destroyed: true,
 	},
@@ -327,7 +328,7 @@ var TenantOwned = []TenantRule{
 		Artefact: bundle.ArtefactRights,
 		Export:   "carried, in the manifest: exactly the entries the projection would not write, and the defaults the store no longer holds",
 		Restore:  "put back after the projection has run and the realm is back: what was granted is granted, what was withdrawn is withdrawn",
-		Import:   "what was withdrawn is withdrawn under the new tenant's names; what was granted is NOT brought, and the result names each entry",
+		Import:   "what was withdrawn is withdrawn, under this cluster's name; what was granted is NOT brought, and the result names each entry",
 		Retain:   "kept",
 		Delete:   "NOT removed: they stay on the tenant's name in the store",
 	},
@@ -354,7 +355,7 @@ var TenantOwned = []TenantRule{
 		Artefact: bundle.ArtefactMailboxes,
 		Export:   "carried, where the cluster runs its own mail server and the mail domain is the tenant's alone: every mailbox of the domain, and every archived mailbox of it as an archived one, copied by the mail server's own synchronisation beside its volume",
 		Restore:  "put back on top: a message the bundle holds and the mailbox lacks is added with its flags, a message that arrived since stays; an archived mailbox comes back as an archived one, into no live mailbox",
-		Import:   "the same, into the mailboxes of the new tenant's mail domain, by the part of each address before the @; the archived mailboxes into that domain's archive",
+		Import:   "the same, into the mailboxes of the tenant's mail domain here, by the part of each address before the @; the archived mailboxes into that domain's archive",
 		Retain:   "kept, the archived ones too; the tenant's addresses stop receiving",
 		Delete:   "destroyed, the archived ones with them, once the tenant's mail routing is gone so that nothing is delivered meanwhile; a mail domain the tenant shares with the cluster is not the tenant's to destroy and is left, with its archive", Destroyed: true,
 	},
@@ -500,20 +501,26 @@ func DeclaresModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 // --- making a store ---------------------------------------------------------
 
 // ObjectStorageProvisionContainer makes an app's bucket and, when it is
-// given the key pair the vault holds for the app, the identity the app reads
-// the bucket with. It is the one piece of code that does: install runs it as
-// the bucket Job, and a restore runs it before it writes a bucket's objects
-// back.
+// given the Secret holding the key pair the vault holds for the app, the
+// identity the app reads the bucket with. It is the one piece of code that
+// does: install runs it as the bucket Job, and a restore runs it before it
+// writes a bucket's objects back.
 //
-// The key pair is passed in because the operator seeds it and a Job cannot
-// read the vault. Without one only the bucket is made, which is what install
-// does on a cluster with no vault.
+// The key pair is the operator's to hand over, because the operator seeds it
+// and a Job cannot read the vault. It reaches the pod through keySecret, a
+// Secret beside the Job that the Job owns (ObjectStorageKeySecret), never as
+// a value in the pod's spec: the bucket Job's spec travels through a
+// ConfigMap and a composed Object, and is readable wherever a Job is. Without
+// a Secret only the bucket is made, which is what install does on a cluster
+// with no vault.
 //
 // It runs weed shell, in the server's own image, against the master: the
-// store is administered through the master and the filer, which check no
-// key -- the NetworkPolicy beside the server admits this pod to them by its
-// ObjectStorageShellLabel and nothing else.
-func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) corev1.Container {
+// store is administered through the master and the filer, which accept a
+// connection only with the client certificate of the store's own Jobs
+// (ObjectStoreShellPod) and only from a pod the NetworkPolicy beside the
+// server admits by its ObjectStorageShellLabel. A pod running it must be
+// made with ObjectStoreShellPod.
+func ObjectStorageProvisionContainer(name, bucket, keySecret string) corev1.Container {
 	no := false
 	yes := true
 	user := objectStoreUser
@@ -528,15 +535,49 @@ func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) 
 			RunAsNonRoot:             &yes,
 			RunAsUser:                &user,
 		},
-		Env: []corev1.EnvVar{objectStoreMasterEnv(), {Name: "BUCKET_NAME", Value: bucket}},
+		Env:          append(objectStoreShellEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
+		VolumeMounts: []corev1.VolumeMount{objectStoreClientTLSMount()},
 	}
-	if accessKey != "" && secretKey != "" {
+	if keySecret != "" {
 		c.Env = append(c.Env,
-			corev1.EnvVar{Name: "APP_ACCESS_KEY", Value: accessKey},
-			corev1.EnvVar{Name: "APP_SECRET_KEY", Value: secretKey},
+			meta.SecretEnv("APP_ACCESS_KEY", keySecret, ObjectStorageKeyAccessKey),
+			meta.SecretEnv("APP_SECRET_KEY", keySecret, ObjectStorageKeySecretKey),
 		)
 	}
 	return c
+}
+
+// The keys of the Secret an app's key pair is handed to its bucket's
+// provisioning in.
+const (
+	ObjectStorageKeyAccessKey = "accessKey"
+	ObjectStorageKeySecretKey = "secretKey"
+)
+
+// ObjectStorageKeySecret is the Secret a Job that provisions an app's bucket
+// reads the app's key pair from: named as the Job, in its namespace, and
+// owned by it, so that it is collected with the Job and lives no longer than
+// the step that needs it. job must be the Job as the cluster has it: its
+// UID is what the ownership names.
+func ObjectStorageKeySecret(job *batchv1.Job, accessKey, secretKey string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      job.Name,
+			Namespace: job.Namespace,
+			Labels:    maps.Clone(job.Labels),
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: batchv1.SchemeGroupVersion.String(),
+				Kind:       "Job",
+				Name:       job.Name,
+				UID:        job.UID,
+			}},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			ObjectStorageKeyAccessKey: []byte(accessKey),
+			ObjectStorageKeySecretKey: []byte(secretKey),
+		},
+	}
 }
 
 // ObjectStorageShellLabel marks the pods that administer the object store
@@ -552,6 +593,67 @@ const objectStoreUser int64 = 1000
 // Secret carries beside the S3 endpoint and the keys.
 func objectStoreMasterEnv() corev1.EnvVar {
 	return meta.SecretEnv("S3_MASTER", StorageAdminSecret, "master")
+}
+
+// The object store's administration is mutual TLS: the master and the filer
+// accept a gRPC connection only with a certificate of the cluster's internal
+// CA whose common name is the server's own or this one
+// (kernel/services/infra-seaweedfs, which issues both).
+const (
+	// ObjectStoreClientTLSSecret is the client certificate of the Jobs that
+	// administer the store, kept current by cert-manager in the store's
+	// namespace: tls.crt, tls.key and the CA's ca.crt.
+	ObjectStoreClientTLSSecret = "seaweedfs-shell-tls"
+	// ObjectStoreSigningSecret holds the keys the store signs its tokens
+	// with, materialised from the vault in the store's namespace.
+	ObjectStoreSigningSecret = "seaweedfs-jwt"
+
+	objectStoreClientTLSVolume = "object-store-client-tls"
+	objectStoreClientTLSDir    = "/etc/sw/tls"
+)
+
+// objectStoreShellEnv is what weed shell needs to administer the store: the
+// master's address; the client certificate and the CA, as weed reads its
+// [grpc.client] settings from the environment (WEED_GRPC_*); and the filer's
+// signing key. The filer requires a token signed with that key on its
+// identity API, which s3.configure uses, and weed shell mints one from it.
+func objectStoreShellEnv() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		objectStoreMasterEnv(),
+		{Name: "WEED_GRPC_CA", Value: objectStoreClientTLSDir + "/ca.crt"},
+		{Name: "WEED_GRPC_CLIENT_CERT", Value: objectStoreClientTLSDir + "/tls.crt"},
+		{Name: "WEED_GRPC_CLIENT_KEY", Value: objectStoreClientTLSDir + "/tls.key"},
+		meta.SecretEnv("WEED_JWT_FILER_SIGNING_KEY", ObjectStoreSigningSecret, "filer_signing_key"),
+	}
+}
+
+func objectStoreClientTLSMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: objectStoreClientTLSVolume, MountPath: objectStoreClientTLSDir, ReadOnly: true}
+}
+
+// ObjectStoreShellPod makes a pod one that administers the object store with
+// weed shell: the label its NetworkPolicy admits to the master and the filer
+// by, and the client certificate, as a volume that only the containers
+// running weed shell mount. The whole Secret is mounted, never a subPath of
+// it, so a certificate cert-manager renews reaches a running pod.
+func ObjectStoreShellPod(template *corev1.PodTemplateSpec) {
+	if template.Labels == nil {
+		template.Labels = map[string]string{}
+	}
+	template.Labels[ObjectStorageShellLabel] = "true"
+	for _, v := range template.Spec.Volumes {
+		if v.Name == objectStoreClientTLSVolume {
+			return
+		}
+	}
+	mode := int32(0o444)
+	template.Spec.Volumes = append(template.Spec.Volumes, corev1.Volume{
+		Name: objectStoreClientTLSVolume,
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName:  ObjectStoreClientTLSSecret,
+			DefaultMode: &mode,
+		}},
+	})
 }
 
 // objectStoreShell is how the scripts below run one weed shell command: one
@@ -780,16 +882,17 @@ func MariaDBDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline Des
 func ObjectStorageDestroyJob(tenant *gentianov1alpha1.Tenant, unit string, deadline DestroyDeadline) *batchv1.Job {
 	job := destroyJob(layout.System("s3"), ObjectStorageDestroyJobName(tenant.Name, unit), tenant.Name, unit, deadline,
 		corev1.Container{
-			Name:    "delete-bucket",
-			Image:   kernel.SeaweedFSImage(),
-			Command: []string{"/bin/sh", "-c", objectStorageDestroyScript(S3Bucket(tenant, unit))},
-			Env:     []corev1.EnvVar{objectStoreMasterEnv()},
+			Name:         "delete-bucket",
+			Image:        kernel.SeaweedFSImage(),
+			Command:      []string{"/bin/sh", "-c", objectStorageDestroyScript(S3Bucket(tenant, unit))},
+			Env:          objectStoreShellEnv(),
+			VolumeMounts: []corev1.VolumeMount{objectStoreClientTLSMount()},
 		})
 	yes := true
 	user := objectStoreUser
 	sc := job.Spec.Template.Spec.Containers[0].SecurityContext
 	sc.RunAsNonRoot, sc.RunAsUser = &yes, &user
-	job.Spec.Template.Labels = map[string]string{ObjectStorageShellLabel: "true"}
+	ObjectStoreShellPod(&job.Spec.Template)
 	return job
 }
 

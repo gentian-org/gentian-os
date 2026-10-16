@@ -131,11 +131,11 @@ Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on it
 | Redis, `system-cache` | 6379 | tenant namespaces; pods of `system-cache` itself (the ACL and destroy Jobs) |
 | SeaweedFS, `system-s3` | 9000 (S3) | tenant namespaces (apps, and the volume capture and restore pods, which run where the claim is); pods of `system-s3` itself (the bucket and destroy Jobs, the capture and restore of a bucket, a bundle's manifest); pods labelled `gentianos.io/component=tenant-export` in `system-postgresql`, `system-mariadb`, the identity namespace, `system-mail` (the copy of a tenant's mailboxes, beside the mail server's volume) and `kernel-data` (the desktop database of the tenant that adopts the kernel realm, beside the kernel's PostgreSQL), which are the steps of a backup and a restore that run beside their own service and write to or read from the bundle; the operator's pods in `kernel-control` (a bundle's manifest, download and import) |
 
-SeaweedFS's master and filer gRPC ports (19333, 18888) check no key: whoever reaches them can make and delete buckets and identities and read every object. They are admitted only from pods of `system-s3` labelled `gentianos.io/object-store-shell=true`, the platform's bucket Job, destroy Job and a bucket's restore, which administer the store with `weed shell`. An app's isolation from another app's bucket is its key: one identity per bucket, named after it, allowed Read, Write, List and Tagging on that bucket alone, never Admin.
+SeaweedFS's master and filer gRPC ports (19333, 18888) are mutual TLS: they accept a connection only with a certificate of the internal CA (§12.4) whose common name is the server's own (`seaweedfs-server`) or the administering Jobs' (`seaweedfs-shell`); the volume server's and the S3 gateway's gRPC accept only the server's. Whoever holds the Jobs' certificate can make and delete buckets and identities and read every object. The ports are admitted only from pods of `system-s3` labelled `gentianos.io/object-store-shell=true`, the platform's bucket Job, destroy Job and a bucket's restore, which administer the store with `weed shell`; those pods alone mount the client certificate (`seaweedfs-shell-tls`) and read the filer's signing key, which the filer requires a token of on its identity API. A volume server refuses a write or a read without a token the master signed, and the filer's HTTP port one the filer or the S3 gateway signed; the keys are random, in the vault at `gentian-os/kernel/storage/s3/jwt`, and reach the server only by `secretKeyRef` from an ExternalSecret in `system-s3`. The master's HTTP port has no check of its own (weed's all-in-one server binds it on every address, which `weed shell` needs); the NetworkPolicy is its only guard. An app's isolation from another app's bucket is its key: one identity per bucket, named after it, allowed Read, Write, List and Tagging on that bucket alone, never Admin. The key pair reaches the Job that makes the identity (the bucket Job, and a bucket's restore) in a Secret of the Job's name beside it in `system-s3`, owned by the Job and collected with it; the Job reads it with `secretKeyRef`, and it is in no Job spec, no provisioning ConfigMap and no composed Object. An app's PostgreSQL role, MariaDB user and cache user passwords, and the OIDC client secret of an app whose Keycloak client an operator Job makes, reach their Jobs the same way, each in a Secret of its Job's name, in its Job's namespace, owned by the Job. The object store's administrator is `s3-admin`, its key derived under `s3` (new installs).
 
 Closed, deliberately: PostgreSQL's metrics port (9187), and SeaweedFS's master and filer HTTP ports and its volume server's ports (reached inside the pod only; the kubelet's probes come from the node). Nothing the platform runs uses them; a cluster that brings a Prometheus adds a policy of its own selecting the same pods, since policies add up.
 
-**The rule has two sides, and neither is enough alone.** A server cannot tell one tenant's app from another's pod, so its policy admits every namespace labelled `gentianos.io/tier=tenant`. It keeps out everything that is not a tenant namespace or a client named above: the kernel's other namespaces, the other system namespaces, a tenant's DMZ, a namespace outside the layout. What keeps out an app that declared no such store is the tenant's side (§2.6): `tenant-isolation` denies egress for every pod of a tenant's namespace -- the platform tenant's and a single-tenancy cluster's `user` tenant included, since both are Tenants and the same reconcile writes it -- and `kernel-access-<app>` opens one store's port for the app that declared it. Two things on that side are wider than a declaring app: a component with a database requirement (the desktop) is opened the whole of `system-postgresql`, which the server now narrows to 5432, and a capture pod (`gentian-tenant-export`) is opened the three stores a bundle can hold.
+**The rule has two sides, and neither is enough alone.** A server cannot tell one tenant's app from another's pod, so its policy admits every namespace labelled `gentianos.io/tier=tenant`. It keeps out everything that is not a tenant namespace or a client named above: the kernel's other namespaces, the other system namespaces, a tenant's DMZ, a namespace outside the layout. What keeps out an app that declared no such store is the tenant's side (§2.6): `tenant-isolation` denies egress for every pod of a tenant's namespace -- the platform tenant's and a single-tenancy cluster's `user` tenant included, since both are Tenants and the same reconcile writes it -- and `kernel-access-<app>` opens one store's port for the app that declared it. Two things on that side are wider than a declaring app: a component with a database requirement (the desktop) is opened the whole of `system-postgresql`, which the server now narrows to 5432, and a capture pod (`gentian-tenant-export`) is opened the three stores a bundle can hold. A capture or restore pod has no way out of the cluster from that policy. A run whose bundle is at an external destination, and that has a step in the tenant's namespace (a volume), is given a policy of its own, `gentian-<export|restore>-destination-<run>`, selecting its own pods only, owned by the run and removed when it ends: egress to the destination's port (the endpoint's, or 443/80 by its scheme), to its address alone when the endpoint names one, and to any address on that port when it names a host by name -- a NetworkPolicy matches addresses, and a rule by name would need a CNI's own extension. A fetch of a bundle from a declared bundle source (storage outside the cluster an import reads from) runs as a Job in `system-s3` and is given `gentian-fetch-source-<fetch>`, owned by its Job, made before the Job is let run (it is created suspended) and deleted when it ends: egress to the source's address and port in the same form, to `system-s3` itself and to DNS, and nowhere else -- in a namespace that otherwise restricts no egress, this policy is what confines the pod. A fetch from a bucket of the cluster's own storage is given no way out at all. The source's keys are the custodian's to set (requirement `bundle-source-<name>`, vault `gentian-os/kernel/backup/sources/<name>`, written by the cluster's administrators only) and reach the Job by `secretKeyRef` from the ExternalSecret `bundle-source-<name>` in `system-s3`; nobody names a source's address or Secret in a request: a bundle is named by source and prefix and the operator finds both. Listing a source and reading a bundle's manifest are the operator's own reads, from `kernel-control`, as for any destination.
 
 **A pod of the server's own namespace is admitted without a label.** The operator's Jobs there carry none on their pods, and a pod there can mount the store's admin Secret, so a label would keep nobody out. The boundary is who may create a pod in a system namespace.
 
@@ -782,9 +782,13 @@ the code does.
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
-| A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths; a bundle is not signed (§6.4). Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
+| A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artefacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today For an app the app Composition installs, the granted rules are a policy of their own, `granted-egress-<app>`, selecting the app's release; the Composition's own policies carry none. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
+| Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
+| The internal CA's key | Implemented; shown against a local OpenBao, not on a cluster | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
+| Who may set a namespace's tier, function and mac-waiver labels | Implemented; shown against an API server, not on a cluster | Tier: the installer, provider-kubernetes, the operator. Function: the installer, provider-kubernetes. Mac-waiver: the operator. And `system:masters`; never Argo CD or provider-helm (§12.4) |
+| What a tenant's chart may create | Implemented; shown against an API server, not on a cluster | Installed as `provider-helm-tenant-apps`, which holds rights in tenant namespaces only: the namespaced kinds tenant charts render, nothing at cluster scope or in another namespace. The kernel's charts, and the charts of a profile bundle's own Composition, are still installed as cluster-admin (§12.4) |
 | What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
@@ -878,6 +882,8 @@ The diagram shows the target. Agents, SPIFFE, AuthZEN, contextual tuples and the
 
 What an app needs from the platform and from other apps is declared in its **`ComponentProfile`**. A declaration is a request and grants nothing. Access to another app is wired by an **`IntegrationBinding`** and limited by an **`AppGrant`**. This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
 
+
+One path between two components of a tenant is opened without a binding, the way the platform's own services are reached: a profile of trust tier `platform` that names `valueMapping.platform.desktopUrlKey` (the App Store app) may reach the desktop's API pods in its namespace on the API's port, and those pods admit it there (`internal/controller/desktop_access.go`). The schema refuses the key at any other tier. The desktop still decides each call on the person's own token.
 Field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
 #### Terminology — manifest language vs CRD fields
@@ -966,7 +972,7 @@ spec:
         port: 8080
       tile:
         displayName: "Demo App"
-        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=
+        logo: data:image/png;base64,iVBORw0KGgo…
         relation: can_launch
 ```
 
@@ -1157,7 +1163,7 @@ gentian-os/
 │   ├── internal/master-password      #   value, salt (§6)
 │   ├── database/                     #   postgresql, mariadb, cnpg, portal-shell
 │   ├── cache/redis
-│   ├── storage/                      #   s3, registry
+│   ├── storage/                      #   s3, s3/jwt (the store's signing keys), registry
 │   ├── identity/keycloak-bootstrap   #   Keycloak's bootstrap administrator
 │   ├── authz/openfga                 #   the rights store's preshared key
 │   ├── oidc/openbao                  #   OpenBao's own sign-in client
@@ -1166,7 +1172,7 @@ gentian-os/
 │   ├── edge/cf-tunnel
 │   ├── repositories/{name}           #   deployments and source repositories
 │   ├── signing/director              #   the director's commit-signing key
-│   ├── backup/                       #   recipients, destination, identity
+│   ├── backup/                       #   recipients, destination, identity, sources/{name}
 │   ├── llm, llm-providers            #   model gateway and its upstream keys
 │   ├── usage-statistics
 │   └── argocd/github-webhook
@@ -1245,8 +1251,9 @@ Who may read what:
   - *The conditions go by the namespace an `ExternalSecret` is in.* Whoever
     can write one into a kernel or system namespace, and read the Secret it
     makes there, reaches the kernel's paths. A tenant's administrator cannot;
-    a chart can, because it is installed with the rights of the whole
-    cluster (provider-helm) and may place its objects in any namespace.
+    a tenant's chart cannot, since it is installed with rights in the
+    tenant's namespace only (§12.4); a chart of a profile bundle's own
+    Composition still can.
   - *Nothing at admission refuses a store.* Any `ClusterSecretStore` may sign
     in as `eso` with ESO's ServiceAccount, and one without conditions is
     usable from every namespace. The API server lets only a cluster
@@ -1293,7 +1300,8 @@ syncs.
 What this does not give:
 
 - **provider-helm is one process for all tenants**, and runs as
-  cluster-admin. It keeps pulled charts in a cache keyed by chart name and
+  cluster-admin, installing a tenant's chart as a narrower account (§12.4)
+  but pulling it as itself. It keeps pulled charts in a cache keyed by chart name and
   version and stays logged in to a registry host once any Release has
   presented a credential for it. A chart one tenant pulled can therefore be
   installed by another whose profile names the same chart, until the
@@ -1466,6 +1474,11 @@ Properties:
   held it as a property of `kernel/database/postgresql` keeps that value at
   the new path where the installer can read the vault; where it cannot, the
   value is made again by the mode and the role is set to it.
+- **Keys no mode applies to** — the object store's signing keys
+  (`kernel/storage/s3/jwt`) are random in either mode, generated once by the
+  installer (B-08) and never overwritten: nothing else the cluster holds may
+  reproduce them. The internal CA's key is not a KV path at all: the vault's
+  PKI engine generated it and keeps it (§12.4).
 - **Per-app credentials** — created by the operator when a tenant installs an
   app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and likewise derived or
   random as the mode says: the database password, the bucket's key pair, the
@@ -1506,8 +1519,8 @@ Properties:
   person, and those of connected tool servers, with this key unless given
   another) is no longer readable: people sign in again and connect such
   servers again. A bundle carries these keys with the generated secrets
-  (§6.4), so a restore after a purge, under another name or on another
-  cluster sets the key the data was written with.
+  (§6.4), so a restore after a purge or on another cluster sets the key the
+  data was written with.
 
 **An app's own secrets** (`spec.secrets.generated` of its profile and an
 extension's `appSecrets`, stored at `…/apps/<app>/internal/<name>`) follow
@@ -1597,8 +1610,8 @@ is one the app's profile declares on this cluster. The path is
 built by the operator; the bundle supplies names and values and no path.
 Nothing is written for an app the restore does not restore, under a name the
 profile does not declare, or outside the tenant restored into; what the
-bundle holds besides is named in the result and not written. This holds for
-an import under another tenant's name as well.
+bundle holds besides is named in the result and not written. A bundle of
+another tenant is not restored at all.
 
 A value that differs from the stored one **replaces it**: the one exception
 to §7. The app's ExternalSecrets are then told to read again, a declared key
@@ -1623,17 +1636,55 @@ A bundle of format 3 or older holds no secrets and restores as before: no
 stored secret is changed, and the result says that what an app encrypted is
 readable only where its secrets are the ones the data was written with.
 
-**A bundle is not signed.** age encrypts to a public key and says nothing of
-who encrypted. Anyone who knows a cluster's backup recipient, which is in
-every bundle's `bundle-info.json`, can make a bundle that a restore opens. A
-restore of it replaces the tenant's data, as it always could, and now also
-sets the secrets of the apps it restores to values its author chose — a
-session-signing key, for one, which outlasts the next restore of good data.
-A restore is run by a tenant's or the cluster's administrator, names the
-tenant it confirms (`confirmTenant`), and writes only the paths above;
-checking a bundle's origin is on the roadmap
+**The manifest is signed, and decides the rights.** The cluster signs each
+bundle's manifest (`internal/backup/signature.go`). The signature,
+`manifest.json.sig` beside `bundle-info.json` and in the clear, covers the
+manifest as `manifest.json` holds it, so it covers the tenant's name, the
+cluster's id (`clusterUid`) and the rights. The id is `spec.clusterUID` of
+the Cluster claim: 32 random hex characters the installer writes once into
+the deployments repository, so a reinstall from that repository keeps it; it
+reaches the operator as `cluster.uid` of `gentian-cluster-config`. A restore
+checks the signature with this cluster's key, never with a key the bundle
+names.
+
+The rights granted in a tenant, a person's (`user:<id>`) among them since a
+restored person keeps their id, come back only when the signature holds,
+the bundle's cluster id is this cluster's, and the tenant restored into has
+the bundle's tenant's name: into a tenant made new as into the one it was
+taken of. From any other bundle (unsigned, which every bundle written
+before this is; signed by another key; of another cluster id or another
+tenant name) what was withdrawn is withdrawn, an entry naming a person is
+not written either way, and nothing granted comes back. Each entry left is
+named, `status.rights.provenance` says why, and a signature that does not
+hold (`BadSignature`) is said apart in the notes. An export that could not
+sign says so in its result.
+
+The artefacts are not covered: the manifest names them and holds no digest
+of them. Anyone who knows a cluster's backup recipient, which is in every
+`bundle-info.json`, can still make a bundle that a restore opens, and a
+restore of it replaces the tenant's data and sets the secrets of the apps it
+restores to values its author chose. With a manifest of their own it brings
+back no granted right; with one this cluster signed for this tenant it brings
+back the rights this cluster recorded. A restore is run by a tenant's or the
+cluster's administrator, names the tenant it confirms (`confirmTenant`), and
+writes only the paths above; checking the artefacts is on the roadmap
 ([1.41](../roadmap.md)). Until then, restore only bundles whose origin is
 known.
+
+**The bundle signing key.** Ed25519, derived from 32 random bytes the
+installer writes once to `gentian-os/kernel/backup/signing` (`signing_seed`,
+on stdin, never replaced). It is not the director's git signing key: that
+one signs commits to the deployments repository, and a key that signs two
+kinds of thing lets a signature on one pass for the other. The operator
+reads it from the vault itself, with its own identity (`operator-write`),
+when it writes or checks a manifest; it is never a Secret, because
+`eso-read` denies the path as it does `backup/identity`. It is otherwise
+read by the `cluster-admin` vault policy and by the holder of the recovery
+kit, which carries it (`BUNDLE_SIGNING_SEED`) so that
+a cluster rebuilt from the kit signs as before and its bundles still hold.
+Whoever holds it can make a bundle that brings rights into a tenant of that
+name on this cluster, which a platform administrator can grant there anyway.
+Replacing it: [operations.md](operations.md).
 
 ## 7. Write-Once Protection
 
@@ -1842,6 +1893,157 @@ and direct-origin callers. Enable **Total TLS**
 (`chat.demo.<cluster domain>`) receive edge certificates — the kernel wildcard alone is
 not sufficient. See [multi-tenancy.md](multi-tenancy.md) §3.
 
+
+### 12.4 The internal CA
+
+Every cluster has the ClusterIssuer `gentian-ca`, in every issuer mode. It is
+for TLS between the platform's own components, where nothing public has to
+trust the certificate -- the object store's gRPC (§2.7) is the first user. It
+does not change which issuer serves public names: on an `acme-*` cluster the
+wildcard and every public host stay with Let's Encrypt. On a `self-signed`
+cluster it is also the anchor of the public names, as it was; on a
+`private-ca` cluster `gentian-ca` is the person's own CA, from the Secret they
+supply, and nothing below applies.
+
+Its key is the vault's and never leaves it. The CA is OpenBao's PKI engine
+at `pki-internal`: step `B-08` generates the root there once
+(`root/generate/internal`, ECDSA P-256, ten years, path length 0; the mount's
+maximum lease is ten years) and never replaces it. No KV path, no Secret and
+no file holds the key. cert-manager does not sign: the ClusterIssuer (`A-09`,
+`kernel/manifests/cert-manager/internal-ca.yaml`) is a Vault issuer that
+sends each request's CSR to `pki-internal/sign/gentian-ca`. It logs in with
+the Kubernetes method as the ServiceAccount `gentian-ca-issuer` in
+cert-manager's namespace, which nothing runs as; cert-manager asks the API
+server for a token for it, with the audience `vault://gentian-ca`. The
+OpenBao role `cert-manager-gentian-ca` is bound to that account and audience,
+and its policy of the same name allows `update` on that one sign path and
+nothing else: not `issue` (the vault would make and hand out the key), not
+`sign-verbatim`, not the role, the CA or its keys. The role and policy are
+composed by the Cluster claim, as the other kernel identities at the vault
+are. cert-manager reaches the vault on 8200 from its controller pods
+(`kernel-network-policies.yaml`) and verifies it against the vault's own CA
+(§12.5).
+
+The role `gentian-ca` decides what may be signed, whatever the CSR asks: the
+names `seaweedfs-server`, `seaweedfs-shell` and the object store's four
+Service names, exactly, and on a `self-signed` cluster also the kernel
+domain, the names under it and its wildcard. No other domain, IP address,
+URI, `localhost`, subdomain of an allowed name (on `acme-*`) or RSA key;
+server and client use both, since one issuer is one role. Certificates live
+at most 90 days, cert-manager's default; `B-08` rewrites the role on every
+run, so it follows the issuer mode.
+
+The CA's certificate alone is written to `gentian-root-ca-tls` in
+cert-manager's namespace (`ca.crt`, `tls.crt`; no key): the anchor a
+self-signed cluster hands to clients. A self-signed cluster whose CA
+cert-manager made before keeps it: `B-08` imports it into the engine once
+(certificate and key on stdin, never as an argument), and the Secret is
+written again without the key. A reinstall of cert-manager or of the whole
+cluster on the same vault finds the same CA; the recovery kit, which opens
+the vault, reaches it.
+
+**A sealed vault signs nothing.** While OpenBao is sealed, no `gentian-ca`
+certificate is issued or renewed; those already issued stay valid. cert-manager
+renews at two thirds of the lifetime, so a certificate has about 30 days left
+when its renewal starts: a vault sealed for longer than that lets the object
+store's certificates expire, and its gRPC stops.
+
+Within the role's names it signs whatever it is asked for -- `seaweedfs-shell` is the object store's administrator -- so only the platform may ask:
+the Kyverno policy `gentian-restrict-internal-ca`
+(`kernel/security/kyverno/policies/gentian-internal-ca.yaml`) refuses a
+`Certificate` or `CertificateRequest` naming the ClusterIssuer `gentian-ca`,
+and an Ingress asking cert-manager's ingress-shim for it, outside the kernel
+and system namespaces. A system namespace counts only by its name
+(`system-*`) and its tier label together. The object store's two certificates
+in `system-s3` are its only users. The tenant AppProject does not allow
+ClusterIssuers, so a tenant's apps cannot replace `gentian-ca` either, and
+its only destinations are `tenant-*`: the Argo CD namespace, a kernel
+namespace and outside the policy, is no longer one.
+
+A tenant's apps may still write Namespace objects, so the namespace labels
+the platform's policies trust have a guard of their own that is not Kyverno,
+since the kernel tier is what Kyverno skips: the ValidatingAdmissionPolicy
+`gentian-namespace-tier`
+(`kernel/bootstrap/chart/templates/namespace-tier-guard.yaml`, applied by
+`B-01`). Each label set has its own writers. `gentianos.io/tier`: the
+installer's own user (`kubectl auth whoami`, passed in at render),
+provider-kubernetes (system and tenant namespaces) and the operator (a
+tenant's DMZ). `gentianos.io/function`, which policies select a function's
+namespace by: the installer and provider-kubernetes. The
+`mac-waiver.gentianos.io/*` labels, the namespace half of a pod-security
+waiver: the operator alone. `system:masters` may write all three. Argo CD's
+application controller and provider-helm, under either of its identities,
+are refused: they apply what tenants supply, and nothing of the platform's
+they apply writes these labels. A write that leaves a set as it was passes
+for anyone. Built-in admission, so Kubernetes 1.30 or newer, which
+pre-flight's 1.33 covers. Shown against an API server
+(`internal/controller/namespace_tier_guard_test.go`), not on a cluster.
+
+A tenant's chart is installed as an account that holds rights in tenant
+namespaces only. provider-helm stays cluster-admin for the kernel's charts,
+some of which ship ClusterRoles. A tenant's Releases (`app-default`, and the
+operator's for a chart it installs itself) name the ProviderConfig
+`tenant-apps` instead, whose kubeconfig (written by `B-05`, no credential in
+it) makes provider-helm act as the ServiceAccount `provider-helm-tenant-apps`.
+That account is bound to `gentian-tenant-apps-helm` by a RoleBinding the
+operator keeps in each namespace of the tenant tier named `tenant-*`, and
+nowhere else (`tenant_apps_helm.go`). The role allows ConfigMaps, Secrets,
+Services, ServiceAccounts, PersistentVolumeClaims, Deployments,
+StatefulSets, Jobs, Ingresses, Roles and RoleBindings, and reads Pods and
+ReplicaSets for Helm's wait: what the catalogue's tenant charts render
+(Activepieces, Docmost, Element's Synapse, Mathesar, Nextcloud and its MCP
+server, Odoo, Open WebUI, OpenProject, XWiki). None renders anything at
+cluster scope or in another namespace. A chart's own Roles are held by
+escalation prevention to a subset of that role. So a tenant chart cannot
+create a cluster-scoped object, write or read another namespace, or touch
+the NetworkPolicies, quota, limits, routes and external secrets of its own;
+a kind beyond the list fails its install, forbidden, and is added to the
+role on review. The binding keeps a finalizer until no Release installs into
+its namespace, so a tenant's releases can be uninstalled while its namespace
+is deleted. Shown against an API server
+(`tenant_apps_helm_envtest_test.go`), not on a cluster.
+
+What this does not close: provider-helm is still one cluster-admin process,
+and which identity a Release gets is the ProviderConfig it names. A profile
+bundle's own Composition (`app-<profile>`, Element's and Odoo's in the
+catalogue) names it itself; theirs name the kernel's, so their charts are
+installed as cluster-admin, and nothing refuses that. provider-helm reads a
+Release's values, pull secret and patches as itself, from any namespace the
+Release names.
+
+### 12.5 The vault's own TLS
+
+OpenBao serves TLS from a certificate, `openbao-tls`, that a CA of its own
+signs: `openbao-ca` in the secrets namespace, self-signed, ten years, its key
+kept on renewal (`kernel/bootstrap/chart/templates/vault-tls.yaml`). Every
+client verifies the vault against that CA's certificate, `ca.crt`: External
+Secrets' stores, the custodian, and cert-manager's internal-CA issuer through
+`openbao-ca-bundle`, a copy of the certificate alone that `B-01` writes to
+cert-manager's namespace (a ClusterIssuer reads Secrets only there). The
+serving certificate renews every 60 days with a new key without any client
+noticing. Before, it was self-signed itself, so what clients trusted changed
+at each renewal.
+
+The operator and
+provider-vault verify the vault against the same certificate, through
+copies `B-01` writes to their namespaces as well (`openbao-ca-bundle`,
+mounted as `BAO_CACERT` and `VAULT_CACERT`). The installer reads `ca.crt`
+from the cluster before it calls the vault and verifies its `bao` and `curl`
+calls against it under the certificate's name `openbao.<secrets>.svc`
+(`openbao_cli_trust`, `bao_curl`), since it reaches the vault at a ClusterIP
+or a port-forward. Only before `B-01` has made the CA, when nothing answers
+on the vault's address, does it not verify.
+
+The vault reads its certificate files only when it starts or on `SIGHUP`, and
+its StatefulSet updates `OnDelete`. A sidecar in the vault's pod,
+`tls-reload`, watches the mounted `tls.crt` and sends `SIGHUP` to `bao` when
+it changes: it shares the pod's process namespace, runs as the vault's uid
+with no capabilities, a read-only root and no service-account token, and so
+can also read the vault process's memory and environment, as the vault's own
+container can. `B-01` still signals after a new certificate has reached the
+pod and records which certificate it was told about; it never restarts the
+vault, which would seal it until the seal unseals it. The custodian reads the
+CA once, at start, and `B-01` restarts it when the CA has changed.
 
 ## 13. Licensing & sovereignty summary
 

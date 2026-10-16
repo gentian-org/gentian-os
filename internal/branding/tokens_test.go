@@ -110,19 +110,29 @@ func TestABrandOverridesOnlyWhatItSets(t *testing.T) {
 // brand.json and the manifest name it by its relative URL.
 func TestADataURLIconBecomesAFile(t *testing.T) {
 	spec := &gentianov1alpha1.BrandingSpec{Identity: gentianov1alpha1.BrandIdentity{Icons: []gentianov1alpha1.BrandIcon{
-		{Src: "data:image/svg+xml;base64,PHN2Zy8+", Type: "image/svg+xml", Purpose: "any"},
+		{Src: "data:image/png;base64,iVBORw0KGgo=", Type: "image/png", Purpose: "any"},
 		{Src: "https://cdn.example/logo.png"},
 	}}}
 	files, err := Render(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(files.Binary["icon-0.svg"]) != "<svg/>" {
+	if string(files.Binary["icon-0.png"]) != "\x89PNG\r\n\x1a\n" {
 		t.Fatalf("binary = %v", files.Binary)
 	}
 	for _, f := range []string{IdentityFile, ManifestFile} {
-		if !strings.Contains(files.Text[f], `"icon-0.svg"`) || strings.Contains(files.Text[f], "base64") || !strings.Contains(files.Text[f], "https://cdn.example/logo.png") {
+		if !strings.Contains(files.Text[f], `"icon-0.png"`) || strings.Contains(files.Text[f], "base64") || !strings.Contains(files.Text[f], "https://cdn.example/logo.png") {
 			t.Fatalf("%s: %s", f, files.Text[f])
 		}
+	}
+}
+
+// An SVG is never published as a logo, even where the schema was not asked.
+func TestAnSVGIconIsRefused(t *testing.T) {
+	spec := &gentianov1alpha1.BrandingSpec{Identity: gentianov1alpha1.BrandIdentity{Icons: []gentianov1alpha1.BrandIcon{
+		{Src: "data:image/svg+xml;base64,PHN2Zy8+", Purpose: "any"},
+	}}}
+	if _, err := Render(spec); err == nil {
+		t.Fatal("an SVG data URL was published")
 	}
 }

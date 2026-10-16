@@ -146,15 +146,15 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	const vault = "gentian-os/tenants/corp/backup/destination"
 
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", s3Namespace,
-		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
+	if err := applyExternalSecret(ctx, r.Client, "backup-destination-corp", s3Namespace,
+		vault, "Owner", nil, map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	first := externalSecretVersion(t, r, "backup-destination-corp")
 
 	// A second pass with identical inputs is what a steady-state reconcile is.
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", s3Namespace,
-		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
+	if err := applyExternalSecret(ctx, r.Client, "backup-destination-corp", s3Namespace,
+		vault, "Owner", nil, map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
 	if second := externalSecretVersion(t, r, "backup-destination-corp"); second != first {
@@ -164,8 +164,8 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	}
 
 	// A real change must still be written, or the object would never converge.
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", s3Namespace,
-		"gentian-os/tenants/corp/backup/moved", "Owner",
+	if err := applyExternalSecret(ctx, r.Client, "backup-destination-corp", s3Namespace,
+		"gentian-os/tenants/corp/backup/moved", "Owner", nil,
 		map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("changed pass: %v", err)
 	}

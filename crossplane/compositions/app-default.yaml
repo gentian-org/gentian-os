@@ -1052,16 +1052,22 @@ spec:
                  the modules and roles the app provisions from — so a Group
                  declared without them would strip what the groups Job sets.
 
-                 Values are coerced to lists: Keycloak group attributes are
-                 map[string][]string, and the annotation writes a bare string for
-                 single values, exactly as collectGentianGroupsJSON normalises. */}}
+                 Values are strings: provider-keycloak types a Group's
+                 attributes as a map of strings and splits a value on "##"
+                 into Keycloak's list, so a list in the annotation is joined
+                 with "##" and a bare string stays as it is -- the same values
+                 collectGentianGroupsJSON sets. */}}
             {{- $gAttrsRaw := dig "metadata" "annotations" "gentianos.io/keycloak-group-attributes" "" $profile }}
             {{- $gAttrs := dict }}
             {{- if $gAttrsRaw }}
             {{- range $k, $v := (fromJson $gAttrsRaw) }}
-            {{- $_ := set $gAttrs $k (ternary $v (list (toString $v)) (kindIs "slice" $v)) }}
+            {{- $_ := set $gAttrs $k (join "##" $v) }}
             {{- end }}
             {{- end }}
+            {{- /* And the platform's mark, which a realm import reads: a group
+                 carrying it is never made from a bundle, and one that is
+                 here keeps its id (internal/keycloak PlatformMarkerAttribute). */}}
+            {{- $_ := set $gAttrs "gentianos.io/managed-by" "platform" }}
             ---
             apiVersion: group.keycloak.crossplane.io/v1alpha1
             kind: Group
@@ -1074,10 +1080,8 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 name: {{ printf "gentian:tenant:%s:app:%s" $tenant $app | quote }}
-                {{- if $gAttrs }}
                 attributes:
                   {{ toYaml $gAttrs | nindent 18 }}
-                {{- end }}
               providerConfigRef:
                 name: keycloak
 
@@ -1207,6 +1211,11 @@ spec:
                 clientId: {{ $oidcCl.clientId | quote }}
                 name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
                 realmId: {{ $realm }}
+                {{- /* The platform's mark: a realm import makes no client
+                     carrying it from a bundle (internal/keycloak
+                     PlatformMarkerAttribute). */}}
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
@@ -1625,6 +1634,8 @@ spec:
                 clientId: {{ $signInEntity | quote }}
                 name: {{ printf "Sign-in sidecar of %s" $app | quote }}
                 enabled: true
+                extraConfig:
+                  gentianos.io/managed-by: platform
                 {{- /* The response and the assertion in it are both signed by
                      the realm; the sidecar accepts nothing less. */}}
                 signDocuments: true
@@ -1874,6 +1885,9 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # The tenant's namespace exists, and the account the release
+                # is installed as may not create one.
+                skipCreateNamespace: true
                 # Not optional: a release that could not read the rule would be
                 # installed without it, and uninstalling it would delete files.
                 patchesFrom:
@@ -1890,8 +1904,10 @@ spec:
                 set:
                   {{ toYaml $relSet | nindent 18 }}
                 {{- end }}
+              # A tenant's chart is installed as the narrow account, not as the
+              # kernel's cluster-admin one (provider-configs.yaml).
               providerConfigRef:
-                name: kubernetes
+                name: tenant-apps
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
             {{- /* The chart creates services named <app>-release-<component>.      */}}
@@ -2404,6 +2420,9 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # The tenant's namespace exists, and the account the release
+                # is installed as may not create one.
+                skipCreateNamespace: true
                 # The app's rule, for the sidecar's release as well: its files
                 # are the app's and are kept on uninstall like the rest.
                 patchesFrom:
@@ -2420,8 +2439,10 @@ spec:
                 set:
                   {{ toYaml $scRelSet | nindent 18 }}
                 {{- end }}
+              # A tenant's chart is installed as the narrow account, not as the
+              # kernel's cluster-admin one (provider-configs.yaml).
               providerConfigRef:
-                name: kubernetes
+                name: tenant-apps
 
             {{- if $sc.stableServiceName }}
             {{- $scSvcPort := default 80 ($sc.stableServicePort | int) }}

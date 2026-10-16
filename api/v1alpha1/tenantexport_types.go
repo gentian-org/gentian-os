@@ -133,7 +133,7 @@ func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint) > 0)",message="mode: custom requires an endpoint"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && size(self.credentialSecretRef) > 0)",message="credentialSource: transient requires credentialSecretRef"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0) && !has(self.addressingStyle))",message="endpoint, region, addressingStyle and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
 	// and an endpoint named here.
@@ -162,6 +162,11 @@ type ExportDestination struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
+
+	// AddressingStyle is how a bucket is named in a request to Endpoint:
+	// path (the default when empty) or virtualHost (BackupDestination).
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
 
 	// CredentialSource decides where mode: custom gets its keys.
 	//
@@ -407,6 +412,13 @@ type BundleRef struct {
 	// +optional
 	Region string `json:"region,omitempty"`
 
+	// AddressingStyle is how the bucket was named in requests to Endpoint
+	// when the bundle was written: path (empty) or virtualHost. Recorded for
+	// the reason Endpoint is: a restore or a deletion of this bundle
+	// addresses it as it was written, whatever the policy says today.
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
+
 	// CredentialSecret names the Secret whose keys open this endpoint. Also
 	// recorded, and for the same reason: a bundle written to a destination the
 	// tenant has since changed still needs the credential it was written with.
@@ -436,6 +448,13 @@ type BundleArtefact struct {
 	// differently when the tenant is. Set by a restore only.
 	// +optional
 	Target string `json:"target,omitempty"`
+	// Databases are, for an archive of the databases an app made itself
+	// (postgresOwned, mariadbOwned), each database it held as
+	// "<name in the bundle>=<name here>", as the restore's Job reported
+	// them once it had put them back. Set by a restore only.
+	// +optional
+	// +listType=atomic
+	Databases []string `json:"databases,omitempty"`
 	// Claim is the volume claim a volume was captured from, as far as making
 	// it again takes. Recorded for the volumes of an app that was uninstalled
 	// with its data kept: where such an app's data is brought into a tenant
@@ -571,6 +590,17 @@ type AppExportStatus struct {
 	QuiesceStart *metav1.Time `json:"quiesceStart,omitempty"`
 	// +optional
 	QuiesceEnd *metav1.Time `json:"quiesceEnd,omitempty"`
+
+	// HeldBackAt is when a restore asked the edge to hold this app back
+	// (TenantRestoreStatus.HeldBack). Restore only.
+	// +optional
+	HeldBackAt *metav1.Time `json:"heldBackAt,omitempty"`
+
+	// RolloutStart is when a restore started this app again on the restored
+	// data, after its post-restore commands. The app is done once that
+	// rollout has finished. Restore only.
+	// +optional
+	RolloutStart *metav1.Time `json:"rolloutStart,omitempty"`
 
 	// Attempts counts capture Jobs run for this app. Bounded, because the
 	// shared Job waiter deletes a failed Job so it gets recreated — right for

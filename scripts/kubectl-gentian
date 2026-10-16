@@ -19,7 +19,7 @@
 #   kubectl gentian tenants show <name>
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #                                  [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]
-#                                  [--self-sign-up]
+#                                  [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]
 #                                  (unstated, approving is off -- and on for the user tenant
 #                                  of a single-tenancy cluster; sign-up is off, and is said
 #                                  out loud when it is on: anybody may make an account)
@@ -27,13 +27,19 @@
 #                                      [--admins-add-catalogues=true|false]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
-#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
-#   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
+#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain]
+#   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]
+#                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
+#                                  (the bundle's custom domain is kept unless --drop-custom-domain)
 #   kubectl gentian tenants delegate-catalogues <name> on|off
 #   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
 #                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
+#   kubectl gentian tenants organizations <name>               realms of other clusters whose people sign in here
+#   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>>
+#                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
+#   kubectl gentian tenants organizations <name> remove <org>  they no longer do
 #
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
@@ -520,8 +526,8 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" answer
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up]"
+    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" answer brokered="[]" spec kv bname bredirect bjwks
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
@@ -531,6 +537,26 @@ cmd_tenants_create() {
             --admins-approve-public-addresses=*) die "--admins-approve-public-addresses is given alone, or as =true or =false" ;;
             --admins-add-catalogues) catalogues="true"; shift ;;
             --self-sign-up) signup="true"; shift ;;
+            # A realm outside the tenant -- usually of another cluster -- where
+            # its people may sign in with their account here. Repeatable.
+            --brokered-to)
+                spec="${2:?--brokered-to name=<n>,redirect=<url>,jwks=<url>}"; shift 2
+                bname=""; bredirect=""; bjwks=""
+                IFS=',' read -r -a parts <<<"${spec}"
+                for kv in "${parts[@]}"; do
+                    case "${kv}" in
+                        name=*) bname="${kv#name=}" ;;
+                        redirect=*) bredirect="${kv#redirect=}" ;;
+                        jwks=*) bjwks="${kv#jwks=}" ;;
+                        *) die "--brokered-to takes name=, redirect= and jwks=; not ${kv}" ;;
+                    esac
+                done
+                [[ -n "${bname}" && -n "${bredirect}" && -n "${bjwks}" ]] ||
+                    die "--brokered-to needs name=, redirect= and jwks="
+                need jq
+                brokered="$(jq -c --arg n "${bname}" --arg r "${bredirect}" --arg j "${bjwks}" \
+                    '. + [{name:$n, redirectURI:$r, jwksURL:$j}]' <<<"${brokered}")"
+                ;;
             -*) die "unknown option $1" ;;
             *) name="$1"; shift ;;
         esac
@@ -552,11 +578,12 @@ cmd_tenants_create() {
     # but for the user tenant of a single-tenancy cluster, whose administrators
     # approve its public addresses unless =false says they do not.
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" \
             '{name:$n, displayName:$d, requireMFA:$m}
              + (if $a != "" then {perimeter:{adminsApprove:($a == "true")}} else {} end)
              + (if $c then {catalogue:{delegated:true}} else {} end)
-             + (if $s then {signUp:true} else {} end)')")" || exit 1
+             + (if $s then {signUp:true} else {} end)
+             + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
     # What the director wrote, where it says; what was asked for otherwise.
     case "$(printf '%s' "${answer}" | jq -r '.adminsApprove | if . == null then "" else tostring end' 2>/dev/null)" in
@@ -574,6 +601,9 @@ cmd_tenants_create() {
     fi
     if [[ "${signup}" == "true" ]]; then
         echo "Anybody may sign up to it; an account made that way is a member of nothing."
+    fi
+    if [[ "$(jq 'length' <<<"${brokered}")" -gt 0 ]]; then
+        echo "Its people may sign in at: $(jq -r '[.[].name] | join(", ")' <<<"${brokered}") (a client broker-to-<name> each, trusting that realm's published keys)."
     fi
     echo "When it is ready, hand the administrator account over:"
     echo "  kubectl gentian tenants activate-admin ${name} [--recovery-email <address>]"
@@ -698,25 +728,32 @@ cmd_tenants_retire() {
 # Import a bundle: upload it, have the director declare the tenant from its
 # manifest and restore into it, and follow the import to its end. The key
 # never travels as an argument: an identity comes from a file, a passphrase
-# from a prompt.
+# from a prompt. A custom domain the bundle's tenant had is declared again
+# with it unless --drop-custom-domain says not to.
 cmd_tenants_import() {
     local file="" idfile="" ask_pw="" name="" identity="" passphrase="" dec body answer bundle st phase msg last=""
-    local bucket="" prefix="" endpoint=""
+    local bucket="" prefix="" endpoint="" style="" keep=true domain=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --identity-file) idfile="${2:?}"; shift 2 ;;
             --passphrase) ask_pw=1; shift ;;
-            --name) name="${2:?}"; shift 2 ;;
             --bucket) bucket="${2:?}"; shift 2 ;;
             --prefix) prefix="${2:?}"; shift 2 ;;
             --endpoint) endpoint="${2:?}"; shift 2 ;;
+            --addressing-style) style="${2:?}"; shift 2 ;;
+            --drop-custom-domain) keep=false; shift ;;
             -*) die "unknown flag $1" ;;
             *) file="$1"; shift ;;
         esac
     done
     if [[ -z "${file}" && -z "${bucket}" ]]; then
-        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url>]  (--identity-file <f> | --passphrase) [--name <n>]"
+        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase) [--drop-custom-domain]"
     fi
+    case "${style}" in
+        ""|path|virtualHost) ;;
+        *) die "--addressing-style is path or virtualHost" ;;
+    esac
+    [[ -z "${style}" || -n "${endpoint}" ]] || die "--addressing-style goes with --endpoint"
     [[ -z "${file}" || -f "${file}" ]] || die "no such file: ${file}"
     [[ -z "${bucket}" || -n "${prefix}" ]] || die "--bucket needs --prefix"
     if [[ -n "${idfile}" ]]; then
@@ -736,13 +773,18 @@ cmd_tenants_import() {
         bundle="$(printf '%s' "${answer}" | jq -c '.bundle')"
     else
         # A bundle still in a bucket the cluster can reach: the platform's
-        # own when no endpoint is given, a destination's otherwise.
-        bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end)')"
+        # own when no endpoint is given, a destination's otherwise, named
+        # path-style unless --addressing-style virtualHost says otherwise.
+        bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
-    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --arg n "${name}" '{bundle:$b, decryption:$d} + (if $n == "" then {} else {name:$n} end)')"
+    # The tenant's name is the bundle's: an import does not rename.
+    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --argjson k "${keep}" '{bundle:$b, decryption:$d, keepCustomDomain:$k}')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
+    domain="$(printf '%s' "${answer}" | jq -r '.customDomain // ""')"
     echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."
+    [[ -z "${domain}" ]] ||
+        echo "It keeps its custom domain ${domain}: point the DNS of ${domain} and its subdomains at this cluster; the import does not."
     # Apps of the bundle's tenant left out here: the platform's own
     # components of an earlier release. Their data is not restored.
     printf '%s' "${answer}" | jq -r '(.skipped // [])[] | "Skipped app \(.app), its data not restored: \(.reason)"'
@@ -757,6 +799,7 @@ cmd_tenants_import() {
         case "${phase}" in
             ready)
                 echo "Tenant ${name} imported."
+                printf '%s' "${st}" | jq -r '.outsideGuarantee // empty'
                 [[ "$(printf '%s' "${st}" | jq -r '.passwordResetRequired')" != "true" ]] ||
                     echo "Members have no credentials yet: send them a password reset from the console, or activate the administrator with 'tenants activate-admin ${name}'."
                 return 0 ;;
@@ -1445,6 +1488,76 @@ _committed() {
     echo "${commit:-no commit id}"
 }
 
+# kubectl gentian tenants organizations <tenant> [add <name> ... | remove <name>]
+# The realms of other clusters whose people sign in to a tenant, each as an
+# organization of its realm (Tenant spec.brokeredFrom). The director commits;
+# the composition makes the organization and its identity provider. Writing
+# needs can_configure on the cluster; a component the tenant names in
+# spec.organizationCommissioners writes them with its own key instead.
+cmd_tenants_organizations() {
+    local usage_text name="" action="" link="" display="" issuer="" client="" domain="" answer
+    usage_text="usage: kubectl gentian tenants organizations <tenant>
+       kubectl gentian tenants organizations <tenant> add <name> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>> --client-id <id> --domain <domain>
+       kubectl gentian tenants organizations <tenant> remove <name>"
+    name="${1:-}"
+    [[ -n "${name}" && "${name}" != -* ]] || die "${usage_text}"
+    shift
+    _label "a tenant" "${name}"
+    action="${1:-}"
+    [[ $# -eq 0 ]] || shift
+    case "${action}" in
+        "") ;;
+        add|remove)
+            link="${1:-}"
+            [[ -n "${link}" && "${link}" != -* ]] || die "${usage_text}"
+            shift
+            _label "an organization" "${link}" ;;
+        *) die "${usage_text}" ;;
+    esac
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --display-name) display="${2:-}"; shift 2 || die "--display-name needs a value" ;;
+            --issuer) issuer="${2:-}"; shift 2 || die "--issuer needs a value" ;;
+            --client-id) client="${2:-}"; shift 2 || die "--client-id needs a value" ;;
+            --domain) domain="${2:-}"; shift 2 || die "--domain needs a value" ;;
+            *) die "unexpected argument $1" ;;
+        esac
+    done
+    need curl jq
+    case "${action}" in
+        "")
+            answer="$(_call GET "/v1/tenants/${name}/brokered-from")" || exit 1
+            if [[ "$(printf '%s' "${answer}" | jq '.brokeredFrom | length')" == "0" ]]; then
+                echo "No realm of another cluster signs in to tenant ${name}."
+                return 0
+            fi
+            printf '%s' "${answer}" | jq -r '.brokeredFrom[] |
+                "\(.name)\t\(.displayName)\t\(.domain)\t\(.issuer)\tclient \(.clientID)\tsign-in alias org-\(.name)"'
+            ;;
+        add)
+            [[ -n "${display}" && -n "${issuer}" && -n "${client}" && -n "${domain}" ]] || die "${usage_text}"
+            domain="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]')"
+            answer="$(_call PUT "/v1/tenants/${name}/brokered-from/${link}" "$(jq -n --arg d "${display}" \
+                --arg i "${issuer}" --arg c "${client}" --arg m "${domain}" \
+                '{displayName: $d, issuer: $i, clientID: $c, domain: $m}')")" || exit 1
+            if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+                echo "Tenant ${name} already has ${link} as declared; nothing was committed."
+                return 0
+            fi
+            echo "People of ${domain} sign in to tenant ${name} as the organization ${display}: committed ($(_committed "${answer}"))."
+            echo "The realm at ${issuer} has to have the client ${client} for this one (its tenant's brokeredTo)."
+            ;;
+        remove)
+            answer="$(_call DELETE "/v1/tenants/${name}/brokered-from/${link}")" || exit 1
+            if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+                echo "Tenant ${name} has no organization ${link}; nothing was committed."
+                return 0
+            fi
+            echo "People of ${link} no longer sign in to tenant ${name}: committed ($(_committed "${answer}"))."
+            ;;
+    esac
+}
+
 # tenants domain: the domain of its own a tenant is served at, instead of its
 # default address under the cluster's domain.
 #
@@ -2019,7 +2132,8 @@ main() {
                 import) cmd_tenants_import "$@" ;;
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain" ;;
+                organizations) cmd_tenants_organizations "$@" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;

@@ -13,11 +13,13 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +49,11 @@ type importingOperator struct {
 	restores map[string]string
 	// failRestore makes a started restore end Failed.
 	failRestore bool
+	// apps is what apps/status answers; empty is element, up.
+	apps string
+	// domain and domainRefused are the tenant's custom domain as the
+	// operator has taken it, and why it did not.
+	domain, domainRefused string
 }
 
 const importedManifest = `{"schemaVersion":1,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd","apps":[{"profile":"element"}]},"apps":[]}`
@@ -56,6 +63,9 @@ func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (i
 	defer o.mu.Unlock()
 	switch {
 	case strings.HasSuffix(path, "/apps/status"):
+		if o.apps != "" {
+			return http.StatusOK, []byte(o.apps), nil
+		}
 		return http.StatusOK, []byte(`{"apps":[{"profile":"element","ready":true,"phase":"Ready"}]}`), nil
 	case strings.Contains(path, "/restores/"):
 		name := path[strings.LastIndex(path, "/")+1:]
@@ -69,12 +79,14 @@ func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (i
 				phase = "Failed"
 			}
 		}
-		return http.StatusOK, []byte(`{"name":"` + name + `","phase":"` + phase + `","message":"1 app(s) restored","passwordResetRequired":true}`), nil
+		return http.StatusOK, []byte(`{"name":"` + name + `","phase":"` + phase + `","message":"1 app(s) restored","passwordResetRequired":true,"outsideGuarantee":"written by platform version 0.4"}`), nil
 	case strings.HasPrefix(path, "/v1/tenants/"):
 		if !o.declared || time.Now().Before(o.readyAt) {
 			return http.StatusOK, []byte(`{"name":"imported","exists":false}`), nil
 		}
-		return http.StatusOK, []byte(`{"name":"imported","exists":true,"deletionPolicy":"Retain","phase":"Ready"}`), nil
+		state, _ := json.Marshal(map[string]any{"name": "imported", "exists": true, "deletionPolicy": "Retain", "phase": "Ready",
+			"domain": o.domain, "domainRefused": o.domainRefused})
+		return http.StatusOK, state, nil
 	}
 	return http.StatusNotFound, []byte(`{}`), nil
 }
@@ -172,7 +184,8 @@ func TestAnImportDeclaresWaitsAndRestores(t *testing.T) {
 			phases = append(phases, phase)
 		}
 		if phase == "ready" {
-			if st["passwordResetRequired"] != true || !strings.HasPrefix(st["restore"].(string), "import-") {
+			if st["passwordResetRequired"] != true || !strings.HasPrefix(st["restore"].(string), "import-") ||
+				st["outsideGuarantee"] != "written by platform version 0.4" {
 				t.Fatalf("final status = %v", st)
 			}
 			break
@@ -211,15 +224,16 @@ func waitImport(t *testing.T, h *harness, token, tenant string, phases ...string
 
 const goodImport = `{"bundle":{"bucket":"gentian-imports","prefix":"x"},"decryption":{"passphrase":"open sesame"}`
 
-// A bundle of tenant "demo", imported as "demo2" on the cluster demo is on.
-// The bundle's manifest states demo's own names, as an export of a created
-// tenant does. The new tenant has its own; demo's manifest is untouched; and
-// the restore is asked for in demo2 and nowhere else.
-func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *testing.T) {
+// An import makes the tenant under the name its bundle carries and renames
+// nothing: a request that names another is refused and commits nothing. The
+// tenant's realm and prefixes follow from that name by the platform's rule,
+// whatever the bundle's manifest states -- here demo's own names, in a
+// bundle of demo2 -- and the restore is asked for in demo2 and nowhere else.
+func TestAnImportTakesTheBundlesNameAndItsOwnNamesFollowFromIt(t *testing.T) {
 	defer api.SetImportPoll(20 * time.Millisecond)()
-	op := &importingOperator{declared: true,
-		manifest: `{"schemaVersion":2,"tenant":"demo","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Demo Ltd",` +
-			`"isolation":{"mode":"namespace","keycloakRealm":"demo","databasePrefix":"demo_","s3Prefix":"demo-"},"apps":[{"profile":"element"}]},"apps":[]}`}
+	ofDemo := `{"schemaVersion":2,"tenant":"demo","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Demo Ltd",` +
+		`"isolation":{"mode":"namespace","keycloakRealm":"demo","databasePrefix":"demo_","s3Prefix":"demo-"},"apps":[{"profile":"element"}]},"apps":[]}`
+	op := &importingOperator{declared: true, manifest: ofDemo}
 	h := startWith(t, op)
 	alice := h.token(t, "gentian", "alice")
 	originalBefore, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo/tenant.yaml")
@@ -231,10 +245,21 @@ func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *test
 	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`); code != http.StatusConflict {
 		t.Fatalf("importing over the original = %d %v", code, body)
 	}
-
+	// Under another: refused, and said why.
 	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`,"name":"demo2"}`)
+	if said, _ := body["error"].(string); code != http.StatusUnprocessableEntity || !strings.Contains(said, "does not rename") {
+		t.Fatalf("import of demo's bundle as demo2 = %d %v", code, body)
+	}
+	if _, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo2/tenant.yaml"); err == nil {
+		t.Fatal("a renamed tenant was committed")
+	}
+
+	op.mu.Lock()
+	op.manifest = strings.Replace(ofDemo, `"tenant":"demo"`, `"tenant":"demo2"`, 1)
+	op.mu.Unlock()
+	code, body = h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`,"name":"demo2"}`)
 	if code != http.StatusAccepted || body["tenant"] != "demo2" {
-		t.Fatalf("import as demo2 = %d %v", code, body)
+		t.Fatalf("import of demo2's bundle = %d %v", code, body)
 	}
 	manifest, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo2/tenant.yaml")
 	if err != nil {
@@ -247,7 +272,7 @@ func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *test
 	}
 	for _, not := range []string{"keycloakRealm: demo\n", "databasePrefix: demo_\n", "s3Prefix: demo-\n"} {
 		if strings.Contains(manifest, not) {
-			t.Errorf("the imported tenant has the original's name %q:\n%s", strings.TrimSpace(not), manifest)
+			t.Errorf("the imported tenant has another tenant's name %q:\n%s", strings.TrimSpace(not), manifest)
 		}
 	}
 
@@ -549,4 +574,188 @@ func TestAnImportWhoseRestoreWasStartedIsWatchedAfterARestart(t *testing.T) {
 	// The first director is still running in this process, which it is not
 	// after a real restart: let its watcher end before its checkout goes.
 	waitImport(t, h, alice, "imported", "ready", "failed")
+}
+
+// An imported app that waits for a credential a person supplies -- which no
+// bundle carries -- is named with the credential while the import waits, so
+// that nobody waits the two hours out to learn why.
+func TestAnImportWaitingForASuppliedCredentialNamesIt(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	op := &importingOperator{declared: true,
+		apps: `{"apps":[{"profile":"element","ready":false,"phase":"Installing","awaitingCredentials":[{"name":"payments","displayName":"Payment keys","requirement":"app-imported-element-payments"}]}]}`}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`); code != http.StatusAccepted {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, st := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/tenants/imported/import", alice, "")
+		msg, _ := st["message"].(string)
+		if strings.Contains(msg, "element (waits for the credentials a person supplies, which a bundle does not carry: Payment keys (payments)") &&
+			strings.Contains(msg, "under Credentials") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the import does not name the credential it waits for: %v", st)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	if op.restored != 0 {
+		t.Error("the restore began before the app was up")
+	}
+}
+
+// customDomainManifest is the bundle of a tenant bound to a custom domain.
+var customDomainManifest = strings.Replace(importedManifest, `"createdAt"`, `"customDomain":"Imported.Example","createdAt"`, 1)
+
+// An import keeps the custom domain the bundle's tenant had, unless asked
+// not to: its TenantDomain is in the commit that declares the tenant, and the
+// restore starts only once the operator has put the tenant on it -- Ready
+// alone is not that -- so that the restore sees the domain the bundle was
+// taken on. The status says the DNS is the person's to point.
+func TestAnImportKeepsTheBundlesCustomDomain(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	op := &importingOperator{declared: true, manifest: customDomainManifest}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	before := h.tip(t)
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`)
+	if code != http.StatusAccepted || body["customDomain"] != "imported.example" ||
+		!strings.Contains(fmt.Sprint(body["message"]), "point the DNS of imported.example") {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	if doc := dt.RemoteFile(t, h.remote, domainFile("imported")); !strings.Contains(doc, "kind: TenantDomain") ||
+		!strings.Contains(doc, "  domain: imported.example") {
+		t.Fatalf("the custom domain is not declared:\n%s", doc)
+	}
+	if k := dt.RemoteFile(t, h.remote, strings.TrimSuffix(domainFile("imported"), gitops.TenantDomainFile)+"kustomization.yaml"); !strings.Contains(k, "- "+gitops.TenantDomainFile) {
+		t.Fatalf("the kustomization does not list the TenantDomain:\n%s", k)
+	}
+	// One commit with the tenant: the tenant is never applied without it.
+	files, err := exec.Command("git", "--git-dir", h.remote, "diff-tree", "--no-commit-id", "--name-only", "-r", "main").Output()
+	if err != nil || !strings.Contains(string(files), "imported/tenant.yaml") || !strings.Contains(string(files), "imported/"+gitops.TenantDomainFile) {
+		t.Fatalf("the tenant and its domain are not one commit: %v\n%s", err, files)
+	}
+	if h.tip(t) == before {
+		t.Fatal("nothing was committed")
+	}
+
+	// Ready, apps up, and not yet on its domain: no restore.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, st := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/tenants/imported/import", alice, "")
+		if strings.Contains(fmt.Sprint(st["message"]), "put the tenant on its custom domain imported.example") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the import does not wait for the domain: %v", st)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	op.mu.Lock()
+	if op.restored != 0 {
+		op.mu.Unlock()
+		t.Fatal("the restore began before the tenant was on its custom domain")
+	}
+	op.domain = "imported.example"
+	op.mu.Unlock()
+	st := waitImport(t, h, alice, "imported", "ready", "failed")
+	if st["phase"] != "ready" || st["customDomain"] != "imported.example" ||
+		!strings.Contains(fmt.Sprint(st["notes"]), "point the DNS of imported.example") {
+		t.Fatalf("the import ended %v", st)
+	}
+}
+
+// Asked not to keep it, an import makes the tenant at its default address,
+// as before.
+func TestAnImportAskedNotToKeepTheCustomDomainDoesNot(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	op := &importingOperator{declared: true, manifest: customDomainManifest}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`,"keepCustomDomain":false}`)
+	if code != http.StatusAccepted || body["customDomain"] != nil {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	if _, err := gitShow(h.remote, domainFile("imported")); err == nil {
+		t.Fatal("a custom domain was declared that the import was asked not to keep")
+	}
+	if st := waitImport(t, h, alice, "imported", "ready", "failed"); st["phase"] != "ready" {
+		t.Fatalf("the import ended %v", st)
+	}
+}
+
+// A custom domain another tenant here is bound to refuses the import, with
+// the way out, before anything is written -- the definitions an import
+// commits first included.
+func TestAnImportWhoseCustomDomainIsAnotherTenantsIsRefused(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	src := catalogueSource(t, elementProfile)
+	op := &importingOperator{declared: true, manifest: strings.Replace(customDomainManifest,
+		`"apps":[{"profile":"element"}]`, `"apps":[{"profile":"element","digest":"`+sha(elementProfile)+`","catalogue":"main"}]`, 1)}
+	h := startSeeded(t, op, func(remote string) {
+		dt.Commit(t, remote, map[string]string{dt.ClaimPath: claimWith(gitops.CatalogueSource{Name: "main", URL: src.URL})})
+	}, withFetcher(src))
+	alice := h.token(t, "gentian", "alice")
+	if code, out := h.do(t, "PUT", domainRoute("demo"), alice, `{"domain":"imported.example"}`); code >= 300 {
+		t.Fatalf("bind demo: %d %v", code, out)
+	}
+	before := h.tip(t)
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`)
+	msg := fmt.Sprint(body["error"])
+	if code != http.StatusConflict {
+		t.Fatalf("import = %d %v, want 409", code, body)
+	}
+	for _, want := range []string{"imported.example is bound to tenant demo", "Nothing was changed", "--drop-custom-domain"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %s", want, msg)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused import moved the repository")
+	}
+}
+
+// A binding the operator refuses -- here, a TenantDomain applied by other
+// means that claimed the domain first -- fails the import before a restore,
+// which would otherwise see a move.
+func TestAnImportWhoseCustomDomainTheOperatorRefusesFails(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	op := &importingOperator{declared: true, manifest: customDomainManifest,
+		domainRefused: "imported.example is tenant other's; the tenant stays at its default domain"}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`); code != http.StatusAccepted {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	st := waitImport(t, h, alice, "imported", "ready", "failed")
+	if st["phase"] != "failed" || !strings.Contains(fmt.Sprint(st["message"]), "is tenant other's") {
+		t.Fatalf("the import ended %v", st)
+	}
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	if op.restored != 0 {
+		t.Error("a restore was started onto another domain")
+	}
+}
+
+// A custom domain that cannot be bound here -- on this cluster's own domain --
+// refuses the import with 422, and nothing is written.
+func TestAnImportWhoseCustomDomainCannotBeBoundHereIsRefused(t *testing.T) {
+	op := &importingOperator{declared: true, manifest: strings.Replace(importedManifest, `"createdAt"`,
+		`"customDomain":"imported.`+dt.KernelDomain+`","createdAt"`, 1)}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	before := h.tip(t)
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`)
+	if msg := fmt.Sprint(body["error"]); code != http.StatusUnprocessableEntity || !strings.Contains(msg, "on the kernel domain") ||
+		!strings.Contains(msg, "keepCustomDomain: false") {
+		t.Fatalf("import = %d %v, want 422", code, body)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused import moved the repository")
+	}
 }

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -52,7 +54,19 @@ type liveStore struct {
 	server  string
 	secrets map[string]map[string]string
 	volumes []string
+	// The CA standing in for the cluster's internal CA, the server's
+	// settings as its chart is given them, and the directory its
+	// certificate is mounted from, which a rotation writes into.
+	ca        *labCA
+	settings  chartServerSettings
+	serverTLS string
+	dirs      string
 }
+
+// labRefreshInterval is how often the lab's server reads its certificate
+// files again. Five hours on a cluster (weed's default); seconds here, so
+// that a rotation can be watched.
+const labRefreshInterval = 2 * time.Second
 
 // runJob runs every container of a Job, init containers first, each to its
 // end, as the kubelet would: one scratch directory for the whole pod, the
@@ -63,6 +77,18 @@ func (l *liveStore) runJob(job *batchv1.Job) (string, error) {
 	mounts := map[string]string{}
 	for _, v := range spec.Volumes {
 		name := fmt.Sprintf("%s-%s-%s", l.net, job.Name, v.Name)
+		if v.Secret != nil {
+			// A Secret is mounted as its keys, one file each; one the
+			// cluster does not have keeps the pod from starting.
+			data, ok := l.secrets[v.Secret.SecretName]
+			if !ok {
+				return "", fmt.Errorf("%s mounts Secret %s, which this test does not hold", job.Name, v.Secret.SecretName)
+			}
+			dir := filepath.Join(l.dirs, job.Name+"-"+v.Name)
+			writeSecretDir(l.t, dir, data)
+			mounts[v.Name] = dir
+			continue
+		}
 		if v.PersistentVolumeClaim != nil {
 			// A claim is the same disk to every Job that names it.
 			name = l.net + "-pvc-" + v.PersistentVolumeClaim.ClaimName
@@ -125,15 +151,63 @@ func (l *liveStore) runContainer(c corev1.Container, mounts map[string]string) (
 	return string(out), err
 }
 
-// pod runs containers as a Job of their own would.
+// keySecret holds a key pair in the Secret a bucket Job of that name reads
+// it from, built by the code the operator builds it with.
+func (l *liveStore) keySecret(job, accessKey, secretKey string) {
+	sec := ObjectStorageKeySecret(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: job, Namespace: "system-s3"}}, accessKey, secretKey)
+	l.secrets[sec.Name] = map[string]string{}
+	for k, v := range sec.Data {
+		l.secrets[sec.Name][k] = string(v)
+	}
+}
+
+// pod runs containers as a Job of their own would; one that runs weed
+// shell in a pod made as the platform makes it (ObjectStoreShellPod).
 func (l *liveStore) pod(name string, containers ...corev1.Container) (string, error) {
-	return l.runJob(&batchv1.Job{
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			Containers: containers,
 			Volumes:    []corev1.Volume{{Name: "work", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 		}}},
-	})
+	}
+	for _, c := range containers {
+		for _, m := range c.VolumeMounts {
+			if m.Name == objectStoreClientTLSVolume {
+				ObjectStoreShellPod(&job.Spec.Template)
+			}
+		}
+	}
+	return l.runJob(job)
+}
+
+// weed runs a weed command in the server's image, beside the server, with
+// a client certificate given as its Secret's keys -- none for nil -- where
+// weed shell's Jobs read theirs. Bounded: a weed client refused by the
+// server tries again for as long as it is let.
+func (l *liveStore) weed(name string, cert map[string]string, script string) (string, error) {
+	l.t.Helper()
+	args := []string{"run", "--rm", "--network", l.net, "--user", fmt.Sprint(objectStoreUser)}
+	if cert != nil {
+		dir := filepath.Join(l.dirs, "client-"+name)
+		writeSecretDir(l.t, dir, cert)
+		args = append(args, "-v", dir+":"+objectStoreClientTLSDir+":ro")
+		for _, e := range objectStoreShellEnv() {
+			if e.Value != "" {
+				args = append(args, "-e", e.Name+"="+e.Value)
+			}
+		}
+	}
+	args = append(args, "--entrypoint", "/bin/sh", kernel.DefaultSeaweedFSImage, "-c", script)
+	out, err := exec.Command("docker", args...).CombinedOutput()
+	return string(out), err
+}
+
+// http runs a script of busybox wget calls beside the server.
+func (l *liveStore) http(script string) string {
+	l.t.Helper()
+	out, _ := exec.Command("docker", "run", "--rm", "--network", l.net, "alpine:3.22", "sh", "-c", script).CombinedOutput()
+	return string(out)
 }
 
 // rclone runs rclone in the storage tools image with a key pair of its own.
@@ -188,7 +262,8 @@ func startLiveStore(t *testing.T) *liveStore {
 	if os.Getenv("GENTIAN_LIVE_S3") == "" {
 		t.Skip("set GENTIAN_LIVE_S3=1 (and STORAGE_TOOLS_IMAGE) to run the object-storage Jobs against a server in docker")
 	}
-	l := &liveStore{t: t, net: fmt.Sprintf("gentian-s3-live-%d", os.Getpid())}
+	l := &liveStore{t: t, net: fmt.Sprintf("gentian-s3-live-%d", os.Getpid()), dirs: t.TempDir(),
+		ca: newLabCA(t, "lab-gentian-ca"), settings: readChartServerSettings(t)}
 	if out, err := exec.Command("docker", "network", "create", l.net).CombinedOutput(); err != nil {
 		t.Fatalf("docker network: %v\n%s", err, out)
 	}
@@ -200,11 +275,18 @@ func startLiveStore(t *testing.T) *liveStore {
 		_ = exec.Command("docker", "network", "rm", l.net).Run()
 	})
 	l.server = l.net + "-server"
-	admin, secret := "live-admin", "live-admin-secret-key"
-	l.startServer(admin, secret)
+	admin, secret := "s3-admin", "live-admin-secret-key"
+	// What cert-manager and External Secrets put into the store's namespace
+	// (kernel/services/infra-seaweedfs): the server's certificate, the
+	// administering Jobs' client certificate, and the signing keys.
 	l.secrets = map[string]map[string]string{
-		StorageAdminSecret: {"endpoint": "http://" + l.server + ":9000", "master": l.server + ":9333", "accessKey": admin, "secretKey": secret},
+		StorageAdminSecret:         {"endpoint": "http://" + l.server + ":9000", "master": l.server + ":9333", "accessKey": admin, "secretKey": secret},
+		l.settings.tlsSecret:       l.ca.issue(t, "seaweedfs-server", "seaweedfs-all-in-one"),
+		ObjectStoreClientTLSSecret: l.ca.issue(t, "seaweedfs-shell"),
+		ObjectStoreSigningSecret: {"signing_key": "lab-volume-write-key", "signing_read_key": "lab-volume-read-key",
+			"filer_signing_key": "lab-filer-write-key", "filer_signing_read_key": "lab-filer-read-key"},
 	}
+	l.startServer(admin, secret)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		if _, err := l.rclone(admin, secret, "", "lsd", "s:"); err == nil {
@@ -236,16 +318,32 @@ func (l *liveStore) startServer(accessKey, secretKey string) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		l.t.Fatal(err)
 	}
-	out, err := exec.Command("docker", "run", "-d", "--name", l.server, "--network", l.net, "--user", "1000:1000",
-		"-v", dir+"/seaweedfs_s3_config:/etc/sw/s3/seaweedfs_s3_config:ro",
-		"-v", dir+"/master.toml:/etc/seaweedfs/master.toml:ro",
-		"--entrypoint", "/bin/sh", kernel.DefaultSeaweedFSImage, "-ec",
+	// The certificate as the chart mounts it, and the settings the chart
+	// gives the server; the signing keys from their Secret.
+	l.serverTLS = filepath.Join(l.dirs, "server-tls")
+	writeSecretDir(l.t, l.serverTLS, l.secrets[l.settings.tlsSecret])
+	args := []string{"run", "-d", "--name", l.server, "--network", l.net, "--user", "1000:1000",
+		"-v", dir + "/seaweedfs_s3_config:/etc/sw/s3/seaweedfs_s3_config:ro",
+		"-v", dir + "/master.toml:/etc/seaweedfs/master.toml:ro",
+		"-v", l.serverTLS + ":" + l.settings.tlsDir + ":ro",
+		"-e", "WEED_TLS_CERT_REFRESH_INTERVAL=" + labRefreshInterval.String()}
+	for name, value := range l.settings.env {
+		args = append(args, "-e", name+"="+value)
+	}
+	for name, ref := range l.settings.secretEnv {
+		value, ok := l.secrets[ref.Name][ref.Key]
+		if !ok {
+			l.t.Fatalf("the server reads %s from %s/%s, which this test does not hold", name, ref.Name, ref.Key)
+		}
+		args = append(args, "-e", name+"="+value)
+	}
+	out, err := exec.Command("docker", append(args, "--entrypoint", "/bin/sh", kernel.DefaultSeaweedFSImage, "-ec",
 		"exec /usr/bin/weed -v=1 server -dir=/data -master -volume -ip=$(hostname -i) -ip.bind=0.0.0.0 -idleTimeout=30 "+
 			"-volume.max=1000 -master.port=9333 -master.defaultReplication=000 -master.volumeSizeLimitMB=1000 "+
 			"-volume.port=8080 -volume.readMode=proxy -volume.minFreeSpacePercent=1 -volume.compactionMBps=50 "+
 			"-filer -filer.port=8888 -filer.dirListLimit=100000 -filer.defaultReplicaPlacement=000 "+
 			"-s3 -s3.port=9000 -s3.config=/etc/sw/s3/seaweedfs_s3_config -s3.port.iceberg=0 -s3.port.lance=0 -s3.iam=false",
-	).CombinedOutput()
+	)...).CombinedOutput()
 	if err != nil {
 		l.t.Fatalf("docker run: %v\n%s", err, out)
 	}
@@ -292,7 +390,15 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 	l.secrets[passSec] = map[string]string{"passphrase": passText}
 
 	// ── install: the bucket and the key the app reads it with ──────────────
-	provision := ObjectStorageProvisionContainer("create-bucket", bucket, appKey, appSec)
+	// The key pair reaches the Job in the Secret the operator makes beside
+	// it, as the operator makes it.
+	l.keySecret("s3-bucket-demo-wiki", appKey, appSec)
+	provision := ObjectStorageProvisionContainer("create-bucket", bucket, "s3-bucket-demo-wiki")
+	for _, e := range provision.Env {
+		if strings.Contains(e.Value, appKey) || strings.Contains(e.Value, appSec) {
+			t.Errorf("the bucket Job's spec carries the app's key in %s", e.Name)
+		}
+	}
 	if out, err := l.pod("s3-bucket-demo-wiki", provision); err != nil {
 		t.Fatalf("the bucket Job failed: %v\n%s", err, out)
 	}
@@ -304,6 +410,87 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 		if out, err := l.rclone(appKey, appSec, body, "rcat", "s:"+bucket+"/"+key); err != nil {
 			t.Fatalf("the app cannot write its own bucket: %v\n%s", err, out)
 		}
+	}
+
+	// ── the store's administration is mutual TLS ───────────────────────────
+	// The master and the filer, each asked directly: a weed client without
+	// a certificate, with one of another CA, or with one of the cluster's
+	// CA under a name they do not accept, is refused; the Jobs' certificate
+	// is accepted. The other CA's client trusts the server, so it is the
+	// server that refuses it.
+	master := fmt.Sprintf("timeout -s KILL 30 weed upload -master=%s:9333 /etc/hostname 2>&1 | grep -v '^ ' | head -n 3", l.server)
+	filer := fmt.Sprintf("timeout -s KILL 30 weed filer.meta.tail -filer=%s:8888 -timeAgo=1h -untilTimeAgo=1s 2>&1 | tail -n 3", l.server)
+	shellList := fmt.Sprintf("printf 's3.bucket.list\n' | timeout -s KILL 20 weed shell -master=%s:9333", l.server)
+	foreign := newLabCA(t, "another-ca").issue(t, "seaweedfs-shell")
+	foreign["ca.crt"] = l.ca.pem
+	for who, cert := range map[string]map[string]string{
+		"no certificate":                        nil,
+		"a certificate of another CA":           foreign,
+		"a certificate of the CA, another name": l.ca.issue(t, "intruder"),
+	} {
+		if out, _ := l.weed("master", cert, master); !strings.Contains(out, "rpc error") {
+			t.Errorf("the master accepted a client with %s:\n%s", who, out)
+		}
+		if out, _ := l.weed("filer", cert, filer); !strings.Contains(out, "rpc error") {
+			t.Errorf("the filer accepted a client with %s:\n%s", who, out)
+		}
+		if out, err := l.weed("shell", cert, shellList); err == nil {
+			t.Errorf("weed shell with %s administered the store:\n%s", who, out)
+		}
+	}
+	jobs := l.secrets[ObjectStoreClientTLSSecret]
+	if out, _ := l.weed("master", jobs, master); strings.Contains(out, "rpc error") || !strings.Contains(out, `"fid"`) {
+		t.Errorf("the master refused the Jobs' certificate:\n%s", out)
+	}
+	if out, _ := l.weed("filer", jobs, filer); strings.Contains(out, "rpc error") {
+		t.Errorf("the filer refused the Jobs' certificate:\n%s", out)
+	}
+	if out, err := l.weed("shell", jobs, shellList); err != nil || !strings.Contains(out, bucket) {
+		t.Errorf("weed shell with the Jobs' certificate did not list the buckets (%v):\n%s", err, out)
+	}
+
+	// ── a volume and the filer's HTTP port take only signed requests ───────
+	// The master hands out a file id on its HTTP port, which the
+	// NetworkPolicy closes; what it does not hand out is the token a write
+	// needs. A write without one, or with one signed by another key, is
+	// refused; the same request signed with the vault's key is taken, so it
+	// is the token that is checked. Reads need a token of their own.
+	assign := l.http(fmt.Sprintf("wget -q -O- http://%s:9333/dir/assign", l.server))
+	fid := regexp.MustCompile(`"fid":"([^"]+)"`).FindStringSubmatch(assign)
+	addr := regexp.MustCompile(`"url":"([^"]+)"`).FindStringSubmatch(assign)
+	if fid == nil || addr == nil {
+		t.Fatalf("the master assigned no file id: %s", assign)
+	}
+	status := func(args string) string {
+		out := l.http("wget -S -O /dev/null " + args + " 2>&1 | grep -o 'HTTP/1.1 [0-9]*' | head -n 1")
+		return strings.TrimSpace(out)
+	}
+	volume := fmt.Sprintf("http://%s/%s", addr[1], fid[1])
+	signing := l.secrets[ObjectStoreSigningSecret]["signing_key"]
+	for what, auth := range map[string]string{
+		"no token":                    "",
+		"a token of another key":      labJWT("not-the-key", fid[1]),
+		"a token for another file id": labJWT(signing, "9,0123456789"),
+	} {
+		header := ""
+		if auth != "" {
+			header = "--header 'Authorization: Bearer " + auth + "' "
+		}
+		if got := status(header + "--post-data=unsigned " + volume); got != "HTTP/1.1 401" {
+			t.Errorf("a write to a volume with %s was answered %q, want 401", what, got)
+		}
+	}
+	if got := status("--header 'Authorization: Bearer " + labJWT(signing, fid[1]) + "' --post-data=signed " + volume); got != "HTTP/1.1 201" {
+		t.Errorf("a write to a volume with the master's token was answered %q, want 201", got)
+	}
+	if got := status(volume); got != "HTTP/1.1 401" {
+		t.Errorf("a read from a volume without a token was answered %q, want 401", got)
+	}
+	if got := status(fmt.Sprintf("--post-data=unsigned http://%s:8888/lab/unsigned.txt", l.server)); got != "HTTP/1.1 401" {
+		t.Errorf("a write to the filer without a token was answered %q, want 401", got)
+	}
+	if got := status(fmt.Sprintf("http://%s:8888/buckets/", l.server)); got != "HTTP/1.1 401" {
+		t.Errorf("a read from the filer without a token was answered %q, want 401", got)
 	}
 
 	// ── capture: a bucket, a volume and the manifest, in both encryptions ──
@@ -335,7 +522,7 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 			mp := p
 			mp.Name = "tx-manifest-" + string(mode)
 			manifest, err := ManifestJob(mp, &Manifest{SchemaVersion: ManifestSchemaVersion, Tenant: "demo"},
-				NewBundleInfo("demo", p.Prefix, "now", p.Encryption))
+				NewBundleInfo("demo", p.Prefix, "now", p.Encryption), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -444,7 +631,8 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 		otherKey = "demo-files-key"
 		otherSec = "demo-files-secret-0123456789"
 	)
-	if out, err := l.pod("s3-bucket-demo-files", ObjectStorageProvisionContainer("create-bucket", other, otherKey, otherSec)); err != nil {
+	l.keySecret("s3-bucket-demo-files", otherKey, otherSec)
+	if out, err := l.pod("s3-bucket-demo-files", ObjectStorageProvisionContainer("create-bucket", other, "s3-bucket-demo-files")); err != nil {
 		t.Fatalf("the bucket Job failed: %v\n%s", err, out)
 	}
 	l.admin("files\n", "rcat", "s:"+other+"/f.txt")
@@ -500,13 +688,37 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 			t.Errorf("the %s Job printed a key:\n%s", name, out)
 		}
 	}
-	if out, err := l.pod("s3-bucket-demo-files-again", ObjectStorageProvisionContainer("create-bucket", other, otherKey, otherSec)); err != nil || strings.Contains(out, otherSec) {
+	if out, err := l.pod("s3-bucket-demo-files-again", ObjectStorageProvisionContainer("create-bucket", other, "s3-bucket-demo-files")); err != nil || strings.Contains(out, otherSec) {
 		t.Errorf("the bucket Job failed or printed the key (%v):\n%s", err, out)
 	}
+	// ── a renewed certificate is taken up without a restart ────────────────
+	// The cluster's CA replaced, and with it every certificate of the
+	// store, as cert-manager reissues them: the server reads its files
+	// again (WEED_TLS_CERT_REFRESH_INTERVAL; seconds here, hours on a
+	// cluster), then accepts the Jobs' new certificate and refuses the old
+	// one, and the S3 gateway, which reaches the filer with the server's
+	// certificate, goes on serving.
+	l.admin("before\n", "rcat", "s:"+other+"/before.txt")
+	renewed := newLabCA(t, "lab-gentian-ca-renewed")
+	old := l.secrets[ObjectStoreClientTLSSecret]
+	writeSecretDir(t, l.serverTLS, renewed.issue(t, "seaweedfs-server", "seaweedfs-all-in-one"))
+	l.secrets[ObjectStoreClientTLSSecret] = renewed.issue(t, "seaweedfs-shell")
+	time.Sleep(4 * labRefreshInterval)
+	if out, err := l.pod("s3-bucket-demo-files-renewed", ObjectStorageProvisionContainer("create-bucket", other, "s3-bucket-demo-files")); err != nil {
+		t.Errorf("the bucket Job with the renewed certificate failed: %v\n%s", err, out)
+	}
+	if out, _ := l.weed("master", old, master); !strings.Contains(out, "rpc error") {
+		t.Errorf("the master still accepts the certificate of the CA it no longer trusts:\n%s", out)
+	}
+	if out, err := l.rclone(otherKey, otherSec, "", "cat", "s:"+other+"/before.txt"); err != nil || out != "before\n" {
+		t.Errorf("after the renewal the app reads its bucket as %q (%v)", out, err)
+	}
+	l.admin("after\n", "rcat", "s:"+other+"/after.txt")
+
 	// The unreachable store: the bucket Job fails, it does not wait forever
 	// or report a bucket made.
 	l.secrets[StorageAdminSecret]["master"] = "nothing-here.invalid:9333"
-	if out, err := l.pod("s3-bucket-unreachable", ObjectStorageProvisionContainer("create-bucket", "demo-x", "", "")); err == nil {
+	if out, err := l.pod("s3-bucket-unreachable", ObjectStorageProvisionContainer("create-bucket", "demo-x", "")); err == nil {
 		t.Errorf("the bucket Job succeeded against a store it cannot reach:\n%s", out)
 	}
 }
