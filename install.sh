@@ -758,6 +758,9 @@ main() {
                 purge_local_state
                 purge_report_remaining
                 purge_report_cluster_residue
+                # Not "complete" while a removed namespace's objects are still
+                # stored: the next install would find them in its new namespace.
+                purge_verify_namespaces_gone || exit 1
                 success "Purge complete."
             else
                 success "Teardown complete."

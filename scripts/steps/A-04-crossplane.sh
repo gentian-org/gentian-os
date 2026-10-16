@@ -37,7 +37,8 @@ _a04_default_activations() {
 
 check() {
     helm_pinned_ok crossplane crossplane provisioning &&
-        kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/null 2>&1 || return 1
+        kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/null 2>&1 &&
+        helm_deployments_available provisioning crossplane crossplane-rbac-manager || return 1
     # The way back has to reach a cluster that was installed without it: the
     # release is at the pinned version either way, so ask for the policy the
     # init container creates when every type is wanted.

@@ -59,3 +59,18 @@ helm_pinned_ok() {
     helm list -n "${ns}" -o json 2>/dev/null | jq -e --arg r "${release}" --arg v "${version}" \
         '.[] | select(.name == $r and .status == "deployed" and (.chart | endswith("-" + $v)))' >/dev/null
 }
+
+# helm_deployments_available <function> <deployment>... — check() half too:
+# each named Deployment in that kernel namespace has at least one available
+# replica. A release record says what Helm last installed, not that it runs:
+# a record restored with dead workloads (a namespace removed over its contents
+# and recreated) answered "deployed" while nothing was serving, and the step
+# was skipped. Asked as well, a dead release is upgraded, which repairs it.
+helm_deployments_available() {
+    local fn="${1:?}" ns name avail; shift
+    ns="$(ns_kernel "${fn}")"
+    for name in "$@"; do
+        avail="$(kubectl get deployment "${name}" -n "${ns}" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)"
+        [[ "${avail:-0}" =~ ^[0-9]+$ && "${avail:-0}" -ge 1 ]] || return 1
+    done
+}

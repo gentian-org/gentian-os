@@ -8,7 +8,8 @@
 
 check() {
     helm_pinned_ok external-secrets external-secrets secrets &&
-        kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1
+        kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1 &&
+        helm_deployments_available secrets external-secrets external-secrets-cert-controller external-secrets-webhook
 }
 
 apply() {

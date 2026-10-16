@@ -8,7 +8,8 @@
 
 check() {
     helm_pinned_ok cert-manager cert-manager edge &&
-        kubectl get crd certificates.cert-manager.io >/dev/null 2>&1
+        kubectl get crd certificates.cert-manager.io >/dev/null 2>&1 &&
+        helm_deployments_available edge cert-manager cert-manager-cainjector cert-manager-webhook
 }
 
 apply() {

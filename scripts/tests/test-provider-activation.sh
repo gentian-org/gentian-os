@@ -85,6 +85,11 @@ case "${verb}" in
                 exit 0 ;;
             providerconfig.*) exit 0 ;;
             managed) exit 0 ;;
+            # Crossplane's own Deployments, available when ${STATE}/objects
+            # names them as deployment/<name>.
+            deployment)
+                grep -qxF "deployment/${name}" "${STATE}/objects" 2>/dev/null && printf '1'
+                exit 0 ;;
             # The cluster's CA, and the tenant-apps kubeconfig as last
             # written (${STATE}/kubeconfig, base64).
             configmap) [[ "${name}" == kube-root-ca.crt ]] && printf 'CA' ; exit 0 ;;
@@ -171,6 +176,7 @@ installed_release() {
     printf '[{"name":"crossplane","namespace":"%s","status":"deployed","chart":"crossplane-%s","app_version":"%s"}]' \
         "${ns}" "${version}" "${version}" > "${STATE}/helm-installed"
     echo "compositeresourcedefinitions.apiextensions.crossplane.io" >> "${STATE}/crds"
+    printf '%s\n' deployment/crossplane deployment/crossplane-rbac-manager >> "${STATE}/objects"
 }
 new_state; installed_release
 out="$(run A-04-crossplane 'check; echo "rc=$?"')"

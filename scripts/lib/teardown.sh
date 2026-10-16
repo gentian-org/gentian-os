@@ -9,58 +9,115 @@
 [[ -n "${GENTIAN_TEARDOWN_LOADED:-}" ]] && return 0
 GENTIAN_TEARDOWN_LOADED=1
 
-# Strip all custom resource finalizers in a namespace so it can terminate.
-# Uses kubectl get all + any remaining resources from a targeted list rather
-# than iterating every api-resource (which hangs when CRDs are mid-deletion).
-_clear_ns_finalizers() {
-    local ns="$1"
-    info "  Clearing finalizers in namespace ${ns}..."
-    # Patch everything returned by 'kubectl get all' first (fast, covers core types).
-    kubectl get all -n "${ns}" -o name 2>/dev/null \
-        | xargs_r -I%% kubectl patch %% -n "${ns}" \
-            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
-    # Then try a fixed list of custom resource types we know may linger.
-    for rt in \
-        externalsecrets.external-secrets.io \
-        pushsecrets.external-secrets.io \
-        clusterexternalsecrets.external-secrets.io \
-        applications.argoproj.io \
-        applicationsets.argoproj.io \
-        secretstores.external-secrets.io \
-        terraforms.infra.contrib.fluxcd.io \
-        releases.helm.crossplane.io \
-        objects.kubernetes.crossplane.io \
-        providerconfigs.kubernetes.crossplane.io \
-        providerconfigs.helm.crossplane.io \
-        providerconfigs.vault.upbound.io \
-        managedresources.crossplane.io \
-        certificates.cert-manager.io \
-        issuers.cert-manager.io; do
-        kubectl get "${rt}" -n "${ns}" -o name 2>/dev/null \
-            | xargs_r -I%% kubectl patch %% -n "${ns}" \
-                --type=merge -p='{"metadata":{"finalizers":null}}' \
-                2>/dev/null || true
+# =============================================================================
+# Namespaces — removed only once nothing is left in them
+# =============================================================================
+#
+# A namespace used to be removed like this: delete it, wait thirty seconds,
+# strip the finalizers of a fixed list of custom resource kinds, then clear the
+# namespace's own finalizer through /finalize. That last call is what lets the
+# API server drop the namespace object; it does not delete one thing inside it.
+# Whatever the namespace controller had not yet removed — because it was still
+# working, or because discovery of an aggregated API had failed and it had
+# stopped — stayed in the datastore under a namespace that no longer existed,
+# and reappeared in the next namespace of that name. A purge on MicroK8s left
+# forty objects in kernel-edge that way: cert-manager's Deployments and Helm
+# release record, external-dns, an Envoy proxy, letsencrypt account keys.
+#
+# So the contents are deleted explicitly, every namespaced kind discovery
+# lists, while the namespace is Terminating and nothing can create anything new
+# in it; what still carries a finalizer after a wait has it stripped; and the
+# namespace is finalized only once a fresh listing finds it empty. A namespace
+# that cannot be emptied is left Terminating and reported, never finalized
+# over its contents.
+
+# Seconds to wait for the contents to go before stripping their finalizers,
+# and again after. Both waits are overridable for the tests.
+GENTIAN_NS_DRAIN_WAIT="${GENTIAN_NS_DRAIN_WAIT:-90}"
+# Seconds an emptied namespace is given to finish Terminating on its own.
+GENTIAN_NS_FINALIZE_WAIT="${GENTIAN_NS_FINALIZE_WAIT:-30}"
+
+# Every namespace a teardown removed in this run, for purge_verify_namespaces_gone.
+_GENTIAN_REMOVED_NAMESPACES=""
+
+# Poll until the namespace holds nothing, for at most $2 seconds. 0 = empty.
+_ns_wait_empty() {
+    local ns="$1" wait="$2" end left rc
+    end=$((SECONDS + wait))
+    while :; do
+        rc=0
+        left="$(ns_objects "${ns}")" || rc=$?
+        [[ "${rc}" == "0" && -z "${left}" ]] && return 0
+        (( SECONDS >= end )) && return 1
+        sleep 3
     done
 }
 
+# Delete a list of object references in a namespace. In one call first; one by
+# one when that fails, because one reference whose kind has gone fails them all.
+_ns_delete_refs() {
+    local ns="$1" refs="$2" ref
+    [[ -n "${refs}" ]] || return 0
+    # shellcheck disable=SC2086 # one reference per word, by construction
+    kubectl delete -n "${ns}" --ignore-not-found=true --wait=false ${refs} >/dev/null 2>&1 && return 0
+    for ref in ${refs}; do
+        kubectl delete -n "${ns}" --ignore-not-found=true --wait=false "${ref}" >/dev/null 2>&1 || true
+    done
+}
+
+# _ns_purge_contents <namespace> — delete everything in it; 0 once it is empty.
+_ns_purge_contents() {
+    local ns="$1" refs rc=0 ref
+    refs="$(ns_objects "${ns}" | cut -f1)" || rc=$?
+    if [[ "${rc}" != "0" ]]; then
+        error "  ${ns}: the API server listed no namespaced kinds, so its contents cannot be checked."
+        return 1
+    fi
+    [[ -n "${refs}" ]] || return 0
+    info "  Deleting $(printf '%s\n' "${refs}" | wc -l | tr -d ' ') object(s) in ${ns}..."
+    _ns_delete_refs "${ns}" "${refs}"
+    _ns_wait_empty "${ns}" "${GENTIAN_NS_DRAIN_WAIT}" && return 0
+
+    # What is still there waits on a finalizer whose controller an earlier
+    # step removed. Strip it from each, and delete again.
+    refs="$(ns_objects "${ns}" | cut -f1 || true)"
+    warn "  ${ns}: $(printf '%s\n' "${refs}" | sed '/^$/d' | wc -l | tr -d ' ') object(s) still present — stripping their finalizers..."
+    for ref in ${refs}; do
+        kubectl patch "${ref}" -n "${ns}" --type=merge \
+            -p='{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+    done
+    _ns_delete_refs "${ns}" "${refs}"
+    _ns_wait_empty "${ns}" "${GENTIAN_NS_DRAIN_WAIT}"
+}
+
 _delete_namespace() {
-    local ns="$1"
-    # IMPORTANT: --wait=false is required.  Without it, `kubectl delete namespace`
-    # blocks indefinitely if the namespace has resources with stuck finalizers
-    # (e.g. terraforms.infra.contrib.fluxcd.io after tf-controller is gone),
-    # which prevents the polling loop below from ever running to strip them.
+    local ns="$1" left
+    _GENTIAN_REMOVED_NAMESPACES="${_GENTIAN_REMOVED_NAMESPACES} ${ns}"
+    # --wait=false: a namespace with a stuck finalizer would otherwise block
+    # here for ever, before the code below could strip it. Deleted first, so
+    # it is Terminating and nothing is created in it while it is emptied.
     kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=5 --wait=false 2>/dev/null || true
-    # Wait up to 30s; if still Terminating, strip finalizers and retry.
-    local deadline=$((SECONDS + 30))
+
+    if ! _ns_purge_contents "${ns}"; then
+        left="$(ns_objects "${ns}" | cut -f1 || true)"
+        error "  ${ns} still holds objects, so it is NOT force-finalized (that would leave them"
+        error "  stored, to reappear in the next ${ns}). Left:"
+        printf '%s\n' "${left}" | sed '/^$/d; s/^/      /' >&2
+        return 1
+    fi
+
+    # Empty: the namespace controller finishes on its own, normally at once.
+    local deadline=$((SECONDS + GENTIAN_NS_FINALIZE_WAIT))
     while kubectl get namespace "${ns}" --request-timeout=5s >/dev/null 2>&1; do
         if (( SECONDS > deadline )); then
-            warn "  ${ns} stuck in Terminating — stripping remaining finalizers..."
-            _clear_ns_finalizers "${ns}"
-            # Also clear the namespace-level finalizer itself.
-            kubectl get namespace "${ns}" -o json --request-timeout=10s 2>/dev/null \
-              | jq '.spec.finalizers=[]' \
-              | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - 2>/dev/null || true
+            # Only now, and only after a fresh listing finds nothing, may the
+            # namespace's own finalizer be cleared: what it was guarding is gone.
+            if _ns_wait_empty "${ns}" 0; then
+                warn "  ${ns} is empty but still Terminating — clearing its finalizer..."
+                kubectl get namespace "${ns}" -o json --request-timeout=10s 2>/dev/null \
+                  | jq '.spec.finalizers=[]' \
+                  | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+            fi
             break
         fi
         sleep 3
@@ -70,6 +127,41 @@ _delete_namespace() {
     else
         success "  Deleted namespace: ${ns}"
     fi
+}
+
+# purge_verify_namespaces_gone — the purge's own proof, before it says it worked.
+#
+# Every namespace this run removed, and every kernel namespace, must be gone,
+# and listing its contents by name must find nothing: objects stored under a
+# namespace that does not exist are what the next install would find in the
+# namespace it creates. 1, with each survivor named, otherwise.
+purge_verify_namespaces_gone() {
+    banner "Purge — verifying the removed namespaces are gone"
+    local ns seen="" left rc bad=0
+    for ns in ${_GENTIAN_REMOVED_NAMESPACES} $(ns_kernel_all); do
+        case " ${seen} " in *" ${ns} "*) continue ;; esac
+        seen="${seen} ${ns}"
+        if kubectl get namespace "${ns}" --request-timeout=10s >/dev/null 2>&1; then
+            error "  namespace ${ns} still exists."
+            bad=1
+        fi
+        rc=0
+        left="$(ns_objects "${ns}")" || rc=$?
+        if [[ "${rc}" != "0" ]]; then
+            error "  ${ns}: no namespaced kinds could be listed, so nothing can be vouched for."
+            bad=1
+        elif [[ -n "${left}" ]]; then
+            error "  ${ns} still holds $(printf '%s\n' "${left}" | wc -l | tr -d ' ') object(s); a new ${ns} would find them:"
+            printf '%s\n' "${left}" | cut -f1 | sed 's/^/      /' >&2
+            error "    kubectl delete -n ${ns} --wait=false $(printf '%s\n' "${left}" | cut -f1 | paste -sd' ' -)"
+            bad=1
+        fi
+    done
+    if [[ "${bad}" == "1" ]]; then
+        error "The purge did not finish: the objects above survived it. Remove them and purge again."
+        return 1
+    fi
+    success "No removed namespace exists any more, and none has objects left behind."
 }
 
 # Delete all PVCs in a namespace and wait for the backing PVs to be Released/Deleted.
@@ -539,7 +631,9 @@ purge_tenant_namespaces() {
         # PVCs first, or the NFS directories behind them are never reclaimed
         # and a reinstall binds new StatefulSets to the old data.
         _drain_pvcs "${ns}"
-        _delete_namespace "${ns}"
+        # A namespace that will not empty is reported here and again by
+        # purge_verify_namespaces_gone; the others still go.
+        _delete_namespace "${ns}" || true
     done
     if [[ "${found}" -eq 0 ]]; then
         info "No tenant, shared or system namespaces; nothing to remove."
@@ -744,7 +838,7 @@ purge_cluster_infra() {
     fi
 
     for ns in $(_cluster_infra_namespaces); do
-        _delete_namespace "${ns}"
+        _delete_namespace "${ns}" || true
     done
 
     for pattern in $(_cluster_infra_crd_patterns); do
