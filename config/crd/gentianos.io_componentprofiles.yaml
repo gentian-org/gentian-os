@@ -2624,6 +2624,41 @@ spec:
                   description: ContractRef identifies an integration contract this
                     app provides.
                   properties:
+                    endpoint:
+                      description: |-
+                        Endpoint is where this component answers the contract in the tenant's
+                        namespace. The platform knows nothing of what is asked there; it only
+                        tells a granted consumer the address, and opens the way to that one
+                        port. Without it a granted consumer is told no address, and the way is
+                        to the provider's pods as a whole.
+                      properties:
+                        path:
+                          description: |-
+                            Path is appended to the address the consumer is told, for an API
+                            served below the root.
+                          maxLength: 253
+                          pattern: ^/[A-Za-z0-9._~/-]*$
+                          type: string
+                        port:
+                          description: |-
+                            Port is the Service's port, and must be the port the provider's pods
+                            listen on: a network policy matches the port a pod listens on, and
+                            the way it opens is to this port and no other.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        service:
+                          description: Service is the provider's Service, in the namespace
+                            it is installed in.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                      required:
+                      - port
+                      - service
+                      type: object
                     name:
                       description: Name is the contract name (e.g., "file-store",
                         "project-management").

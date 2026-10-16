@@ -890,13 +890,13 @@ Field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
 | Concept | `ComponentProfile` field | Type |
 |---|---|---|
-| Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol? }` |
+| Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol?, endpoint? }` |
 | Contracts the app **may consume** from other apps | `spec.integrations[]` | `{ contract, provider?, capabilities? }` |
 | Platform services (identity, database, object storage, cache, mail, model gateway, …) | `spec.requires.services` | Separate from contracts |
 | What goes beyond the default posture (pod-security waiver, egress, cluster roles) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
 | Where the chart takes what was provided | `spec.package.valueMapping` | Chart value keys per service |
 
-A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one.
+A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one. A provider may say where it answers one (`endpoint`: a Service of its own, the port its pods listen on, a path); the binding carries that, the consumer is told the address and a grant opens that port only. What is asked there is the two apps' business.
 
 #### Three layers — declaration, wiring, authorization
 
@@ -956,6 +956,9 @@ spec:
   provides:                          # contracts this app serves to other apps
     - name: project-management
       protocol: http-json
+      endpoint:                      # optional: where it is answered
+        service: demo-app-api
+        port: 8000
 
   integrations:                      # contracts this app may consume, if a provider is installed
     - contract: file-store
@@ -1002,7 +1005,7 @@ spec:
     vaultPath: gentian-os/tenants/demo/contracts/file-store
 ```
 
-With the binding the operator writes a generated password to `vaultPath`, once per tenant and contract. A consumer whose profile maps the contract under `package.valueMapping.integrations` gets it, with an endpoint and a user name where the binding's reconciler knows them (`calendar` and `contacts` only), as chart values. No profile of the catalogue maps one today, and this delivery does not wait for a grant. The binding is topology and secret wiring, not a per-person permission.
+The operator writes a generated password to `vaultPath`, once per tenant and contract, for every contract an installed app maps under `package.valueMapping.integrations`, and an empty endpoint and user beside it. A component that maps the contract gets them as chart values: the consumer the password and the endpoint, the provider the same password to check its callers' with. The endpoint is filled in from the binding: the address of the provider's `endpoint` (`http://<service>.<namespace>.svc.cluster.local:<port><path>`), or for `calendar` and `contacts` the provider's DAV address. This delivery does not wait for a grant, and every consumer of one contract in a tenant holds the same password. The binding is topology and secret wiring, not a per-person permission.
 
 #### 3. Grant — `AppGrant` (tenant-authored, per install)
 
@@ -1027,12 +1030,12 @@ spec:
 
 What a grant does today (`tenant_network_policy.go`, `internal/kernel/netpolicy`, `contract_keys.go`):
 
-- **The network path.** A tenant's namespace is closed in both directions. For a binding whose consumer was granted at least one capability, two NetworkPolicies let the consumer's pods reach the provider's and the provider's admit them. Without a grant neither exists.
+- **The network path.** A tenant's namespace is closed in both directions. For a binding whose consumer was granted at least one capability, two NetworkPolicies let the consumer's pods reach the provider's and the provider's admit them, on the endpoint's port where the binding carries one. Without a grant neither exists.
 - **A key per consumer.** The consumer gets a Secret `contract-key-<consumer>-<contract>` with a random key, and the provider a Secret `contract-callers-<provider>` with the SHA-256 of each granted consumer's key and its name, so a provider can tell which of its consumers is calling. Both go when the grant goes. Mounting the Secret, sending the key and checking it are the two apps' own work; the platform checks no call.
 
 What it does not do:
 
-- **Capabilities are not enforced.** Any granted capability opens the whole path to the provider's pods. The list is written on the policy as a label and nowhere else.
+- **Capabilities are not enforced.** Any granted capability opens the whole path: to the endpoint's port, or without an endpoint to the provider's pods. The list is written on the policy as a label and nowhere else.
 - **Nothing reaches the rights store.** The model has a `contract` type; nothing writes it and no enforcement point asks about a call between two apps (§3.0).
 - **Nothing is granted at install.** The operator writes no grant and changes none; its role in the cluster can neither create nor patch one. A declared integration stays closed until the tenant's administrator grants it, and a grant narrower than the declaration is what takes effect. The binding says how much of what it asks for was granted: its `Granted` condition is `True` when all of it was, and `False` with the reason `NotGranted` or `PartlyGranted` otherwise, naming the capabilities that are missing. The *Integrations* screen of the administration console shows the same.
 - **A grant the operator wrote before it stopped doing so stays.** An earlier operator wrote a full grant for every declared integration. Those objects are left as they are and keep the path open; an administrator narrows or empties one by setting the grant, and it goes with the tenant.

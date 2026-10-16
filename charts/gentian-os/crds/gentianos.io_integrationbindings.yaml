@@ -114,6 +114,40 @@ spec:
                 minLength: 1
                 pattern: ^[a-z0-9-]+$
                 type: string
+              endpoint:
+                description: |-
+                  Endpoint is where the provider answers the contract, copied from its
+                  profile's spec.provides entry. The consumer is told its address under
+                  the endpoint of the contract's credentials, and a grant opens the way
+                  to its port only.
+                properties:
+                  path:
+                    description: |-
+                      Path is appended to the address the consumer is told, for an API
+                      served below the root.
+                    maxLength: 253
+                    pattern: ^/[A-Za-z0-9._~/-]*$
+                    type: string
+                  port:
+                    description: |-
+                      Port is the Service's port, and must be the port the provider's pods
+                      listen on: a network policy matches the port a pod listens on, and
+                      the way it opens is to this port and no other.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  service:
+                    description: Service is the provider's Service, in the namespace
+                      it is installed in.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - port
+                - service
+                type: object
               provider:
                 description: Provider identifies the app that fulfils the contract.
                 properties:

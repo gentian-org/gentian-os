@@ -621,6 +621,11 @@ type ContractCreds struct {
 }
 
 // SeedContract writes a unique password into OpenBao for an integration contract.
+//
+// The endpoint and the user are written empty with it, and are the binding's
+// to fill (IntegrationBindingReconciler): a component that maps them is
+// installed whether or not the other side of the contract is, and the
+// ExternalSecret that reads them fails on a property the path does not hold.
 func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
 	salt := ContractPath(tenant, contract)
 	g, err := s.gen(ctx, salt, "password", 40)
@@ -629,6 +634,8 @@ func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (Con
 	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"password": g.value,
+		"endpoint": "",
+		"user":     "",
 	}, g.reproducible)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)

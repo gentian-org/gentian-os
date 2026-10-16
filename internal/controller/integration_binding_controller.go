@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -128,30 +129,26 @@ func (r *IntegrationBindingReconciler) seedContract(ctx context.Context, ib *gen
 	if r.Seeder == nil {
 		return nil
 	}
-	// The provider's profile, for the Service its contract is served on.
-	//
-	// A ComponentProfile: AD-4 leaves one catalogue kind, and this read
-	// asked for the other one long after the catalogue stopped shipping
-	// it -- so every binding failed here with a NotFound and no contract
-	// credential was ever seeded. Found by deleting the AppProfile type
-	// rather than by anything noticing at runtime, which is the argument
-	// for deleting a type instead of leaving it defined and unused.
-	var providerProfile gentianov1alpha1.ComponentProfile
-	if err := r.Get(ctx, client.ObjectKey{Name: ib.Spec.Provider.App}, &providerProfile); err != nil {
-		return fmt.Errorf("failed to get provider ComponentProfile: %w", err)
-	}
-
-	// Fetch Tenant
-	var tenant gentianov1alpha1.Tenant
-	if err := r.Get(ctx, client.ObjectKey{Name: ib.Namespace}, &tenant); err != nil {
-		return fmt.Errorf("failed to get tenant: %w", err)
-	}
-
-	// For Nextcloud, we just set the endpoint based on the contract
 	endpoint := ""
 	user := fmt.Sprintf("gentian-contract-%s", ib.Spec.Contract) // A standard user
-	switch ib.Spec.Contract {
-	case "calendar", "contacts":
+	switch {
+	case ib.Spec.Endpoint != nil:
+		// Where the provider's profile says it answers the contract. What
+		// is asked there is the two apps' business.
+		endpoint = contractURL(ib.Spec.Endpoint, ib.Namespace)
+	case ib.Spec.Contract == "calendar", ib.Spec.Contract == "contacts":
+		// The provider's profile, for the Service its contract is served on.
+		//
+		// A ComponentProfile: AD-4 leaves one catalogue kind, and this read
+		// asked for the other one long after the catalogue stopped shipping
+		// it -- so every binding failed here with a NotFound and no contract
+		// credential was ever seeded. Found by deleting the AppProfile type
+		// rather than by anything noticing at runtime, which is the argument
+		// for deleting a type instead of leaving it defined and unused.
+		var providerProfile gentianov1alpha1.ComponentProfile
+		if err := r.Get(ctx, client.ObjectKey{Name: ib.Spec.Provider.App}, &providerProfile); err != nil {
+			return fmt.Errorf("failed to get provider ComponentProfile: %w", err)
+		}
 		// The provider's own web entry, which is what its DAV endpoint is
 		// served on. Its backend names the Service and the port; where
 		// the entry routes to ANOTHER component, that component's Service
@@ -173,8 +170,26 @@ func (r *IntegrationBindingReconciler) seedContract(ctx context.Context, ib *gen
 	}
 
 	if endpoint != "" {
-		path := secrets.ContractPath(ib.Namespace, ib.Spec.Contract)
-		data, _ := r.Seeder.Read(ctx, path)
+		// The path the binding names, which is the one the tenant's
+		// reconciler seeded the password at and the app Composition reads:
+		// it is the tenant's, not the namespace's, and the two names differ.
+		path := ""
+		if ib.Spec.Auth != nil {
+			path = ib.Spec.Auth.VaultPath
+		}
+		if path == "" {
+			tenant := ib.Labels[tenantLabel]
+			if tenant == "" {
+				return fmt.Errorf("binding %s/%s names neither a vault path nor its tenant", ib.Namespace, ib.Name)
+			}
+			path = secrets.ContractPath(tenant, ib.Spec.Contract)
+		}
+		// A read that failed is not an empty path: writing the endpoint
+		// over it would drop the shared password both apps hold.
+		data, err := r.Seeder.Read(ctx, path)
+		if err != nil && !stderrors.Is(err, secrets.ErrNotFound) {
+			return fmt.Errorf("read contract data from Vault: %w", err)
+		}
 		if data == nil {
 			data = make(map[string]string)
 		}
