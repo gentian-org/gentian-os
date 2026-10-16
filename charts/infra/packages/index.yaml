@@ -5,7 +5,7 @@ entries:
       category: Database
       licenses: Apache-2.0
     apiVersion: v2
-    created: "2026-10-15T12:05:56.964646186+02:00"
+    created: "2026-10-16T10:09:54.160784411+02:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -28,7 +28,7 @@ entries:
   - annotations:
       category: Database
     apiVersion: v2
-    created: "2026-10-15T12:05:56.96545234+02:00"
+    created: "2026-10-16T10:09:54.16196999+02:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -64,7 +64,7 @@ entries:
       licenses: Apache-2.0
     apiVersion: v2
     appVersion: 7.2.3
-    created: "2026-10-15T12:05:56.968729668+02:00"
+    created: "2026-10-16T10:09:54.16669833+02:00"
     dependencies:
     - name: common
       repository: oci://registry-1.docker.io/bitnamicharts
@@ -93,11 +93,20 @@ entries:
   seaweedfs:
   - apiVersion: v1
     appVersion: "4.48"
-    created: "2026-10-15T12:05:56.971300769+02:00"
+    created: "2026-10-16T10:09:54.174061568+02:00"
     description: SeaweedFS
     digest: ef3582fb5f8b8f7327b61181778f2ad6ae8c96183fc984564844ce38f7b7e5d8
     name: seaweedfs
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/seaweedfs-4.48.0.tgz
     version: 4.48.0
-generated: "2026-10-15T12:05:56.963226342+02:00"
+  - apiVersion: v1
+    appVersion: "4.48"
+    created: "2026-10-16T10:09:54.170491138+02:00"
+    description: SeaweedFS
+    digest: 40b4c119d3837af1ea44243ef56fa4c5805cae2745ea297c4222856277cc039b
+    name: seaweedfs
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/seaweedfs-4.48.0-gentian.1.tgz
+    version: 4.48.0-gentian.1
+generated: "2026-10-16T10:09:54.158672216+02:00"

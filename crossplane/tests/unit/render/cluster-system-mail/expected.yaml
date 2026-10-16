@@ -450,7 +450,7 @@ spec:
     chart:
       name: seaweedfs
       repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
-      version: 4.48.0
+      version: 4.48.0-gentian.1
     namespace: system-s3
     valuesFrom:
     - configMapKeyRef:
