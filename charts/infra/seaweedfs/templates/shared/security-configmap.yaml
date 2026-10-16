@@ -18,7 +18,22 @@ data:
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
   {{- $existing = lookup "v1" "ConfigMap" .Release.Namespace $legacyName }}
   {{- end }}
-  {{- $securityConfig := fromToml (dig "data" "security.toml" "" $existing) }}
+  {{- /* Gentian patch (UPSTREAM.md): upstream reads the keys back with
+    fromToml, which Helm adds only in 3.17 and provider-helm's Helm lacks.
+    The four signing keys are read with regexes instead, into the same
+    shape fromToml gives the dig calls below. */}}
+  {{- $existingToml := dig "data" "security.toml" "" $existing }}
+  {{- $securityConfig := dict }}
+  {{- $jwt := dict }}
+  {{- range $section := list "signing" "filer_signing" }}
+  {{- $keys := dict }}
+  {{- $writeKey := regexReplaceAll `(?s)^.*key = "([^"]*)"$` (regexFind (printf `(?m)^\[jwt\.%s\]\nkey = "[^"]*"` $section) $existingToml) "${1}" }}
+  {{- if $writeKey }}{{- $_ := set $keys "key" $writeKey }}{{- end }}
+  {{- $readKey := regexReplaceAll `(?s)^.*key = "([^"]*)"$` (regexFind (printf `(?m)^\[jwt\.%s\.read\]\nkey = "[^"]*"` $section) $existingToml) "${1}" }}
+  {{- if $readKey }}{{- $_ := set $keys "read" (dict "key" $readKey) }}{{- end }}
+  {{- if $keys }}{{- $_ := set $jwt $section $keys }}{{- end }}
+  {{- end }}
+  {{- if $jwt }}{{- $_ := set $securityConfig "jwt" $jwt }}{{- end }}
   {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}
   {{- $jwtSigning := $securityConfigValues.jwtSigning | default dict }}
   {{- $expiresAfterSeconds := $jwtSigning.expiresAfterSeconds | default dict }}
