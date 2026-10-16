@@ -4,7 +4,10 @@ Profile bundles exactly as gentian-apps publishes them: the output of its
 `scripts/build-catalogue-source.py` (`dist/catalogue/profiles/<name>.yaml`),
 copied here unchanged so that these tests need no other repository.
 
-Built from gentian-apps commit `03fcda7` (branch `develop`), all nine.
+Built from gentian-apps commit `03fcda7` (branch `develop`), all nine. One
+change was made here: each tile logo, an SVG in that build, was rendered to the
+PNG the schema admits (`scripts/tools/render-tiles.py --convert`), and each
+`tile.image` names the PNG. A rebuild from gentian-apps replaces both.
 
 They are fixtures for what the two repositories have to agree on: each must be
 a bundle the director accepts and the operator verifies

@@ -102,6 +102,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultForTenants) || !self.defaultForTenants",message="defaultForTenants is for class app: a service and a shared-app have one instance"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultWhereStoreOffered) || !self.defaultWhereStoreOffered",message="defaultWhereStoreOffered is for class app: a service and a shared-app have one instance"
 // +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size() == 0 || self.trustTier == 'platform'",message="storeUrlKey requires trustTier platform: naming it opens the component a way out of the cluster"
+// +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || !has(self.__package__.valueMapping.platform.desktopUrlKey) || self.__package__.valueMapping.platform.desktopUrlKey.size() == 0 || self.trustTier == 'platform'",message="desktopUrlKey requires trustTier platform: naming it opens the component a way to the desktop's API"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database) || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)",message="requires.services.identity.sidecar.database needs requires.services.database: the database the handler is given is the app's own"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail) || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn) || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity) && has(self.requires.services.identity.oidc))",message="requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc: the sign-in client whose tokens the mail server is to accept"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)) || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
@@ -762,25 +763,31 @@ type ExposureTile struct {
 	// +kubebuilder:validation:MaxLength=256
 	Description string `json:"description,omitempty"`
 
-	// Logo is the tile's image: an SVG the component ships, inline as a data
-	// URI. Every component brings its own -- an app, an API entry and an addon
-	// alike -- because a tile is how a person recognises the thing before they
-	// can read the label, and a shared glyph set makes two different apps look
-	// like the same one.
+	// Logo is the tile's default image: a square PNG, 128x128, inline as a
+	// data URI. Every component brings its own -- an app, an API entry and an
+	// addon alike -- because a tile is how a person recognises the thing
+	// before they can read the label. Where a component has no art of its
+	// own, it is a rendering of a platform glyph.
 	//
-	// A component with no idea for its own starts from the placeholder in the
-	// app template rather than from a name out of a set the platform owns.
+	// It is the default and nothing more: the desktop shows a tile the tenant
+	// chose, or one the person uploaded, in its place. Those are the
+	// desktop's to keep, not the profile's.
+	//
+	// PNG and nothing else. An SVG is a document a browser runs, with
+	// scripts, links and fetches of its own; a PNG is pixels. An SVG is only
+	// ever the template a PNG is rendered from before commit. The schema
+	// checks the media type and the PNG signature.
 	//
 	// Inline rather than a URL: the portal renders the desktop from one
 	// ConfigMap and must not fetch an image per tile from wherever a profile
 	// pointed, which is a request per tile to a third party on every login.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=65536
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	// +kubebuilder:validation:Pattern=`^data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*=*$`
 	Logo string `json:"logo"`
 
-	// Image is the profile-relative path the SVG lives at in git, e.g.
-	// assets/tile.svg. It is the author's copy: gentian-apps'
+	// Image is the profile-relative path the PNG lives at in git, e.g.
+	// assets/tile.png. It is the author's copy: gentian-apps'
 	// scripts/sync-profile-tile.py inlines it into Logo before commit, so the
 	// cluster reads one field and a reviewer still sees a real file in the
 	// diff rather than a wall of base64.

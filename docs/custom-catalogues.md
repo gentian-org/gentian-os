@@ -266,7 +266,7 @@ spec:
       backend: {service: acme-notes, port: 8080}
       tile:
         displayName: Notes
-        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MiA1MiI+PHJlY3Qgd2lkdGg9IjUyIiBoZWlnaHQ9IjUyIiByeD0iMTAiIGZpbGw9IiMzNTU4YTgiLz48L3N2Zz4=
+        logo: data:image/png;base64,iVBORw0KGgo…   # a 128x128 PNG; see app-customization.md
         path: /
         relation: can_launch
 ```

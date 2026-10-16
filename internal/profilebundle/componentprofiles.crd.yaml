@@ -1103,8 +1103,8 @@ spec:
                           type: object
                         image:
                           description: |-
-                            Image is the profile-relative path the SVG lives at in git, e.g.
-                            assets/tile.svg. It is the author's copy: gentian-apps'
+                            Image is the profile-relative path the PNG lives at in git, e.g.
+                            assets/tile.png. It is the author's copy: gentian-apps'
                             scripts/sync-profile-tile.py inlines it into Logo before commit, so the
                             cluster reads one field and a reviewer still sees a real file in the
                             diff rather than a wall of base64.
@@ -1112,21 +1112,27 @@ spec:
                           type: string
                         logo:
                           description: |-
-                            Logo is the tile's image: an SVG the component ships, inline as a data
-                            URI. Every component brings its own -- an app, an API entry and an addon
-                            alike -- because a tile is how a person recognises the thing before they
-                            can read the label, and a shared glyph set makes two different apps look
-                            like the same one.
+                            Logo is the tile's default image: a square PNG, 128x128, inline as a
+                            data URI. Every component brings its own -- an app, an API entry and an
+                            addon alike -- because a tile is how a person recognises the thing
+                            before they can read the label. Where a component has no art of its
+                            own, it is a rendering of a platform glyph.
 
-                            A component with no idea for its own starts from the placeholder in the
-                            app template rather than from a name out of a set the platform owns.
+                            It is the default and nothing more: the desktop shows a tile the tenant
+                            chose, or one the person uploaded, in its place. Those are the
+                            desktop's to keep, not the profile's.
+
+                            PNG and nothing else. An SVG is a document a browser runs, with
+                            scripts, links and fetches of its own; a PNG is pixels. An SVG is only
+                            ever the template a PNG is rendered from before commit. The schema
+                            checks the media type and the PNG signature.
 
                             Inline rather than a URL: the portal renders the desktop from one
                             ConfigMap and must not fetch an image per tile from wherever a profile
                             pointed, which is a request per tile to a third party on every login.
                           maxLength: 65536
                           minLength: 1
-                          pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                          pattern: ^data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*=*$
                           type: string
                         object:
                           default: app
@@ -2113,8 +2119,8 @@ spec:
                             type: object
                           image:
                             description: |-
-                              Image is the profile-relative path the SVG lives at in git, e.g.
-                              assets/tile.svg. It is the author's copy: gentian-apps'
+                              Image is the profile-relative path the PNG lives at in git, e.g.
+                              assets/tile.png. It is the author's copy: gentian-apps'
                               scripts/sync-profile-tile.py inlines it into Logo before commit, so the
                               cluster reads one field and a reviewer still sees a real file in the
                               diff rather than a wall of base64.
@@ -2122,21 +2128,27 @@ spec:
                             type: string
                           logo:
                             description: |-
-                              Logo is the tile's image: an SVG the component ships, inline as a data
-                              URI. Every component brings its own -- an app, an API entry and an addon
-                              alike -- because a tile is how a person recognises the thing before they
-                              can read the label, and a shared glyph set makes two different apps look
-                              like the same one.
+                              Logo is the tile's default image: a square PNG, 128x128, inline as a
+                              data URI. Every component brings its own -- an app, an API entry and an
+                              addon alike -- because a tile is how a person recognises the thing
+                              before they can read the label. Where a component has no art of its
+                              own, it is a rendering of a platform glyph.
 
-                              A component with no idea for its own starts from the placeholder in the
-                              app template rather than from a name out of a set the platform owns.
+                              It is the default and nothing more: the desktop shows a tile the tenant
+                              chose, or one the person uploaded, in its place. Those are the
+                              desktop's to keep, not the profile's.
+
+                              PNG and nothing else. An SVG is a document a browser runs, with
+                              scripts, links and fetches of its own; a PNG is pixels. An SVG is only
+                              ever the template a PNG is rendered from before commit. The schema
+                              checks the media type and the PNG signature.
 
                               Inline rather than a URL: the portal renders the desktop from one
                               ConfigMap and must not fetch an image per tile from wherever a profile
                               pointed, which is a request per tile to a third party on every login.
                             maxLength: 65536
                             minLength: 1
-                            pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                            pattern: ^data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*=*$
                             type: string
                           object:
                             default: app
@@ -2442,6 +2454,21 @@ spec:
                               The tenant's language is the FIRST of the languages it declares, because
                               the order is the preference: a tenant listing de then en is saying it is
                               German-speaking and also serves English.
+                            type: string
+                          desktopUrlKey:
+                            description: |-
+                              DesktopURLKey receives the in-cluster address of the API of the
+                              desktop in the component's own namespace, from the desktop profile's
+                              "api" entry: http://<its Service>:<its port>. The component calls it
+                              with the person's own token, and the desktop decides; what the App
+                              Store app stores there is a tile the tenant chose.
+
+                              Like the URL keys above it is more than a fact. A tenant's namespace is
+                              closed between pods too, so naming this key is what opens the
+                              component's pods a way to the desktop's pods on that one port, and the
+                              desktop's pods admit them on it. Nothing else of the desktop is opened,
+                              and no other component. That is why only a platform-trust profile may
+                              name it.
                             type: string
                           directorUrlKey:
                             description: |-
@@ -3675,6 +3702,11 @@ spec:
                 component a way out of the cluster'
               rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
                 || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size()
+                == 0 || self.trustTier == ''platform'''
+            - message: 'desktopUrlKey requires trustTier platform: naming it opens
+                the component a way to the desktop''s API'
+              rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
+                || !has(self.__package__.valueMapping.platform.desktopUrlKey) || self.__package__.valueMapping.platform.desktopUrlKey.size()
                 == 0 || self.trustTier == ''platform'''
             - message: 'requires.services.identity.sidecar.database needs requires.services.database:
                 the database the handler is given is the app''s own'

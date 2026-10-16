@@ -601,9 +601,9 @@ func TestTheProxyItselfKeepsThePlatformsPathsOnTheMainAddress(t *testing.T) {
 		t.Errorf("the website's own page: %d\n%s", status, head)
 	}
 	for _, path := range []string{
-		"/sign-in", "/Sign-In", "/branding/logo.svg", "/BRANDING/logo.svg", "/.well-known/acme-challenge/token",
+		"/sign-in", "/Sign-In", "/branding/logo.png", "/BRANDING/logo.png", "/.well-known/acme-challenge/token",
 		"/.well-known/pki-validation/x", "/.well-known/ACME-challenge/token", "/%2ewell-known/acme-challenge/token",
-		"/x/../branding/logo.svg", "//branding/logo.svg", "/branding%2flogo.svg",
+		"/x/../branding/logo.png", "//branding/logo.png", "/branding%2flogo.png",
 	} {
 		if status, _, body := rig.get(path); reached(body) || status == 200 {
 			t.Errorf("the website answered a path that is the platform's: %s -> %d", path, status)

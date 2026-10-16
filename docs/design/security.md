@@ -882,6 +882,8 @@ The diagram shows the target. Agents, SPIFFE, AuthZEN, contextual tuples and the
 
 What an app needs from the platform and from other apps is declared in its **`ComponentProfile`**. A declaration is a request and grants nothing. Access to another app is wired by an **`IntegrationBinding`** and limited by an **`AppGrant`**. This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
 
+
+One path between two components of a tenant is opened without a binding, the way the platform's own services are reached: a profile of trust tier `platform` that names `valueMapping.platform.desktopUrlKey` (the App Store app) may reach the desktop's API pods in its namespace on the API's port, and those pods admit it there (`internal/controller/desktop_access.go`). The schema refuses the key at any other tier. The desktop still decides each call on the person's own token.
 Field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
 #### Terminology — manifest language vs CRD fields
@@ -970,7 +972,7 @@ spec:
         port: 8080
       tile:
         displayName: "Demo App"
-        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=
+        logo: data:image/png;base64,iVBORw0KGgo…
         relation: can_launch
 ```
 

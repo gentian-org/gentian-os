@@ -58,8 +58,12 @@ type BrandIcon struct {
 	// Src is an https URL, or the image itself as a data URL. A data URL keeps
 	// the brand in the cluster's own repository and asks no third party
 	// whenever a page is shown.
+	//
+	// A data URL is a PNG, a WebP or an icon file, never an SVG: an SVG is a
+	// document a browser runs, with scripts and fetches of its own, and a
+	// logo is pixels. An SVG logo is rendered to PNG before it is set here.
 	// +kubebuilder:validation:MaxLength=262144
-	// +kubebuilder:validation:Pattern=`^(https://[^\s"'<>]+|data:image/(png|svg\+xml|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+)$`
+	// +kubebuilder:validation:Pattern=`^(https://[^\s"'<>]+|data:image/(png|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+)$`
 	Src string `json:"src"`
 
 	// Sizes, as the manifest says them: "any", or "192x192 512x512".
@@ -68,9 +72,10 @@ type BrandIcon struct {
 	// +kubebuilder:validation:Pattern=`^(any|[0-9]+x[0-9]+( [0-9]+x[0-9]+)*)?$`
 	Sizes string `json:"sizes,omitempty"`
 
-	// Type is the image's media type.
+	// Type is the image's media type: one of those a data URL may carry.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^(image/(png|webp|x-icon|vnd\.microsoft\.icon))?$`
 	Type string `json:"type,omitempty"`
 
 	// Purpose, as the manifest says it: any, maskable, monochrome.

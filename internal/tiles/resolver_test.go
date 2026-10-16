@@ -11,10 +11,11 @@ SPDX-License-Identifier: MPL-2.0
 package tiles
 
 import (
+	"bytes"
+	"encoding/base64"
+	"image/png"
 	"strings"
 	"testing"
-
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func TestResolveIconKnown(t *testing.T) {
@@ -22,7 +23,7 @@ func TestResolveIconKnown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveIcon: %v", err)
 	}
-	if !strings.HasPrefix(uri, "data:image/svg+xml;base64,") {
+	if !strings.HasPrefix(uri, "data:image/png;base64,") {
 		t.Fatalf("unexpected uri prefix: %s", uri[:32])
 	}
 }
@@ -33,44 +34,41 @@ func TestResolveIconUnknown(t *testing.T) {
 	}
 }
 
-func TestResolveLogoPriority(t *testing.T) {
-	profileIcon, err := ResolveIcon("erp")
+// Every glyph of the catalogue is a square PNG of 128 pixels, the size a
+// profile's tile is drawn at.
+func TestCatalogueGlyphsArePNGs(t *testing.T) {
+	ids, err := CatalogueIconIDs()
 	if err != nil {
-		t.Fatalf("ResolveIcon: %v", err)
+		t.Fatalf("CatalogueIconIDs: %v", err)
 	}
-	mailIcon, err := ResolveIcon("mail")
-	if err != nil {
-		t.Fatalf("ResolveIcon: %v", err)
+	for _, id := range ids {
+		uri, err := ResolveIcon(id)
+		if err != nil {
+			t.Fatalf("ResolveIcon(%s): %v", id, err)
+		}
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(uri, dataURIPrefix))
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		cfg, err := png.DecodeConfig(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("%s is not a PNG: %v", id, err)
+		}
+		if cfg.Width != 128 || cfg.Height != 128 {
+			t.Errorf("%s is %dx%d, not 128x128", id, cfg.Width, cfg.Height)
+		}
+		if len(uri) > 65536 {
+			t.Errorf("%s is %d characters, more than a profile's logo may be", id, len(uri))
+		}
 	}
+}
 
-	got, err := ResolveLogo(
-		&gentianov1alpha1.TileSpec{Icon: "erp"},
-		&gentianov1alpha1.TileSpec{Icon: "mail"},
-	)
-	if err != nil {
-		t.Fatalf("ResolveLogo: %v", err)
+func TestEncodeCustomLogoRefusesSVG(t *testing.T) {
+	if _, err := EncodeCustomLogo([]byte("<svg xmlns=\"http://www.w3.org/2000/svg\"/>")); err == nil {
+		t.Fatal("an SVG was encoded as a tile")
 	}
-	if got != mailIcon {
-		t.Fatalf("portal tile icon should win")
-	}
-
-	got, err = ResolveLogo(&gentianov1alpha1.TileSpec{Icon: "erp"}, nil)
-	if err != nil {
-		t.Fatalf("ResolveLogo: %v", err)
-	}
-	if got != profileIcon {
-		t.Fatalf("profile tile icon expected")
-	}
-
-	got, err = ResolveLogo(nil, nil)
-	if err != nil {
-		t.Fatalf("ResolveLogo: %v", err)
-	}
-	defaultIcon, err := ResolveIcon(defaultIconID)
-	if err != nil {
-		t.Fatalf("ResolveIcon: %v", err)
-	}
-	if got != defaultIcon {
-		t.Fatalf("default catalogue icon expected, got %q", got)
+	uri, err := EncodeCustomLogo(pngSignature)
+	if err != nil || !strings.HasPrefix(uri, "data:image/png;base64,") {
+		t.Fatalf("EncodeCustomLogo(png) = %q, %v", uri, err)
 	}
 }
