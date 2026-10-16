@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
-      and 32 more'
+      and 34 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -1153,6 +1153,66 @@ spec:
     providerId: form-flow
     realmId: render-fixture
     requirement: REQUIRED
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: ClientPolicyProfilePolicy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-request-bound-redirect-policy
+  labels:
+    crossplane.io/composite: render-fixture
+    gentianos.io/realm-rule: request-bound-redirect
+    gentianos.io/tenant-namespace: tenant-render-fixture
+  name: render-fixture-request-bound-redirect-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    condition:
+    - configuration:
+        attributes: '[{"key":"gentianos.io/request-bound-redirect","value":"true"}]'
+      name: client-attributes
+    description: The clients that declare a request parameter
+    enabled: true
+    name: gentian-request-bound-redirect
+    profilesRefs:
+    - name: render-fixture-request-bound-redirect-profile
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: ClientPolicyProfile
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-request-bound-redirect-profile
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-request-bound-redirect-profile
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: A client's code goes only to the address computed from its request
+      parameter
+    executor:
+    - name: gentian-request-bound-redirect
+    name: gentian-request-bound-redirect
+    realmId: render-fixture
   providerConfigRef:
     name: keycloak
 ---

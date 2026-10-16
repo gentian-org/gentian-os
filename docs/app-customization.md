@@ -112,6 +112,61 @@ elsewhere it is accepted and does nothing, so an app keeps a fallback (an app
 password) for those clusters. Who checks what:
 [security.md §2.16](design/security.md).
 
+**Naming the service a token is for.** A Keycloak access token names the
+client it was issued to in `azp`, and nothing in `aud` unless a mapper puts it
+there. An app that hands its tokens to a service which checks for its own name
+declares that name:
+
+```yaml
+metadata:
+  name: example
+spec:
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: example
+          audiences: [example-api]
+```
+
+Each name goes into the client's access tokens and the introspection answer,
+not its ID tokens, and comes off when the profile stops naming it. It is a
+grant -- the service accepts every token that names it -- so a name is the
+profile's own: its name, a dash and a label. None may begin with `gentian`,
+name a kernel service or a client Keycloak makes in every realm, or be another
+profile's name; the operator holds an install that would
+(`SignInClientRefused`).
+
+Every public client (`accessType: PUBLIC`, the default) must use PKCE with
+`S256`; the realm refuses a request without a code challenge.
+
+**One client for many places.** A client whose sign-ins come from many places
+-- an issuer that every cluster's App Store app signs in at, each with its own
+callback -- declares the parameter that says which place, and the one callback
+address computed from it:
+
+```yaml
+          requestParameter:
+            name: tenant_url
+            pattern: 'https://(?<host>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+)'
+            redirectUri: 'https://store.${host}/oauth/callback'
+            claim: tenant_url      # optional: put the value in the access token
+```
+
+The realm then refuses an authorization request, with an error page, unless it
+carries the parameter once, the value matches the pattern as a whole, and
+`redirect_uri` is exactly `redirectUri` with each `${group}` filled from the
+match; a request object or a pushed request is refused. The client is
+registered with `https://*`, narrowed by that refusal, and only once the realm
+has it. `claim` is put in the access token at the exchange of a code issued for
+that address, and in no other token; the client gets no refresh token, and
+the introspection answer does not carry the claim. Both halves are the
+platform's Keycloak extension (`kernel/extensions/keycloak-event-listener`), and
+both fail closed: without them no token carries the claim. The pattern uses
+the syntax Go and Java share (`(?<name>...)`, no back-references); the
+parameter and the claim may not be ones OAuth, OpenID Connect or JWT already
+define.
+
 **Language models are a need like the others.** An app that calls models
 declares the platform's model gateway, and only an app that declares it is
 given a key there, the gateway's address and a network path to it:

@@ -960,6 +960,7 @@ func (s ComponentProfileSpec) Delivery() ComponentDelivery {
 // +kubebuilder:printcolumn:name="Delivery",type=string,JSONPath=`.status.delivery`
 // +kubebuilder:printcolumn:name="Tier",type=string,JSONPath=`.spec.trustTier`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.requires) || !has(self.spec.requires.services) || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc) || !has(self.spec.requires.services.identity.oidc.audiences) || self.spec.requires.services.identity.oidc.audiences.all(a, a.startsWith(self.metadata.name + '-') && size(a) > size(self.metadata.name) + 1)",message="an audience of requires.services.identity.oidc is the profile's own: its name, a dash and a label"
 type ComponentProfile struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

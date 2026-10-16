@@ -1405,6 +1405,38 @@ spec:
                                   - PUBLIC
                                   - CONFIDENTIAL
                                   type: string
+                                audiences:
+                                  description: |-
+                                    Audiences are names the access tokens of this client carry in aud,
+                                    beside what Keycloak puts there itself: the name a service the app
+                                    hands its tokens to checks for.
+
+                                    It is a grant: a service that checks for a name accepts every token
+                                    that carries it. So a name is the app's own -- the profile's name, a
+                                    dash and a label of the app's choosing, e.g. "example-api" for the
+                                    profile "example" -- and is never the name of anything else: not one
+                                    beginning with "gentian", which is how the platform's own services are
+                                    named, not a kernel service's or a Keycloak client's of the realm's own,
+                                    and not another profile's (the operator holds an install that would).
+                                    Each name is put in the access token alone, not in the ID token, by a
+                                    mapper on this client that goes when the name is no longer declared.
+                                  items:
+                                    description: |-
+                                      TokenAudience is a name an app's access tokens carry in aud: one DNS label,
+                                      and none of the platform's own (see OIDCClientSpec.Audiences).
+                                    maxLength: 63
+                                    minLength: 1
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                    x-kubernetes-validations:
+                                    - message: 'an audience may not begin with gentian:
+                                        the platform''s own services are named so,
+                                        and a token naming one would be accepted by
+                                        it'
+                                      rule: '!self.startsWith(''gentian'')'
+                                  maxItems: 8
+                                  type: array
+                                  x-kubernetes-list-type: set
                                 backchannelLogout:
                                   description: |-
                                     BackchannelLogout says where in the app the realm tells it that a
@@ -1485,6 +1517,51 @@ spec:
                                   items:
                                     type: string
                                   type: array
+                                requestParameter:
+                                  description: |-
+                                    RequestParameter binds an authorization-request parameter of this
+                                    client's sign-ins to where the code is delivered, and puts it in the
+                                    access token: for an app whose one client serves many places, each
+                                    with a callback address of its own that is computed from the request.
+                                    See OIDCRequestParameterSpec.
+                                  properties:
+                                    claim:
+                                      description: |-
+                                        Claim is the access-token claim the value is put in. Omitted, the
+                                        value is checked and bound to the redirect address but not put in the
+                                        token. Not a claim Keycloak or JWT already gives a meaning: the
+                                        operator holds an install that names one.
+                                      maxLength: 64
+                                      pattern: ^[a-z][a-z0-9_]*$
+                                      type: string
+                                    name:
+                                      description: |-
+                                        Name is the parameter, as the app sends it on the authorization request.
+                                        Not one of OAuth's or OpenID Connect's own: the operator holds an
+                                        install that names one.
+                                      maxLength: 64
+                                      minLength: 1
+                                      pattern: ^[a-z][a-z0-9_]*$
+                                      type: string
+                                    pattern:
+                                      description: Pattern is what the value must
+                                        be, matched as a whole.
+                                      maxLength: 512
+                                      minLength: 1
+                                      type: string
+                                    redirectUri:
+                                      description: |-
+                                        RedirectURI is the one address a code for the request is delivered to:
+                                        https, with at least one ${group} for a named group of the pattern's
+                                        match, and no wildcard, query or fragment.
+                                      maxLength: 512
+                                      pattern: ^https://[^*?#\s]*\$\{[^*?#\s]+$
+                                      type: string
+                                  required:
+                                  - name
+                                  - pattern
+                                  - redirectUri
+                                  type: object
                               required:
                               - clientId
                               type: object
@@ -3142,6 +3219,37 @@ spec:
                                 - PUBLIC
                                 - CONFIDENTIAL
                                 type: string
+                              audiences:
+                                description: |-
+                                  Audiences are names the access tokens of this client carry in aud,
+                                  beside what Keycloak puts there itself: the name a service the app
+                                  hands its tokens to checks for.
+
+                                  It is a grant: a service that checks for a name accepts every token
+                                  that carries it. So a name is the app's own -- the profile's name, a
+                                  dash and a label of the app's choosing, e.g. "example-api" for the
+                                  profile "example" -- and is never the name of anything else: not one
+                                  beginning with "gentian", which is how the platform's own services are
+                                  named, not a kernel service's or a Keycloak client's of the realm's own,
+                                  and not another profile's (the operator holds an install that would).
+                                  Each name is put in the access token alone, not in the ID token, by a
+                                  mapper on this client that goes when the name is no longer declared.
+                                items:
+                                  description: |-
+                                    TokenAudience is a name an app's access tokens carry in aud: one DNS label,
+                                    and none of the platform's own (see OIDCClientSpec.Audiences).
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                  x-kubernetes-validations:
+                                  - message: 'an audience may not begin with gentian:
+                                      the platform''s own services are named so, and
+                                      a token naming one would be accepted by it'
+                                    rule: '!self.startsWith(''gentian'')'
+                                maxItems: 8
+                                type: array
+                                x-kubernetes-list-type: set
                               backchannelLogout:
                                 description: |-
                                   BackchannelLogout says where in the app the realm tells it that a
@@ -3222,6 +3330,51 @@ spec:
                                 items:
                                   type: string
                                 type: array
+                              requestParameter:
+                                description: |-
+                                  RequestParameter binds an authorization-request parameter of this
+                                  client's sign-ins to where the code is delivered, and puts it in the
+                                  access token: for an app whose one client serves many places, each
+                                  with a callback address of its own that is computed from the request.
+                                  See OIDCRequestParameterSpec.
+                                properties:
+                                  claim:
+                                    description: |-
+                                      Claim is the access-token claim the value is put in. Omitted, the
+                                      value is checked and bound to the redirect address but not put in the
+                                      token. Not a claim Keycloak or JWT already gives a meaning: the
+                                      operator holds an install that names one.
+                                    maxLength: 64
+                                    pattern: ^[a-z][a-z0-9_]*$
+                                    type: string
+                                  name:
+                                    description: |-
+                                      Name is the parameter, as the app sends it on the authorization request.
+                                      Not one of OAuth's or OpenID Connect's own: the operator holds an
+                                      install that names one.
+                                    maxLength: 64
+                                    minLength: 1
+                                    pattern: ^[a-z][a-z0-9_]*$
+                                    type: string
+                                  pattern:
+                                    description: Pattern is what the value must be,
+                                      matched as a whole.
+                                    maxLength: 512
+                                    minLength: 1
+                                    type: string
+                                  redirectUri:
+                                    description: |-
+                                      RedirectURI is the one address a code for the request is delivered to:
+                                      https, with at least one ${group} for a named group of the pattern's
+                                      match, and no wildcard, query or fragment.
+                                    maxLength: 512
+                                    pattern: ^https://[^*?#\s]*\$\{[^*?#\s]+$
+                                    type: string
+                                required:
+                                - name
+                                - pattern
+                                - redirectUri
+                                type: object
                             required:
                             - clientId
                             type: object
@@ -3910,6 +4063,14 @@ spec:
                 type: string
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: 'an audience of requires.services.identity.oidc is the profile''s
+            own: its name, a dash and a label'
+          rule: '!has(self.spec.requires) || !has(self.spec.requires.services) ||
+            !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc)
+            || !has(self.spec.requires.services.identity.oidc.audiences) || self.spec.requires.services.identity.oidc.audiences.all(a,
+            a.startsWith(self.metadata.name + ''-'') && size(a) > size(self.metadata.name)
+            + 1)'
     served: true
     storage: true
     subresources:
