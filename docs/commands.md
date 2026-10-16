@@ -757,7 +757,7 @@ group that holds a platform role and answers 403 for the platform admin's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
-Keycloak master-realm admin (Suze stack):
+Keycloak master-realm admin:
 
 ```bash
 kubectl get secret keycloak-admin -n kernel-authentication \

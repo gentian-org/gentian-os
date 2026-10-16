@@ -293,7 +293,7 @@ NetworkPolicies enforce three rules at the CNI level:
 
 ## 5. Identity and OIDC Trust Chain
 
-**Suze** (Keycloak + OpenFGA) is the **single trust anchor** on new installs.
+**Keycloak + OpenFGA** are the **single trust anchor** on new installs.
 Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
 against that realm, and its people sign in there too: the edge in front of a
 tenant's desktop sends the browser to the tenant realm, and the concierge
@@ -311,7 +311,7 @@ Every tenant is identified by a pair that must be kept in 1:1 correspondence:
 Keycloak realm <tenant>   ↔   namespace tenant-<tenant>
 ```
 
-On the Suze path, users live in the **tenant realm**.
+Users live in the **tenant realm**.
 
 Breaking realm ↔ namespace correspondence is a configuration error and must never occur.
 

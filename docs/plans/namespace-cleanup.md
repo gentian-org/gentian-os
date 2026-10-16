@@ -55,7 +55,7 @@ the catalogue.
 | OpenBao transit seal | `openbao` | `kernel-seal` | its unseal key is an in-cluster Secret (`openbao-transit-unseal`, written by B-02); apart from the vault it sits in a separate RBAC and backup domain. With a KMS the key leaves the cluster |
 | External Secrets Operator | `external-secrets` | `kernel-secrets` | |
 | Reloader | `stakater-system` | `kernel-secrets` | part of the rotation path |
-| Keycloak, `keycloak-idp` config (theme, SMTP ExternalSecret), realm script | `platform-kernel` | `kernel-authentication` | Suze claim `idpNamespace`; apart from OpenFGA because it has a public route and different credential holders |
+| Keycloak, `keycloak-idp` config (theme, SMTP ExternalSecret), realm script | `platform-kernel` | `kernel-authentication` | the identity ApplicationSet; apart from OpenFGA because it has a public route and different credential holders |
 | Keycloak event listener (SPI provider pushing signed membership events to the operator) | — | `kernel-authentication` | new; the operator is its only receiver; holds only its signing key. **Changed 2026-10-09** from "to the director": the operator writes the authorization store (AD-12) |
 | OpenFGA | `platform-kernel` | `kernel-authorization` | reachable from enforcement points only |
 | gentian-os operator, custodian | `gentian-system` | `kernel-control` | the director joins here |

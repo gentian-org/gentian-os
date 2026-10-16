@@ -5,13 +5,13 @@ This document describes identity, roles, and access control in Gentian OS.
 **Companion docs:**
 - [admin-console.md](admin-console.md) — the administration console
 - [multi-tenancy.md](multi-tenancy.md) — namespace, network, and data isolation
-- [security.md](security.md) — Suze, OpenFGA, MAC layers
+- [security.md](security.md) — Keycloak, OpenFGA, MAC layers
 
 ---
 
-## 1. Identity topology (Suze / Keycloak-native)
+## 1. Identity topology (Keycloak-native)
 
-**Suze** (Keycloak + OpenFGA) is the identity authority. Identity is
+**Keycloak + OpenFGA** are the identity authority. Identity is
 **Keycloak-native per tenant** — each tenant realm is the authoritative
 user and group store for that organisation.
 

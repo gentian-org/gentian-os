@@ -68,7 +68,7 @@ Tenant isolation rests on two independent layers (see [security.md](security.md)
 | **Identity domain** | One Keycloak realm per tenant |
 
 Keycloak Organizations (one realm, logical tenants) are not used: they share
-one user database. See [iam.md §1](iam.md#1-identity-topology-suze--keycloak-native).
+one user database. See [iam.md §1](iam.md#1-identity-topology-keycloak-native).
 
 Authority in the console is not read from a token's groups. Which screens a
 person gets is decided from two answers of the director: the verbs they hold
@@ -80,7 +80,7 @@ service that receives it.
 ## 3. Identity topology
 
 Realms, sign-in, the group names and the member/administrator split are
-described once, in [iam.md §1.1–§1.3](iam.md#1-identity-topology-suze--keycloak-native).
+described once, in [iam.md §1.1–§1.3](iam.md#1-identity-topology-keycloak-native).
 What the console relies on:
 
 - People and groups of a tenant are in the tenant's own realm; the platform
