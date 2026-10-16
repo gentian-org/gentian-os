@@ -69,7 +69,7 @@ flowchart TB
         EAG["Envoy AI Gateway v1.0<br/>JWT Auth & Ext Authz"]:::gateway
     end
 
-    subgraph Auth [Kernel Space / Suze Platform]
+    subgraph Auth [Kernel Space / Identity]
         KC[Keycloak]:::kernel
         OFG[OpenFGA]:::kernel
     end
@@ -111,8 +111,8 @@ The components are allocated as follows:
 sequenceDiagram
     actor App as Tenant Application
     participant EAG as Envoy AI Gateway
-    participant KC as Keycloak (Suze)
-    participant OFG as OpenFGA (Suze)
+    participant KC as Keycloak
+    participant OFG as OpenFGA
     participant LLP as LiteLLM Proxy
     participant Backend as vLLM / LocalAI
 
@@ -175,7 +175,7 @@ Stage 1 focuses on establishing the core loop: running a single-GPU server, secu
           name: llm-route
       extAuthz:
         - grpc:
-            authority: openfga-envoy.suze.svc.cluster.local
+            authority: openfga-envoy.kernel-authorization.svc.cluster.local
             port: 50051
     ```
 
