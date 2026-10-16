@@ -323,7 +323,7 @@ func TestADefinitionNotGeneratedYetIsWaitedForNotCalledOutdated(t *testing.T) {
 
 // A kind no reconciler writes may be absent for as long as it likes.
 func TestAnAbsentKindNothingWritesHoldsNothing(t *testing.T) {
-	w := newDefinitionsWorld(t, servedExcept(t, notServed("suze.gentianos.io"), notServed("xsuze.gentianos.io")))
+	w := newDefinitionsWorld(t, servedExcept(t, notServed("repositories.gentianos.io"), notServed("xrepositories.gentianos.io")))
 	w.checker.CheckOnce(context.Background())
 	w.reconcile(w.tenant, heldTenantKey)
 	w.reconcile(w.component, heldComponentKey)

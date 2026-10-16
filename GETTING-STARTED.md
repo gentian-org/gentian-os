@@ -399,7 +399,6 @@ checkout:
 | File | What it is |
 |---|---|
 | `claims/cluster.yaml` | Everything that describes this cluster — every setting above, set or commented with the default in effect |
-| `claims/suze.yaml` | Cluster security: Keycloak and OpenFGA |
 | `claims/deployments-repository.yaml` | Where the director pushes. Without it every write answers 503: no tenant can be created and nobody can be invited |
 | `claims/gentian-os-repository.yaml`, `claims/gentian-ui-repository.yaml` | The platform's own repositories, as Argo CD may read them |
 | `values.yaml` | This cluster's Helm overlay |

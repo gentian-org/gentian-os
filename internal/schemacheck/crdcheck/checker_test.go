@@ -254,7 +254,7 @@ func TestADefinitionNotThereYetIsNotReadyAndClearsByItself(t *testing.T) {
 // anything: the report says so and that is all.
 func TestAKindNobodyWritesMayStayAbsent(t *testing.T) {
 	set := schemacheck.Embedded()
-	checker, gate, _ := newChecker(newCluster(t, without(t, set, absent("suze.gentianos.io"), absent("xsuze.gentianos.io"))...))
+	checker, gate, _ := newChecker(newCluster(t, without(t, set, absent("repositories.gentianos.io"), absent("xrepositories.gentianos.io"))...))
 	report := checker.CheckOnce(context.Background())
 	if report.OK {
 		t.Fatal("an absent definition is not a cluster in order")

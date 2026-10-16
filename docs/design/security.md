@@ -163,7 +163,7 @@ Three more servers carry a NetworkPolicy of the same kind, each in its own chart
 
 Closed: the metrics port (9187). Not admitted: Argo CD, Crossplane and its providers, the vault, the edge, the director, the usher, the custodian, the system namespaces, a tenant's DMZ.
 
-- **The two identity namespaces are admitted whole.** Keycloak's and OpenFGA's pods are built by upstream charts the Suze claim installs at a version it may move, and a pod of either namespace can mount the database Secret there.
+- **The two identity namespaces are admitted whole.** Keycloak's and OpenFGA's pods are built by upstream charts the identity ApplicationSet installs at a version its values may move, and a pod of either namespace can mount the database Secret there.
 - **Tenant namespaces are admitted by tier, not by name.** Which tenant keeps its desktop's database here is decided by its realm (`componentDatabaseNamespace`), so no namespace can be named. The tenant's side is what narrows it, as for a store: egress is denied by default, and only that one tenant's desktop is opened `kernel-data`.
 - **CloudNativePG's operator is not selected by this policy.** It runs in `kernel-data` beside the cluster; the namespace's own rule (§2.13) leaves its webhook port open to any source, because the API server calls it from no pod, and closes its metrics port.
 - **Switched off, this one policy is kept and admits everything** rather than being removed: the Application that syncs the chart does not prune, so a policy that merely stopped being rendered would stay in force.
@@ -753,7 +753,7 @@ the code does.
 
 | Control | Status | Where |
 | --- | --- | --- |
-| Keycloak per-tenant realms, kernel realm, OIDC for the desktops, the consoles and apps | Implemented | `suze.yaml` installs Keycloak; realms and clients come from `tenant-default.yaml` and `identity_reconciler.go` |
+| Keycloak per-tenant realms, kernel realm, OIDC for the desktops, the consoles and apps | Implemented | `kernel/services/keycloak-idp` installs Keycloak (Argo CD, the keycloakx chart vendored); realms and clients come from `tenant-default.yaml` and `identity_reconciler.go` |
 | Keycloak group → OpenFGA tuple sync | Implemented, from events | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The poll on a timer is gone from the code. The operator is the writer AD-12 names; the director writes nothing to the store. Not built: nothing reconciles the stored memberships toward Keycloak, and a change of a person's groups ends none of their sessions |
 | Keycloak's master administrator credential | **Held by the operator** | The operator reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups (`identity_reconciler.go`, `internal/keycloak/shell_helpers.go`). The process that writes the rights store is therefore also the one that can change any identity. Narrowing it is **Target** |
 | `AppGrant` → tuples | **Not built** | A grant opens the network path of a contract and gives the consumer a key (§3.4). It does not reach the rights store: `app_grant_reconciler.go` records the object and writes no tuple, the model's `contract` type has no writer, and nothing asks about it |
