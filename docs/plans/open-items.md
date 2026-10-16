@@ -464,7 +464,7 @@ Carried over from before, and still not shown:
 - `busybox:1.36` is pinned by digest for `tls-reload` only; the image is not
   in `lint-image-pins`' `DIGEST_REQUIRED`, since its other uses are by tag.
 - The registrar may now `get` Argo CD Applications in the gitops namespace
-  (to answer 424 for a tenant whose sync failed); owner to confirm the grant.
+  (to answer 424 for a tenant whose sync failed); the owner kept the grant on 2026-10-16.
   The invitation state it reports still says `pending` for such a tenant.
 
 ## 3. Known defects, open
