@@ -75,6 +75,23 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
+            # The tenant realm's client policy that narrows a request-bound
+            # client's https://* (tenant-default); a client is registered
+            # with it only while this reads Ready.
+            - apiVersion: realm.keycloak.crossplane.io/v1alpha1
+              kind: ClientPolicyProfilePolicy
+              into: requestBoundRedirectPolicy
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/realm-rule
+                    type: Value
+                    value: request-bound-redirect
+                  - key: gentianos.io/tenant-namespace
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.tenantNamespace
             # Optional portal-bridge SSO helper page shipped with the profile catalogue.
             - kind: ConfigMap
               into: portalBridgeSso
@@ -1147,6 +1164,46 @@ spec:
             {{- if and (regexMatch $dnsLabel $bclService) (regexMatch $dnsLabel $ns) (gt $bclPort 0) (le $bclPort 65535) (le (len $bclPath) 256) (regexMatch "^(/[A-Za-z0-9_~-]+(\\.[A-Za-z0-9_~-]+)*)+/?$" $bclPath) (not (contains ".." $bclPath)) (not (contains "//" $bclPath)) }}
             {{- $signOutNotice = printf "http://%s.%s.svc.cluster.local:%d%s" $bclService $ns $bclPort $bclPath }}
             {{- end }}
+            {{- /* ── what the client puts in its tokens, held ─────────────────
+                 audiences and requestParameter, each held here to what the
+                 definition holds it to, so that nothing rests on that alone;
+                 the operator holds what needs the cluster's other profiles
+                 (token_audiences.go). TestTheCompositionHoldsTheSameNames
+                 keeps the three lists equal to the operator's. A declaration
+                 that fails is not composed at all. */}}
+            {{- $reservedAudiences := list "account" "account-console" "admin-cli" "broker" "realm-management" "security-admin-console" "director" "keycloak" "openbao" "vault" "dovecot" "infra-mariadb" "infra-redis" "infra-seaweedfs" "keycloak-config" "keycloak-idp" "llm" "mail-edge" "openbao-config" "openfga" "postfix" }}
+            {{- $protocolParameters := list "acr_values" "authorization_details" "claims" "client_id" "code_challenge" "code_challenge_method" "display" "dpop_jkt" "id_token_hint" "kc_action" "kc_idp_hint" "login_hint" "max_age" "nonce" "prompt" "redirect_uri" "registration" "request" "request_uri" "resource" "response_mode" "response_type" "scope" "state" "ui_locales" }}
+            {{- $reservedClaims := list "acr" "address" "allowed-origins" "amr" "at_hash" "aud" "auth_time" "azp" "c_hash" "client_id" "cnf" "email" "email_verified" "exp" "family_name" "given_name" "groups" "iat" "iss" "jti" "name" "nbf" "nonce" "phone_number" "preferred_username" "realm_access" "resource_access" "scope" "sid" "session_state" "sub" "typ" }}
+            {{- $profileName := dig "metadata" "name" "" $profile }}
+            {{- $audiences := list }}
+            {{- range $aud := (default list $oidcCl.audiences) }}
+            {{- if and $profileName (hasPrefix (printf "%s-" $profileName) $aud) (gt (len $aud) (add1 (len $profileName))) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) (not (has $aud $reservedAudiences)) }}
+            {{- $audiences = append $audiences $aud }}
+            {{- end }}
+            {{- end }}
+            {{- /* requestParameter: the parameter and its address, held as the
+                 definition holds them; the pattern is the extension's to
+                 match, which refuses one it cannot. And whether the realm has
+                 the rule that narrows https://* again: tenant-default's client
+                 policy, found by its labels, Ready. Until it is, the client is
+                 registered without https://* and every request computed from
+                 the parameter is refused as an unknown address. */}}
+            {{- $rp := default dict $oidcCl.requestParameter }}
+            {{- $rpName := default "" $rp.name }}
+            {{- $rpClaim := default "" $rp.claim }}
+            {{- $rpRedirect := default "" $rp.redirectUri }}
+            {{- $bound := and (regexMatch "^[a-z][a-z0-9_]{0,63}$" $rpName) (not (has $rpName $protocolParameters)) $rp.pattern (le (len (default "" $rp.pattern)) 512) (le (len $rpRedirect) 512) (regexMatch "^https://[^*?#\\s]*\\$\\{[^*?#\\s]+$" $rpRedirect) (or (not $rpClaim) (and (regexMatch "^[a-z][a-z0-9_]{0,63}$" $rpClaim) (not (has $rpClaim $reservedClaims)))) }}
+            {{- $narrowed := false }}
+            {{- range $p := (dig "requestBoundRedirectPolicy" list $extraRes) }}
+            {{- range $c := (dig "status" "conditions" list $p) }}
+            {{- if and (eq (dig "type" "" $c) "Ready") (eq (dig "status" "" $c) "True") }}
+            {{- $narrowed = true }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if and $bound $narrowed }}
+            {{- $redirects = append $redirects "https://*" }}
+            {{- end }}
             {{- /* provider-keycloak Client reads clientSecretSecretRef from this Secret;
                  it must match the OpenBao path XWiki consumes via ExternalSecret. */}}
             {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
@@ -1216,10 +1273,33 @@ spec:
                      PlatformMarkerAttribute). */}}
                 extraConfig:
                   gentianos.io/managed-by: platform
+                  {{- /* The request parameter, for the platform's executor
+                       and mapper, which read it here and nowhere else; the
+                       flag is what the realm's client policy matches. */}}
+                  {{- if $bound }}
+                  gentianos.io/request-bound-redirect: "true"
+                  gentianos.io/request-parameter: {{ $rpName | quote }}
+                  gentianos.io/request-parameter-pattern: {{ $rp.pattern | quote }}
+                  gentianos.io/request-parameter-redirect-uri: {{ $rpRedirect | quote }}
+                  {{- end }}
                 accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
+                {{- /* A public client has no secret, so the code is all that
+                     stands between whoever receives it and a token: PKCE
+                     with S256, on every one, and a request without a
+                     challenge is refused. */}}
+                {{- if eq (default "PUBLIC" $oidcCl.accessType) "PUBLIC" }}
+                pkceCodeChallengeMethod: S256
+                {{- end }}
+                {{- /* No refresh token for a client whose tokens carry the
+                     request parameter: a refresh is not an exchange of a
+                     code, so its token would not, and the client signs in
+                     again instead. */}}
+                {{- if $bound }}
+                useRefreshTokens: false
+                {{- end }}
                 {{- if hasKey $oidcPackFullScopeAllowed $oidcPackKey }}
                 fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcPackKey }}
                 {{- end }}
@@ -1257,11 +1337,11 @@ spec:
                  audience whose client does not exist.
 
                  A grant, so held to what the definition holds it to, and not
-                 left to that alone: only for a profile from a catalogue of the
-                 whole cluster (the operator holds an install of one from a
-                 tenant's own catalogue and says why), a name that is one DNS
-                 label, and none beginning with "gentian", which is how the
-                 platform's own services are named.
+                 left to that alone: the profile's own name, a dash and a label;
+                 none beginning with "gentian"; none of the names the platform
+                 keeps ($reservedAudiences). That no other profile is called so
+                 is the operator's to say (token_audiences.go), which holds the
+                 install of one that would be.
 
                  deletionPolicy: Delete, unlike the mappers of a client that
                  goes as a whole: the client stays when a profile stops naming
@@ -1271,10 +1351,7 @@ spec:
 
                  All five config keys and no external-name, for the reasons
                  given at director-audience in tenant-default. */}}
-            {{- $origin := dig "metadata" "annotations" "gentianos.io/catalogue-origin" "" $profile }}
-            {{- if hasPrefix "cluster/" $origin }}
-            {{- range $aud := (default list $oidcCl.audiences) }}
-            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) }}
+            {{- range $aud := $audiences }}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
             kind: ProtocolMapper
@@ -1302,7 +1379,48 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
-            {{- end }}
+
+            {{- /* ── the request parameter, in the access token ───────────────
+                 requestParameter.claim: the platform's mapper
+                 gentian-request-parameter-mapper (its Keycloak extension)
+                 copies the parameter into this claim. It reads the parameter,
+                 its pattern and its address from the client's attributes
+                 above, and puts the value in the token at the exchange of a
+                 code only, and only when that exchange's redirect_uri -- which
+                 the realm has held to the code's -- is the address computed
+                 from the value. A token got another way does not carry it.
+
+                 Into the access token alone: not the ID token, and not the
+                 answer of an introspection, which runs the mappers again with
+                 no exchange to compare with. Delete, as the audiences above. */}}
+            {{- if and $bound $rp.claim }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-request-parameter
+              name: {{ $tenant }}-{{ $app }}-oidc-request-parameter
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "request-parameter-%s" $rp.name | quote }}
+                protocol: openid-connect
+                protocolMapper: gentian-request-parameter-mapper
+                config:
+                  claim.name: {{ $rp.claim | quote }}
+                  jsonType.label: String
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "false"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
             {{- end }}
             {{- if hasKey $oidcPackDefaultScopes $oidcPackKey }}
             ---

@@ -2857,6 +2857,72 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* ── the realm holds a request to its parameter ──────────────
+                 An app's client may declare requires.services.identity.oidc.
+                 requestParameter: one parameter of its sign-ins and the one
+                 address a code for such a request is delivered to, computed
+                 from it. The client is then registered with https://* (app-
+                 default), and this is what narrows that again: a client
+                 policy of the realm whose one executor, gentian-request-
+                 bound-redirect from the platform's Keycloak extension, refuses
+                 every authorization request of such a client whose redirect_uri
+                 is not the address computed from its parameter. It reads the
+                 parameter, its pattern and the address from the client's own
+                 attributes, so the one profile and the one policy serve every
+                 app of the realm, and the condition picks the clients that
+                 carry gentianos.io/request-bound-redirect "true".
+
+                 app-default registers https://* only while the policy below
+                 reads Ready: a client is not open before the realm narrows it.
+                 It finds the policy by the two labels.
+
+                 Orphan, both: the realm keeps them as long as it exists, and
+                 the provider's read of either never reports one missing, so a
+                 delete would not finish. A realm without such a client runs
+                 the executor for nobody. */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: ClientPolicyProfile
+            metadata:
+              name: {{ $tenant }}-request-bound-redirect-profile
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-request-bound-redirect-profile
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: gentian-request-bound-redirect
+                description: "A client's code goes only to the address computed from its request parameter"
+                executor:
+                  - name: gentian-request-bound-redirect
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: ClientPolicyProfilePolicy
+            metadata:
+              name: {{ $tenant }}-request-bound-redirect-policy
+              labels:
+                gentianos.io/realm-rule: request-bound-redirect
+                gentianos.io/tenant-namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-request-bound-redirect-policy
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: gentian-request-bound-redirect
+                description: "The clients that declare a request parameter"
+                enabled: true
+                condition:
+                  - name: client-attributes
+                    configuration:
+                      attributes: '[{"key":"gentianos.io/request-bound-redirect","value":"true"}]'
+                profilesRefs:
+                  - name: {{ $tenant }}-request-bound-redirect-profile
+              providerConfigRef:
+                name: keycloak
+
             {{- if $kernelBroker }}
             {{- /* ── kernel broker client, observed ────────────────────────────
                  The tenant realm brokers to the kernel realm, and broker-<tenant>

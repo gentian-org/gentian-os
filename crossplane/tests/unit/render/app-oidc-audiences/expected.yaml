@@ -280,10 +280,10 @@ apiVersion: client.keycloak.crossplane.io/v1alpha1
 kind: ProtocolMapper
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: demo-app-oidc-audience-store
+    crossplane.io/composition-resource-name: demo-app-oidc-audience-demo-app-api
   labels:
     crossplane.io/composite: render-demo-app-fixture
-  name: demo-demo-app-oidc-audience-store
+  name: demo-demo-app-oidc-audience-demo-app-api
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -301,10 +301,10 @@ spec:
     config:
       access.token.claim: "true"
       id.token.claim: "false"
-      included.custom.audience: store
+      included.custom.audience: demo-app-api
       introspection.token.claim: "true"
       userinfo.token.claim: "false"
-    name: audience-store
+    name: audience-demo-app-api
     protocol: openid-connect
     protocolMapper: oidc-audience-mapper
     realmId: demo

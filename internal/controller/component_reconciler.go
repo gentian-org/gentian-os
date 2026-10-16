@@ -410,13 +410,18 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInSidecarRefused, noSignIn, 0)
 	}
-	// Audiences on the app's sign-in tokens: a grant, held for the same
-	// reason and at the same point as the sidecar (token_audiences.go).
-	if refusal := tokenAudiencesRefusal(profile); refusal != "" {
-		if r.Recorder != nil && !componentReports(comp, reasonTokenAudiencesRefused, refusal) {
-			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonTokenAudiencesRefused, refusal)
+	// What the app's sign-in client puts in its tokens: audiences are a
+	// grant and a request parameter a narrowing of where codes go, held at
+	// the same point as the sidecar (token_audiences.go).
+	noSignInClient, err := r.signInClientRefusalFor(ctx, profile, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if noSignInClient != "" {
+		if r.Recorder != nil && !componentReports(comp, reasonSignInClientRefused, noSignInClient) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonSignInClientRefused, noSignInClient)
 		}
-		return r.status(ctx, comp, metav1.ConditionFalse, reasonTokenAudiencesRefused, refusal, 0)
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInClientRefused, noSignInClient, 0)
 	}
 	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {

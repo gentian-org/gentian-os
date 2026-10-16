@@ -3,7 +3,7 @@ kind: ComponentProfile
 metadata:
   name: demo-app
   annotations:
-    gentianos.io/catalogue-origin: cluster/private
+    gentianos.io/catalogue-origin: tenant/demo/own
   labels:
     gentianos.io/profile-name: demo-app
 spec:
@@ -31,7 +31,6 @@ spec:
             - "https://demo.${TENANT_DOMAIN}/oidc/callback"
           postLogoutRedirectUris:
             - "https://demo.${TENANT_DOMAIN}/"
-          # From a catalogue of the whole cluster: its client's tokens name the
-          # service they are handed to.
+          # The profile's own name and a label; from any catalogue.
           audiences:
-            - store
+            - demo-app-api

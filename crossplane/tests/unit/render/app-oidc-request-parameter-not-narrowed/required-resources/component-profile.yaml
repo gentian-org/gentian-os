@@ -17,20 +17,23 @@ spec:
       repository: oci://example.invalid/demo-app
       name: demo-app
       version: "1.0.0"
-    valueMapping:
-      oidc:
-        clientSecretKey: demo-app.oidc.secret
   requires:
     services:
       identity:
         oidc:
           clientId: catalogue-test-client
           name: Demo App
-          accessType: CONFIDENTIAL
+          accessType: PUBLIC
           redirectUris:
             - "https://demo.${TENANT_DOMAIN}/oidc/callback"
           postLogoutRedirectUris:
             - "https://demo.${TENANT_DOMAIN}/"
-          # From the tenant's own catalogue: the audience is not given.
           audiences:
-            - store
+            - demo-app-api
+          # One client for many places: the code goes to the address
+          # computed from the parameter, and the token carries it.
+          requestParameter:
+            name: tenant_url
+            pattern: 'https://(?<host>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+)'
+            redirectUri: 'https://store.${host}/oauth/callback'
+            claim: tenant_url
