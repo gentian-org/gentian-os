@@ -286,7 +286,7 @@ kv_put_once "storage/s3" "$(cat <<EOF
 EOF
 )"
 
-# --- Keycloak Bootstrap (Suze IdP admin) ---
+# --- Keycloak Bootstrap (Keycloak admin) ---
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
   "admin_password": "${KC_ADMIN_PW}"

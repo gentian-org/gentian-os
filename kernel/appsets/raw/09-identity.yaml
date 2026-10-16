@@ -1,7 +1,21 @@
 ---
-# Keycloak's and OpenFGA's values into their own namespaces. The workloads
-# themselves are composed by the Suze claim (11-claims), which reads these
-# ConfigMaps and ExternalSecrets from the namespaces the claim names.
+# Keycloak and OpenFGA, each from its chart under kernel/services/<app>/
+# manifests: the upstream chart as a vendored subchart, its values in git,
+# the credentials as ExternalSecrets the pods read by secretKeyRef. Argo CD
+# renders and applies them like any other kernel service; nothing composes
+# them. Wave 9, after the kernel's Postgres they both read (08).
+#
+# Both Applications receive the same parameters -- one template -- so each
+# chart ignores the other's: keycloakx.* is Keycloak's subchart, dbHost is
+# OpenFGA's ExternalSecret, and global.* is how a value reaches a string the
+# keycloakx chart runs through tpl in its own scope (the event listener's
+# image in an init container).
+#
+# releaseName: the Helm release is what names the Services
+# (gentian-idp-keycloak-keycloakx-http, gentian-openfga) and labels the pods
+# (app.kubernetes.io/instance), and everything that reaches them --
+# compositions, the operator chart, the gateway routes -- was written to
+# those names when a Crossplane Release carried them.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -24,8 +38,10 @@ spec:
           elements:
           - app: keycloak-idp
             namespace: ns.authentication.placeholder
+            release: gentian-idp-keycloak
           - app: openfga
             namespace: ns.authorization.placeholder
+            release: gentian-openfga
   template:
     metadata:
       name: '{{.app}}-{{.env}}'
@@ -38,13 +54,17 @@ spec:
         targetRevision: develop
         path: kernel/services/{{.app}}/manifests
         helm:
+          releaseName: '{{.release}}'
           parameters:
             - name: env
               value: '{{.env}}'
             - name: kernelDomain
               value: 'kernel.domain.placeholder'
-            # Kernel data lives on kernel-postgres, in the data namespace.
+            # Kernel data lives on kernel-postgres, in the data namespace:
+            # once for OpenFGA's datastore URI, once for Keycloak's chart.
             - name: dbHost
+              value: 'kernel-postgres-rw.ns.data.placeholder.svc.cluster.local'
+            - name: keycloakx.database.hostname
               value: 'kernel-postgres-rw.ns.data.placeholder.svc.cluster.local'
             # Where Keycloak states a user's groups. The director runs in the
             # control namespace and is reached on the cluster network, never
@@ -52,14 +72,14 @@ spec:
             # The provider jar is built from this repository, so it follows
             # the same ref the manifests do. A tag of its own would let the
             # jar and the values that configure it come from different commits.
-            - name: eventListener.image
+            - name: global.eventListener.image
               value: 'ghcr.io/gentian-org/keycloak-event-listener:gentian.os.revision.placeholder'
             # The OPERATOR's endpoint, not the director's. Who is in which
             # group is cluster state, so the thing that turns declared state
             # into cluster state projects it; the director reads the graph to
             # decide a call and writes git, and its token can no longer write
             # a tuple at all. The path is unchanged, so only the host moved.
-            - name: eventListener.directorURL
+            - name: global.eventListener.directorURL
               value: 'http://gentian-os-membership.ns.control.placeholder.svc.cluster.local:8090/v1/events/keycloak'
             # The claim's mail.host, the relay Keycloak's realm sends through on
             # an external-mail cluster -- the same placeholder the mail

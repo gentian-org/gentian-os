@@ -405,9 +405,10 @@ What is declared and what is still a Job:
 ### 1.10 Keycloak version, features and upgrades
 
 **Version.** Keycloak 26.8.0, from the `keycloakx` chart 7.3.2. The chart is
-pinned in the `suze` Composition and XRD
-([suze.yaml](../../crossplane/compositions/suze.yaml)); the image tag in
-`keycloakVersion` ([values.yaml](../../kernel/services/keycloak-idp/manifests/values.yaml)),
+vendored under
+[kernel/services/keycloak-idp/manifests/charts/](../../kernel/services/keycloak-idp/manifests/UPSTREAM.md)
+and rendered by Argo CD from the identity ApplicationSet; the image tag in
+`keycloakx.image.tag` ([values.yaml](../../kernel/services/keycloak-idp/manifests/values.yaml)),
 because the chart trails upstream; the event listener is compiled against the
 same version (`keycloak.version` in its `pom.xml`). The three move together.
 `provider-keycloak` stays at v2.19.0.
@@ -463,9 +464,9 @@ start of the new version, and the migration is one-way: 26.0 cannot run on a
 26.8 database, so going back means restoring the database.
 
 1. Back up the `keycloak` database (and take the tenant exports).
-2. Upgrade: sync the release. If the cluster's `Suze` claim sets
-   `keycloak.chartVersion`, change it there; the default is 7.3.2. Keycloak is
-   one replica, so sign-in is down while the pod restarts and migrates.
+2. Upgrade: replace the vendored chart and the image tag (UPSTREAM.md says
+   how) and let Argo CD sync `keycloak-idp-<stage>`. Keycloak is one replica,
+   so sign-in is down while the pod restarts and migrates.
 3. Verify: the pod is Ready, a person can sign in, the console lists people,
    and a tenant's Keycloak objects are Synced.
 

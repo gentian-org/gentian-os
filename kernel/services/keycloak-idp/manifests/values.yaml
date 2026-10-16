@@ -1,9 +1,6 @@
 # env is supplied by the ApplicationSet (helm.parameters). The default
 # only matters for `helm template` run by hand.
 env: dev
-# storageClass empty = use the cluster's default StorageClass. Set per
-# stage in values-<env>.yaml only where a stage genuinely differs.
-storageClass: ""
 
 # Realm SMTP. Supplied by the ApplicationSet from the Cluster claim, the same
 # way Postfix receives them — see externalsecret-smtp.yaml for what is built
@@ -18,26 +15,223 @@ kernelDomain: ""
 # The realm the cluster's own users live in. Tenants have their own realms and
 # are configured by the operator, not from here.
 kernelRealm: kernel
-# The database host: kernel-postgres in kernel-data.
-dbHost: ""   # empty: kernel-postgres-rw.kernel-data.svc.cluster.local
 
-# The Keycloak image tag. One version for the server, the theme's init
-# container and the event listener's build; see templates/configmap.yaml.
-keycloakVersion: "26.8.0"
+# Shared with the subchart. Helm hands `global` to every chart of a release,
+# and the keycloakx strings below that name these values are run through tpl
+# by that chart, in its own scope -- so a value the ApplicationSet supplies
+# reaches an init container's image only this way.
+global:
+  # The event listener that keeps OpenFGA's memberships equal to Keycloak's.
+  #
+  # Keycloak is the only place a membership changes; the director holds a
+  # projection of it and never edits that in place. Without this provider the
+  # projection is empty, so nobody holds a group, and every permission that
+  # follows from group membership is refused to everyone.
+  eventListener:
+    # Overridden by the ApplicationSet with the ref the manifests come from.
+    # The default only matters for a `helm template` run by hand.
+    image: ghcr.io/gentian-org/keycloak-event-listener:develop
+    # The operator's membership endpoint on the cluster network. Supplied by
+    # the ApplicationSet, which knows where the control namespace is. Still
+    # called directorURL because that is the name the listener jar reads.
+    directorURL: ""
+    # The id the director lists this key under.
+    keyID: gentian-listener
 
-# The event listener that keeps OpenFGA's memberships equal to Keycloak's.
-#
-# Keycloak is the only place a membership changes; the director holds a
-# projection of it and never edits that in place. Without this provider the
-# projection is empty, so nobody holds a group, and every permission that
-# follows from group membership is refused to everyone.
-eventListener:
-  # Overridden by the ApplicationSet with the ref the manifests come from.
-  # The default only matters for a `helm template` run by hand.
-  image: ghcr.io/gentian-org/keycloak-event-listener:develop
-  # The operator's membership endpoint on the cluster network. Supplied by
-  # the ApplicationSet, which knows where the control namespace is. Still
-  # called directorURL because that is the name the listener jar reads.
-  directorURL: ""
-  # The id the director lists this key under.
-  keyID: gentian-listener
+# The keycloakx chart's values (charts/keycloakx-7.3.2.tgz). What used to be
+# the keycloak-idp-base-values ConfigMap a Crossplane Release merged.
+keycloakx:
+  replicas: 1
+  # The Keycloak the platform runs. Named here because the keycloakx chart
+  # trails upstream: 7.3.2 still defaults to 26.7.4. The event listener is
+  # compiled against this version (keycloak.version in
+  # kernel/extensions/keycloak-event-listener/pom.xml) and the two move
+  # together: the SPIs it implements are internal.
+  image:
+    tag: "26.8.0"
+  command:
+    - "/opt/keycloak/bin/kc.sh"
+  args:
+    - "start"
+    - "--http-enabled=true"
+    - "--hostname=https://id.$(KERNEL_DOMAIN)/auth"
+    - "--hostname-backchannel-dynamic=true"
+    - "--hostname-strict=false"
+    - "--proxy-headers=xforwarded"
+    - "--cache=local"
+    # Theme assets are served from /auth/resources/<hash>/, and Keycloak stamps
+    # them Cache-Control: max-age=2592000 because that path is meant to be
+    # content-addressed. It is not: the hash comes from the Keycloak build, so
+    # a theme change leaves the URL identical while the bytes change, and every
+    # cache in front — Cloudflare included — keeps serving the old file for
+    # thirty days. Observed exactly that: the pod had the new stylesheet while
+    # the edge returned the previous one on a cf-cache-status HIT.
+    #
+    # -1 stops Keycloak emitting max-age at all. The cost is refetching ~19 KB
+    # on a login page; the alternative is a theme edit that silently does not
+    # take effect. Server-side theme caching stays on: Reloader rolls the pod
+    # when the ConfigMap changes, so templates are re-read anyway.
+    - "--spi-theme-static-max-age=-1"
+  proxy:
+    mode: xforwarded
+  service:
+    type: ClusterIP
+    httpPort: 8080
+  ingress:
+    enabled: false
+  metrics:
+    enabled: false
+  database:
+    vendor: postgres
+    # kernel-postgres in kernel-data. The ApplicationSet overrides this with
+    # the data namespace of the cluster's layout.
+    hostname: kernel-postgres-rw.kernel-data.svc.cluster.local
+    port: 5432
+    database: keycloak
+    username: keycloak_user
+    # The password, read into KC_DB_PASSWORD by the chart.
+    existingSecret: keycloak-idp-credentials
+    existingSecretKey: db-password
+  # Gentian login theme — sources in kernel/services/keycloak-idp/theme/,
+  # rendered to a ConfigMap by scripts/gen/gen-keycloak-theme-configmap.py.
+  #
+  # A ConfigMap key cannot contain "/", so the theme's directory tree is encoded
+  # as "__" and expanded here at startup. Mounting the ConfigMap directly does
+  # not work: login/resources/css would have to mount inside the read-only
+  # login volume, which has no such directory to mount onto. Per-file subPath
+  # mounts would work but put a copy of the file list in these values, so every
+  # new template would need editing in two places.
+  #
+  # The init container reuses the image named above so the Keycloak version
+  # is not pinned a second time here; extraInitContainers is tpl'd by the chart.
+  extraInitContainers: |
+    - name: expand-theme
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+      imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          rm -rf /theme/gentian
+          for src in /theme-src/*; do
+            [ -f "$src" ] || continue
+            rel=$(basename "$src" | sed 's|__|/|g')
+            mkdir -p "/theme/gentian/$(dirname "$rel")"
+            cp "$src" "/theme/gentian/$rel"
+          done
+          echo "expanded $(find /theme/gentian -type f | wc -l) theme file(s)"
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: theme-src
+          mountPath: /theme-src
+          readOnly: true
+        - name: theme
+          mountPath: /theme
+    # The event listener. Keycloak is the only place a membership changes,
+    # and this provider is what tells the director about it, so OpenFGA's
+    # copy follows rather than drifting. Its image exists to be copied from:
+    # Keycloak's own image stays upstream's.
+    - name: install-event-listener
+      image: {{ .Values.global.eventListener.image | quote }}
+      # Always: the tag follows the branch the manifests come from
+      # (keycloak-event-listener:<branch>), so IfNotPresent kept the first
+      # jar a node ever pulled -- a restart loaded the old extension and the
+      # activation-link endpoint never arrived. The image is a single jar.
+      imagePullPolicy: Always
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: providers
+          mountPath: /target
+  extraVolumes: |
+    - name: providers
+      emptyDir: {}
+    - name: listener-key
+      secret:
+        secretName: keycloak-event-listener-key
+        # Optional so a missing key can never stop Keycloak from starting.
+        # Without it the listener cannot sign, Keycloak says so, and the
+        # director says it is accepting no statements -- two loud complaints
+        # rather than a pod that waits forever on a volume.
+        optional: true
+    - name: theme-src
+      configMap:
+        name: keycloak-idp-theme
+    - name: theme
+      emptyDir: {}
+  extraVolumeMounts: |
+    - name: theme
+      mountPath: /opt/keycloak/themes
+      readOnly: true
+    - name: providers
+      mountPath: /opt/keycloak/providers
+      readOnly: true
+    - name: listener-key
+      mountPath: /etc/gentian/listener
+      readOnly: true
+  # Keycloak caches themes, so a change has to roll the pod rather than rely on
+  # the kubelet refreshing a mounted file in place.
+  podAnnotations:
+    secret.reloader.stakater.com/reload: keycloak-idp-credentials,keycloak-event-listener-key
+    configmap.reloader.stakater.com/reload: keycloak-idp-theme
+  # Do NOT add KC_CACHE or KC_HEALTH_ENABLED here — the keycloakx chart
+  # already emits both natively (KC_CACHE from the --cache=local arg
+  # above; KC_HEALTH_ENABLED from the chart's own default health-check
+  # behavior), and a duplicate `name:` in the same env list is refused by
+  # the API server on the next apply.
+  extraEnv: |
+    - name: KERNEL_DOMAIN
+      valueFrom:
+        configMapKeyRef:
+          name: gentian-kernel-services
+          key: KERNEL_DOMAIN
+    - name: KEYCLOAK_ADMIN
+      value: admin
+    - name: KEYCLOAK_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-idp-credentials
+          key: admin-password
+    - name: KC_METRICS_ENABLED
+      value: "false"
+    - name: KC_HOSTNAME
+      value: "https://id.$(KERNEL_DOMAIN)/auth"
+    # No KC_HOSTNAME_ADMIN. The administration console is served on the
+    # hostname above, behind the kernel session at the edge, because
+    # Keycloak cannot serve it anywhere else: with a second hostname the
+    # console takes a token stamped with the issuer's hostname and calls
+    # the Admin REST API on the admin hostname, which refuses it with 401
+    # and the console spins for ever. Upstream closed that as not planned
+    # (keycloak/keycloak#42264). id.<kernel> therefore carries a public
+    # path allowlist, a refused master realm, and /auth/admin/ behind the
+    # session — told apart by path, which is what the edge routes do.
+    - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+      value: "true"
+    - name: KC_HOSTNAME_STRICT
+      value: "false"
+    # Where the listener states a user's groups, and the key it signs with.
+    # The director believes a statement only from a key it lists, and only
+    # about groups the stating realm is entitled to speak for.
+    - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_DIRECTOR_URL
+      value: {{ .Values.global.eventListener.directorURL | quote }}
+    - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_KEY_ID
+      value: {{ .Values.global.eventListener.keyID | quote }}
+    - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_PRIVATE_KEY_FILE
+      value: /etc/gentian/listener/listener.pem
+  resources:
+    requests:
+      cpu: 200m
+      memory: 768Mi
+    limits:
+      cpu: "2"
+      memory: 1.5Gi

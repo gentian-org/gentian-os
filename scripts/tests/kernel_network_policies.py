@@ -249,13 +249,12 @@ def census():
         raise Failure("A-06 no longer installs Argo CD and its image updater the way this reads")
     pinned("step:A-06-argocd", functions["gitops"], versions["argocd"]["manifest"], "A-06 (Argo CD manifest)")
 
-    # The identity provider and OpenFGA, which the Suze composition installs.
-    suze = (ROOT / "crossplane/compositions/suze.yaml").read_text()
-    for var, namespace in (("kcVersion", "kernel-authentication"), ("fgaVersion", "kernel-authorization")):
-        m = re.search(r'\$' + var + r' := default "([^"]+)"', suze)
-        if not m:
-            raise Failure(f"suze.yaml no longer sets ${var} the way this reads")
-        pinned("composition:suze", namespace, m.group(1), f"the Suze composition ({var})")
+    # The identity provider and OpenFGA: Argo CD Applications of the identity
+    # ApplicationSet, each a chart carrying the upstream chart as a vendored
+    # subchart under charts/. The version is that subchart's.
+    for app, chart, namespace in (("keycloak-idp", "keycloakx", "kernel-authentication"), ("openfga", "openfga", "kernel-authorization")):
+        meta = yaml.safe_load((ROOT / "kernel/services" / app / "manifests/charts" / chart / "Chart.yaml").read_text())
+        pinned(f"application:{app}", namespace, meta["version"], f"the {app} chart's vendored {chart} subchart")
 
     # Crossplane's providers and functions.
     for doc in yaml.safe_load_all((ROOT / "crossplane/providers/providers.yaml").read_text()):
@@ -263,8 +262,9 @@ def census():
             pinned("step:B-05-crossplane-providers", "kernel-provisioning", None, f"{doc['kind']} {doc['metadata']['name']}")
 
     # Every installedBy names something this looked at, or says in words what
-    # creates the pods (cert-manager's solver).
-    known = ("bootstrap-application:", "bootstrap-chart:", "step:", "composition:")
+    # creates the pods (cert-manager's solver). application: is an Application
+    # of an ApplicationSet under kernel/appsets.
+    known = ("bootstrap-application:", "bootstrap-chart:", "step:", "application:")
     for installer in installed:
         if installer.startswith(known):
             continue

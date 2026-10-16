@@ -409,7 +409,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	for _, rule := range idRoute.Spec.Rules {
 		prefix := *rule.Matches[0].Path.Value
 		if got := *rule.BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
-			t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
+			t.Fatalf("id backend port = %d, want 8080 (Keycloak)", got)
 		}
 		if ns := rule.BackendRefs[0].Namespace; ns == nil || string(*ns) != identityNamespace {
 			t.Fatalf("id backend namespace = %v, want %s", ns, identityNamespace)

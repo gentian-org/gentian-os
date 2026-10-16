@@ -379,7 +379,7 @@ create_crossplane_secrets() {
             --arg b "$(_derive s3 root_password)" \
             '{root_user:$a,root_password:$b}')"
 
-    # ── identity/keycloak-bootstrap (Suze Keycloak admin password) ─────────────
+    # ── identity/keycloak-bootstrap (Keycloak admin password) ──────────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --arg a "$(_derive keycloak adminPassword)" \
@@ -1314,23 +1314,16 @@ print_summary_cp() {
     infra_mdb_ready=$(_release_ready mariadb)
     infra_redis_ready=$(_release_ready redis)
     infra_s3_ready=$(_release_ready seaweedfs)
-    local suze_ready openfga_ready keycloak_ready suze_xr
-    suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
-        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
-    # `|| true` on both: grep exits 1 when the release is absent, which is the
-    # normal state until phase D deploys Suze. Under pipefail and the ERR trap
-    # that ends the run — the summary, whose whole job is to report state, would
-    # abort the install for finding a component not deployed yet.
-    local openfga_rel keycloak_rel
-    openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1 || true)
-    keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep keycloak | head -1 || true)
-    openfga_ready=$(kubectl get release.helm.crossplane.io/"${openfga_rel}" \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    keycloak_ready=$(kubectl get release.helm.crossplane.io/"${keycloak_rel}" \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    # Keycloak and OpenFGA are Argo CD Applications of the identity
+    # ApplicationSet (kernel/appsets/raw/09-identity.yaml), not composed:
+    # their state is the Application's sync and health.
+    _identity_app_state() {
+        kubectl get application "$1-${GENTIAN_DEPLOYMENTS_STAGE:-dev}" -n "$(ns_kernel gitops)" \
+            -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null || echo "unknown"
+    }
+    local openfga_state keycloak_state
+    keycloak_state=$(_identity_app_state keycloak-idp)
+    openfga_state=$(_identity_app_state openfga)
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
@@ -1352,7 +1345,8 @@ print_summary_cp() {
     echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
     echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
     echo -e "${GREEN}  System S3      : ${xr_name}-seaweedfs (Ready=${infra_s3_ready})${NC}"
-    echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
+    echo -e "${GREEN}  Keycloak       : keycloak-idp-${GENTIAN_DEPLOYMENTS_STAGE:-dev} (${keycloak_state})${NC}"
+    echo -e "${GREEN}  OpenFGA        : openfga-${GENTIAN_DEPLOYMENTS_STAGE:-dev} (${openfga_state})${NC}"
     echo ""
     if [[ -n "${_gentian_handover_done:-}" ]]; then
         echo -e "${GREEN}  Completed      : phases A–E (control-plane, secrets, platform, applications, handover)${NC}"
@@ -1372,8 +1366,8 @@ print_summary_cp() {
     # has to say which is which; on a multi-tenancy one, tenants come next.
     print_roles_summary
     echo ""
-    echo -e "${GREEN}  Inspect authz stack:${NC}"
-    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}${NC}"
+    echo -e "${GREEN}  Inspect the identity services:${NC}"
+    echo -e "${GREEN}    kubectl get application keycloak-idp-${GENTIAN_DEPLOYMENTS_STAGE:-dev} openfga-${GENTIAN_DEPLOYMENTS_STAGE:-dev} -n $(ns_kernel gitops)${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
@@ -1508,7 +1502,7 @@ print_handover_summary() {
 
 # =============================================================================
 # scaffold_cluster_deployment — write this cluster's kernel/ directory in
-# gentian-deployments: claims/{cluster,infra-data,suze}.yaml and values.yaml,
+# gentian-deployments: claims/cluster.yaml, claims/deployments-repository.yaml and values.yaml,
 # generated from KERNEL_DOMAIN and GENTIAN_DEPLOYMENTS_STAGE. Reached through
 # step 0 of `install.sh`.
 #
@@ -1951,6 +1945,22 @@ _remove_retired_apps_repository_claim() {
     rm -f "${file}"
     info "Removed ${file}: profiles are no longer copied from the gentian-apps git repository;"
     info "  they arrive one at a time from the catalogue source on the Cluster claim."
+    return 0
+}
+
+# _remove_retired_suze_claim <kernel dir>
+#
+# Removes the Suze claim earlier installers scaffolded for Keycloak and
+# OpenFGA, and answers 0 when it removed one. Only a file declaring that
+# kind: a claims/suze.yaml saying anything else is somebody's own and is
+# left alone.
+_remove_retired_suze_claim() {
+    local file="$1/claims/suze.yaml"
+    [[ -f "${file}" ]] || return 1
+    grep -q '^kind: Suze$' "${file}" || return 1
+    rm -f "${file}"
+    info "Removed ${file}: Keycloak and OpenFGA are installed by the identity ApplicationSet"
+    info "  (kernel/appsets/raw/09-identity.yaml); no claim composes them any more."
     return 0
 }
 
@@ -2511,24 +2521,12 @@ EOF
         generated=1
     fi
 
-    if [[ ! -f "${kernel_dir}/claims/suze.yaml" ]]; then
-        cat > "${kernel_dir}/claims/suze.yaml" <<EOF
-apiVersion: gentianos.io/v1alpha1
-kind: Suze
-metadata:
-  name: ${cluster}-${stage}-suze
-  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
-spec:
-  environment: ${stage}
-  idpNamespace: kernel-authentication
-  fgaNamespace: kernel-authorization
-  compositeDeletePolicy: Background
-  openfga:
-    chartVersion: "0.3.10"
-EOF
-        info "Scaffolded ${kernel_dir}/claims/suze.yaml"
-        generated=1
-    fi
+    # Keycloak and OpenFGA are Argo CD Applications of the identity
+    # ApplicationSet now, and the Suze kind that composed them is gone. A
+    # checkout scaffolded before then still holds that claim, and the claims
+    # Application would fail on a kind the cluster does not serve -- so it is
+    # removed here, and the removal is committed with the rest.
+    _remove_retired_suze_claim "${kernel_dir}" && generated=1
 
     # The deployments repository's own credential.
     #
@@ -3413,7 +3411,7 @@ _warn_uncommitted_cluster_deployment() {
 cluster_deployment_missing() {
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel"
     local f
-    for f in claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml; do
+    for f in claims/cluster.yaml claims/deployments-repository.yaml values.yaml; do
         [[ -f "${kernel_dir}/${f}" ]] || printf '%s\n' "${f}"
     done
 }

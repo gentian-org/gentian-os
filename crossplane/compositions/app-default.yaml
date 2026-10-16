@@ -1873,7 +1873,7 @@ spec:
                 # cluster does not have, three pods were Pending the whole time,
                 # and every signal above them was green.
                 #
-                # The kernel's own releases (infra-data, suze) have always waited.
+                # The kernel's own releases have always waited.
                 # Apps are what a tenant actually sees, so a false green matters
                 # more here, not less.
                 #
@@ -2408,7 +2408,7 @@ spec:
                 # cluster does not have, three pods were Pending the whole time,
                 # and every signal above them was green.
                 #
-                # The kernel's own releases (infra-data, suze) have always waited.
+                # The kernel's own releases have always waited.
                 # Apps are what a tenant actually sees, so a false green matters
                 # more here, not less.
                 #

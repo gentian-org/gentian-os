@@ -93,8 +93,8 @@ type kernelHTTPRouteSpec struct {
 	authz *routeAuthz
 }
 
-// suzeKeycloakHTTPServiceName is the keycloakx chart HTTP Service for Stage 1 Suze IdP.
-func suzeKeycloakHTTPServiceName() string {
+// keycloakHTTPServiceName is the keycloakx chart's HTTP Service, as the identity ApplicationSet releases it.
+func keycloakHTTPServiceName() string {
 	if v := envOrDefault("KEYCLOAK_HTTP_SERVICE", ""); v != "" {
 		return v
 	}
@@ -360,7 +360,7 @@ func kernelHTTPRouteSpecs(
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 
-	kcService := suzeKeycloakHTTPServiceName()
+	kcService := keycloakHTTPServiceName()
 	kcPort := int32(8080)
 
 	idFilters := keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)

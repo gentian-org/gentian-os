@@ -1,8 +1,61 @@
 # env is supplied by the ApplicationSet (helm.parameters). The default
 # only matters for `helm template` run by hand.
 env: dev
-# storageClass empty = use the cluster's default StorageClass. Set per
-# stage in values-<env>.yaml only where a stage genuinely differs.
-storageClass: ""
-# The database host: kernel-postgres in kernel-data.
+# The database host: kernel-postgres in kernel-data. Goes into the datastore
+# URI the ExternalSecret builds.
 dbHost: ""   # empty: kernel-postgres-rw.kernel-data.svc.cluster.local
+
+# The openfga chart's values (charts/openfga-0.3.10.tgz). What used to be
+# the openfga-base-values ConfigMap a Crossplane Release merged.
+openfga:
+  replicaCount: 1
+  postgresql:
+    enabled: false
+  mysql:
+    enabled: false
+  datastore:
+    engine: postgres
+    # The URI, credential included, under the key `uri` of this Secret
+    # (templates/externalsecret.yaml); the chart reads it into
+    # OPENFGA_DATASTORE_URI by secretKeyRef.
+    uriSecret: openfga-credentials
+    maxOpenConns: 30
+    maxIdleConns: 10
+    connMaxIdleTime: 30s
+    connMaxLifetime: 60s
+    applyMigrations: true
+    # initContainer runs `openfga migrate` before the server starts. waitForMigrations
+    # must stay true — the chart only renders initContainers when it is true (job
+    # waiter is gated separately on migrationType=job).
+    migrationType: initContainer
+    waitForMigrations: true
+  grpc:
+    enabled: true
+  telemetry:
+    trace:
+      enabled: false
+    metrics:
+      enabled: false
+  authn:
+    method: preshared
+    preshared:
+      # The key under `keys` of this Secret, read into
+      # OPENFGA_AUTHN_PRESHARED_KEYS by secretKeyRef.
+      keysSecret: openfga-credentials
+  # Chart 0.3.x enables playground by default; v1.18+ panics if authn != none.
+  playground:
+    enabled: false
+  ingress:
+    enabled: false
+  # AuthZEN evaluation API (experimental) — required when portal BFF uses OPENFGA_AUTHZEN_ENABLED.
+  # Helm chart values.schema.json does not yet allow experimentals: [authzen]; use env instead.
+  extraEnvVars:
+    - name: OPENFGA_EXPERIMENTALS
+      value: authzen
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi

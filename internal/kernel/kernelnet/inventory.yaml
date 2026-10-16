@@ -422,7 +422,7 @@ namespaces:
       namespace's egress would have to keep both.
     workloads:
       - name: keycloak
-        installedBy: composition:suze
+        installedBy: application:keycloak-idp
         readAt: keycloakx chart 7.3.2
         podLabels: {app.kubernetes.io/name: keycloakx}
         ports:
@@ -469,11 +469,11 @@ namespaces:
     sameNamespace: true
     sameNamespaceWhy: one workload; a pod of this namespace can mount OpenFGA's own Secrets anyway.
     egress: open
-    egressWhy: not restricted in this pass; OpenFGA calls its database, whose address the Suze claim decides, and DNS.
+    egressWhy: not restricted in this pass; OpenFGA calls its database, whose address its values name, and DNS.
     workloads:
       - name: openfga
-        installedBy: composition:suze
-        readAt: openfga chart 0.3.10
+        installedBy: application:openfga
+        readAt: openfga chart 0.3.10-gentian.1 (upstream 0.3.10)
         podLabels: {app.kubernetes.io/name: openfga}
         ports:
           - port: 8080
