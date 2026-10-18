@@ -81,6 +81,42 @@ spec:
                         type: string
                       jwksURL:
                         type: string
+                groups:
+                  type: array
+                  maxItems: 50
+                  description: >
+                    Groups of the tenant's realm declared in git
+                    (spec.groups on the Tenant), made as plain groups.
+                  items:
+                    type: string
+                signInFrom:
+                  type: array
+                  maxItems: 16
+                  description: >
+                    Other tenants of the cluster whose people sign in here,
+                    with both tenants' consent (spec.signInFrom here and
+                    spec.signInTo there). Each is an identity provider, alias,
+                    for the other realm, authenticating with a JWT this realm
+                    signs, trusting its verified addresses, and putting each
+                    person in groups (realm paths) at every sign-in.
+                  items:
+                    type: object
+                    required: [tenant, alias, displayName, realm, clientID]
+                    properties:
+                      tenant:
+                        type: string
+                      alias:
+                        type: string
+                      displayName:
+                        type: string
+                      realm:
+                        type: string
+                      clientID:
+                        type: string
+                      groups:
+                        type: array
+                        items:
+                          type: string
                 brokeredFrom:
                   type: array
                   maxItems: 1000

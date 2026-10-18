@@ -505,6 +505,10 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
+		// A sign-in between two tenants is in both composites, so a change
+		// of either side redoes the other's (tenant_sign_in.go).
+		Watches(&gentianov1alpha1.Tenant{}, tenantsSignInWith(mgr.GetClient()),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&gentianov1alpha1.AppGrant{}, handler.EnqueueRequestsFromMapFunc(mapGrantToTenant)).
 		// One worker is controller-runtime's default, and it is the wrong one
 		// here. A tenant waiting on its provisioning Jobs requeues every two
@@ -1274,14 +1278,38 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	}
 	// The same: only where there is one, so a tenant without composes as it
 	// did.
-	if len(tenant.Spec.BrokeredTo) > 0 {
-		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo))
+	// The sign-ins between this tenant and another of the cluster
+	// (tenant_sign_in.go): the clients it is the source of join the
+	// brokeredTo it declares, which wins a name both carry.
+	signInFrom, signInClients, err := r.tenantSignInProjection(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("read the tenants a sign-in pairs %s with: %w", tenant.Name, err)
+	}
+	if len(tenant.Spec.BrokeredTo) > 0 || len(signInClients) > 0 {
+		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo)+len(signInClients))
+		declared := map[string]bool{}
 		for _, b := range tenant.Spec.BrokeredTo {
+			declared[b.Name] = true
 			brokered = append(brokered, map[string]interface{}{
 				"name": b.Name, "redirectURI": b.RedirectURI, "jwksURL": b.JWKSURL,
 			})
 		}
+		for _, c := range signInClients {
+			if !declared[c.(map[string]interface{})["name"].(string)] {
+				brokered = append(brokered, c)
+			}
+		}
 		spec["brokeredTo"] = brokered
+	}
+	if len(signInFrom) > 0 {
+		spec["signInFrom"] = signInFrom
+	}
+	if len(tenant.Spec.Groups) > 0 {
+		groups := make([]interface{}, 0, len(tenant.Spec.Groups))
+		for _, g := range tenant.Spec.Groups {
+			groups = append(groups, g.Name)
+		}
+		spec["groups"] = groups
 	}
 	if len(tenant.Spec.BrokeredFrom) > 0 {
 		from := make([]interface{}, 0, len(tenant.Spec.BrokeredFrom))

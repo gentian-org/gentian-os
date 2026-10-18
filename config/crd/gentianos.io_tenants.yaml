@@ -660,6 +660,37 @@ spec:
                 - install
                 - exposureName
                 x-kubernetes-list-type: map
+              groups:
+                description: |-
+                  Groups are groups of the tenant's realm declared in git; see
+                  TenantGroup.
+                items:
+                  description: |-
+                    TenantGroup is a group of the tenant's realm declared in git. The platform
+                    makes it; people are put in it in the Admin Console, and an app's profile
+                    or a TenantSignInFrom names it. It is not renamed or deleted from the
+                    console: git holds it.
+                  properties:
+                    name:
+                      description: |-
+                        Name is the group's name in the realm. Not one the platform's own
+                        groups take (gentian...).
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: names beginning with gentian are the platform's own
+                          groups
+                        rule: '!self.startsWith(''gentian'')'
+                  required:
+                  - name
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               isolation:
                 description: Isolation describes the workload isolation boundaries
                   for this tenant.
@@ -1026,6 +1057,59 @@ spec:
                         type: boolean
                     type: object
                 type: object
+              signInFrom:
+                description: |-
+                  SignInFrom are other tenants of this cluster whose people sign in here;
+                  see TenantSignInFrom.
+                items:
+                  description: |-
+                    TenantSignInFrom is another tenant of this cluster whose people sign in to
+                    this one with their account there, and the groups of this tenant they are
+                    in for it. It takes both tenants: this one names the other here, and the
+                    other names this one in its spec.signInTo. Either alone opens nothing.
+
+                    The platform makes, in the other tenant's realm, the client this realm
+                    signs in with (authenticated by a JWT this realm signs: no secret), and in
+                    this realm an identity provider, tenant-<other>, that trusts the other
+                    realm's verified addresses and puts each person who arrives in the groups
+                    named, at every sign-in. An account that is already here under the same
+                    address is linked only once its owner proves it.
+                  properties:
+                    groups:
+                      description: |-
+                        Groups are the groups of this tenant its people are in: a name of
+                        spec.groups, or members (the tenant's members, who may enter it). The
+                        tenant's administrators and its perimeter approvers are never given
+                        this way.
+                      items:
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      maxItems: 16
+                      type: array
+                    tenant:
+                      description: Tenant is the other tenant.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - tenant
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - tenant
+                x-kubernetes-list-type: map
+              signInTo:
+                description: |-
+                  SignInTo are other tenants of this cluster this tenant's people may
+                  sign in to with their account here: this tenant's half of the other's
+                  spec.signInFrom.
+                items:
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 16
+                type: array
               signUp:
                 description: |-
                   SignUp is whether people make their own accounts in the realm. Unset

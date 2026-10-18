@@ -150,6 +150,50 @@ type TenantComponentRef struct {
 	Profile string `json:"profile"`
 }
 
+// TenantGroup is a group of the tenant's realm declared in git. The platform
+// makes it; people are put in it in the Admin Console, and an app's profile
+// or a TenantSignInFrom names it. It is not renamed or deleted from the
+// console: git holds it.
+type TenantGroup struct {
+	// Name is the group's name in the realm. Not one the platform's own
+	// groups take (gentian...).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="names beginning with gentian are the platform's own groups"
+	Name string `json:"name"`
+}
+
+// TenantSignInFrom is another tenant of this cluster whose people sign in to
+// this one with their account there, and the groups of this tenant they are
+// in for it. It takes both tenants: this one names the other here, and the
+// other names this one in its spec.signInTo. Either alone opens nothing.
+//
+// The platform makes, in the other tenant's realm, the client this realm
+// signs in with (authenticated by a JWT this realm signs: no secret), and in
+// this realm an identity provider, tenant-<other>, that trusts the other
+// realm's verified addresses and puts each person who arrives in the groups
+// named, at every sign-in. An account that is already here under the same
+// address is linked only once its owner proves it.
+type TenantSignInFrom struct {
+	// Tenant is the other tenant.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Tenant string `json:"tenant"`
+
+	// Groups are the groups of this tenant its people are in: a name of
+	// spec.groups, or members (the tenant's members, who may enter it). The
+	// tenant's administrators and its perimeter approvers are never given
+	// this way.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Groups []string `json:"groups,omitempty"`
+}
+
 // SignUpEnabled reports whether people make their own accounts in this
 // tenant's realm (spec.signUp.enabled); off unless the tenant says so.
 func (t *Tenant) SignUpEnabled() bool {
@@ -228,6 +272,30 @@ type TenantSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=8
 	OrganizationCommissioners []TenantComponentRef `json:"organizationCommissioners,omitempty"`
+
+	// Groups are groups of the tenant's realm declared in git; see
+	// TenantGroup.
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	Groups []TenantGroup `json:"groups,omitempty"`
+
+	// SignInTo are other tenants of this cluster this tenant's people may
+	// sign in to with their account here: this tenant's half of the other's
+	// spec.signInFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	SignInTo []string `json:"signInTo,omitempty"`
+
+	// SignInFrom are other tenants of this cluster whose people sign in here;
+	// see TenantSignInFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=tenant
+	SignInFrom []TenantSignInFrom `json:"signInFrom,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional

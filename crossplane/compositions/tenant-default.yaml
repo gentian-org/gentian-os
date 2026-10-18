@@ -1927,6 +1927,32 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
+            {{- /* The tenant's own groups, declared in git (spec.groups): plain
+                 groups, without the registrar's custom mark, so the console
+                 puts people in them and neither renames nor deletes them. */}}
+            {{- range $g := (dig "groups" list $spec) }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $g)) (not (hasPrefix "gentian" (toString $g))) }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-declared-group-{{ $g }}
+              name: {{ $tenant }}-group-{{ $g }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $g | quote }}
+                {{- /* The platform's mark, as on every group a Composition
+                     makes: a realm import does not make it again from a
+                     bundle, since this does. */}}
+                attributes:
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- if not $adoptsKernelRealm }}
 
             {{- /* ── the profile prompts a tenant user must not meet ───────────
@@ -2397,6 +2423,127 @@ spec:
                   key: client_secret
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── sign-in from another tenant ─────────────────────────────
+                 Another tenant of this cluster whose people sign in here
+                 (spec.signInFrom, with that tenant's spec.signInTo): an
+                 identity provider for its realm, and one mapper per group.
+
+                 The other realm's client, broker-to-<this tenant>, is that
+                 tenant's composite's (brokeredTo, projected by the operator):
+                 it checks a JWT this realm signs against this realm's keys,
+                 so no secret is made. The provider insists on one all the
+                 same, so a fixed word that is never sent fills it.
+
+                 The browser goes to the other realm's public address; the
+                 code is redeemed on the cluster's own network, as the kernel
+                 broker does, and the assertion names the realm's public
+                 issuer as its audience, which is what the other realm checks.
+
+                 The two realms are the cluster's own, administered by the
+                 same people, so their verified addresses are trusted
+                 (trustEmail) and the groups follow every sign-in (FORCE).
+                 An account already here under the same address is still
+                 linked only once its owner proves it: Keycloak's own
+                 first-broker-login flow, not the kernel broker's. Shown on
+                 the login page under the other tenant's name. */}}
+            {{- range $f := (dig "signInFrom" list $spec) }}
+            {{- if and $kd $kcInternal (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $f.tenant)) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $f.realm)) }}
+            {{- $srcIssuer := printf "https://id.%s/auth/realms/%s" $kd $f.realm }}
+            {{- $srcInternal := printf "%s/realms/%s" $kcInternal $f.realm }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-client
+              name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+                    namespace: {{ $identityNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: {{ $f.clientID | quote }}
+                    # Never sent: the client authenticates by a signed JWT.
+                    client_secret: private-key-jwt
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-signin-{{ $f.tenant }}-idp
+              annotations:
+                crossplane.io/external-name: {{ $f.alias }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-idp
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                alias: {{ $f.alias }}
+                displayName: {{ $f.displayName | quote }}
+                providerId: oidc
+                enabled: true
+                trustEmail: true
+                storeToken: false
+                hideOnLoginPage: false
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: FORCE
+                validateSignature: true
+                defaultScopes: openid profile email
+                issuer: {{ $srcIssuer | quote }}
+                authorizationUrl: {{ printf "%s/protocol/openid-connect/auth" $srcIssuer | quote }}
+                logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $srcIssuer | quote }}
+                tokenUrl: {{ printf "%s/protocol/openid-connect/token" $srcInternal | quote }}
+                jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $srcInternal | quote }}
+                userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $srcInternal | quote }}
+                extraConfig:
+                  clientAuthMethod: private_key_jwt
+                  clientAssertionAudience: {{ $srcIssuer | quote }}
+                clientIdSecretRef:
+                  name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- range $i, $g := (default list $f.groups) }}
+            {{- if hasPrefix "/" (toString $g) }}
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-group-{{ $i }}
+              name: {{ $tenant }}-signin-{{ $f.tenant }}-group-{{ $i }}
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realm: {{ $realm }}
+                identityProviderAlias: {{ $f.alias }}
+                name: {{ printf "group %s" (trimPrefix "/" (toString $g)) | quote }}
+                identityProviderMapper: oidc-hardcoded-group-idp-mapper
+                extraConfig:
+                  syncMode: FORCE
+                  group: {{ $g | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}

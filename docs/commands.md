@@ -495,6 +495,20 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
+### Credentials a person supplies
+
+A registry's token, an app's API keys: what a profile asks a person for is
+set at the custodian, which checks each value before it stores it. A value is
+read from a file or from standard input, never from the command line, and a
+file's trailing newline is dropped.
+
+```bash
+kubectl gentian credentials list --tenant customers    # each requirement, its fields, and whether it is set
+kubectl gentian credentials set app-customers-aluvian-website-stripe \
+  --field secret_key=@stripe-restricted.txt --field publishable_key=@stripe-publishable.txt
+openssl rand -hex 32 | kubectl gentian credentials set app-customers-aluvian-website-intake --field token=-
+```
+
 ### What an app asks for beyond the default
 
 An app whose profile asks for more than a tenant's apps get by default -- a
