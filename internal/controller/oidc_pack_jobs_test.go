@@ -70,9 +70,9 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutComponentProfile(t *testing
 		},
 	}
 
-	configs, err := r.collectOIDCAppConfigs(context.Background(), tenant)
-	if err != nil {
-		t.Fatalf("collectOIDCAppConfigs: %v", err)
+	configs, refused, err := r.collectOIDCAppConfigs(context.Background(), tenant)
+	if err != nil || len(refused) > 0 {
+		t.Fatalf("collectOIDCAppConfigs: %v, refused %v", err, refused)
 	}
 	if len(configs) != 2 {
 		t.Fatalf("expected 2 OIDC configs (catalogue-test-app + sidecar), got %d", len(configs))

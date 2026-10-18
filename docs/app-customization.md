@@ -165,7 +165,14 @@ platform's Keycloak extension (`kernel/extensions/keycloak-event-listener`), and
 both fail closed: without them no token carries the claim. The pattern uses
 the syntax Go and Java share (`(?<name>...)`, no back-references); the
 parameter and the claim may not be ones OAuth, OpenID Connect or JWT already
-define.
+define. Such a client declares no `redirectUris`. Only an app's own client
+can be one: the app Composition composes it, and nothing composes an
+extension's client or an API entry's.
+
+A client that cannot be made as declared -- one with neither `redirectUris`
+nor a request parameter, or a request-bound one of an extension or an API
+entry -- is not made. The tenant's `IdentityReady` names it
+(`OIDCClientRefused`); the tenant's other apps are provisioned as before.
 
 **Language models are a need like the others.** An app that calls models
 declares the platform's model gateway, and only an app that declares it is

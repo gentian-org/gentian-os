@@ -190,7 +190,8 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
 	}
 
-	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	// An app whose client is refused gets no Job; ensureIdentity says why.
+	oidcConfigs, _, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
 		return nil, nil, err
 	}
