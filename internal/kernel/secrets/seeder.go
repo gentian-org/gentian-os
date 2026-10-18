@@ -643,6 +643,33 @@ func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (Con
 	return ContractCreds{Password: got["password"]}, nil
 }
 
+// ClearContractEndpoint empties the endpoint of a contract no granted
+// provider answers any more, as SeedContract writes it for a consumer with
+// none: the consumer is told there is no provider, not an address nothing
+// answers at. The password stays; the user does too, it names no address.
+func (s *Seeder) ClearContractEndpoint(ctx context.Context, tenant, contract string) error {
+	path := ContractPath(tenant, contract)
+	data, err := s.w.Get(ctx, path)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("read contract(%s/%s): %w", tenant, contract, err)
+	}
+	if data["endpoint"] == "" {
+		return nil
+	}
+	cleared := make(map[string]string, len(data))
+	for k, v := range data {
+		cleared[k] = v
+	}
+	cleared["endpoint"] = ""
+	if err := s.w.Put(ctx, path, cleared); err != nil {
+		return fmt.Errorf("clear contract endpoint(%s/%s): %w", tenant, contract, err)
+	}
+	return nil
+}
+
 func (s *Seeder) Read(ctx context.Context, logicalPath string) (map[string]string, error) {
 	return s.w.Get(ctx, logicalPath)
 }
