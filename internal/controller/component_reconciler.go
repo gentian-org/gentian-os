@@ -1831,7 +1831,11 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// address -- the website's, and the platform's page, which steps back
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
-			builder.WithPredicates(mainAddressChanged()))
+			builder.WithPredicates(mainAddressChanged())).
+		// The edge's public address, which a component granted the internet
+		// reaches from inside through the edge's pods (own_public_address.go).
+		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
+			builder.WithPredicates(edgeAddressChanged()))
 	if len(r.clusterRoleSet()) > 0 {
 		// What the cluster permits is another object's: a role it stops
 		// permitting is unbound when the policy changes, not when something
