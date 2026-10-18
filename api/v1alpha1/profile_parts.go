@@ -1329,6 +1329,15 @@ type IMAPValueMapping struct {
 	PortKey string `json:"portKey,omitempty"`
 }
 
+// SidecarValueMapping maps what the platform granted a sidecar to keys of the
+// sidecar's chart.
+type SidecarValueMapping struct {
+	// OIDC maps the sidecar's OIDC client to Helm keys, as the app's own
+	// valueMapping.oidc does.
+	// +optional
+	OIDC *OIDCValueMapping `json:"oidc,omitempty"`
+}
+
 // AppSidecarSpec declares a companion service deployed alongside the primary
 // app by a purpose-built composition (for example a sidecar with its own ingress).
 type AppSidecarSpec struct {
@@ -1345,6 +1354,13 @@ type AppSidecarSpec struct {
 	// ServiceRequirements declares kernel services the sidecar needs.
 	// +optional
 	ServiceRequirements *ServiceRequirements `json:"kernelRequirements,omitempty"`
+
+	// ValueMapping places what the platform granted the sidecar into its
+	// chart's values, as package.valueMapping does for the app. Only OIDC: the
+	// client kernelRequirements.identity.oidc asks for, read from
+	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/oidc.
+	// +optional
+	ValueMapping *SidecarValueMapping `json:"valueMapping,omitempty"`
 
 	// AppSecrets are sidecar-internal secrets stored at
 	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.

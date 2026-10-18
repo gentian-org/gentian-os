@@ -55,6 +55,36 @@ func newOIDCProfile(name string) *gentianov1alpha1.ComponentProfile {
 	}
 }
 
+// createOIDCProfile creates newOIDCProfile(name) and the pack catalogue its
+// bundle would bring: the test catalogue's packs under the profile's label,
+// the one catalogue its pack is looked up in.
+func createOIDCProfile(t *testing.T, name string) *gentianov1alpha1.ComponentProfile {
+	t.Helper()
+	ctx := context.Background()
+	profile := newOIDCProfile(name)
+	if err := testClient.Create(ctx, profile); err != nil {
+		t.Fatalf("create ComponentProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	shipped := &gentianov1alpha1.OIDCPackCatalog{}
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "test-oidc-catalog"}, shipped); err != nil {
+		t.Fatalf("get the test OIDCPackCatalog: %v", err)
+	}
+	catalog := &gentianov1alpha1.OIDCPackCatalog{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name + "-oidc",
+			Labels: map[string]string{gentianov1alpha1.LabelProfileName: name},
+		},
+		Spec: *shipped.Spec.DeepCopy(),
+	}
+	if err := testClient.Create(ctx, catalog); err != nil {
+		t.Fatalf("create OIDCPackCatalog: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), catalog) })
+	return profile
+}
+
 // markJobComplete patches a Job's status to Complete so the reconciler sees it as done.
 func markJobComplete(t *testing.T, jobName, namespace string) {
 	t.Helper()
@@ -209,11 +239,7 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 // triggers creation of the Keycloak realm Job in the kernel namespace.
 func TestIdentity_CreatesRealmJob(t *testing.T) {
 	t.Parallel()
-	profile := newOIDCProfile("oidc-app1")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create ComponentProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	createOIDCProfile(t, "oidc-app1")
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "realmtest"},
@@ -252,11 +278,7 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 // waits for the realm Job to complete before creating the OIDC client Job.
 func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	t.Parallel()
-	profile := newOIDCProfile("oidc-app2")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create ComponentProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	createOIDCProfile(t, "oidc-app2")
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "clienttest"},
@@ -319,7 +341,7 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 	profile := newOIDCProfile("oidc-nopack")
 	profile.Services().Identity.OIDC.OIDCPackRef = ""
 	// The clientID must not match a pack either — ResolvePack falls back to it
-	// when oidcPackRef is empty.
+	// when oidcPackRef is empty. No catalogue carries this profile's label.
 	profile.Services().Identity.OIDC.ClientID = "oidc-nopack"
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
@@ -375,11 +397,7 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 // Phase=Ready are set only after both the realm and all client Jobs have completed.
 func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	t.Parallel()
-	profile := newOIDCProfile("oidc-app3")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create ComponentProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	createOIDCProfile(t, "oidc-app3")
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "allready"},
@@ -447,11 +465,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 // enforced via IdentityReady condition reasons, not Job creation timing.
 func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	t.Parallel()
-	profile := newOIDCProfile("oidc-app-admin")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create ComponentProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	createOIDCProfile(t, "oidc-app-admin")
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "admintest"},
@@ -518,11 +532,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 // with DeletionPolicy=Delete creates a realm-deletion Job in the kernel namespace.
 func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	t.Parallel()
-	profile := newOIDCProfile("oidc-app4")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create ComponentProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	createOIDCProfile(t, "oidc-app4")
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "identdelete"},
@@ -557,11 +567,7 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 // cannot log in but realm configuration is preserved for fast redeploy.
 func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 	t.Parallel()
-	profile := newOIDCProfile("oidc-app5")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create ComponentProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	createOIDCProfile(t, "oidc-app5")
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "identretain"},

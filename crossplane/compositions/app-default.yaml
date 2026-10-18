@@ -2567,10 +2567,10 @@ spec:
             {{- /* synced from OpenBao at the SidecarAppName-scoped path              */}}
             {{- /* ({parent}-{sidecar}, matching api/v1alpha1.SidecarAppName -- OIDC  */}}
             {{- /* client registration and OpenBao secret purge on uninstall already   */}}
-            {{- /* key off this same synthetic name). KernelRequirements beyond OIDC   */}}
-            {{- /* (its client is composed above, beside the app's own) are not wired  */}}
-            {{- /* into the sidecar's own Release values yet -- a sidecar that needs   */}}
-            {{- /* its own database/cache/S3 isn't supported by this mechanism yet.    */}}
+            {{- /* key off this same synthetic name). Its OIDC client (composed above,  */}}
+            {{- /* beside the app's own) reaches its Release through valueMapping.oidc; */}}
+            {{- /* other kernelRequirements are not wired into the sidecar's values  */}}
+            {{- /* -- a sidecar that needs its own database/cache/S3 isn't supported. */}}
             {{- /* extensions on ComponentProfile: the same sidecar list under the
                  name that also covers what is not strictly a sidecar. */}}
             {{- $sidecars := dig "extensions" list $pSpec }}
@@ -2589,6 +2589,29 @@ spec:
             {{- $scRelSet = append $scRelSet (dict "name" $s.valuePath
                 "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
             {{- end }}
+            {{- end }}
+
+            {{- /* The sidecar's OIDC client, mapped as the app's own: issuer and
+                 client id the operator writes at the sidecar's key beside the
+                 secret, the secret at the explicit path where one is named. */}}
+            {{- $scOidcVM := dig "valueMapping" "oidc" dict $sc }}
+            {{- $scOidcPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $scKey }}
+            {{- if $scOidcVM.issuerKey }}
+            {{- $scEsData = append $scEsData (dict "secretKey" "oidc-issuer" "remoteRef" (dict "key" $scOidcPath "property" "issuer")) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $scOidcVM.issuerKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- end }}
+            {{- if $scOidcVM.clientIdKey }}
+            {{- $scEsData = append $scEsData (dict "secretKey" "oidc-client-id" "remoteRef" (dict "key" $scOidcPath "property" "client-id")) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $scOidcVM.clientIdKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- end }}
+            {{- if $scOidcVM.clientSecretKey }}
+            {{- $scCsPath := default $scOidcPath $scOidcVM.clientSecretOpenbaoPath }}
+            {{- $scCsProp := default "client-secret" $scOidcVM.clientSecretOpenbaoProperty }}
+            {{- $scEsData = append $scEsData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $scCsPath "property" $scCsProp)) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $scOidcVM.clientSecretKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" "oidc-client-secret"))) }}
             {{- end }}
 
             {{- /* OpenBao KV seeders for each sidecar appSecret (mirrors the primary   */}}

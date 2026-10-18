@@ -28,6 +28,12 @@ spec:
         repository: oci://example.invalid/demo-app-mcp
         name: demo-app-mcp
         version: "0.1.0"
+      # Its client reaches its chart as the app's own would.
+      valueMapping:
+        oidc:
+          issuerKey: oidc.issuer
+          clientIdKey: oidc.clientId
+          clientSecretKey: oidc.clientSecret
       kernelRequirements:
         identity:
           oidc:
@@ -47,6 +53,11 @@ spec:
         repository: oci://example.invalid/demo-app-meet
         name: demo-app-meet
         version: "0.1.0"
+      # A public client: no secret to map.
+      valueMapping:
+        oidc:
+          issuerKey: auth.issuer
+          clientIdKey: auth.clientId
       kernelRequirements:
         identity:
           oidc:

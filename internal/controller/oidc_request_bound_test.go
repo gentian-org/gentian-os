@@ -225,7 +225,7 @@ func TestNoJobWritesARequestBoundClientsRedirects(t *testing.T) {
 	// never a PUT of the client that would restate its redirects.
 	withPack := oidcProfile("store", requestBoundOIDC("gentian-app-store"), false)
 	catalog := &gentianov1alpha1.OIDCPackCatalog{
-		ObjectMeta: metav1.ObjectMeta{Name: "apps"},
+		ObjectMeta: metav1.ObjectMeta{Name: "store-oidc", Labels: map[string]string{gentianov1alpha1.LabelProfileName: "store"}},
 		Spec: gentianov1alpha1.OIDCPackCatalogSpec{Packs: map[string]gentianov1alpha1.OIDCPackSpec{
 			"gentian-app-store": {ScopeName: "store", ClientRole: "user", EntitlementGroup: "store-users", PublicClient: true},
 		}},
