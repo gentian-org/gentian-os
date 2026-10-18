@@ -25,6 +25,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
@@ -210,6 +211,9 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 				return nil, fmt.Errorf("seed contract %s: %w", contract, err)
 			}
 		}
+		if err := r.clearUngrantedContractEndpoints(ctx, tenant, bindings, mapped); err != nil {
+			return nil, err
+		}
 	}
 
 	edgeObjects, err := r.buildTenantEdgeObjects(ctx, tenant)
@@ -219,6 +223,49 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	objects = append(objects, edgeObjects...)
 
 	return objects, nil
+}
+
+// clearUngrantedContractEndpoints empties the endpoint of every contract the
+// tenant seeds that no granted binding answers: its provider was removed, so
+// the binding is no longer desired, or the consumer's grant was withdrawn.
+// The binding's reconciler writes the endpoint, and has nothing left to
+// reconcile once its binding is gone; this is read from what is desired now,
+// so an operator restarted in between clears it on its next pass all the
+// same.
+func (r *TenantReconciler) clearUngrantedContractEndpoints(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	bindings []*gentianov1alpha1.IntegrationBinding,
+	mapped []string,
+) error {
+	var grants gentianov1alpha1.AppGrantList
+	if err := r.List(ctx, &grants, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
+		return fmt.Errorf("list AppGrants for tenant %s: %w", tenant.Name, err)
+	}
+	grantOf := make(map[string]*gentianov1alpha1.AppGrant, len(grants.Items))
+	for i := range grants.Items {
+		grantOf[grants.Items[i].Spec.App] = &grants.Items[i]
+	}
+	seeded := map[string]struct{}{}
+	granted := map[string]struct{}{}
+	for _, ib := range bindings {
+		seeded[ib.Spec.Contract] = struct{}{}
+		if len(netpolicy.EffectiveContractCapabilities(ib, grantOf[ib.Spec.Consumer.App])) > 0 {
+			granted[ib.Spec.Contract] = struct{}{}
+		}
+	}
+	for _, contract := range mapped {
+		seeded[contract] = struct{}{}
+	}
+	for contract := range seeded {
+		if _, ok := granted[contract]; ok {
+			continue
+		}
+		if err := r.Seeder.ClearContractEndpoint(ctx, tenant.Name, contract); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mappedContracts are the contracts the tenant's installed components map

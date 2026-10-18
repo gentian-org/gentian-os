@@ -66,7 +66,14 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 	apimeta.SetStatusCondition(&ib.Status.Conditions, granted)
 
-	seedErr := r.seedContract(ctx, &ib)
+	// The address is the consumer's once it was granted the contract, and
+	// not before: until then nothing is opened to it. Where nothing granted
+	// answers the contract any more, the tenant's reconcile empties it
+	// (clearUngrantedContractEndpoints).
+	var seedErr error
+	if granted.Reason != reasonNotGranted {
+		seedErr = r.seedContract(ctx, &ib)
+	}
 	if seedErr == nil {
 		ib.Status.State = gentianov1alpha1.IntegrationBindingStateReady
 	}
@@ -79,6 +86,10 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 // conditionBindingGranted says how much of what a binding asks for the
 // tenant's administrator granted.
 const conditionBindingGranted = "Granted"
+
+// reasonNotGranted is the Granted condition's reason where nothing of the
+// contract was granted.
+const reasonNotGranted = "NotGranted"
 
 // grantedCondition compares what the binding asks for with the consumer's
 // grant. True only when every capability asked for was granted.
@@ -108,7 +119,7 @@ func (r *IntegrationBindingReconciler) grantedCondition(ctx context.Context, ib 
 	switch {
 	case len(effective) == 0:
 		cond.Status = metav1.ConditionFalse
-		cond.Reason = "NotGranted"
+		cond.Reason = reasonNotGranted
 		cond.Message = fmt.Sprintf("%s asks for contract %s of %s and was granted none of it: nothing is opened between the two until the tenant's administrator grants it",
 			ib.Spec.Consumer.App, ib.Spec.Contract, ib.Spec.Provider.App)
 	case len(missing) > 0:

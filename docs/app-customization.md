@@ -406,8 +406,9 @@ not granted. A target that names where it answers the contract (`spec.provides[]
 Service, the port its pods listen on, a path) is reached on that port only, and the companion is
 told the address under `valueMapping.integrations.<contract>.endpointKey`; both can take the
 contract's shared password under `passwordKey`. Otherwise the path is to the target's pods as a
-whole. The granted capabilities are recorded and not enforced, and the target is not told which
-app is calling. What a consumer may do there is the target's to check.
+whole. Once no granted target answers the contract (the target removed, the grant withdrawn), the
+address is emptied again and the password kept. The granted capabilities are recorded and not
+enforced, and the target is not told which app is calling. What a consumer may do there is the target's to check.
 
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
 role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines
