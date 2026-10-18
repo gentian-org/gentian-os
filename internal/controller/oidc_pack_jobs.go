@@ -183,13 +183,30 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if oidcSpec.OIDCPackRef != "" {
 		packKey = oidcSpec.OIDCPackRef
 	}
-	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
+	if err := r.resolveOIDCPack(ctx, &cfg, profileName, packKey); err != nil {
 		return oidcAppConfig{}, err
-	} else if ok {
+	}
+	return cfg, nil
+}
+
+// resolveOIDCPack puts the pack the profile's own catalogue holds under
+// packKey on cfg, where the app Composition looks for it (oidc.ResolvePack).
+// A profile two catalogues are labelled for is refused: which one the
+// Composition reads is not defined, so neither writer can be told the client
+// is its own.
+func (r *TenantReconciler) resolveOIDCPack(ctx context.Context, cfg *oidcAppConfig, profileName, packKey string) error {
+	pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, profileName, packKey)
+	if stderrors.Is(err, oidc.ErrCatalogAmbiguous) {
+		return refuseOIDCClient("ComponentProfile %s: %v", profileName, err)
+	}
+	if err != nil {
+		return err
+	}
+	if ok {
 		cfg.pack = &pack
 		cfg.templates = templates
 	}
-	return cfg, nil
+	return nil
 }
 
 func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
@@ -227,11 +244,10 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 		clientID:      clientID,
 		redirectURIs:  redirects,
 	}
-	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
+	// The parent's catalogue: the extension's client is declared on it, and
+	// the app Composition looks for its pack there.
+	if err := r.resolveOIDCPack(ctx, &cfg, parentProfile, packKey); err != nil {
 		return oidcAppConfig{}, err
-	} else if ok {
-		cfg.pack = &pack
-		cfg.templates = templates
 	}
 	return cfg, nil
 }

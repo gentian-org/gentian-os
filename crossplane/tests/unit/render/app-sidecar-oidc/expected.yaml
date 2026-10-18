@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-entitlement-group, demo-app-keep-volumes,
-      demo-app-mcp-keycloak-client, and 8 more'
+      demo-app-mcp-externalsecret, and 10 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -73,6 +73,54 @@ spec:
       metadata:
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-mcp-externalsecret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-mcp-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: demo-app-mcp-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app-mcp/oidc
+            property: issuer
+          secretKey: oidc-issuer
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app-mcp/oidc
+            property: client-id
+          secretKey: oidc-client-id
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app-mcp/oidc
+            property: client-secret
+          secretKey: oidc-client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao-tenant-demo
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: demo-app-mcp-sensitive-values
   providerConfigRef:
     name: kubernetes
 ---
@@ -224,6 +272,25 @@ spec:
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
         optional: false
+    set:
+    - name: oidc.issuer
+      valueFrom:
+        secretKeyRef:
+          key: oidc-issuer
+          name: demo-app-mcp-sensitive-values
+          namespace: tenant-demo
+    - name: oidc.clientId
+      valueFrom:
+        secretKeyRef:
+          key: oidc-client-id
+          name: demo-app-mcp-sensitive-values
+          namespace: tenant-demo
+    - name: oidc.clientSecret
+      valueFrom:
+        secretKeyRef:
+          key: oidc-client-secret
+          name: demo-app-mcp-sensitive-values
+          namespace: tenant-demo
     skipCRDs: true
     skipCreateNamespace: true
     values:
@@ -235,6 +302,50 @@ spec:
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-meet-externalsecret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-meet-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: demo-app-meet-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app-meet/oidc
+            property: issuer
+          secretKey: oidc-issuer
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app-meet/oidc
+            property: client-id
+          secretKey: oidc-client-id
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao-tenant-demo
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: demo-app-meet-sensitive-values
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
@@ -305,6 +416,19 @@ spec:
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
         optional: false
+    set:
+    - name: auth.issuer
+      valueFrom:
+        secretKeyRef:
+          key: oidc-issuer
+          name: demo-app-meet-sensitive-values
+          namespace: tenant-demo
+    - name: auth.clientId
+      valueFrom:
+        secretKeyRef:
+          key: oidc-client-id
+          name: demo-app-meet-sensitive-values
+          namespace: tenant-demo
     skipCRDs: true
     skipCreateNamespace: true
     values:

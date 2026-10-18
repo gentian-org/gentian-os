@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,5 +132,105 @@ func TestTheCompositionOwnsAnExtensionsClientWithoutAPack(t *testing.T) {
 		if got := crossplaneOwnsOIDCClient(c.profile, c.cfg); got != c.owns {
 			t.Errorf("%s: crossplaneOwnsOIDCClient = %v, want %v", c.name, got, c.owns)
 		}
+	}
+}
+
+// The operator looks for a pack where the app Composition does: in the
+// catalogue labelled with the profile, an extension's in its parent's. A pack
+// any other catalogue holds under the same client id leaves the client the
+// Composition's, so it is never also a pack Job's.
+func TestAClientsPackIsLookedUpInItsProfilesCatalogueOnly(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	profile := func(name string) *gentianov1alpha1.ComponentProfile {
+		return &gentianov1alpha1.ComponentProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: gentianov1alpha1.ComponentProfileSpec{
+				Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+					Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
+						ClientID: name, RedirectURIs: []string{"https://${TENANT_DOMAIN}/callback"},
+					}},
+				}},
+				Extensions: []gentianov1alpha1.AppSidecarSpec{{
+					Name: "till",
+					ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+						Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
+							ClientID: name + "-till", RedirectURIs: []string{"https://${TENANT_DOMAIN}/till/callback"},
+						}},
+					},
+				}},
+			},
+		}
+	}
+	catalog := func(name, label string, clientIDs ...string) *gentianov1alpha1.OIDCPackCatalog {
+		c := &gentianov1alpha1.OIDCPackCatalog{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		if label != "" {
+			c.Labels = map[string]string{gentianov1alpha1.LabelProfileName: label}
+		}
+		c.Spec.Packs = map[string]gentianov1alpha1.OIDCPackSpec{}
+		for _, id := range clientIDs {
+			c.Spec.Packs[id] = gentianov1alpha1.OIDCPackSpec{ScopeName: id, ClientRole: "user", EntitlementGroup: id}
+		}
+		return c
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		profile("shop"), profile("drive"),
+		// shop's own catalogue holds the extension's pack, not the app's.
+		catalog("shop-oidc", "shop", "shop-till"),
+		// Another profile's, and an unlabelled one, hold the rest.
+		catalog("drive-oidc", "drive", "shop"),
+		catalog("kernel", "", "shop", "drive", "drive-till"),
+	).Build()
+	r := &TenantReconciler{Client: c, KernelDomain: "platform.example.com"}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{Apps: []gentianov1alpha1.TenantApp{{Profile: "shop"}, {Profile: "drive"}}},
+	}
+	configs, refused, err := r.collectOIDCAppConfigs(context.Background(), tenant)
+	if err != nil || len(refused) > 0 {
+		t.Fatalf("collectOIDCAppConfigs: %v, refused %v", err, refused)
+	}
+	withPack := map[string]bool{}
+	for _, cfg := range configs {
+		withPack[cfg.profileName] = cfg.pack != nil
+	}
+	want := map[string]bool{"shop": false, "shop-till": true, "drive": false, "drive-till": false}
+	for name, has := range want {
+		if got, ok := withPack[name]; !ok || got != has {
+			t.Errorf("%s: has a pack = %v (resolved %v), want %v", name, got, ok, has)
+		}
+	}
+}
+
+// Two catalogues labelled with one profile: the Composition reads one of
+// them and which is not defined, so the app's clients are refused rather
+// than given to whichever writer guessed.
+func TestTwoCataloguesOfOneProfileRefuseItsClients(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	labelled := map[string]string{gentianov1alpha1.LabelProfileName: "shop"}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&gentianov1alpha1.ComponentProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: "shop"},
+			Spec: gentianov1alpha1.ComponentProfileSpec{Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
+					ClientID: "shop", RedirectURIs: []string{"https://${TENANT_DOMAIN}/callback"},
+				}},
+			}}},
+		},
+		&gentianov1alpha1.OIDCPackCatalog{ObjectMeta: metav1.ObjectMeta{Name: "shop-oidc", Labels: labelled}},
+		&gentianov1alpha1.OIDCPackCatalog{ObjectMeta: metav1.ObjectMeta{Name: "shop-old-oidc", Labels: labelled}},
+	).Build()
+	r := &TenantReconciler{Client: c, KernelDomain: "platform.example.com"}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       gentianov1alpha1.TenantSpec{Apps: []gentianov1alpha1.TenantApp{{Profile: "shop"}}},
+	}
+	configs, refused, err := r.collectOIDCAppConfigs(context.Background(), tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configs) != 0 || len(refused) != 1 || !strings.Contains(refused[0], "shop-old-oidc") {
+		t.Fatalf("configs %+v, refused %v", configs, refused)
 	}
 }

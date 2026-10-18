@@ -28,7 +28,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
-	"github.com/gentian-org/gentian-os/internal/oidc"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -96,11 +95,11 @@ const (
 
 // oidcRule is the rule ResidueOIDC applies, said once for whoever reads the
 // answer. It is oidc.ResolvePack's, and the app Composition's.
-const oidcRule = "A client is configured from the first OIDCPackCatalog on the cluster that holds a pack under " +
-	"its client id, whoever brought the catalog; and an app's Composition reads the OIDCPackCatalog that carries " +
-	"its profile's label. So a pack catalog on this list is still in effect (yes) when it is the only one holding " +
-	"one of its client ids, or the only one labelled for a profile that is installed; contested when another " +
-	"catalog holds the same, and which is read is not defined; and no otherwise."
+const oidcRule = "A client is configured from the OIDCPackCatalog that carries its profile's label, an extension's " +
+	"from its parent profile's; the app's Composition and the identity Job read that one catalog and no other. " +
+	"So a pack catalog on this list is still in effect (yes) when it is the only one labelled for a profile that " +
+	"is installed; contested when another catalog carries the same label, and which is read is not defined; and " +
+	"no otherwise."
 
 // catalogueApplication is what the name of the Argo CD Application that
 // applies the catalogue directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
@@ -144,9 +143,11 @@ type ResidueItem struct {
 type ResidueOIDC struct {
 	// Effective is yes, contested or no (oidcRule).
 	Effective string `json:"effective"`
-	// Clients are the client ids only this catalog holds a pack for.
+	// Clients are the client ids this catalog decides: those it holds a
+	// pack for, when it is in effect.
 	Clients []string `json:"clients"`
-	// Contested are the client ids another catalog holds a pack for too.
+	// Contested are the client ids it holds a pack for when another catalog
+	// carries the same profile's label, and may be read instead.
 	Contested []string `json:"contested"`
 	// Composition is the installed profile whose Composition reads this
 	// catalog by its label; empty when none does.
@@ -468,12 +469,8 @@ func created(obj client.Object) string {
 // effective says, for each pack catalog on the list, whether it is still
 // read, by the rule of oidc.ResolvePack and of the app Composition.
 func (v *residueView) effective(ctx context.Context, reader client.Reader, packs []found) error {
-	holders, err := oidc.PackHolders(ctx, reader)
-	if err != nil {
-		return err
-	}
-	// How many pack catalogs carry each profile's label: a Composition asks
-	// for the one that carries its profile's.
+	// How many pack catalogs carry each profile's label: a client is
+	// configured from the one that carries its profile's.
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(packs[0].gvk.GroupVersion().WithKind(profilebundle.KindOIDCPacks + "List"))
 	if err := reader.List(ctx, list); err != nil {
@@ -489,30 +486,20 @@ func (v *residueView) effective(ctx context.Context, reader client.Reader, packs
 		obj := packs[i].obj.(*unstructured.Unstructured)
 		state := &ResidueOIDC{Effective: EffectiveNo, Clients: []string{}, Contested: []string{}}
 		held, _, _ := unstructured.NestedMap(obj.Object, "spec", "packs")
+		clientIDs := make([]string, 0, len(held))
 		for clientID := range held {
-			if len(holders[clientID]) > 1 {
-				state.Contested = append(state.Contested, clientID)
-			} else {
-				state.Clients = append(state.Clients, clientID)
-			}
+			clientIDs = append(clientIDs, clientID)
 		}
-		sort.Strings(state.Clients)
-		sort.Strings(state.Contested)
-		sole := len(state.Clients) > 0
-		contested := len(state.Contested) > 0
+		sort.Strings(clientIDs)
 		if profile := obj.GetLabels()[profilebundle.ProfileLabel]; profile != "" && v.inUse[profile] {
 			state.Composition = profile
 			if labelled[profile] > 1 {
-				contested = true
+				state.Effective = EffectiveContested
+				state.Contested = clientIDs
 			} else {
-				sole = true
+				state.Effective = EffectiveYes
+				state.Clients = clientIDs
 			}
-		}
-		switch {
-		case sole:
-			state.Effective = EffectiveYes
-		case contested:
-			state.Effective = EffectiveContested
 		}
 		packs[i].item.OIDC = state
 	}

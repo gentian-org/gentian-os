@@ -15,6 +15,7 @@ package oidc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -23,65 +24,54 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ResolvePack returns the OIDC pack for clientID from cluster OIDCPackCatalog CRs.
+// ErrCatalogAmbiguous is returned by ResolvePack when more than one
+// OIDCPackCatalog carries a profile's label: the app Composition reads one of
+// them, and which is not defined.
+var ErrCatalogAmbiguous = errors.New("more than one OIDCPackCatalog carries the profile's label")
+
+// ResolvePack returns the OIDC pack for clientID from the OIDCPackCatalog
+// labelled with profileName (gentianos.io/profile-name), the catalogue the
+// profile's bundle brings.
 //
-// The rule: every OIDCPackCatalog on the cluster is listed, and the first one
-// that holds a pack under clientID is taken. Nothing else about the catalog is
-// asked -- not its name, not its labels, not whether a profile's bundle still
-// brings it. A catalog that is the only one holding a client id is therefore
-// always the one used for it, and where two hold the same id, which is used
-// is the order the list came in (PackHolders).
-func ResolvePack(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
-	if clientID == "" {
+// The rule is the app Composition's: it reads that one catalogue, and
+// composes the client itself where the catalogue holds no pack for it. Looked
+// up anywhere else, a pack in some other catalogue would make the client a
+// pack Job's as well as the Composition's. An extension's client is looked up
+// in its parent profile's catalogue, where the Composition looks for it.
+func ResolvePack(ctx context.Context, c client.Reader, profileName, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
+	if clientID == "" || profileName == "" {
 		return Pack{}, nil, false, nil
 	}
 	if c == nil {
 		return Pack{}, nil, false, fmt.Errorf("kubernetes client is required")
 	}
-	return packFromCluster(ctx, c, clientID)
-}
-
-func packFromCluster(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
 	list := &gentianov1alpha1.OIDCPackCatalogList{}
-	if err := c.List(ctx, list); err != nil {
+	if err := c.List(ctx, list, client.MatchingLabels{gentianov1alpha1.LabelProfileName: profileName}); err != nil {
 		return Pack{}, nil, false, fmt.Errorf("list OIDCPackCatalog: %w", err)
 	}
-	for i := range list.Items {
-		catalog := &list.Items[i]
-		packSpec, ok := catalog.Spec.Packs[clientID]
-		if !ok {
-			continue
+	switch len(list.Items) {
+	case 0:
+		return Pack{}, nil, false, nil
+	case 1:
+	default:
+		names := make([]string, 0, len(list.Items))
+		for i := range list.Items {
+			names = append(names, list.Items[i].Name)
 		}
-		templates := mapperTemplatesFromCR(catalog.Spec.MapperTemplates)
-		pack := packFromCR(packSpec)
-		if err := validatePack(clientID, pack, templates); err != nil {
-			return Pack{}, nil, false, err
-		}
-		return pack, templates, true, nil
+		sort.Strings(names)
+		return Pack{}, nil, false, fmt.Errorf("%w: profile %s, catalogues %v", ErrCatalogAmbiguous, profileName, names)
 	}
-	return Pack{}, nil, false, nil
-}
-
-// PackHolders answers, for every client id any OIDCPackCatalog on the cluster
-// holds a pack for, the names of the catalogs that hold one, sorted. It is
-// ResolvePack's rule read the other way round: a client id with one holder
-// resolves to that catalog, and one with several resolves to whichever of
-// them the list returns first.
-func PackHolders(ctx context.Context, c client.Reader) (map[string][]string, error) {
-	list := &gentianov1alpha1.OIDCPackCatalogList{}
-	if err := c.List(ctx, list); err != nil {
-		return nil, fmt.Errorf("list OIDCPackCatalog: %w", err)
+	catalog := &list.Items[0]
+	packSpec, ok := catalog.Spec.Packs[clientID]
+	if !ok {
+		return Pack{}, nil, false, nil
 	}
-	out := map[string][]string{}
-	for i := range list.Items {
-		for clientID := range list.Items[i].Spec.Packs {
-			out[clientID] = append(out[clientID], list.Items[i].Name)
-		}
+	templates := mapperTemplatesFromCR(catalog.Spec.MapperTemplates)
+	pack := packFromCR(packSpec)
+	if err := validatePack(clientID, pack, templates); err != nil {
+		return Pack{}, nil, false, err
 	}
-	for clientID := range out {
-		sort.Strings(out[clientID])
-	}
-	return out, nil
+	return pack, templates, true, nil
 }
 
 func packFromCR(spec gentianov1alpha1.OIDCPackSpec) Pack {

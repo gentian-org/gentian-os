@@ -148,8 +148,18 @@ and the app Composition composes it beside the app's own: redirect addresses
 the secret the operator seeds at the extension's own key,
 `apps/<app>-<extension>/oidc`. Its audiences are held as the app's own. A
 client the profile's OIDC pack catalogue holds a pack for is the pack Job's
-instead. The extension's release is not handed the client's secret: its
-`appSecrets` and `extraValues` are what it gets.
+instead. The extension's release is handed its client through
+`extensions[].valueMapping.oidc`, with the keys `package.valueMapping.oidc`
+offers the app (`issuerKey`, `clientIdKey`, `clientSecretKey`, and the
+`clientSecretOpenbao*` overrides), read from its own key as the app's are
+from the app's.
+
+**Which catalogue.** A client's pack is looked up in one place only: the
+`OIDCPackCatalog` labelled `gentianos.io/profile-name: <profile>`, the one
+the profile's bundle brings; an extension's in its parent's. The app
+Composition and the operator read that one, so a pack any other catalogue
+holds does not make a client the pack Job's. A profile two catalogues are
+labelled for has its clients refused.
 
 **One client for many places.** A client whose sign-ins come from many places
 -- an issuer that every cluster's App Store app signs in at, each with its own

@@ -1017,12 +1017,20 @@ func TestAPurgeRemovesTheAppsSignInScope(t *testing.T) {
 			OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: name, OIDCPackRef: pack}}
 		return p
 	}
+	// Each profile's packs are in the catalogue labelled with it, where they
+	// are looked up; drive's holds the same shared pack as wiki's.
 	packs := &gentianov1alpha1.OIDCPackCatalog{
-		ObjectMeta: metav1.ObjectMeta{Name: "catalogue"},
+		ObjectMeta: metav1.ObjectMeta{Name: "wiki-oidc", Labels: map[string]string{gentianov1alpha1.LabelProfileName: "wiki"}},
 		Spec: gentianov1alpha1.OIDCPackCatalogSpec{Packs: map[string]gentianov1alpha1.OIDCPackSpec{
 			"wiki-pack":    {ScopeName: "wiki-scope", ClientRole: "user", EntitlementGroup: "wiki"},
 			"shared-pack":  {ScopeName: "shared-scope", ClientRole: "user", EntitlementGroup: "shared"},
 			"builtin-pack": {ScopeName: "profile", ClientRole: "user", EntitlementGroup: "x"},
+		}},
+	}
+	drivePacks := &gentianov1alpha1.OIDCPackCatalog{
+		ObjectMeta: metav1.ObjectMeta{Name: "drive-oidc", Labels: map[string]string{gentianov1alpha1.LabelProfileName: "drive"}},
+		Spec: gentianov1alpha1.OIDCPackCatalogSpec{Packs: map[string]gentianov1alpha1.OIDCPackSpec{
+			"shared-pack": {ScopeName: "shared-scope", ClientRole: "user", EntitlementGroup: "shared"},
 		}},
 	}
 	cases := []struct {
@@ -1036,7 +1044,7 @@ func TestAPurgeRemovesTheAppsSignInScope(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			objects := []client.Object{oidcProfile("wiki", c.pack), packs}
+			objects := []client.Object{oidcProfile("wiki", c.pack), packs, drivePacks}
 			if c.installed != nil {
 				objects = append(objects, c.installed)
 			}

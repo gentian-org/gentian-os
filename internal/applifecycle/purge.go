@@ -604,8 +604,10 @@ func signsIn(profile *gentianov1alpha1.ComponentProfile) bool {
 // them. A client with no pack, or a pack that is a service client, has none.
 func (s *Service) packScopes(ctx context.Context, tenantName, app string, profile *gentianov1alpha1.ComponentProfile) ([]string, error) {
 	var scopes []string
+	// Looked up in the profile's own catalogue, an extension's too, where
+	// the identity Job and the app Composition look.
 	add := func(key string) error {
-		pack, _, found, err := oidc.ResolvePack(ctx, s.client, key)
+		pack, _, found, err := oidc.ResolvePack(ctx, s.client, profile.Name, key)
 		if err != nil {
 			return fmt.Errorf("read the sign-in pack %s: %w", key, err)
 		}
