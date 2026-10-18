@@ -140,6 +140,17 @@ profile's name; the operator holds an install that would
 Every public client (`accessType: PUBLIC`, the default) must use PKCE with
 `S256`; the realm refuses a request without a code challenge.
 
+**An extension's client.** An extension that signs people in itself declares
+its client the same way, under `extensions[].kernelRequirements.identity.oidc`,
+and the app Composition composes it beside the app's own: redirect addresses
+(or the profile's `gentianos.io/oidc-default-redirect-uris`) with
+`${TENANT_DOMAIN}` filled in, PKCE for a public one, and for a confidential one
+the secret the operator seeds at the extension's own key,
+`apps/<app>-<extension>/oidc`. Its audiences are held as the app's own. A
+client the profile's OIDC pack catalogue holds a pack for is the pack Job's
+instead. The extension's release is not handed the client's secret: its
+`appSecrets` and `extraValues` are what it gets.
+
 **One client for many places.** A client whose sign-ins come from many places
 -- an issuer that every cluster's App Store app signs in at, each with its own
 callback -- declares the parameter that says which place, and the one callback
@@ -166,8 +177,8 @@ both fail closed: without them no token carries the claim. The pattern uses
 the syntax Go and Java share (`(?<name>...)`, no back-references); the
 parameter and the claim may not be ones OAuth, OpenID Connect or JWT already
 define. Such a client declares no `redirectUris`. Only an app's own client
-can be one: the app Composition composes it, and nothing composes an
-extension's client or an API entry's.
+can be one: the app Composition binds the parameter on it alone, and an API
+entry has no Composition.
 
 A client that cannot be made as declared -- one with neither `redirectUris`
 nor a request parameter, or a request-bound one of an extension or an API

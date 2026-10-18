@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
 func TestCollectOIDCAppConfigs_IncludesSidecarWithoutComponentProfile(t *testing.T) {
@@ -29,9 +30,6 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutComponentProfile(t *testing
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-test-app"},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
 			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
-			// Rendered by a Composition, which is what decides that Crossplane
-			// owns its sidecar's OIDC client rather than the operator.
-			Package: gentianov1alpha1.PackageSpec{Composition: "app-default"},
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
@@ -100,6 +98,38 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutComponentProfile(t *testing
 		t.Errorf("owner profile = %q, want catalogue-test-app", owner.Name)
 	}
 	if !crossplaneOwnsOIDCClient(owner, *sidecarCfg) {
-		t.Error("expected Crossplane to own sidecar OIDC when parent has compositionRef")
+		t.Error("expected the app Composition to own the sidecar's OIDC client")
+	}
+}
+
+// The app Composition composes every client without a pack of an app it
+// renders, an extension's as well as the app's own, whether or not the
+// profile names package.composition: app-default renders an app that names
+// none. What it composes the operator makes no Job for, and what it does not
+// compose -- a client with a pack, or anything of an API entry -- it does.
+func TestTheCompositionOwnsAnExtensionsClientWithoutAPack(t *testing.T) {
+	extension := oidcAppConfig{profileName: "shop-till", parentProfile: "shop", clientID: "shop-till"}
+	app := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "shop"}}
+	named := app.DeepCopy()
+	named.Spec.Package.Composition = "app-shop"
+	api := app.DeepCopy()
+	api.Spec.Package.API = &gentianov1alpha1.APIIntegration{}
+	withPack := extension
+	withPack.pack = &oidc.Pack{}
+
+	for _, c := range []struct {
+		name    string
+		profile *gentianov1alpha1.ComponentProfile
+		cfg     oidcAppConfig
+		owns    bool
+	}{
+		{"an app that names no Composition", app, extension, true},
+		{"an app that names its own", named, extension, true},
+		{"a client with a pack", app, withPack, false},
+		{"an API entry", api, extension, false},
+	} {
+		if got := crossplaneOwnsOIDCClient(c.profile, c.cfg); got != c.owns {
+			t.Errorf("%s: crossplaneOwnsOIDCClient = %v, want %v", c.name, got, c.owns)
+		}
 	}
 }

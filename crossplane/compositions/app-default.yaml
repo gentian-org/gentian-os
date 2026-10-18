@@ -1102,6 +1102,12 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* What an audience is held to (below): the profile's own name,
+                 a dash and a label, and none of the names the platform keeps.
+                 Out here because the app's own client and each extension's
+                 are held to the same. */}}
+            {{- $reservedAudiences := list "account" "account-console" "admin-cli" "broker" "realm-management" "security-admin-console" "director" "keycloak" "openbao" "vault" "dovecot" "infra-mariadb" "infra-redis" "infra-seaweedfs" "keycloak-config" "keycloak-idp" "llm" "mail-edge" "openbao-config" "openfga" "postfix" }}
+            {{- $profileName := dig "metadata" "name" "" $profile }}
             {{- $oidcCl   := default dict $identity.oidc }}
             {{- if $oidcCl.clientId }}
             {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
@@ -1171,10 +1177,8 @@ spec:
                  (token_audiences.go). TestTheCompositionHoldsTheSameNames
                  keeps the three lists equal to the operator's. A declaration
                  that fails is not composed at all. */}}
-            {{- $reservedAudiences := list "account" "account-console" "admin-cli" "broker" "realm-management" "security-admin-console" "director" "keycloak" "openbao" "vault" "dovecot" "infra-mariadb" "infra-redis" "infra-seaweedfs" "keycloak-config" "keycloak-idp" "llm" "mail-edge" "openbao-config" "openfga" "postfix" }}
             {{- $protocolParameters := list "acr_values" "authorization_details" "claims" "client_id" "code_challenge" "code_challenge_method" "display" "dpop_jkt" "id_token_hint" "kc_action" "kc_idp_hint" "login_hint" "max_age" "nonce" "prompt" "redirect_uri" "registration" "request" "request_uri" "resource" "response_mode" "response_type" "scope" "state" "ui_locales" }}
             {{- $reservedClaims := list "acr" "address" "allowed-origins" "amr" "at_hash" "aud" "auth_time" "azp" "c_hash" "client_id" "cnf" "email" "email_verified" "exp" "family_name" "given_name" "groups" "iat" "iss" "jti" "name" "nbf" "nonce" "phone_number" "preferred_username" "realm_access" "resource_access" "scope" "sid" "session_state" "sub" "typ" }}
-            {{- $profileName := dig "metadata" "name" "" $profile }}
             {{- $audiences := list }}
             {{- range $aud := (default list $oidcCl.audiences) }}
             {{- if and $profileName (hasPrefix (printf "%s-" $profileName) $aud) (gt (len $aud) (add1 (len $profileName))) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) (not (has $aud $reservedAudiences)) }}
@@ -1689,6 +1693,161 @@ spec:
                   - name: {{ $tenant }}-{{ $app }}-client-role
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── each extension's own client ────────────────────────────────
+                 extensions[].kernelRequirements.identity.oidc: an extension
+                 that signs people in itself, as the app does, under a client
+                 of its own. The operator leaves it to this Composition
+                 (crossplaneOwnsOIDCClient) and seeds its secret at the
+                 extension's key, {app}-{extension} (SidecarAppName), so it is
+                 composed here in the shape of the app's own client above:
+                 redirect addresses with the tenant's domain put in, PKCE
+                 with S256 for a public one, the secret from that key for a
+                 confidential one, and the audiences, held as the app's are.
+
+                 Where the extension declares no redirect address the
+                 profile's default (gentianos.io/oidc-default-redirect-uris)
+                 is used, as the operator does; with neither, the operator
+                 refuses the client and nothing is composed.
+
+                 Not composed, because the operator does not leave it here:
+                 a client the profile's OIDC pack catalogue holds a pack for,
+                 which the pack Job makes; and one that declares
+                 requestParameter, which only the app's own client may and
+                 the operator refuses for an extension. backchannelLogout
+                 the definition refuses for an extension. */}}
+            {{- range $sc := (dig "extensions" list $pSpec) }}
+            {{- $scOIDC := dig "kernelRequirements" "identity" "oidc" dict $sc }}
+            {{- $scClientId := default "" $scOIDC.clientId }}
+            {{- $scPackKey := default $scClientId $scOIDC.oidcPackRef }}
+            {{- if and $sc.name $scClientId (not $scOIDC.requestParameter) (not (hasKey $oidcPacks $scPackKey)) }}
+            {{- $scKey := printf "%s-%s" $app $sc.name }}
+            {{- $scDeclared := default list $scOIDC.redirectUris }}
+            {{- if not $scDeclared }}
+            {{- $scDefault := fromJson (dig "metadata" "annotations" "gentianos.io/oidc-default-redirect-uris" "" $profile) }}
+            {{- if kindIs "slice" $scDefault }}
+            {{- $scDeclared = $scDefault }}
+            {{- end }}
+            {{- end }}
+            {{- $scRedirects := list }}
+            {{- range $uri := $scDeclared }}
+            {{- $scRedirects = append $scRedirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $scPostLogout := list }}
+            {{- range $uri := (default list $scOIDC.postLogoutRedirectUris) }}
+            {{- $scPostLogout = append $scPostLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $scAudiences := list }}
+            {{- range $aud := (default list $scOIDC.audiences) }}
+            {{- if and $profileName (hasPrefix (printf "%s-" $profileName) $aud) (gt (len $aud) (add1 (len $profileName))) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) (not (has $aud $reservedAudiences)) }}
+            {{- $scAudiences = append $scAudiences $aud }}
+            {{- end }}
+            {{- end }}
+            {{- $scConfidential := eq (default "PUBLIC" $scOIDC.accessType) "CONFIDENTIAL" }}
+            {{- if $scRedirects }}
+            {{- if $scConfidential }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scKey }}-oidc-client-creds-es
+              name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds
+                    namespace: {{ $provNs }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: {{ printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $scKey }}
+                          property: client-secret
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scKey }}-keycloak-client
+              name: {{ $tenant }}-{{ $scKey }}-keycloak-client
+            spec:
+              deletionPolicy: Delete
+              # As the app's own client: everything except LateInitialize.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $scClientId | quote }}
+                name: {{ default $scClientId $scOIDC.name | quote }}
+                realmId: {{ $realm }}
+                extraConfig:
+                  gentianos.io/managed-by: platform
+                accessType: {{ default "PUBLIC" $scOIDC.accessType | quote }}
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: {{ default false $scOIDC.directAccessGrantsEnabled }}
+                serviceAccountsEnabled: false
+                {{- if not $scConfidential }}
+                pkceCodeChallengeMethod: S256
+                {{- end }}
+                validRedirectUris:
+                  {{ toYaml $scRedirects | nindent 18 }}
+                webOrigins:
+                  - "+"
+                {{- if $scPostLogout }}
+                validPostLogoutRedirectUris:
+                  {{ toYaml $scPostLogout | nindent 18 }}
+                {{- end }}
+                {{- if $scConfidential }}
+                clientSecretSecretRef:
+                  name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds
+                  namespace: {{ $provNs }}
+                  key: client-secret
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- range $aud := $scAudiences }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scKey }}-oidc-audience-{{ $aud }}
+              name: {{ $tenant }}-{{ $scKey }}-oidc-audience-{{ $aud }}
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $scKey }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "audience-%s" $aud | quote }}
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $aud | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
@@ -2409,7 +2568,7 @@ spec:
             {{- /* ({parent}-{sidecar}, matching api/v1alpha1.SidecarAppName -- OIDC  */}}
             {{- /* client registration and OpenBao secret purge on uninstall already   */}}
             {{- /* key off this same synthetic name). KernelRequirements beyond OIDC   */}}
-            {{- /* (already handled independently by oidc_pack_jobs.go) are not wired  */}}
+            {{- /* (its client is composed above, beside the app's own) are not wired  */}}
             {{- /* into the sidecar's own Release values yet -- a sidecar that needs   */}}
             {{- /* its own database/cache/S3 isn't supported by this mechanism yet.    */}}
             {{- /* extensions on ComponentProfile: the same sidecar list under the

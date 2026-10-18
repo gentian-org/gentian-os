@@ -22,10 +22,10 @@ import (
 )
 
 // What an app's own sign-in client puts in its tokens beyond what Keycloak
-// does: requires.services.identity.oidc.audiences and .requestParameter. The
-// app Composition composes both onto the client; this is the operator's half
-// of the rules they are held to, the half that needs to know more than the
-// one profile. The Composition holds the rest itself, and
+// does: requires.services.identity.oidc.audiences and .requestParameter, and
+// the audiences of an extension's client. The app Composition composes them
+// onto the clients; this is the operator's half of the rules they are held
+// to, the half that needs to know more than the one profile. The Composition holds the rest itself, and
 // TestTheCompositionHoldsTheSameNames keeps the two lists below equal.
 //
 // An audience is a grant. A service that checks its name in aud accepts every
@@ -73,14 +73,11 @@ var reservedClaims = []string{
 // redirectGroup is a ${group} of a request parameter's redirect address.
 var redirectGroup = regexp.MustCompile(`\$\{([A-Za-z][A-Za-z0-9]*)\}`)
 
-// signInClientRefusal answers why the profile's sign-in client may not be
-// composed as declared, or "" when it may. others are the cluster's other
-// profiles.
+// signInClientRefusal answers why the profile's sign-in clients may not be
+// composed as declared, or "" when they may: its own and each of its
+// extensions', whose audiences are held as its own are. others are the
+// cluster's other profiles.
 func signInClientRefusal(profile *gentianov1alpha1.ComponentProfile, others []gentianov1alpha1.ComponentProfile, adoptsKernelRealm bool) string {
-	refuse := func(format string, args ...any) string {
-		return fmt.Sprintf("ComponentProfile %q declares requires.services.identity.oidc.", profile.Name) + fmt.Sprintf(format, args...)
-	}
-	oidc := declaredOIDCClient(profile)
 	// Another profile's audience that is this profile's name would make that
 	// profile's tokens the key to this app, whichever came first.
 	for i := range others {
@@ -88,44 +85,67 @@ func signInClientRefusal(profile *gentianov1alpha1.ComponentProfile, others []ge
 		if o.Name == profile.Name {
 			continue
 		}
-		if c := declaredOIDCClient(o); c != nil && slices.Contains(c.Audiences, gentianov1alpha1.TokenAudience(profile.Name)) {
-			return fmt.Sprintf("ComponentProfile %q is named %q, which ComponentProfile %q names as an audience of its tokens: those would be accepted as tokens for this app", profile.Name, profile.Name, o.Name)
-		}
-	}
-	if oidc == nil {
-		return ""
-	}
-	for _, a := range oidc.Audiences {
-		name := string(a)
-		if !strings.HasPrefix(name, profile.Name+"-") || len(name) == len(profile.Name)+1 {
-			return refuse("audiences names %q: an audience is the profile's own, its name, a dash and a label", name)
-		}
-		if strings.HasPrefix(name, "gentian") || slices.Contains(reservedAudiences, name) {
-			return refuse("audiences names %q, which is the name of a service of the platform's or a client of every realm", name)
-		}
-		for i := range others {
-			if others[i].Name == name {
-				return refuse("audiences names %q, which is another profile: its app would accept these tokens", name)
+		for _, c := range declaredOIDCClients(o) {
+			if slices.Contains(c.spec.Audiences, gentianov1alpha1.TokenAudience(profile.Name)) {
+				return fmt.Sprintf("ComponentProfile %q is named %q, which ComponentProfile %q names as an audience of its tokens: those would be accepted as tokens for this app", profile.Name, profile.Name, o.Name)
 			}
 		}
 	}
-	if p := oidc.RequestParameter; p != nil {
-		if problem := requestParameterProblem(p); problem != "" {
-			return refuse("requestParameter %s", problem)
+	for _, c := range declaredOIDCClients(profile) {
+		refuse := func(format string, args ...any) string {
+			return fmt.Sprintf("ComponentProfile %q declares %s.", profile.Name, c.path) + fmt.Sprintf(format, args...)
 		}
-		if adoptsKernelRealm {
-			return refuse("requestParameter: the tenant signs in in the kernel realm, which does not have the rule that holds a request to its parameter")
+		for _, a := range c.spec.Audiences {
+			name := string(a)
+			if !strings.HasPrefix(name, profile.Name+"-") || len(name) == len(profile.Name)+1 {
+				return refuse("audiences names %q: an audience is the profile's own, its name, a dash and a label", name)
+			}
+			if strings.HasPrefix(name, "gentian") || slices.Contains(reservedAudiences, name) {
+				return refuse("audiences names %q, which is the name of a service of the platform's or a client of every realm", name)
+			}
+			for i := range others {
+				if others[i].Name == name {
+					return refuse("audiences names %q, which is another profile: its app would accept these tokens", name)
+				}
+			}
+		}
+		// An extension's request parameter is refused whatever it says
+		// (resolveSidecarOIDCAppConfig).
+		if p := c.spec.RequestParameter; p != nil && !c.extension {
+			if problem := requestParameterProblem(p); problem != "" {
+				return refuse("requestParameter %s", problem)
+			}
+			if adoptsKernelRealm {
+				return refuse("requestParameter: the tenant signs in in the kernel realm, which does not have the rule that holds a request to its parameter")
+			}
 		}
 	}
 	return ""
 }
 
-func declaredOIDCClient(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.OIDCClientSpec {
-	s := profile.Services()
-	if s == nil || s.Identity == nil {
-		return nil
+// declaredClient is one sign-in client a profile declares, and where.
+type declaredClient struct {
+	path      string
+	extension bool
+	spec      *gentianov1alpha1.OIDCClientSpec
+}
+
+// declaredOIDCClients are the profile's own client and its extensions'.
+func declaredOIDCClients(profile *gentianov1alpha1.ComponentProfile) []declaredClient {
+	var out []declaredClient
+	if s := profile.Services(); s != nil && s.Identity != nil && s.Identity.OIDC != nil {
+		out = append(out, declaredClient{path: "requires.services.identity.oidc", spec: s.Identity.OIDC})
 	}
-	return s.Identity.OIDC
+	for _, ext := range profile.Spec.Extensions {
+		if r := ext.ServiceRequirements; r != nil && r.Identity != nil && r.Identity.OIDC != nil {
+			out = append(out, declaredClient{
+				path:      fmt.Sprintf("extensions[%s].kernelRequirements.identity.oidc", ext.Name),
+				extension: true,
+				spec:      r.Identity.OIDC,
+			})
+		}
+	}
+	return out
 }
 
 // requestParameterProblem is what is wrong with a request parameter, or "".

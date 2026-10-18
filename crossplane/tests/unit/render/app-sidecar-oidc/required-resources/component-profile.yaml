@@ -1,0 +1,79 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+  annotations:
+    # Where the "meet" extension's client is redirected to: it declares none.
+    gentianos.io/oidc-default-redirect-uris: '["https://demo.${TENANT_DOMAIN}/meet/callback"]'
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+  # The app has no client of its own; each of its extensions' clients is what
+  # this fixture is about.
+  extensions:
+    # Confidential, with its own redirect addresses and an audience of the
+    # profile's own, and one that is not (dropped).
+    - name: mcp
+      chart:
+        repository: oci://example.invalid/demo-app-mcp
+        name: demo-app-mcp
+        version: "0.1.0"
+      kernelRequirements:
+        identity:
+          oidc:
+            clientId: demo-app-mcp
+            name: Demo App MCP
+            accessType: CONFIDENTIAL
+            redirectUris:
+              - "https://mcp.${TENANT_DOMAIN}/oauth/callback"
+            postLogoutRedirectUris:
+              - "https://mcp.${TENANT_DOMAIN}/"
+            audiences:
+              - demo-app-mcp-api
+              - gentian-director
+    # Public, with the profile's default redirect address.
+    - name: meet
+      chart:
+        repository: oci://example.invalid/demo-app-meet
+        name: demo-app-meet
+        version: "0.1.0"
+      kernelRequirements:
+        identity:
+          oidc:
+            clientId: demo-app-meet
+    # Request-bound: refused by the operator for an extension, not composed.
+    - name: store
+      chart:
+        repository: oci://example.invalid/demo-app-store
+        name: demo-app-store
+        version: "0.1.0"
+      kernelRequirements:
+        identity:
+          oidc:
+            clientId: demo-app-store
+            requestParameter:
+              name: tenant_url
+              pattern: 'https://(?<host>[a-z.]+)'
+              redirectUri: 'https://store.${host}/oauth/callback'
+    # Held by a pack: the pack Job's, not composed.
+    - name: packed
+      chart:
+        repository: oci://example.invalid/demo-app-packed
+        name: demo-app-packed
+        version: "0.1.0"
+      kernelRequirements:
+        identity:
+          oidc:
+            clientId: demo-app-packed
+            redirectUris:
+              - "https://packed.${TENANT_DOMAIN}/callback"
