@@ -41,6 +41,10 @@
 #                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
 #   kubectl gentian tenants organizations <name> remove <org>  they no longer do
 #
+#   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
+#   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
+#                                                             set one; a value from a file, or from stdin (once)
+#
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> --path <directory> [--tenant <tenant>]
@@ -342,6 +346,9 @@ _disconnect() {
     if [[ -n "${_USH_PF_PID}" ]]; then
         kill "${_USH_PF_PID}" 2>/dev/null || true
     fi
+    if [[ -n "${_CUS_PF_PID}" ]]; then
+        kill "${_CUS_PF_PID}" 2>/dev/null || true
+    fi
 }
 
 # The usher: the Deployment labelled app.kubernetes.io/component=usher, in
@@ -380,6 +387,45 @@ _connect_usher() {
 
 # The registrar: the Deployment labelled app.kubernetes.io/component=registrar
 # in the director's namespace, on the port its Service names.
+# The custodian: the Deployment labelled app.kubernetes.io/component=custodian,
+# beside the director. Credentials are set there, as the person: it checks
+# them against what the requirement declares and writes them to the vault
+# with the person's own authority.
+_CUS_PF_PID=""
+_CUS_BASE=""
+
+_connect_custodian() {
+    [[ -n "${_CUS_BASE}" ]] && return 0
+    _discover
+    local deploy target port
+    deploy="$(kubectl get deploy -n "${_DIR_NS}" -l app.kubernetes.io/component=custodian \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    [[ -n "${deploy}" ]] || die "no custodian in ${_DIR_NS}: credentials are set there, and this cluster does not run one"
+    target="$(kubectl get deploy "${deploy}" -n "${_DIR_NS}" \
+        -o jsonpath='{.spec.template.spec.containers[0].ports[0].containerPort}' 2>/dev/null || true)"
+    [[ -n "${target}" ]] || die "the custodian in ${_DIR_NS} names no port"
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    kubectl port-forward -n "${_DIR_NS}" "deploy/${deploy}" "${port}:${target}" >/dev/null 2>&1 &
+    _CUS_PF_PID=$!
+    trap '_disconnect' EXIT
+    local _i
+    for _i in $(seq 1 30); do
+        if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${port}/healthz"; then
+            _CUS_BASE="http://127.0.0.1:${port}"
+            return 0
+        fi
+        kill -0 "${_CUS_PF_PID}" 2>/dev/null || break
+        sleep 0.5
+    done
+    die "the custodian in ${_DIR_NS} could not be reached"
+}
+
+# _call_custodian <method> <path> [json-body] — the same, of the custodian.
+_call_custodian() {
+    _connect_custodian
+    _ask custodian "${_CUS_BASE}" "$@"
+}
+
 _REG_PF_PID=""
 _REG_BASE=""
 
@@ -2132,6 +2178,75 @@ cmd_apps_approve() {
     echo "Approved ${privilege} for ${app} in ${t}: committed ($(_committed "${answer}")). The app goes on once the platform has it."
 }
 
+# kubectl gentian credentials list [--tenant <t>]
+# kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-] ...
+#
+# What a person supplies -- a registry's token, an app's API keys -- is set at
+# the custodian, which checks each value against what the requirement
+# declares (a stray newline is refused, not stored) and writes it to the vault
+# with the person's own authority. A value never appears on the command line:
+# it is read from a file (@path) or from standard input (-), so it stays out
+# of the shell's history and the process list. Every field the requirement
+# declares is given at once, as the Admin Console does.
+cmd_credentials() {
+    local sub="${1:-}" t="" name="" answer
+    shift || true
+    case "${sub}" in
+        list)
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+                    *) die "usage: kubectl gentian credentials list [--tenant <tenant>]" ;;
+                esac
+            done
+            need curl jq
+            answer="$(_call_custodian GET /v1/credentials)" || exit 1
+            jq -r --arg t "${t}" '(["NAME","TENANT","SET","FIELDS"] | @tsv),
+                (.credentials[]? | select($t == "" or .tenant == $t)
+                 | [.name, (.tenant // "-"), (if .satisfied then "yes" else "no" end),
+                    ([.fields[]?.key] | join(","))] | @tsv)' <<<"${answer}" | column -t -s $'\t'
+            ;;
+        set)
+            name="${1:-}"
+            [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]"
+            shift
+            local fields='{}' spec key src value stdin_used=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --field)
+                        spec="${2:-}"
+                        shift 2 || die "--field needs <key>=@<file> or <key>=-"
+                        [[ "${spec}" == *=* ]] || die "--field is <key>=@<file> or <key>=-, not '${spec}'"
+                        key="${spec%%=*}"
+                        src="${spec#*=}"
+                        [[ "${key}" =~ ^[A-Za-z0-9_.-]+$ ]] || die "'${key}' is not a field name"
+                        case "${src}" in
+                            -)
+                                [[ -z "${stdin_used}" ]] || die "only one field can be read from standard input"
+                                stdin_used=1
+                                value="$(cat)" ;;
+                            @*)
+                                [[ -r "${src#@}" ]] || die "cannot read ${src#@}"
+                                value="$(cat -- "${src#@}")" ;;
+                            *) die "a value is given as @<file> or -, never on the command line: --field ${key}=@<file>" ;;
+                        esac
+                        # A file ends in a newline more often than not, and the
+                        # custodian refuses a value that does: the last one goes.
+                        value="${value%$'\n'}"
+                        fields="$(jq -c --arg k "${key}" --arg v "${value}" '. + {($k): $v}' <<<"${fields}")"
+                        ;;
+                    *) die "unexpected argument $1" ;;
+                esac
+            done
+            [[ "${fields}" != "{}" ]] || die "give every field of ${name}: --field <key>=@<file>"
+            need curl jq
+            answer="$(_call_custodian PUT "/v1/credentials/${name}" "$(jq -c '{fields: .}' <<<"${fields}")")" || exit 1
+            echo "Set ${name}: stored$(jq -r 'if .validated == false then " without validation (" + (.validationSkipped // "") + ")" elif .validated == true then " and validated" else "" end' <<<"${answer}" 2>/dev/null)."
+            ;;
+        *) die "usage: kubectl gentian credentials list|set ..." ;;
+    esac
+}
+
 cmd_resources() {
     local sub="${1:-}"
     shift || true
@@ -2218,6 +2333,7 @@ main() {
         setting|settings) cmd_settings "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
+        credential|credentials) cmd_credentials "$@" ;;
         version|--version|-v) cmd_version ;;
         help|--help|-h) usage ;;
         *) usage; exit 1 ;;

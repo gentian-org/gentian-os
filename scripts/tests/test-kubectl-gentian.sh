@@ -53,6 +53,9 @@ cat > "${SANDBOX}/bin/kubectl" <<'STUB'
 case "$*" in
     "config current-context") echo test ;;
     "get deploy -A -l app.kubernetes.io/component=director"*) echo "kernel-control director" ;;
+    # A custodian, where credentials are set.
+    "get deploy -n kernel-control -l app.kubernetes.io/component=custodian"*) echo "custodian" ;;
+    "get deploy custodian -n kernel-control -o jsonpath="*) echo 9444 ;;
     # And one usher beside it, which answers what the cluster holds.
     "get deploy -A -l app.kubernetes.io/component=usher"*) echo "kernel-control usher" ;;
     "get deploy usher -n kernel-control -o jsonpath="*) echo 8080 ;;
@@ -108,6 +111,16 @@ gentian() {
     OUT="$(env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" \
         STUB_CALLS="${CALLS}" STUB_REPLIES="${SANDBOX}/replies" \
         bash "${REPO}/scripts/kubectl-gentian" "$@" 2>&1 </dev/null)"
+    RC=$?
+}
+
+# gentian_stdin <input> <args...> : the same, with <input> on standard input.
+gentian_stdin() {
+    local input="$1"
+    shift
+    OUT="$(printf '%s\n' "${input}" | env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" \
+        STUB_CALLS="${CALLS}" STUB_REPLIES="${SANDBOX}/replies" \
+        bash "${REPO}/scripts/kubectl-gentian" "$@" 2>&1)"
     RC=$?
 }
 
@@ -374,6 +387,23 @@ is "organizations remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/tenan
 fresh; reply GET /v1/tenants/customers/brokered-from 200 '{"brokeredFrom":[{"name":"abc","displayName":"ABC AG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}]}'
 gentian tenants organizations customers
 has "organizations lists the sign-in alias" "${OUT}" "sign-in alias org-abc"
+
+# Credentials: listed by tenant; set from files and stdin, never from the
+# command line, every value without its trailing newline.
+fresh; reply GET /v1/credentials 200 '{"credentials":[{"name":"app-customers-aluvian-website-intake","tenant":"customers","satisfied":false,"fields":[{"key":"token"}]},{"name":"repository-aluvian-team","tenant":"team","satisfied":true,"fields":[{"key":"password"}]}]}'
+gentian credentials list --tenant customers
+has "credentials list names the tenant's requirement and its fields" "${OUT}" "app-customers-aluvian-website-intake"
+lacks "... and not another tenant's" "${OUT}" "repository-aluvian-team"
+printf 'sk_test_restricted\n' > "${SANDBOX}/secret-key"
+fresh; reply PUT /v1/credentials/app-customers-aluvian-website-stripe 200 '{"name":"app-customers-aluvian-website-stripe","stored":true,"validated":true}'
+gentian_stdin "pk_test_x" credentials set app-customers-aluvian-website-stripe --field secret_key=@"${SANDBOX}/secret-key" --field publishable_key=-
+is "credentials set sends every field, without trailing newlines" "$(writes | tr -d ' \n')" \
+    'PUT/v1/credentials/app-customers-aluvian-website-stripe{"fields":{"secret_key":"sk_test_restricted","publishable_key":"pk_test_x"}}'
+has "... and says it was stored and validated" "${OUT}" "Set app-customers-aluvian-website-stripe: stored and validated."
+fresh
+gentian credentials set app-customers-aluvian-website-intake --field token=plaintext
+refused "a value on the command line is refused"
+is "... and nothing is sent" "$(cat "${CALLS}")" ""
 
 # An app waiting on a privilege: what it waits for, then one PUT that answers
 # it with the person's reason.
