@@ -77,6 +77,12 @@ kinds:
       - clusterexternalsecrets  # ClusterExternalSecret
       - clustersecretstores    # ClusterSecretStore
       - externalsecrets        # ExternalSecret
+  # Not from a Composition: the tenant operator hands the provider an
+  # IntegrationBinding for each consumer whose provider is installed
+  # (tenant_data_plane_manifests.go), which no render fixture shows.
+  - group: gentianos.io
+    resources:
+      - integrationbindings  # IntegrationBinding
   - group: generators.external-secrets.io
     resources:
       - passwords        # Password
