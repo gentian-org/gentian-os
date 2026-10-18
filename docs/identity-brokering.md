@@ -142,6 +142,15 @@ spec:
   signInTo: [customers]
 ```
 
+Written with the CLI, as the cluster's administrator (one commit of both
+tenants' line):
+
+```bash
+kubectl gentian tenants groups customers website-editors
+kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers --remove team     # ends it
+```
+
 The platform then makes, in the source realm, the client `broker-to-<target>`
 (authenticated by a JWT the target realm signs: no secret), and in the target
 realm the identity provider `tenant-<source>`, shown on the login page under

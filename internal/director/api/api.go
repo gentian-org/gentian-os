@@ -75,6 +75,10 @@ type Repository interface {
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
+	TenantGroups(ctx context.Context, tenant string) ([]string, error)
+	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
+	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
+	SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
@@ -476,6 +480,13 @@ func (s *Server) routes() {
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// A tenant's own groups, and who signs in to it from another tenant
+		// (tenant_sign_in.go).
+		s.guarded("GET /v1/clusters/{c}/tenants/{t}/groups", "can_audit", s.clusterObject, s.tenantGroups)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/groups", "can_configure", s.clusterObject, s.setTenantGroups)
+		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
 		// A second address for one published surface, directly under the
 		// cluster's own domain. can_configure, and not the tenant's
 		// approver: a name under the cluster's domain is the cluster's to

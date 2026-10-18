@@ -495,6 +495,19 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
+### Groups, and people of another tenant signing in
+
+A tenant's own groups are declared in git, made by the platform and filled
+in the Admin Console. People of another tenant of the cluster may sign in to
+a tenant with their account there, given some of its groups (`members`, or
+its own); see [identity-brokering.md](identity-brokering.md).
+
+```bash
+kubectl gentian tenants groups customers website-editors store-editors
+kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers                 # what it declares
+```
+
 ### Credentials a person supplies
 
 A registry's token, an app's API keys: what a profile asks a person for is

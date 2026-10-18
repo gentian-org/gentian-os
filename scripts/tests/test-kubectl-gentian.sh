@@ -388,6 +388,22 @@ fresh; reply GET /v1/tenants/customers/brokered-from 200 '{"brokeredFrom":[{"nam
 gentian tenants organizations customers
 has "organizations lists the sign-in alias" "${OUT}" "sign-in alias org-abc"
 
+# A tenant's own groups, and another tenant's people signing in: one request
+# each, as the director takes them.
+fresh; reply PUT /v1/clusters/c1/tenants/customers/groups 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants groups customers website-editors store-editors
+is "tenants groups sends the list" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/groups{"groups":["website-editors","store-editors"]}'
+fresh; reply PUT /v1/clusters/c1/tenants/customers/sign-in/team 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants sign-in customers --from team --groups website-editors,members
+is "tenants sign-in sends the source and its groups" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/sign-in/team{"groups":["website-editors","members"]}'
+has "... and says it is committed" "${OUT}" "People of team sign in to customers as website-editors,members: committed"
+fresh; reply DELETE /v1/clusters/c1/tenants/customers/sign-in/team 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants sign-in customers --remove team
+is "tenants sign-in --remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/clusters/c1/tenants/customers/sign-in/team "
+fresh
+gentian tenants groups customers Not_A_Label
+refused "a group name that is not a label is a usage error"
+
 # Credentials: listed by tenant; set from files and stdin, never from the
 # command line, every value without its trailing newline.
 fresh; reply GET /v1/credentials 200 '{"credentials":[{"name":"app-customers-aluvian-website-intake","tenant":"customers","satisfied":false,"fields":[{"key":"token"}]},{"name":"repository-aluvian-team","tenant":"team","satisfied":true,"fields":[{"key":"password"}]}]}'

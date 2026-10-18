@@ -36,6 +36,9 @@
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
 #                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
+#   kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
+#   kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
+#                                                             people of another tenant of this cluster signing in here
 #   kubectl gentian tenants organizations <name>               realms of other clusters whose people sign in here
 #   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>>
 #                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
@@ -1538,6 +1541,99 @@ _committed() {
     echo "${commit:-no commit id}"
 }
 
+# kubectl gentian tenants groups <tenant> [<group>... | --clear]
+# A tenant's own groups of its realm, declared in git (spec.groups): made by
+# the platform, filled in the Admin Console. Without names it shows them;
+# with names it sets them (the list given is the list); --clear removes all.
+cmd_tenants_groups() {
+    local name="${1:-}" clear="" answer body
+    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants groups <tenant> [<group>... | --clear]"
+    shift
+    _label "a tenant" "${name}"
+    local groups=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --clear) clear=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *) _label "a group" "$1"; groups+=("$1"); shift ;;
+        esac
+    done
+    need curl jq
+    _connect
+    if [[ -z "${clear}" && ${#groups[@]} -eq 0 ]]; then
+        answer="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/groups")" || exit 1
+        if [[ "$(jq '.groups | length' <<<"${answer}")" == "0" ]]; then
+            echo "Tenant ${name} declares no groups of its own."
+        else
+            jq -r '.groups[]' <<<"${answer}"
+        fi
+        return 0
+    fi
+    [[ -z "${clear}" || ${#groups[@]} -eq 0 ]] || die "--clear takes no groups"
+    if [[ ${#groups[@]} -gt 0 ]]; then
+        body="$(printf '%s\n' "${groups[@]}" | jq -R . | jq -sc '{groups: .}')"
+    else
+        body='{"groups":[]}'
+    fi
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/groups" "${body}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "Tenant ${name}'s groups are as given already; nothing was committed."
+        return 0
+    fi
+    echo "Tenant ${name}'s groups: committed ($(_committed "${answer}")). The platform makes them in its realm."
+}
+
+# kubectl gentian tenants sign-in <target> [--from <source> --groups <g>,... | --remove <source>]
+# People of another tenant of this cluster signing in to <target> with their
+# account there, given the groups of <target> named (members, or groups of
+# its own: tenants groups). One commit of both tenants' line; the platform
+# makes the client and the identity provider. Without options it shows what
+# <target> declares.
+cmd_tenants_sign_in() {
+    local name="${1:-}" from="" given="" remove="" answer body
+    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants sign-in <tenant> [--from <tenant> --groups <g>,... | --remove <tenant>]"
+    shift
+    _label "a tenant" "${name}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from="${2:-}"; shift 2 || die "--from needs a tenant" ;;
+            --groups) given="${2:-}"; shift 2 || die "--groups needs a list" ;;
+            --remove) remove="${2:-}"; shift 2 || die "--remove needs a tenant" ;;
+            *) die "unexpected argument $1" ;;
+        esac
+    done
+    need curl jq
+    _connect
+    if [[ -z "${from}" && -z "${remove}" ]]; then
+        answer="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in")" || exit 1
+        jq -r --arg t "${name}" '
+            (if (.signInFrom | length) == 0 then "No tenant'"'"'s people sign in to \($t)."
+             else (.signInFrom[] | "people of \(.tenant) sign in to \($t) as: \((.groups // []) | join(", "))") end),
+            (if (.signInTo | length) > 0 then "people of \($t) sign in to: \(.signInTo | join(", "))" else empty end)' <<<"${answer}"
+        return 0
+    fi
+    [[ -z "${from}" || -z "${remove}" ]] || die "--from and --remove do not go together"
+    if [[ -n "${remove}" ]]; then
+        _label "a tenant" "${remove}"
+        answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${remove}")" || exit 1
+        if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+            echo "People of ${remove} did not sign in to ${name}; nothing was committed."
+            return 0
+        fi
+        echo "People of ${remove} no longer sign in to ${name}: committed ($(_committed "${answer}"))."
+        return 0
+    fi
+    _label "a tenant" "${from}"
+    body="$(printf '%s' "${given}" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc '{groups: .}')"
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${from}" "${body}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "People of ${from} sign in to ${name} as declared already; nothing was committed."
+        return 0
+    fi
+    echo "People of ${from} sign in to ${name}${given:+ as ${given}}: committed ($(_committed "${answer}"))."
+    echo "Their button on ${name}'s sign-in page reads ${from}'s display name."
+}
+
 # kubectl gentian tenants organizations <tenant> [add <name> ... | remove <name>]
 # The realms of other clusters whose people sign in to a tenant, each as an
 # organization of its realm (Tenant spec.brokeredFrom). The director commits;
@@ -2323,7 +2419,9 @@ main() {
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
                 organizations) cmd_tenants_organizations "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations" ;;
+                groups) cmd_tenants_groups "$@" ;;
+                sign-in) cmd_tenants_sign_in "$@" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations|groups|sign-in" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;
