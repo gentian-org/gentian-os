@@ -319,9 +319,12 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 
 // crossplaneOwnsOIDCClient reports whether the app Composition already emits a
 // provider-keycloak Client MR, so the operator pack/client Job can be skipped.
-// Sidecars: when the parent profile has compositionRef, Crossplane owns Client MRs
-// for sidecar OIDC clients too; the operator still reconciles OIDC pack Jobs when
-// a pack catalog is configured (see collectOIDCAppConfigs).
+// That is every client without an OIDC pack of an app that has a Composition:
+// the app's own (requires.services.identity.oidc) and each extension's
+// (extensions[].kernelRequirements.identity.oidc), which app-default composes
+// beside it. A client with a pack is the pack Job's; an extension's
+// request-bound client is refused before it gets here
+// (resolveSidecarOIDCAppConfig).
 func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oidcAppConfig) bool {
 	if cfg.pack != nil {
 		return false
@@ -333,8 +336,11 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oi
 	if profile.IsAPI() {
 		return false
 	}
+	// An extension's client is declared on the parent profile, and the
+	// parent's Composition composes it. Not only where the parent names
+	// package.composition: app-default renders an app that names none.
 	if cfg.parentProfile != "" {
-		return profile.Spec.Package.Composition != ""
+		return true
 	}
 	kr := profile.Services()
 	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {

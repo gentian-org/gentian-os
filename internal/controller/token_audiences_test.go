@@ -83,6 +83,45 @@ func TestAProfileNamedAsAnotherOnesAudienceIsHeld(t *testing.T) {
 	}
 }
 
+func withExtensionClient(p gentianov1alpha1.ComponentProfile, extension string, oidc gentianov1alpha1.OIDCClientSpec) gentianov1alpha1.ComponentProfile {
+	if oidc.ClientID == "" {
+		oidc.ClientID = p.Name + "-" + extension
+	}
+	p.Spec.Extensions = append(p.Spec.Extensions, gentianov1alpha1.AppSidecarSpec{
+		Name:                extension,
+		ServiceRequirements: &gentianov1alpha1.ServiceRequirements{Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &oidc}},
+	})
+	return p
+}
+
+// An extension's client is composed with its audiences as the app's own is,
+// so they are the profile's own as well, and another profile's extension
+// naming this one is held as the other profile itself would be.
+func TestAnExtensionsAudienceIsTheProfilesOwn(t *testing.T) {
+	others := []gentianov1alpha1.ComponentProfile{clientProfile("store-web", gentianov1alpha1.OIDCClientSpec{})}
+	for _, c := range []struct {
+		name      string
+		audiences []string
+		held      string
+	}{
+		{"its profile's name and a label", []string{"store-till-api"}, ""},
+		{"another name", []string{"billing-api"}, "extensions[till].kernelRequirements.identity.oidc.audiences"},
+		{"another profile", []string{"store-web"}, "another profile"},
+		{"a platform service", []string{"gentian-director"}, "the profile's own"},
+	} {
+		profile := withExtensionClient(clientProfile("store", gentianov1alpha1.OIDCClientSpec{}), "till", audiences(c.audiences...))
+		refusal := signInClientRefusal(&profile, others, false)
+		if (refusal == "") != (c.held == "") || !strings.Contains(refusal, c.held) {
+			t.Errorf("%s: refusal %q, want one containing %q", c.name, refusal, c.held)
+		}
+	}
+
+	naming := []gentianov1alpha1.ComponentProfile{withExtensionClient(clientProfile("store", gentianov1alpha1.OIDCClientSpec{}), "till", audiences("store-web"))}
+	if refusal := signInClientRefusal(ptr(clientProfile("store-web", gentianov1alpha1.OIDCClientSpec{})), naming, false); !strings.Contains(refusal, "names as an audience") {
+		t.Fatalf("a profile another's extension names as an audience: refusal %q", refusal)
+	}
+}
+
 func boundParameter(mutate func(*gentianov1alpha1.OIDCRequestParameterSpec)) gentianov1alpha1.OIDCClientSpec {
 	p := &gentianov1alpha1.OIDCRequestParameterSpec{
 		Name:        "tenant_url",

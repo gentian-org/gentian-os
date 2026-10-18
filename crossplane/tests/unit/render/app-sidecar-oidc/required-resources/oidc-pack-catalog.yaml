@@ -1,0 +1,13 @@
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: test-oidc-catalog
+  labels:
+    gentianos.io/oidc-catalog: test
+    gentianos.io/profile-name: demo-app
+spec:
+  # A pack for the "packed" extension's client: the pack Job makes that one,
+  # so the Composition composes none.
+  packs:
+    demo-app-packed:
+      serviceClient: true

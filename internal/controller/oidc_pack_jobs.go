@@ -203,11 +203,13 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	// The app Composition composes no client for a sidecar, so nothing
-	// would hold a sidecar's request parameter (see resolveOIDCAppConfig).
+	// The app Composition holds the rule that narrows a request-bound
+	// client's https://* for the app's own client alone; an extension's it
+	// composes without one, so nothing would hold its request parameter
+	// (see resolveOIDCAppConfig).
 	if oidcSpec.RequestParameter != nil {
 		return oidcAppConfig{}, refuseOIDCClient(
-			"ComponentProfile %s: extension %s declares requestParameter, which only the app's own client can: the app Composition composes no client for an extension", parentProfile, sidecar.Name)
+			"ComponentProfile %s: extension %s declares requestParameter, which only the app's own client can: the app Composition binds no request parameter on an extension's client", parentProfile, sidecar.Name)
 	}
 	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs, false)
 	if err != nil {
