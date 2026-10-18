@@ -65,7 +65,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return r.ensureAdoptedRealmIdentity(ctx, tenant)
 	}
 
-	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	oidcConfigs, refused, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -196,9 +196,33 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		}
 	}
 
+	if r.reportRefusedOIDCClients(ctx, tenant, refused) {
+		return ctrl.Result{}, nil
+	}
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
 		"Provisioned", "Keycloak realm and OIDC clients are ready")
 	return ctrl.Result{}, nil
+}
+
+// reasonOIDCClientRefused is the IdentityReady reason of a tenant one of
+// whose apps declares an OIDC client that cannot be made as declared.
+const reasonOIDCClientRefused = "OIDCClientRefused"
+
+// reportRefusedOIDCClients puts the apps whose OIDC client was refused
+// (collectOIDCAppConfigs) on IdentityReady, and reports whether there were
+// any. Everything else of the tenant has been provisioned by then: the
+// condition stays False until the profile is put right, and asks for no
+// requeue of its own -- a tenant not Ready is looked at again anyway, and the
+// profile's change is what will set it right.
+func (r *TenantReconciler) reportRefusedOIDCClients(ctx context.Context, tenant *gentianov1alpha1.Tenant, refused []string) bool {
+	if len(refused) == 0 {
+		return false
+	}
+	msg := "OIDC client not provisioned: " + strings.Join(refused, "; ")
+	ctrl.LoggerFrom(ctx).Info("app OIDC client refused; the tenant's other apps are provisioned",
+		"tenant", tenant.Name, "refused", refused)
+	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, reasonOIDCClientRefused, msg)
+	return true
 }
 
 // ensureRealmJob waits for the Crossplane-owned Keycloak realm Job.
@@ -1039,12 +1063,25 @@ func (r *TenantReconciler) ensureAdoptedRealmIdentity(ctx context.Context, tenan
 			"ProvisioningGroups", "Waiting for Gentian groups Job to complete")
 		return r.requeueForPendingJob(ctx, tenant.Name, gentianGroupsJobName(tenant.Name)), nil
 	}
-	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	oidcConfigs, refused, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	var pending []string
 	for _, cfg := range oidcConfigs {
+		// No Job is built for a client the app Composition composes
+		// (buildIdentityProvisioningJobs), so none is waited for here
+		// either: its secret is seeded, as for any other tenant.
+		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if crossplaneOwnsOIDCClient(profile, cfg) {
+			if err := r.seedOIDCSecrets(ctx, tenant, r.KernelRealm, cfg); err != nil {
+				return ctrl.Result{}, err
+			}
+			continue
+		}
 		done, err := r.ensureOIDCClientJob(ctx, tenant, r.KernelRealm, cfg)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OIDC Job for app %s: %w", cfg.profileName, err)
@@ -1057,6 +1094,9 @@ func (r *TenantReconciler) ensureAdoptedRealmIdentity(ctx context.Context, tenan
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningClients", "Waiting for OIDC client Jobs to complete")
 		return r.requeueForPendingJob(ctx, tenant.Name, pending...), nil
+	}
+	if r.reportRefusedOIDCClients(ctx, tenant, refused) {
+		return ctrl.Result{}, nil
 	}
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
 		"Adopted", "The kernel realm is adopted; the tenant's groups and clients are ready")
