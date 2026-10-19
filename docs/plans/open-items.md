@@ -2258,6 +2258,7 @@ Closed in the code or in the documents. None has been seen on a cluster.
 
 | Date | What | Commit |
 | --- | --- | --- |
+| 2026-10-19 | A private catalogue for a tenant's own administrator: a catalogue may be an OCI artifact read with the credential of a repository its owner declared, added under delegation like an address; the deployments-repository directory is deprecated (AD-14, decision 52 c) | `be746b35` |
 | 2026-10-11 | The director commits a tenant's password policy again; the registrar's action for it is gone and its Keycloak client is no longer granted `manage-realm`; the tenant Composition always declares the realm's password policy. The documents say so (defect 25) | `24123aef`, `5fd8b15f`, `eec19bad`, `a84fadd7` |
 | 2026-10-11 | The check that a per-tenant L3 customization runs in the tenant's own namespace is written again. It is still applied nowhere (decision 49) | `d7b25cd9` |
 | 2026-10-11 | The store API documents, a test and a comment name no company and carry no commercial terms | `cbd3d530` |
