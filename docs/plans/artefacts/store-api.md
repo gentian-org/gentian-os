@@ -712,7 +712,10 @@ Everything in the summary, and:
 | `support` | SupportOffer[] | no | The partners that offer support, in the order to show them, in the language of the request. Absent or empty when none. Added in 1.3 |
 
 `?country=` (ISO 3166-1 alpha-2, 1.3) narrows `support` to the offers that
-cover that country, worldwide ones among them.
+cover that country, worldwide ones among them. Without it, an anonymous
+caller is shown every offer; for a signed-in caller the store may narrow them
+to a country it knows of the account (its company's), in a personalised
+answer (`Cache-Control: private, no-store`). A `country` asked always wins.
 
 **SupportOffer** (1.3, feature `support`). Plain text throughout.
 

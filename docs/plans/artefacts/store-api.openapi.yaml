@@ -658,7 +658,11 @@ paths:
       summary: One app in full
       description: |
         `country` narrows `support` to the offers that cover that country,
-        worldwide offers among them. Without it every offer is listed.
+        worldwide offers among them. Without it, the store lists every
+        offer to an anonymous caller, and may narrow them for a signed-in
+        caller to a country it knows of the account (its company's); such
+        an answer is personalised and carries `Cache-Control: private,
+        no-store`. A `country` asked always wins.
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
         - $ref: "#/components/parameters/IfNoneMatch"
@@ -2374,7 +2378,8 @@ components:
               description: |
                 The partners that offer support for the entry, in the order
                 to show them, in the language of the request; narrowed by
-                `country` when it was asked. Absent or empty when there are
+                `country` when it was asked, or for a signed-in caller as the
+                operation says. Absent or empty when there are
                 none. Added in 1.3, with the feature `support`.
               items:
                 $ref: "#/components/schemas/SupportOffer"
