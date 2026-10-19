@@ -20,10 +20,11 @@ import (
 //
 // Every reconciler of one of the operator's own kinds is held while any
 // definition the chart delivers is older than the operator; that needs
-// nothing said here (crdcheck.Holder.Guard). These two also write a kind
+// nothing said here (crdcheck.Holder.Guard). These also write a kind
 // Crossplane generates from an XRD, which reaches a cluster by installer step
-// B-06 and not with the chart, so each names it. They are the only two: the
-// operator reads Repository and Cluster claims and writes neither.
+// B-06 and not with the chart, so each names it. The operator reads
+// Repository claims and writes none; of the Cluster claim it writes the
+// composite's status alone.
 //
 // This is the one list in the definitions check that is kept by hand, because
 // which reconciler writes a kind is not written down anywhere a program can
@@ -31,6 +32,9 @@ import (
 // PERMITTED to write, and definitions_test.go fails when that and this list
 // disagree.
 var generatedKindsWritten = map[string][]string{
+	// The platform status writer patches the Cluster claim's composite
+	// (platform_status.go): the version line and build the cluster runs.
+	"platform-status": {"XCluster"},
 	// The XTenant the tenant Composition renders from: a quota or a security
 	// setting its definition does not know never reaches the Composition.
 	"tenant": {xTenantGVK.Kind},

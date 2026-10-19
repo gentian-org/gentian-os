@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -166,8 +167,8 @@ type Config struct {
 	// UpdaterOff keeps the platform's own mover (updater.go) from running:
 	// a test, or a cluster whose administrator moves everything by hand.
 	UpdaterOff bool
-	Authn Authenticator
-	Authz authz.Checker
+	Authn      Authenticator
+	Authz      authz.Checker
 	// Viewer reads who holds what, for the console's read-only authorization
 	// view. Optional: without it the routes do not exist, which a console
 	// shows as the screen being unavailable rather than as an error on a
@@ -1659,16 +1660,16 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 // buildCommit is the commit this binary was built from, or "" when the build
 // recorded none (sources built without their git history).
 func buildCommit() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ""
-	}
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				return setting.Value
+			}
 		}
 	}
-	return ""
+	// An image built without the repository's history carries no revision;
+	// the chart then names the build by the image tag it renders.
+	return os.Getenv("GENTIAN_BUILD")
 }
 
 func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {

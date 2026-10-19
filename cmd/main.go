@@ -413,8 +413,8 @@ func main() {
 		Seeder:            buildSeeder(),
 		// Runs a profile's verification command in the app's pod after a
 		// move, the way the restore does; nil skips the verification.
-		Exec:              appExecer,
-		Recorder:          mgr.GetEventRecorderFor("component"), //nolint:staticcheck
+		Exec:     appExecer,
+		Recorder: mgr.GetEventRecorderFor("component"), //nolint:staticcheck
 		// What a component that asked where the App Store is gets told.
 		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
 		WatchClusterClaim:      true,
@@ -738,16 +738,16 @@ func releaseFeed() string {
 }
 
 func buildVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ""
-	}
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				return setting.Value
+			}
 		}
 	}
-	return ""
+	// An image built without the repository's history carries no revision;
+	// the chart then names the build by the image tag it renders.
+	return os.Getenv("GENTIAN_BUILD")
 }
 
 // ownPod names this pod, for the definitions check to record its findings
