@@ -115,6 +115,19 @@ with no secret ([identity-brokering.md](identity-brokering.md)):
 kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
 ```
 
+The country the tenant is in (`--country`, ISO 3166-1 alpha-2, `spec.country`)
+is optional. It is changed afterwards by whoever may set the tenant's policy,
+its own administrators too (`PUT /v1/tenants/<t>/country`, `can_set_policy`);
+`""` removes it. A component whose profile names
+`valueMapping.platform.countryKey` is told it: the App Store app asks a store
+for the support offered there.
+
+```bash
+kubectl gentian tenants create acme --country CH
+kubectl gentian tenants set acme --country DE
+kubectl gentian tenants set acme --country ""
+```
+
 The other half, on the cluster whose tenant those people sign in to: each
 realm of another cluster becomes an organization of the tenant's realm, with
 an identity provider `org-<name>` (`spec.brokeredFrom`, `can_configure` on

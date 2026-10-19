@@ -1832,6 +1832,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
 			builder.WithPredicates(mainAddressChanged())).
+		// A tenant's country, which a profile naming countryKey is told
+		// (tenant_country.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
+			builder.WithPredicates(countryChanged())).
 		// The edge's public address, which a component granted the internet
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),

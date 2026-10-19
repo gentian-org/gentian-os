@@ -371,6 +371,14 @@ type TenantSpec struct {
 	// +kubebuilder:validation:items:Pattern=`^[a-z]{2}(-[A-Za-z0-9]{2,8})?$`
 	Locales []string `json:"locales,omitempty"`
 
+	// Country is the country the tenant is in, as an ISO 3166-1 alpha-2 code
+	// in upper case (CH, DE). A component whose profile names
+	// valueMapping.platform.countryKey is told it; the App Store app asks a
+	// store for the support offered there. Unset: no country is assumed.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z]{2}$`
+	Country string `json:"country,omitempty"`
+
 	// Privileges are the privilege requests a person granted for this
 	// tenant's components (AD-5). They live here because a grant has to
 	// survive the thing it applies to: a Component is rebuilt from its

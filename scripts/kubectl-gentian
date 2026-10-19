@@ -20,11 +20,13 @@
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #                                  [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]
 #                                  [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]
+#                                  [--country <ISO 3166-1 alpha-2, e.g. CH>]
 #                                  (unstated, approving is off -- and on for the user tenant
 #                                  of a single-tenancy cluster; sign-up is off, and is said
 #                                  out loud when it is on: anybody may make an account)
 #   kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false]
 #                                      [--admins-add-catalogues=true|false]
+#                                      [--country <alpha-2> | --country ""]   "" names none
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain]
@@ -566,6 +568,7 @@ cmd_tenants_show() {
         "Apps:            \((.apps // []) | if length == 0 then "none" else join(", ") end)",
         "Signs in under:  \(.loginDomain // "-")",
         "Own domain:      \(.customDomain // "none")",
+        "Country:         \(.country // "none")",
         "State:           \(if .purging then "purging" elif .protected then "protected" else "-" end)",
         "",
         "Its administrators may approve public addresses:  \(if .adminsApprove then "yes" else "no" end)",
@@ -579,8 +582,8 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" answer brokered="[]" spec kv bname bredirect bjwks
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]"
+    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" country="" answer brokered="[]" spec kv bname bredirect bjwks
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...] [--country <alpha-2>]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
@@ -590,6 +593,8 @@ cmd_tenants_create() {
             --admins-approve-public-addresses=*) die "--admins-approve-public-addresses is given alone, or as =true or =false" ;;
             --admins-add-catalogues) catalogues="true"; shift ;;
             --self-sign-up) signup="true"; shift ;;
+            # The country the tenant is in, ISO 3166-1 alpha-2 (CH, DE).
+            --country) country="${2:?--country <alpha-2>}"; shift 2 ;;
             # A realm outside the tenant -- usually of another cluster -- where
             # its people may sign in with their account here. Repeatable.
             --brokered-to)
@@ -615,6 +620,7 @@ cmd_tenants_create() {
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
+    country="$(_country "${country}")" || exit 1
     _discover
     # Said before anything is committed, because it is the one switch here
     # that opens the cluster to people nobody invited.
@@ -631,12 +637,13 @@ cmd_tenants_create() {
     # but for the user tenant of a single-tenancy cluster, whose administrators
     # approve its public addresses unless =false says they do not.
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" --arg k "${country}" \
             '{name:$n, displayName:$d, requireMFA:$m}
              + (if $a != "" then {perimeter:{adminsApprove:($a == "true")}} else {} end)
              + (if $c then {catalogue:{delegated:true}} else {} end)
              + (if $s then {signUp:true} else {} end)
-             + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)')")" || exit 1
+             + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)
+             + (if $k != "" then {country:$k} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
     # What the director wrote, where it says; what was asked for otherwise.
     case "$(printf '%s' "${answer}" | jq -r '.adminsApprove | if . == null then "" else tostring end' 2>/dev/null)" in
@@ -654,6 +661,9 @@ cmd_tenants_create() {
     fi
     if [[ "${signup}" == "true" ]]; then
         echo "Anybody may sign up to it; an account made that way is a member of nothing."
+    fi
+    if [[ -n "${country}" ]]; then
+        echo "Its country: ${country}."
     fi
     if [[ "$(jq 'length' <<<"${brokered}")" -gt 0 ]]; then
         echo "Its people may sign in at: $(jq -r '[.[].name] | join(", ")' <<<"${brokered}") (a client broker-to-<name> each, trusting that realm's published keys)."
@@ -1487,23 +1497,29 @@ cmd_tenants_delegate_catalogues() {
 # publishes to the internet, and whether they may add catalogues. Each is a
 # switch on the tenant's manifest in git, off unless turned on; each option
 # given is one request to the director (PUT turns it on, DELETE off), which
-# decides who may. Everything is read before anything is asked, so a mistyped
+# decides who may. --country sets the tenant's country (spec.country), which
+# its own administrators may set too. Everything is read before anything is asked, so a mistyped
 # option changes nothing.
 cmd_tenants_set() {
-    local name="" approve="" catalogues="" usage_text
-    usage_text="usage: kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false] [--admins-add-catalogues=true|false]"
+    local name="" approve="" catalogues="" country="" country_set="" usage_text
+    usage_text="usage: kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false] [--admins-add-catalogues=true|false] [--country <alpha-2> | --country \"\"]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --admins-approve-public-addresses=true|--admins-approve-public-addresses=false) approve="${1#*=}"; shift ;;
             --admins-add-catalogues=true|--admins-add-catalogues=false) catalogues="${1#*=}"; shift ;;
             --admins-approve-public-addresses*|--admins-add-catalogues*) die "${1%%=*} is given as ${1%%=*}=true or ${1%%=*}=false" ;;
+            --country) [[ $# -ge 2 ]] || die "${usage_text}"; country="$2"; country_set=1; shift 2 ;;
+            --country=*) country="${1#*=}"; country_set=1; shift ;;
             -*) die "unknown option $1" ;;
             *) [[ -z "${name}" ]] || die "${usage_text}"; name="$1"; shift ;;
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
-    [[ -n "${approve}${catalogues}" ]] || die "nothing to set. ${usage_text}"
+    [[ -n "${approve}${catalogues}${country_set}" ]] || die "nothing to set. ${usage_text}"
     _label "The tenant" "${name}"
+    if [[ -n "${country_set}" ]]; then
+        country="$(_country "${country}")" || exit 1
+    fi
     _discover
     if [[ "${approve}" == "true" ]]; then
         _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/perimeter-delegation" >/dev/null
@@ -1519,6 +1535,26 @@ cmd_tenants_set() {
         _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
         echo "The administrators of ${name} may no longer add catalogues: committed. What they added stays until it is removed."
     fi
+    # The tenant's own setting, beside its languages: asked on the tenant's
+    # route, which its own administrators may use as well.
+    if [[ -n "${country_set}" ]]; then
+        _call PUT "/v1/tenants/${name}/country" "$(jq -n --arg k "${country}" '{country:$k}')" >/dev/null
+        if [[ -n "${country}" ]]; then
+            echo "The country of ${name} is ${country}: committed."
+        else
+            echo "${name} names no country: committed."
+        fi
+    fi
+}
+
+# _country <code> -- a country as the director takes it: ISO 3166-1 alpha-2,
+# upper case; "" stays "". The director checks it again.
+_country() {
+    local c
+    c="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+    [[ -z "${c}" || "${c}" =~ ^[A-Z]{2}$ ]] ||
+        die "a country is an ISO 3166-1 alpha-2 code, two letters such as CH or DE, not '$1'"
+    printf '%s' "${c}"
 }
 
 # ---------------------------------------------------------------------------

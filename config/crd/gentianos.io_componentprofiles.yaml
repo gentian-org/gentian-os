@@ -2548,6 +2548,12 @@ spec:
                             description: ClusterKey receives the id the director knows
                               this cluster by.
                             type: string
+                          countryKey:
+                            description: |-
+                              CountryKey receives the tenant's country (spec.country), an ISO 3166-1
+                              alpha-2 code in upper case, and the empty string while the tenant names
+                              none.
+                            type: string
                           custodianUrlKey:
                             description: |-
                               CustodianURLKey receives the custodian's in-cluster

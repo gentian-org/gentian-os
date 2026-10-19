@@ -479,6 +479,14 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                 type: object
+              country:
+                description: |-
+                  Country is the country the tenant is in, as an ISO 3166-1 alpha-2 code
+                  in upper case (CH, DE). A component whose profile names
+                  valueMapping.platform.countryKey is told it; the App Store app asks a
+                  store for the support offered there. Unset: no country is assumed.
+                pattern: ^[A-Z]{2}$
+                type: string
               deletion:
                 description: Deletion refines what a Delete leaves behind.
                 properties:

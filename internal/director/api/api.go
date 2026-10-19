@@ -114,6 +114,8 @@ type Repository interface {
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
 	TenantLocales(ctx context.Context, tenant string) ([]string, error)
 	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
+	TenantCountry(ctx context.Context, tenant string) (string, error)
+	SetTenantCountry(ctx context.Context, tenant, country string, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
@@ -745,6 +747,12 @@ func (s *Server) routes() {
 		// languages a tenant's people are offered is the tenant's to choose.
 		s.guarded("GET /v1/tenants/{t}/locales", "can_view", tenantObject, s.tenantLocales)
 		s.guarded("PUT /v1/tenants/{t}/locales", "can_set_policy", tenantObject, s.setTenantLocales)
+
+		// The country the tenant is in, beside its languages and changed by
+		// the same people. Declared in the manifest; a component whose
+		// profile names countryKey is told it.
+		s.guarded("GET /v1/tenants/{t}/country", "can_view", tenantObject, s.tenantCountry)
+		s.guarded("PUT /v1/tenants/{t}/country", "can_set_policy", tenantObject, s.setTenantCountry)
 
 		// The privileges this tenant's components asked for and what was
 		// answered. A profile declaring a privilege is a request (AD-5); the
@@ -1598,7 +1606,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, `+
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", `+
 			`"brokeredTo": [{"name": "<name>", "redirectURI": "https://…", "jwksURL": "https://…"}]`)
 		return
 	}
@@ -1613,6 +1621,12 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
 		return
 	}
+	country, err := gitops.NormaliseCountry(body.Country)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.Country = country
 	// Whether its administrators approve its public addresses is the
 	// request's to say. Unsaid it is off, except for the user tenant of a
 	// single-tenancy cluster (gitops.AdminsApproveAtCreation). Settled here
@@ -1637,7 +1651,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo)}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo), "country": body.Country}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return
