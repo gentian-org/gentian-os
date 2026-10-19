@@ -1390,6 +1390,13 @@ mappers and flow, nor the broker client is made any more
     exists; nothing moves the platform from inside the cluster. Whether the
     OS takes `latest`, `manual` and the window, and what a production
     cluster's default is, is §7.2 of the plan.
+  - `[ ]` **A rollback to a build the cluster never kept.** An install pinned
+    before builds were kept has no `ProfileBuild` of the build it ran; a
+    move rolled back lands on `DigestMismatch` and the instance is held
+    (seen on the corp cluster, aluvian-statistics, 2026-10-20). Either the
+    director materialises the old build from the catalogue's snapshot once
+    there is one, or the rollout record says plainly that there is nothing
+    to go back to and the next build is the way out.
   - `[ ]` **Companions per build.** Two builds of one app share their
     companions by name; a tenant on the older build is held
     (`CompanionMismatch`) when the newer build's Composition or pack catalog

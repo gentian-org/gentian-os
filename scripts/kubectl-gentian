@@ -2246,6 +2246,8 @@ cmd_apps_outdated() {
              elif .outdated and ((.held // []) | length) > 0 then "outdated, held: " + ((.held // []) | join("; "))
              elif .outdated then "outdated"
              elif (.rollout.phase // "") == "Exporting" or (.rollout.phase // "") == "Rolling" then "moving"
+             elif (.rollout.phase // "") == "RolledBack" then "rolled back: " + (.rollout.message // .rollout.reason // "")
+             elif (.rollout.phase // "") == "Failed" then "move failed: " + (.rollout.message // .rollout.reason // "")
              else "current" end)] | @tsv)' <<<"${answer}" | column -t -s $'\t'
     local partial unread
     partial="$(jq -r '.partial // empty' <<<"${answer}")"
