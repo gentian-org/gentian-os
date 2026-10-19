@@ -85,6 +85,9 @@ profile() {   # profile <name> <version>
     printf 'apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: %s\nspec:\n  classes: [app]\n  trustTier: platform\n  version: "%s"\n' "$1" "$2"
 }
 sha() { sha256sum "$1" | cut -d' ' -f1; }
+# build_of <name> <file>: the ProfileBuild the installer writes beside a
+# profile, under builds/, named by the profile and twelve hex of its digest.
+build_of() { printf 'builds/%s-%s.yaml' "$1" "$(sha "$2" | cut -c1-12)"; }
 
 # new_world -- an empty deployments checkout and an empty catalogue.
 new_world() {
@@ -136,7 +139,13 @@ if carried "${DIR}/operations-console.bundle.yaml" | cmp -s - "${CATALOGUE}/prof
 else
     bad "beside it the bundle: the same bytes, and the catalogue it came from as its origin" "$(cat "${DIR}/operations-console.bundle.yaml" 2>&1)"
 fi
-if [[ "$(cat "${DIR}/kustomization.yaml")" == $'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- operations-console.yaml\npatches:\n- path: operations-console.bundle.yaml' ]]; then
+if [[ "$(cat "${DIR}/kustomization.yaml")" == "apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- operations-console.yaml
+- $(build_of operations-console "${CATALOGUE}/profiles/operations-console.yaml")
+patches:
+- path: operations-console.bundle.yaml" && -f "${DIR}/$(build_of operations-console "${CATALOGUE}/profiles/operations-console.yaml")" ]]; then
     ok "the kustomization lists the profile as a resource and its bundle as a patch"
 else
     bad "the kustomization lists the profile as a resource and its bundle as a patch" "$(cat "${DIR}/kustomization.yaml")"
@@ -304,7 +313,7 @@ cp "${CATALOGUE}/profiles/operations-console.yaml" "${DIR}/operations-console.ya
 printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- operations-console.yaml\n' > "${DIR}/kustomization.yaml"
 out="$(scaffold)"
 if [[ "${out}" == *"rc=0"* && -f "${DIR}/operations-console.bundle.yaml" ]] && cmp -s "${CATALOGUE}/profiles/operations-console.yaml" "${DIR}/operations-console.yaml" \
-    && ! fetched "${URL}" && [[ "$(grep -c 'operations-console' "${DIR}/kustomization.yaml")" == "2" ]]; then
+    && ! fetched "${URL}" && [[ "$(grep -c 'operations-console' "${DIR}/kustomization.yaml")" == "3" ]]; then
     ok "an earlier installer's copy with no record, the same bytes as the index lists: the record is added, the profile untouched"
 else
     bad "an earlier installer's copy with no record, the same bytes as the index lists: the record is added, the profile untouched" "${out}"
@@ -432,7 +441,7 @@ printf 'entries:\n- name: notes\n  digest: sha256:%s\n' "$(sha "${CATALOGUE}/pro
 out="$(scaffold GENTIAN_DEFAULT_PROFILES="${BASE}/profiles/notes.yaml")"
 if [[ "${out}" == *"rc=0"* ]] && cmp -s "${CATALOGUE}/profiles/notes.yaml" "${DIR}/notes.yaml" \
     && carried "${DIR}/notes.bundle.yaml" | cmp -s - "${CATALOGUE}/profiles/notes.yaml" \
-    && [[ "$(grep -c '^- ' "${DIR}/kustomization.yaml")" == "2" ]]; then
+    && [[ "$(grep -c '^- ' "${DIR}/kustomization.yaml")" == "3" ]]; then
     ok "a profile with a companion: the file is written whole, once, and the bundle carries all of it"
 else
     bad "a profile with a companion: the file is written whole, once, and the bundle carries all of it" "${out}"
@@ -456,7 +465,16 @@ profile notes 1.0.0 > "${CATALOGUE}/profiles/notes.yaml"
 printf -- '- name: notes\n  digest: sha256:%s\n' "$(sha "${CATALOGUE}/profiles/notes.yaml")" >> "${CATALOGUE}/index.yaml"
 out="$(scaffold GENTIAN_DEFAULT_PROFILES="${URL} , ${BASE}/profiles/notes.yaml")"
 if [[ "${out}" == *"rc=0"* && -f "${DIR}/operations-console.bundle.yaml" && -f "${DIR}/notes.bundle.yaml" ]] \
-    && [[ "$(cat "${DIR}/kustomization.yaml")" == $'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- operations-console.yaml\n- notes.yaml\npatches:\n- path: operations-console.bundle.yaml\n- path: notes.bundle.yaml' ]]; then
+    && [[ "$(cat "${DIR}/kustomization.yaml")" == "apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- operations-console.yaml
+- $(build_of operations-console "${CATALOGUE}/profiles/operations-console.yaml")
+- notes.yaml
+- $(build_of notes "${CATALOGUE}/profiles/notes.yaml")
+patches:
+- path: operations-console.bundle.yaml
+- path: notes.bundle.yaml" ]]; then
     ok "two entries, comma separated: both placed, each listed once"
 else
     bad "two entries, comma separated: both placed, each listed once" "${out}$(cat "${DIR}/kustomization.yaml" 2>&1)"

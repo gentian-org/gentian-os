@@ -182,17 +182,23 @@ _b05_tenant_apps_apply() {
 # are up, not which they are: a pin bumped in providers.yaml was otherwise
 # never applied to a cluster that already had healthy providers, and the
 # cluster stayed on the old package for good (docs/plans/versioning.md).
-# Read with kubectl's client-side dry run, so no YAML tool is needed.
+# Read off the file itself (_b05_declared_packages), so no YAML tool is
+# needed: the file is this repository's and has one shape.
+_b05_declared_packages() {
+    awk '
+        /^kind:/ { kind = $2 }
+        /^  name:/ && kind != "" && name == "" { name = $2 }
+        /^  package:/ { if (kind == "Provider" || kind == "Function") print kind "\t" name "\t" $2; name = "" }
+        /^---/ { kind = ""; name = "" }
+    ' "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
+}
 _b05_packages_current() {
-    local declared line kind name want have
-    declared="$(kubectl apply --dry-run=client -o json -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" 2>/dev/null \
-        | jq -r '(if .kind == "List" then .items[] else . end) | select(.kind == "Provider" or .kind == "Function") | [.kind, .metadata.name, .spec.package] | @tsv')" || return 1
-    [[ -n "${declared}" ]] || return 1
+    local kind name want have
     while IFS=$'\t' read -r kind name want; do
         [[ -n "${name}" ]] || continue
         have="$(kubectl get "$(to_lower "${kind}").pkg.crossplane.io" "${name}" -o jsonpath='{.spec.package}' 2>/dev/null)" || return 1
         [[ "${have}" == "${want}" ]] || return 1
-    done <<< "${declared}"
+    done < <(_b05_declared_packages)
     return 0
 }
 

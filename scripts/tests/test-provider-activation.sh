@@ -82,6 +82,16 @@ case "${verb}" in
                 exit 0 ;;
             provider.pkg.crossplane.io|function.pkg.crossplane.io)
                 [[ "${jsonpath}" == *Healthy* ]] && printf 'True'
+                # Installed at the package the checkout declares, unless the
+                # test says a name runs another (${STATE}/packages, "name pkg").
+                if [[ "${jsonpath}" == *package* ]]; then
+                    if grep -q "^${name} " "${STATE}/packages" 2>/dev/null; then
+                        grep "^${name} " "${STATE}/packages" | cut -d' ' -f2
+                    else
+                        awk -v n="${name}" '/^kind:/{k=$2} /^  name:/&&nm==""{nm=$2} /^  package:/{if(nm==n)print $2; nm=""} /^---/{nm=""}' \
+                            "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
+                    fi
+                fi
                 exit 0 ;;
             # The providers' role, with the checksum of the file it was
             # applied from as last recorded (${STATE}/rbac-sha).

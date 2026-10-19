@@ -230,7 +230,7 @@ _v5_os_build_pinned() {
 # cannot be made (no python3 with PyYAML on this host) it says so once and
 # answers current, because "cannot tell" must not re-apply forever.
 _v5_bootstrap_apps_current() {
-    local ns tmp rendered names name live rc drift=0
+    local ns tmp names name live rc drift=0
     ns="$(ns_kernel gitops)"
     command -v python3 >/dev/null 2>&1 || { warn "python3 is not on this host: bootstrap Applications are not compared with their templates."; return 0; }
     tmp="$(mktemp -d)"
