@@ -109,6 +109,7 @@ rules:
     - mailboxremovals.gentianos.io
     - oidcpackcatalogs.gentianos.io
     - platformsecuritypolicies.gentianos.io
+    - profilebuilds.gentianos.io
     - repositories.gentianos.io
     - resourceplans.gentianos.io
     - tenantbackuppolicies.gentianos.io
@@ -361,6 +362,7 @@ rules:
     resources:
     - brandings
     - clusters
+    - profilebuilds
     - repositories
     - resourceplans
     - tenantdomains

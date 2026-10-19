@@ -80,8 +80,8 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 		return nil
 	}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
@@ -369,8 +369,8 @@ type samlAppConfig struct {
 func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]samlAppConfig, error) {
 	var configs []samlAppConfig
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

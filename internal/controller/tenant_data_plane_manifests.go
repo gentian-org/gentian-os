@@ -273,8 +273,8 @@ func (r *TenantReconciler) clearUngrantedContractEndpoints(
 func (r *TenantReconciler) mappedContracts(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
 	seen := map[string]struct{}{}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
@@ -305,8 +305,8 @@ func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context
 
 	var out []*gentianov1alpha1.IntegrationBinding
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

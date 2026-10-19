@@ -258,7 +258,19 @@ upgrades are platform-wide and atomic.
 An app is not upgraded with the kernel. A tenant's install names the build of
 the profile it runs (`spec.apps[].digest`); the `ComponentProfile` is
 committed to the deployments repository at that digest and delivered by
-Argo CD ([custom-catalogues.md](../custom-catalogues.md)).
+Argo CD, and so is every build any tenant installed, as a `ProfileBuild`
+([custom-catalogues.md §6](../custom-catalogues.md)). How an app moves to a
+newer build -- the platform inside the cluster's window, the cluster's
+administrator, or the tenant's -- is its update mode's to say, and the move
+itself exports first, verifies after and rolls back by itself
+([versioning.md](../plans/versioning.md)).
+
+The platform this cluster runs is on the Cluster claim's status
+(`status.platform`): the version line and the build the operator runs, and
+the newest release the platform's feed publishes
+(`GENTIAN_RELEASE_FEED_URL`; `none` on a cluster that reaches nothing). A
+profile declares the oldest line it runs on (`spec.requires.platform`), and
+the director refuses a build whose floor this line does not meet.
 
 ### 7.2 Per-Environment Update Policies
 

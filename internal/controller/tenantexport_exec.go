@@ -107,12 +107,22 @@ func (e *PodExecer) Exec(ctx context.Context, namespace, pod, container string, 
 // with the right container is a better target than any other pod: after a
 // restore the app is often unready precisely because the hook has not run.
 func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, appName, container string) (*corev1.Pod, error) {
-	pods := &corev1.PodList{}
 	namespace, err := tenantNamespaceByName(ctx, r.Client, tenantName)
 	if err != nil {
 		return nil, err
 	}
-	if err := r.List(ctx, pods, client.InNamespace(namespace)); err != nil {
+	pod, err := runningPodIn(ctx, r.Client, namespace, appName, container)
+	if err != nil {
+		return nil, fmt.Errorf("%w in tenant %q", err, tenantName)
+	}
+	return pod, nil
+}
+
+// runningPodIn is a running pod of an app in a namespace, a ready one
+// first, with the named container where one is named.
+func runningPodIn(ctx context.Context, c client.Reader, namespace, appName, container string) (*corev1.Pod, error) {
+	pods := &corev1.PodList{}
+	if err := c.List(ctx, pods, client.InNamespace(namespace)); err != nil {
 		return nil, err
 	}
 	var fallback *corev1.Pod
@@ -143,7 +153,7 @@ func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, app
 	if fallback != nil {
 		return fallback, nil
 	}
-	return nil, fmt.Errorf("no running pod for app %q in tenant %q", appName, tenantName)
+	return nil, fmt.Errorf("no running pod for app %q", appName)
 }
 
 func podHasContainer(pod *corev1.Pod, name string) bool {

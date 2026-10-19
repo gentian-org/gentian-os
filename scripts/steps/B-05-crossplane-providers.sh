@@ -177,9 +177,29 @@ _b05_tenant_apps_apply() {
         _kubectl_retry apply -f - >/dev/null
 }
 
+# _b05_packages_current -- every provider and function the checkout declares
+# runs the package it declares. The health checks below say the packages
+# are up, not which they are: a pin bumped in providers.yaml was otherwise
+# never applied to a cluster that already had healthy providers, and the
+# cluster stayed on the old package for good (docs/plans/versioning.md).
+# Read with kubectl's client-side dry run, so no YAML tool is needed.
+_b05_packages_current() {
+    local declared line kind name want have
+    declared="$(kubectl apply --dry-run=client -o json -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" 2>/dev/null \
+        | jq -r '(if .kind == "List" then .items[] else . end) | select(.kind == "Provider" or .kind == "Function") | [.kind, .metadata.name, .spec.package] | @tsv')" || return 1
+    [[ -n "${declared}" ]] || return 1
+    while IFS=$'\t' read -r kind name want; do
+        [[ -n "${name}" ]] || continue
+        have="$(kubectl get "${kind,,}.pkg.crossplane.io" "${name}" -o jsonpath='{.spec.package}' 2>/dev/null)" || return 1
+        [[ "${have}" == "${want}" ]] || return 1
+    done <<< "${declared}"
+    return 0
+}
+
 check() {
     local p pc fn crd
     _b05_activation_current || return 1
+    _b05_packages_current || return 1
     for p in provider-kubernetes provider-helm provider-vault; do
         [[ "$(kubectl get provider.pkg.crossplane.io "${p}" -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null)" == "True" ]] || return 1
     done

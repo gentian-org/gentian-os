@@ -99,6 +99,17 @@ type ComponentSpec struct {
 	// +kubebuilder:validation:MaxItems=128
 	AddonPins []AddonPin `json:"addonPins,omitempty"`
 
+	// MovedAt and MovedBy are the request behind the current pin, as the
+	// tenant's manifest records them (TenantApp.MovedAt, MovedBy): when the
+	// pin was last moved and by whom or what. A move the platform rolled
+	// back is tried again only when a later MovedAt asks.
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	MovedAt string `json:"movedAt,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	MovedBy string `json:"movedBy,omitempty"`
+
 	// Config is what this install overrides of the profile's defaults: the
 	// replica count and chart values the tenant chose. It is the install's
 	// and not the profile's, so two tenants installing one profile may differ
@@ -227,6 +238,13 @@ type PrivilegeGrant struct {
 
 // ComponentStatus is the observed state of a Component.
 type ComponentStatus struct {
+	// Rollout is which build this instance actually runs, and how the last
+	// move to the pinned build went. The pin (spec.profileRef.digest) is what
+	// was asked; this is what is. The two differ while a move is under way,
+	// and after a move the platform rolled back.
+	// +optional
+	Rollout *RolloutStatus `json:"rollout,omitempty"`
+
 	// Fulfilment is "dedicated" or "shared". Availability decided it at install
 	// and a later offer does not move a running instance.
 	// +optional
@@ -247,6 +265,66 @@ type ComponentStatus struct {
 
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// RolloutPhase is where a move stands.
+// +kubebuilder:validation:Enum=Exporting;Rolling;Done;RolledBack;Failed
+type RolloutPhase string
+
+const (
+	// RolloutExporting: the app's data is being exported before the move;
+	// the instance still runs the build it ran.
+	RolloutExporting RolloutPhase = "Exporting"
+	// RolloutRolling: the pinned build is being rolled out and verified.
+	RolloutRolling RolloutPhase = "Rolling"
+	// RolloutDone: the instance runs the pinned build.
+	RolloutDone RolloutPhase = "Done"
+	// RolloutRolledBack: the pinned build did not come up or did not verify,
+	// and the instance was put back on the build it ran. It stays there
+	// until a later move asks again.
+	RolloutRolledBack RolloutPhase = "RolledBack"
+	// RolloutFailed: the move could not start -- the export before it
+	// failed -- and the instance still runs the build it ran.
+	RolloutFailed RolloutPhase = "Failed"
+)
+
+// RolloutStatus is a move: from the build the instance runs to the one it
+// is pinned to.
+type RolloutStatus struct {
+	// Digest is the build the instance runs: the last one that rolled out
+	// and verified. Empty before the first build has.
+	// +optional
+	Digest string `json:"digest,omitempty"`
+	// Target is the build the move under way, or the last move, was to.
+	// +optional
+	Target string `json:"target,omitempty"`
+	// Previous is the build the instance ran before the last move to Digest.
+	// +optional
+	Previous string `json:"previous,omitempty"`
+	// Phase is where the move to Target stands.
+	// +optional
+	Phase RolloutPhase `json:"phase,omitempty"`
+	// Export names the TenantExport taken before the move, in the tenant's
+	// namespace.
+	// +optional
+	Export string `json:"export,omitempty"`
+	// Reason and Message say why a move was rolled back or failed.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
+	// MovedAt and MovedBy are the request this move answers, as the tenant's
+	// manifest records them.
+	// +optional
+	MovedAt string `json:"movedAt,omitempty"`
+	// +optional
+	MovedBy string `json:"movedBy,omitempty"`
+	// StartedAt is when the pinned build began rolling out; FinishedAt when
+	// the move ended, either way.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// +optional
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 
 // Component is an installed instance of a ComponentProfile.

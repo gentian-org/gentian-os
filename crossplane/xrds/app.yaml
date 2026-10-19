@@ -37,6 +37,17 @@ spec:
                     name:
                       type: string
                       description: Name of the ComponentProfile (e.g. "demo-app").
+                    build:
+                      type: string
+                      default: ""
+                      description: >-
+                        The ProfileBuild this app is rendered from, when the
+                        tenant runs a build that is not the ComponentProfile's
+                        current one: its name, "<profile>-<12 hex of the
+                        digest>". Set by the operator. Empty, the
+                        ComponentProfile is read. Always present, because the
+                        Composition reads it by field path and a missing path
+                        is a fatal result there, not an absent value.
                 tenantNamespace:
                   type: string
                   description: >
@@ -189,6 +200,24 @@ rules:
       - gentianos.io
     resources:
       - componentprofiles
+    verbs:
+      - get
+      - list
+      - watch
+---
+# The same grant for ProfileBuild: app-default reads a tenant's build from it
+# when the tenant runs a build that is not the ComponentProfile's current one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:profilebuilds.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - profilebuilds
     verbs:
       - get
       - list

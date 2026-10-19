@@ -43,6 +43,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/platformversion"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
@@ -58,6 +59,7 @@ type Repository interface {
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
+	Tenants(ctx context.Context) ([]string, error)
 	IsPlatformTenant(ctx context.Context, tenant string) (bool, error)
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
@@ -95,6 +97,9 @@ type Repository interface {
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
 	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta gitops.Meta) (gitops.Result, error)
 	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
+	BuildOnCluster(ctx context.Context, name, digest string) (gitops.StoredBuild, bool, error)
+	UpdatePolicy(ctx context.Context) (gitops.UpdatePolicy, error)
+	SetAppUpdateMode(ctx context.Context, tenant, profile, mode string, meta gitops.Meta) (gitops.Result, error)
 	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
@@ -155,6 +160,9 @@ type Lifecycle interface {
 
 // Config assembles a Server.
 type Config struct {
+	// UpdaterOff keeps the platform's own mover (updater.go) from running:
+	// a test, or a cluster whose administrator moves everything by hand.
+	UpdaterOff bool
 	Authn Authenticator
 	Authz authz.Checker
 	// Viewer reads who holds what, for the console's read-only authorization
@@ -219,6 +227,7 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, mux: http.NewServeMux()}
 	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
+	s.startUpdater()
 	return s, nil
 }
 
@@ -421,6 +430,8 @@ func (s *Server) routes() {
 	// may see a tenant may see what it has installed, whether or not they may
 	// change it.
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
+	// The same report for one tenant: what of its apps is behind, and why.
+	s.guarded("GET /v1/tenants/{t}/updates", "can_view", tenantObject, s.updatesForTenant)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
 	// The catalogues a tenant sees (AD-14): the cluster's and its own.
@@ -456,6 +467,16 @@ func (s *Server) routes() {
 		// Every change is a commit to the claim in git with the person as its
 		// author, and the operator acts on it from there.
 		s.guarded("GET /v1/clusters/{c}/settings", "can_audit", s.clusterObject, s.clusterSettings)
+
+		// Which installed apps are behind the build their catalogue offers,
+		// and what keeps them there (updates.go); the move of all or some of
+		// them to the newest build; and a tenant's override of how an app
+		// moves. The report is the auditor's; the move and the override are
+		// the cluster administrator's, under /v1/clusters so that a tenant's
+		// administrator cannot give themselves the tenant mode.
+		s.guarded("GET /v1/clusters/{c}/updates", "can_audit", s.clusterObject, s.updatesForCluster)
+		s.action("POST /v1/clusters/{c}/actions/move-outdated", "can_configure", s.clusterObject, s.moveOutdated)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/apps/{p}/update-mode", "can_configure", s.clusterObject, s.setAppUpdateMode)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
 		// The brand every page shows: read like a setting, written like one.
 		// The pages themselves read what the operator publishes from it,
@@ -961,6 +982,24 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if !ok {
 		return
 	}
+	// An app already installed at another build is being MOVED, and who
+	// may move it is the app's update mode's to say (updates.go): under
+	// tenant mode whoever may install here, otherwise the cluster's
+	// administrator. Asked before anything is fetched or written.
+	if body.Digest != "" {
+		apps, err := s.cfg.Repo.Apps(ctx, tenant)
+		if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+			s.repoError(w, r, err)
+			return
+		}
+		for _, app := range apps {
+			if app.Profile == profile && app.Digest != "" && app.Digest != body.Digest {
+				if !s.moveAllowed(w, r, c, tenant, app) {
+					return
+				}
+			}
+		}
+	}
 	catalogueName := ""
 	if source != nil {
 		catalogueName = source.Name
@@ -1008,8 +1047,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	if source != nil {
-		fetched, ok := s.fetchEntry(w, r, *source, entry, body.Digest)
+		fetched, ok := s.fetchOrStored(w, r, *source, tenant, entry, body.Digest)
 		if !ok {
+			return
+		}
+		if s.refusedByFloor(w, r, fetched, "app "+body.Coordinate) {
 			return
 		}
 		if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
@@ -1238,6 +1280,51 @@ func (s *Server) fetchEntry(
 		return nil, false
 	}
 	return profile, true
+}
+
+// fetchOrStored is fetchEntry, except for a build the cluster already holds
+// under builds/ of its catalogue directory: that one is read from there and
+// not fetched, so a tenant can be moved back to a build the source no longer
+// serves. Held to the same digest and the same checks; the source is asked
+// only for a build the cluster does not have.
+func (s *Server) fetchOrStored(
+	w http.ResponseWriter, r *http.Request, source visibleSource, tenant, name, digest string,
+) (*catalogue.Profile, bool) {
+	stored, found, err := s.cfg.Repo.BuildOnCluster(r.Context(), name, digest)
+	if err != nil {
+		s.cfg.Log.WarnContext(r.Context(), "a stored build could not be read; fetching instead",
+			"request_id", reqID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
+	}
+	// Only a build this very catalogue brought: one another tenant's own
+	// catalogue stored is not this tenant's to install by naming its digest.
+	if err == nil && found && stored.Origin == source.origin(tenant) {
+		profile, err := catalogue.FromStored(stored.Body, name, digest, source.Key)
+		if err == nil {
+			return profile, true
+		}
+		s.cfg.Log.WarnContext(r.Context(), "a stored build is not one this cluster installs; fetching instead",
+			"request_id", reqID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
+	}
+	return s.fetchEntry(w, r, source, name, digest)
+}
+
+// refusedByFloor refuses a fetched build whose spec.requires.platform is
+// above this platform's version line, and reports that it did. Asked of
+// the bundle itself, after the digest and before anything is written: the
+// index repeats the floor so a listing can say it, but what an install is
+// held to is what the build states.
+func (s *Server) refusedByFloor(w http.ResponseWriter, r *http.Request, fetched *catalogue.Profile, what string) bool {
+	floor := ""
+	if fetched.Definition != nil && fetched.Definition.Spec.Requires != nil {
+		floor = fetched.Definition.Spec.Requires.Platform
+	}
+	unmet := platformversion.Unmet(floor)
+	if unmet == "" {
+		return false
+	}
+	s.fail(w, r, http.StatusUnprocessableEntity, what+" "+unmet+
+		"; move the platform forward first, or install a build whose floor this cluster meets. Nothing was installed")
+	return true
 }
 
 // commitEntry commits a fetched and verified bundle beside its profile,
@@ -1501,6 +1588,9 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		for i, entry := range pinned {
 			bundle, ok := s.fetchEntry(w, r, sources[i], entry.Name, entry.Digest)
 			if !ok {
+				return
+			}
+			if s.refusedByFloor(w, r, bundle, "add-on "+entry.Coordinate) {
 				return
 			}
 			if why := fetchedTakesReservedAddress(bundle.Definition, sources[i].origin(tenant), zone); why != "" {

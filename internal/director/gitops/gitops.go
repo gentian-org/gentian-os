@@ -122,6 +122,17 @@ type Meta struct {
 	Principal string
 }
 
+// movedAt is when a pin is moved, as the entry records it: now, to the
+// second, in UTC.
+func (m Meta) movedAt() string { return now().UTC().Format(time.RFC3339) }
+
+// mover is who or what moved a pin: the person, or the principal that stood
+// in for one.
+func (m Meta) mover() string { return m.actor() }
+
+// now is the clock the entries' timestamps come from; a test replaces it.
+var now = time.Now
+
 // ActorName is who an ACTION records. A commit has an author and a trailer to
 // read a person off; an action has neither, so the object it creates carries
 // this name instead — the same identity, by the same rule.
@@ -531,6 +542,17 @@ func (g *GitOps) InstallFrom(
 				lines, recorded = setAppEntryKey(lines, profile, "catalogue", catalogue, "digest")
 				moved = moved || recorded
 			}
+			if moved {
+				// Who or what moved the pin, and when: what the Component's
+				// rollout record answers to, and what makes a move the
+				// platform rolled back worth trying again.
+				after := "digest"
+				if appEntryHasKey(lines, profile, "catalogue") {
+					after = "catalogue"
+				}
+				lines, _ = setAppEntryKey(lines, profile, appMovedAtKey, meta.movedAt(), after)
+				lines, _ = setAppEntryKey(lines, profile, appMovedByKey, meta.mover(), appMovedAtKey)
+			}
 			changed = moved
 		}
 		if defaultGrant != nil {
@@ -557,6 +579,13 @@ func (g *GitOps) InstallFrom(
 // appDefaultGrantKey is the key of an app's entry that says every member of
 // the tenant has access to it by default.
 const appDefaultGrantKey = "defaultGrant"
+
+// appMovedAtKey and appMovedByKey record the last move of an entry's pin:
+// when, and who or what asked for it.
+const (
+	appMovedAtKey = "movedAt"
+	appMovedByKey = "movedBy"
+)
 
 // appEntryHasKey reports whether an app's entry carries a scalar key.
 func appEntryHasKey(lines []string, profile, key string) bool {

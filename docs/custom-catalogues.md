@@ -828,11 +828,32 @@ kubectl gentian apps install acme-notes --tenant demo   # "Moving acme-notes in 
 ```
 
 The index is cached for five minutes, so a build published a moment ago may not be listed yet.
+The index repeats each build's `platform` floor beside its digest and version, so a cluster can say
+which entries it cannot install without fetching them.
 
-A profile is one object for the whole cluster. When two tenants have the same app from a catalogue
-of the cluster and one moves to a new build, the other's install is still pinned to the old digest:
-the operator holds it as it is (`DigestMismatch` on its Component) and rolls nothing out for it until
-that tenant moves too. Publish a build that must coexist with the old one under a new name.
+A profile is one object for the whole cluster, and it is the newest build any tenant installed.
+Every build a tenant installed is kept beside it as a `ProfileBuild` (`builds/<profile>-<12 hex of
+the digest>.yaml` in the catalogue directory): a tenant pinned to another build than the profile's
+current one is rendered from its build, so two tenants on two builds of one app do not touch each
+other, and a tenant moved back to a build it ran finds it on the cluster without a fetch. What holds
+such an install is a companion the build brings that differs from the one on the cluster
+(`CompanionMismatch`): companions are one object per name, like the profile.
+
+A move is one guarded operation, whoever asks for it ([versioning.md](plans/versioning.md) §5):
+the app's data is exported first, to the platform's own storage; the new build rolls out; once its
+release is ready the profile's `restore.verify` command runs; a build that does not come up within
+fifteen minutes or does not verify is rolled back, and the instance runs the build it ran. The
+Component's `status.rollout` records the build it runs, the move's target, its phase and why it
+ended as it did; `kubectl gentian apps outdated` reads it for every tenant.
+
+Who may move an app is its update mode's to say: the cluster's policy on the claim
+(`spec.catalogue.updates`), an override per tenant and app (`kubectl gentian apps update-mode`),
+and a customization at L3 or above that carries upgrade risk, which puts the app on a manual move.
+Under `latest`, the default, the platform moves apps to the newest build their floor admits inside
+the cluster's window, one tenant first; under `manual` the cluster's administrator does
+(`kubectl gentian apps move-outdated`); under `tenant` the tenant's administrator may. A profile's
+floor is `spec.requires.platform`: a build whose floor is above this platform's version line is
+listed with the reason and not installed.
 
 ### What a newer build leaves behind
 

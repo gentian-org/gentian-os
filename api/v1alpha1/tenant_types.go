@@ -791,6 +791,27 @@ type TenantApp struct {
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest,omitempty"`
 
+	// UpdateMode overrides, for this tenant and this app, how the app moves
+	// to newer builds: latest (the platform moves it), manual (the
+	// cluster's administrator does) or tenant (the tenant's administrator
+	// may). Written by the cluster's administrator through the director;
+	// absent, the cluster's policy for the app applies.
+	// +optional
+	// +kubebuilder:validation:Enum=latest;manual;tenant
+	UpdateMode string `json:"updateMode,omitempty"`
+
+	// MovedAt is when the pin was last moved to another build, RFC 3339,
+	// and MovedBy who or what moved it: a person's id, or the policy that
+	// did ("policy:latest"). Written by the director with the digest; the
+	// Component carries both onto its rollout record, and a move the
+	// platform rolled back is tried again only when a later MovedAt asks.
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	MovedAt string `json:"movedAt,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	MovedBy string `json:"movedBy,omitempty"`
+
 	// Catalogue is the catalogue the pinned build was fetched from: the first
 	// half of its coordinate, <catalogue>/<profile>. It is written with the
 	// digest by an install that fetched the bundle from that catalogue's

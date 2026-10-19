@@ -52,7 +52,7 @@ func (r *TenantReconciler) collectKernelApps(
 	}
 	var apps []string
 	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		profile, ok := appProfileForApp(profileIndex, app)
 		if !ok {
 			continue
 		}

@@ -10,5 +10,6 @@ spec:
     namespace: tenant-demo
   profileRef:
     name: demo-app
+    build: ""
   tenantNamespace: tenant-demo
   domain: demo.platform.example.test

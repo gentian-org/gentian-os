@@ -1351,6 +1351,51 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` A test that a tenant's file is read by the app and wins over the profile's by its prefix.
 
 
+### 2.34 Versioning and Updates: What Remains (**)
+* **Target Domain**: Build and Release
+* **Context**: [versioning.md](plans/versioning.md) §6 is built: the platform
+  knows its version line and build, a profile declares its floor, every build
+  a tenant installed is kept as a `ProfileBuild`, a move exports first and
+  rolls back by itself, apps move under a mode the cluster's administrator
+  sets, the report and the console show what is behind, and the installer
+  compares every pin on a re-run. What the build left open is here, so the
+  plan is not read as a backlog.
+* **Backlog Items**:
+  - `[ ]` **Unused builds as residue.** A `ProfileBuild` stays once no
+    tenant pins it and the profile has moved on. The residue list does not
+    name it yet; `kubectl gentian catalogues residue` should list it as
+    `unused build` and remove it like a dropped companion, after one line
+    of grace.
+  - `[ ]` **The catalogue keeps every published build.** A tenant moves
+    back to a build its cluster stored; a build no cluster stored is gone
+    once the index moved on. gentian-apps publishes a snapshot per publish
+    beside the moving index.
+  - `[ ]` **The mover's state survives a restart.** The platform's mover
+    reads the report afresh on every run, which is enough for one tenant
+    first and the rest after; what it does not keep is the stop it decided
+    on after a rollback, so a restarted director tries the canary again.
+    Record the stop on the cluster.
+  - `[ ]` **The installer's default profile is held to the floor.** The
+    director refuses a build whose `spec.requires.platform` the cluster does
+    not meet; the profile step 0 places goes through `scripts/lib/catalogue.sh`
+    and is not asked.
+  - `[ ]` **The window per tenant.** The policy's window is the cluster's;
+    a tenant with hours of its own is put on `manual`. Decide whether a
+    tenant may carry a window.
+  - `[ ]` **A development cluster's `latest`.** It follows builds whose
+    charts are `-develop.<sha7>` pins, which `releasing.md` forbids on
+    `main` and `validate-chart-refs.py` refuses only in release mode. Say
+    whether a development cluster is meant to take them.
+  - `[ ]` **The OS under the same modes.** The report says a newer release
+    exists; nothing moves the platform from inside the cluster. Whether the
+    OS takes `latest`, `manual` and the window, and what a production
+    cluster's default is, is §7.2 of the plan.
+  - `[ ]` **Companions per build.** Two builds of one app share their
+    companions by name; a tenant on the older build is held
+    (`CompanionMismatch`) when the newer build's Composition or pack catalog
+    differs. Crossplane's composition revisions are the way to pin the
+    older one.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
@@ -1468,10 +1513,11 @@ what the components it already runs could do with little extra code.
 
 ### 5.2 Backups That Prove Themselves (**)
 * **Target Domain**: Availability
-* **Context**: Availability is the one SOC 2 criterion the platform is behind on: backups are design-only (roadmap 2.x, Velero/pgBackRest), and an untested backup is not a control.
+* **Context**: Availability is the one SOC 2 criterion the platform is behind on. Tenant backup is implemented (`BackupPolicy`, `TenantExport`, `TenantRestore`, age-encrypted, signed manifests); the kernel Postgres and OpenBao have none, and an untested backup is not a control. Planned in [plans/certification.md](plans/certification.md) C10.
 * **Proposed Solution**: Once backups exist, a scheduled restore drill restores a tenant into a scratch namespace, verifies it, and records the result as evidence.
 * **Backlog Items**:
-  - `[ ]` Implement backups for the kernel Postgres, the tenant data engines and OpenBao.
+  - `[x]` Implement backups for the tenant data engines.
+  - `[ ]` Implement backups for the kernel Postgres (point-in-time recovery) and OpenBao (Raft snapshots).
   - `[ ]` Scheduled restore drill per cluster with a signed result record.
   - `[ ]` Recovery time and recovery point objectives stated per cluster and measured by the drill.
 

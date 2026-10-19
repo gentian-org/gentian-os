@@ -351,6 +351,19 @@ type RequirementSpec struct {
 	// +optional
 	Services *ServiceRequirements `json:"services,omitempty"`
 
+	// Platform is the oldest platform version line this build runs on, as a
+	// floor: ">=0.5", or "0.5" which means the same. It is compared with the
+	// line of the platform that would install it -- the major and minor of
+	// the release, never a patch -- and a cluster on an older line refuses
+	// the install and lists the entry with the reason. There is no upper
+	// bound: what a later platform stops reading, the platform says, by
+	// deprecating it one line ahead. Absent means ">=0.0", a build that
+	// claims nothing.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(>=)?v?[0-9]+\.[0-9]+$`
+	// +kubebuilder:validation:MaxLength=16
+	Platform string `json:"platform,omitempty"`
+
 	// Privileges escape the default posture. Declaring one is asking, never
 	// receiving: each is granted per install, by a named person, and recorded
 	// on the Component.

@@ -232,6 +232,18 @@ spec:
                         profile's name, so the same app keeps one name across builds.
                       pattern: ^sha256:[a-f0-9]{64}$
                       type: string
+                    movedAt:
+                      description: |-
+                        MovedAt is when the pin was last moved to another build, RFC 3339,
+                        and MovedBy who or what moved it: a person's id, or the policy that
+                        did ("policy:latest"). Written by the director with the digest; the
+                        Component carries both onto its rollout record, and a move the
+                        platform rolled back is tried again only when a later MovedAt asks.
+                      maxLength: 40
+                      type: string
+                    movedBy:
+                      maxLength: 128
+                      type: string
                     profile:
                       description: |-
                         Profile is the name of the ComponentProfile to install.
@@ -278,6 +290,18 @@ spec:
                             When set, this is the exact profile CR to use.
                           type: string
                       type: object
+                    updateMode:
+                      description: |-
+                        UpdateMode overrides, for this tenant and this app, how the app moves
+                        to newer builds: latest (the platform moves it), manual (the
+                        cluster's administrator does) or tenant (the tenant's administrator
+                        may). Written by the cluster's administrator through the director;
+                        absent, the cluster's policy for the app applies.
+                      enum:
+                      - latest
+                      - manual
+                      - tenant
+                      type: string
                   type: object
                   x-kubernetes-validations:
                   - message: either profile or profileRef is required

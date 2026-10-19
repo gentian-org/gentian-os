@@ -413,6 +413,9 @@ kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   #
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
+kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalogue, and why they stay
+kubectl gentian apps move-outdated [--tenant demo] [--app xwiki-ce]   # move them to the newest build (cluster administrator)
+kubectl gentian apps update-mode xwiki-ce --tenant demo --mode tenant # who moves this app: latest | manual | tenant | default
 ```
 
 **The command line installs a pinned build.** An app is installed from one
@@ -451,7 +454,12 @@ with none. The listing is the director's reading of each source's index, the
 
 The director verifies the bundle against the digest before it commits, and
 the operator verifies it again at rollout
-([design/store-contract.md](design/store-contract.md) §3, §4).
+([design/store-contract.md](design/store-contract.md) §3, §4). Installing an
+app the tenant already has at another build moves it: who may is the app's
+update mode's to say, and the move exports first, verifies after and rolls
+back by itself ([custom-catalogues.md §6](custom-catalogues.md)). The
+`PLATFORM` column of `--available` is the build's floor, `spec.requires.platform`;
+one marked `(not met)` needs a newer platform than this cluster runs.
 
 Uninstalling and purging are two different acts, and the CLI says which one it
 did.

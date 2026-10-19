@@ -140,11 +140,17 @@ func appComposition(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.
 // Component removes the claim, and with it everything the Composition made.
 func (r *ComponentReconciler) ensureAppClaim(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
-	composition string, mailboxTokenSignIn bool, signIn *signInSidecar,
+	composition, build string, mailboxTokenSignIn bool, signIn *signInSidecar,
 ) (bool, string, error) {
 	if composition == "" {
 		composition = defaultAppComposition
 	}
+	// The profile by name, and the build when this tenant runs one that is
+	// not the profile's current: the Composition then reads the build's spec
+	// and keeps the profile's identity.
+	// Always written, "" included: the Composition reads it by field path,
+	// and a path that is not there is a fatal result, not an absent value.
+	profileRef := map[string]interface{}{"name": comp.Spec.ProfileRef.Name, "build": build}
 	spec := map[string]interface{}{
 		"compositionUpdatePolicy": "Automatic",
 		// Which Composition renders the app, said rather than left to the
@@ -152,7 +158,7 @@ func (r *ComponentReconciler) ensureAppClaim(
 		// was given last, and that has to stop being the profile's own when
 		// the profile no longer brings one.
 		"compositionRef":  map[string]interface{}{"name": composition},
-		"profileRef":      map[string]interface{}{"name": comp.Spec.ProfileRef.Name},
+		"profileRef":      profileRef,
 		"tenantNamespace": comp.Namespace,
 		"domain":          zone.domain,
 		// The tenant's realm, by the one rule (keycloak.RealmName). The

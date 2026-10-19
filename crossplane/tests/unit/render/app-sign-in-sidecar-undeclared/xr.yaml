@@ -10,6 +10,7 @@ spec:
     namespace: tenant-demo
   profileRef:
     name: demo-app
+    build: ""
   tenantNamespace: tenant-demo
   domain: demo.platform.example.test
   # What the operator puts on the claim for an install pinned to a digest

@@ -64,6 +64,10 @@ type IndexEntry struct {
 	// the build an install from this listing asks for. The trust in it is
 	// the Cluster claim naming the source.
 	Digest string `json:"digest,omitempty"`
+	// Platform is the build's spec.requires.platform, repeated here so a
+	// listing can say which entries this cluster cannot install without a
+	// fetch. The bundle's own value is what an install is held to.
+	Platform string `json:"platform,omitempty"`
 }
 
 // Index is what a source says it holds.

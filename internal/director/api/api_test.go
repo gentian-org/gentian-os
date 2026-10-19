@@ -52,6 +52,7 @@ const audience = "gentian-director"
 
 type harness struct {
 	*httptest.Server
+	srv    *api.Server
 	issuer *dt.Issuer
 	remote string
 	// asked is every question put to the decision point, in order, as
@@ -192,10 +193,13 @@ func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts 
 	// stopped once the last request is answered, and before the checkout
 	// they write to is removed.
 	t.Cleanup(srv.Close)
-	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, asked: decisions}
+	h := &harness{Server: httptest.NewServer(srv), srv: srv, issuer: is, remote: remote, asked: decisions}
 	t.Cleanup(h.Close)
 	return h
 }
+
+// server is the director itself, for a test that calls what no route does.
+func (h *harness) server() *api.Server { return h.srv }
 
 func (h *harness) token(t *testing.T, realm, sub string) string {
 	return h.issuer.Token(t, dt.Claims{Realm: realm, Subject: sub, Audience: audience, Name: strings.ToUpper(sub[:1]) + sub[1:], Email: sub + "@example.com"})
@@ -463,7 +467,9 @@ func TestAnInstallRecordsTheDigestItAskedFor(t *testing.T) {
 	}
 	served = strings.Replace(elementProfile, `version: "1.0.0"`, `version: "1.0.1"`, 1)
 	next := sha(served)
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+	// Moved by the cluster's administrator: under the default update mode,
+	// latest, a move of an installed app is theirs (updates.go).
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", h.token(t, "gentian", "alice"),
 		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, next)); code != http.StatusAccepted || body["status"] != "updated" {
 		t.Fatalf("another build: %d %v", code, body)
 	}
