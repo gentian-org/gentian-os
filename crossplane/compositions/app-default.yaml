@@ -2524,7 +2524,7 @@ spec:
                              backoffLimit bounds and no reconcile clears, so the
                              bootstrap never runs and nothing reports an error.
 
-                             That is not theoretical. On ifk-w4h both tenants lost
+                             That is not theoretical. On one cluster both tenants lost
                              the coin flip and their open-webui post-install sat
                              wedged for six days, so the tenant administrator was
                              never seeded in either.

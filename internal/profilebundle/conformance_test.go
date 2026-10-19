@@ -70,7 +70,9 @@ func TestThePublishedCataloguesConform(t *testing.T) {
 					if got := "sha256:" + hex.EncodeToString(sum[:]); got != e.Digest {
 						t.Fatalf("the index states %s and the file hashes to %s", e.Digest, got)
 					}
-					if _, err := profilebundle.Check(bundle, e.Name, "conformance"); err != nil {
+					// As a catalogue of the whole cluster brings it: the one origin
+					// that may bring companions.
+					if _, err := profilebundle.Check(bundle, e.Name, profilebundle.ClusterOrigin("conformance")); err != nil {
 						t.Fatalf("not a bundle this platform installs: %v", err)
 					}
 					profile, err := profilebundle.ReadProfile(bundle)

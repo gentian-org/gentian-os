@@ -190,7 +190,7 @@ _b05_packages_current() {
     [[ -n "${declared}" ]] || return 1
     while IFS=$'\t' read -r kind name want; do
         [[ -n "${name}" ]] || continue
-        have="$(kubectl get "${kind,,}.pkg.crossplane.io" "${name}" -o jsonpath='{.spec.package}' 2>/dev/null)" || return 1
+        have="$(kubectl get "$(to_lower "${kind}").pkg.crossplane.io" "${name}" -o jsonpath='{.spec.package}' 2>/dev/null)" || return 1
         [[ "${have}" == "${want}" ]] || return 1
     done <<< "${declared}"
     return 0
