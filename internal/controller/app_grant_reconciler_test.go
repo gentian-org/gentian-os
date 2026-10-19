@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // The operator records a grant and touches no authorization store: the
@@ -194,6 +195,170 @@ func TestBindingReportsWhatWasGranted(t *testing.T) {
 		}
 		if cond == nil || cond.Status != tc.status || cond.Reason != tc.reason {
 			t.Fatalf("%s: condition = %+v, want %s/%s", tc.name, cond, tc.status, tc.reason)
+		}
+	}
+}
+
+// A binding that carries the provider's endpoint writes its address beside
+// the shared password, at the path the binding names: the tenant's, which the
+// app Composition reads, and not one named after the namespace.
+func TestBindingWritesTheProvidersAddress(t *testing.T) {
+	t.Parallel()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	path := secrets.ContractPath("demo", "orders")
+	b := &gentianov1alpha1.IntegrationBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "demo--consumer--orders", Namespace: "tenant-demo",
+			Labels: map[string]string{tenantLabel: "demo"},
+		},
+		Spec: gentianov1alpha1.IntegrationBindingSpec{
+			Contract: "orders",
+			Provider: gentianov1alpha1.AppEndpoint{App: "provider", Namespace: "tenant-demo"},
+			Consumer: gentianov1alpha1.AppEndpoint{App: "consumer", Namespace: "tenant-demo"},
+			Auth:     &gentianov1alpha1.BindingAuth{Method: "api-key", VaultPath: path},
+			Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "provider-api", Port: 8000, Path: "/v1"},
+		},
+	}
+	grant := &gentianov1alpha1.AppGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "consumer", Namespace: "tenant-demo"},
+		Spec: gentianov1alpha1.AppGrantSpec{
+			App:     "consumer",
+			Consume: []gentianov1alpha1.ConsumeGrantSpec{{Contract: "orders", Granted: []string{"read"}}},
+		},
+	}
+	vault := memVault{path: {"password": "shared", "endpoint": "", "user": ""}}
+	key := types.NamespacedName{Name: b.Name, Namespace: b.Namespace}
+
+	// Not granted, it is told nothing: nothing is opened to it.
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(b.DeepCopy()).WithStatusSubresource(b).Build()
+	r := &IntegrationBindingReconciler{Client: c, Scheme: scheme, Seeder: secrets.NewSeeder(vault, nil)}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := vault[path]["endpoint"]; got != "" {
+		t.Fatalf("endpoint before the grant = %q, want empty", got)
+	}
+
+	c = fake.NewClientBuilder().WithScheme(scheme).WithObjects(b, grant).WithStatusSubresource(b).Build()
+	r = &IntegrationBindingReconciler{Client: c, Scheme: scheme, Seeder: secrets.NewSeeder(vault, nil)}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := vault[path]
+	if got["endpoint"] != "http://provider-api.tenant-demo.svc.cluster.local:8000/v1" {
+		t.Fatalf("endpoint = %q", got["endpoint"])
+	}
+	if got["password"] != "shared" {
+		t.Fatalf("the shared password became %q", got["password"])
+	}
+	if len(vault) != 1 {
+		t.Fatalf("written at %d paths, want the binding's only", len(vault))
+	}
+}
+
+// Each contract an installed component maps is seeded, once, whether or not
+// the other side is installed: the provider's ExternalSecret reads the
+// password before any consumer is there, and the consumer's reads an endpoint
+// that is empty until a provider is.
+func TestMappedContractsAreThoseTheInstalledComponentsMap(t *testing.T) {
+	t.Parallel()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	profile := func(name string, contracts ...string) *gentianov1alpha1.ComponentProfile {
+		m := map[string]gentianov1alpha1.IntegrationValueMapping{}
+		for _, c := range contracts {
+			m[c] = gentianov1alpha1.IntegrationValueMapping{PasswordKey: "secrets.token"}
+		}
+		p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: m}
+		return p
+	}
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "provider"}, {Profile: "consumer"}, {Profile: "gone"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(profile("provider", "orders"), profile("consumer", "orders", "files"), profile("elsewhere", "mail")).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+	got, err := r.mappedContracts(context.Background(), tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "files" || got[1] != "orders" {
+		t.Fatalf("mapped contracts = %v, want [files orders]", got)
+	}
+}
+
+// A contract no granted provider answers any more is told no address, as a
+// consumer with no provider is: the provider was removed from the tenant, or
+// the consumer's grant withdrawn. Another consumer still granted the same
+// contract keeps it, since the address is the contract's and not the
+// consumer's. The shared password stays either way.
+func TestEndpointIsClearedWhenNoGrantedProviderAnswers(t *testing.T) {
+	t.Parallel()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	const address = "http://provider-api.tenant-demo.svc.cluster.local:8000/v1"
+	provider := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "provider"}}
+	provider.Spec.Provides = []gentianov1alpha1.ContractRef{{
+		Name:     "orders",
+		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "provider-api", Port: 8000, Path: "/v1"},
+	}}
+	consumer := func(name string) *gentianov1alpha1.ComponentProfile {
+		p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		p.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "orders", Capabilities: []string{"read"}}}
+		p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
+			"orders": {EndpointKey: "orders.url", PasswordKey: "orders.token"},
+		}}
+		return p
+	}
+	grant := func(app string) *gentianov1alpha1.AppGrant {
+		return &gentianov1alpha1.AppGrant{
+			ObjectMeta: metav1.ObjectMeta{Name: app, Namespace: "tenant-demo"},
+			Spec: gentianov1alpha1.AppGrantSpec{
+				App:     app,
+				Consume: []gentianov1alpha1.ConsumeGrantSpec{{Contract: "orders", Granted: []string{"read"}}},
+			},
+		}
+	}
+	cases := []struct {
+		name   string
+		apps   []string
+		grants []*gentianov1alpha1.AppGrant
+		want   string
+	}{
+		{"provider removed", []string{"consumer"}, []*gentianov1alpha1.AppGrant{grant("consumer")}, ""},
+		{"grant withdrawn", []string{"provider", "consumer"}, nil, ""},
+		{"another consumer still granted", []string{"provider", "consumer", "other"}, []*gentianov1alpha1.AppGrant{grant("other")}, address},
+	}
+	for _, tc := range cases {
+		tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+		for _, app := range tc.apps {
+			tenant.Spec.Apps = append(tenant.Spec.Apps, gentianov1alpha1.TenantApp{Profile: app})
+		}
+		builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(provider, consumer("consumer"), consumer("other"))
+		for _, g := range tc.grants {
+			builder = builder.WithObjects(g)
+		}
+		path := secrets.ContractPath("demo", "orders")
+		vault := memVault{path: {"password": "shared", "endpoint": address, "user": "gentian-contract-orders"}}
+		r := &TenantReconciler{Client: builder.Build(), Scheme: scheme, Seeder: secrets.NewSeeder(vault, nil)}
+		ctx := context.Background()
+		bindings, err := r.collectDesiredIntegrationBindings(ctx, tenant)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		mapped, err := r.mappedContracts(ctx, tenant)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if err := r.clearUngrantedContractEndpoints(ctx, tenant, bindings, mapped); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := vault[path]["endpoint"]; got != tc.want {
+			t.Fatalf("%s: endpoint = %q, want %q", tc.name, got, tc.want)
+		}
+		if got := vault[path]["password"]; got != "shared" {
+			t.Fatalf("%s: the shared password became %q", tc.name, got)
 		}
 	}
 }

@@ -410,6 +410,19 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInSidecarRefused, noSignIn, 0)
 	}
+	// What the app's sign-in client puts in its tokens: audiences are a
+	// grant and a request parameter a narrowing of where codes go, held at
+	// the same point as the sidecar (token_audiences.go).
+	noSignInClient, err := r.signInClientRefusalFor(ctx, profile, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if noSignInClient != "" {
+		if r.Recorder != nil && !componentReports(comp, reasonSignInClientRefused, noSignInClient) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonSignInClientRefused, noSignInClient)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInClientRefused, noSignInClient, 0)
+	}
 	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {
 		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &values); err != nil {
@@ -1818,7 +1831,15 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// address -- the website's, and the platform's page, which steps back
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
-			builder.WithPredicates(mainAddressChanged()))
+			builder.WithPredicates(mainAddressChanged())).
+		// A tenant's country, which a profile naming countryKey is told
+		// (tenant_country.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
+			builder.WithPredicates(countryChanged())).
+		// The edge's public address, which a component granted the internet
+		// reaches from inside through the edge's pods (own_public_address.go).
+		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
+			builder.WithPredicates(edgeAddressChanged()))
 	if len(r.clusterRoleSet()) > 0 {
 		// What the cluster permits is another object's: a role it stops
 		// permitting is unbound when the policy changes, not when something

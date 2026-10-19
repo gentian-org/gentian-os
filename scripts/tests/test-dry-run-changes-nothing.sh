@@ -228,7 +228,6 @@ spec:
     admin: gentian:platform:admin
   networkMode: tunnel
 EOF
-    printf 'apiVersion: gentianos.io/v1alpha1\nkind: Suze\nmetadata:\n  name: sandbox-dev-suze\nspec: {}\n' > "${CLUSTER_DIR}/kernel/claims/suze.yaml"
     printf 'apiVersion: gentianos.io/v1alpha1\nkind: Repository\nmetadata:\n  name: deployments\nspec:\n  type: git\n' > "${CLUSTER_DIR}/kernel/claims/deployments-repository.yaml"
     printf 'image:\n  tag: develop-abc1234\n' > "${CLUSTER_DIR}/kernel/values.yaml"
     printf 'GENTIAN_SIGNING_KEY_DIRECTOR=1111111111111111\nGENTIAN_SIGNING_KEY_BREAK_GLASS=2222222222222222\n' > "${CLUSTER_DIR}/kernel/signing/keys.env"

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -167,5 +168,77 @@ func TestBrokeredFromReachesTheXTenantOnlyWhereATenantHasOne(t *testing.T) {
 	}
 	if !strings.Contains(string(composition), `dig "brokeredFrom" list $spec`) {
 		t.Error("tenant-default.yaml does not read brokeredFrom")
+	}
+}
+
+// A sign-in between two tenants reaches the composites only where both say
+// so: the target gets the identity provider with its groups as realm paths
+// -- a declared group and the members, never one it does not declare or an
+// administrators' group -- and the source gets the client, beside what it
+// declares itself. One side alone composes nothing on either.
+func TestASignInBetweenTenantsTakesBothAndGivesOnlyDeclaredGroups(t *testing.T) {
+	ctx := context.Background()
+	team := &gentianov1alpha1.Tenant{}
+	team.Name = "team"
+	team.Spec.DisplayName = "Aluvian"
+	customers := &gentianov1alpha1.Tenant{}
+	customers.Name = "customers"
+	customers.Spec.DisplayName = "Customers"
+	customers.Spec.Groups = []gentianov1alpha1.TenantGroup{{Name: "website-editors"}}
+	customers.Spec.SignInFrom = []gentianov1alpha1.TenantSignInFrom{{
+		Tenant: "team", Groups: []string{"website-editors", "members", "admins", "not-declared"},
+	}}
+
+	build := func(target *gentianov1alpha1.Tenant, objs ...client.Object) map[string]interface{} {
+		r := &TenantReconciler{
+			Client:       fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(objs...).Build(),
+			KernelDomain: "aluvian.io", TenancyMode: "multi",
+		}
+		xr, err := r.buildXTenant(ctx, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, _ := xr.Object["spec"].(map[string]interface{})
+		return spec
+	}
+
+	// Only the target names the other: nothing on either side.
+	if spec := build(customers, team.DeepCopy(), customers.DeepCopy()); spec["signInFrom"] != nil {
+		t.Fatalf("a sign-in the source did not consent to: %v", spec["signInFrom"])
+	}
+	if spec := build(team, team.DeepCopy(), customers.DeepCopy()); spec["brokeredTo"] != nil {
+		t.Fatalf("a client for a tenant the source does not name: %v", spec["brokeredTo"])
+	}
+
+	consenting := team.DeepCopy()
+	consenting.Spec.SignInTo = []string{"customers"}
+	spec := build(customers, consenting.DeepCopy(), customers.DeepCopy())
+	list, _ := spec["signInFrom"].([]interface{})
+	if len(list) != 1 {
+		t.Fatalf("signInFrom = %v", spec["signInFrom"])
+	}
+	entry := list[0].(map[string]interface{})
+	if entry["alias"] != "tenant-team" || entry["realm"] != "team" || entry["clientID"] != "broker-to-customers" ||
+		entry["displayName"] != "Aluvian" {
+		t.Fatalf("entry = %v", entry)
+	}
+	groups := entry["groups"].([]interface{})
+	if len(groups) != 2 || groups[0] != "/website-editors" || groups[1] != "/gentian:tenant:customers:members" {
+		t.Fatalf("groups = %v: only a declared group and the members", groups)
+	}
+	if got := spec["groups"].([]interface{}); len(got) != 1 || got[0] != "website-editors" {
+		t.Fatalf("declared groups = %v", got)
+	}
+
+	source := build(consenting, consenting.DeepCopy(), customers.DeepCopy())
+	clients, _ := source["brokeredTo"].([]interface{})
+	if len(clients) != 1 {
+		t.Fatalf("brokeredTo = %v", source["brokeredTo"])
+	}
+	c := clients[0].(map[string]interface{})
+	if c["name"] != "customers" ||
+		c["redirectURI"] != "https://id.aluvian.io/auth/realms/customers/broker/tenant-team/endpoint" ||
+		c["jwksURL"] != "https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs" {
+		t.Fatalf("client = %v", c)
 	}
 }

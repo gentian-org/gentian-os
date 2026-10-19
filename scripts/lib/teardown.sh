@@ -496,7 +496,7 @@ _delete_gentianos_api_scaffold() {
 #
 #   Cluster claim <cluster>-prod  finalizer.apiextensions.crossplane.io
 #     -> clusters.gentianos.io CRD        customresourcecleanup
-#       -> XRDs xclusters / xsuze        offered + foregroundDeletion
+#       -> XRD xclusters                 offered + foregroundDeletion
 #         -> Argo Applications crossplane-xrds, gentian-appsets
 #           -> kubectl delete application, blocking with no timeout
 #

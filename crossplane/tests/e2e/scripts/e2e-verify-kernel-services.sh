@@ -5,7 +5,7 @@
 #         VERIFY_KERNEL_SERVICES=1 ./scripts/e2e-verify-kernel-services.sh
 #
 # Prerequisites:
-#   - Gentian OS Stage 1 install complete (Suze / Keycloak in platform-kernel)
+#   - Gentian OS install complete (Keycloak in the authentication namespace)
 #   - For Dovecot checks: MAIL_SERVICE_MODE=system and dovecot-dev deployed
 set -euo pipefail
 

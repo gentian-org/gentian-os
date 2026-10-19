@@ -17,6 +17,10 @@ import (
 
 // ProvisioningJobTTLSeconds is how long finished Batch Jobs remain before the
 // TTL controller deletes them. Keep short so tenant CPU quotas free quickly.
+//
+// Only for Jobs the operator creates itself. A Job a provider-kubernetes Object
+// holds carries none: the Object recreates what the TTL deletes, and the Job
+// would run again every TTL, forever (keepFinishedJobs in the controller).
 const ProvisioningJobTTLSeconds int32 = 600
 
 // ProvisioningJobBackoffLimit allows dependent identity Jobs to survive transient

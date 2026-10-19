@@ -33,6 +33,12 @@ func buildOIDCPackScript(
 		return buildOIDCServiceClientScript(realmName, clientID, pack)
 	}
 
+	// A request-bound client declares no address of its own: the Job makes
+	// it with none, and the Composition registers https://* once the realm
+	// narrows it. [] and not null, which Keycloak does not take for a list.
+	if redirectURIs == nil {
+		redirectURIs = []string{}
+	}
 	redirectJSON, _ := json.Marshal(redirectURIs)
 	mapperBlocks := buildMapperPOSTBlocks(pack, templates)
 

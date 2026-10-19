@@ -571,8 +571,8 @@ def wiring_kernel_postgres(apps, wanted, fn):
     if bootstrap_application("cnpg")["spec"]["destination"]["namespace"] != kp["namespace"]:
         raise Failure("CloudNativePG's operator no longer runs beside kernel-postgres; the status rule admits its own namespace only")
 
-    # Keycloak and OpenFGA: where their values land is where the Suze claim
-    # installs them, and the host they are handed is this server's.
+    # Keycloak and OpenFGA: where the identity ApplicationSet installs them,
+    # and the host they are handed is this server's.
     identity = application_set("gentian-identity")
     if identity is None:
         raise Failure("no gentian-identity ApplicationSet rendered")
@@ -591,21 +591,20 @@ def wiring_kernel_postgres(apps, wanted, fn):
         rows = [c for c in wanted["kernel-postgres"] if c["client"].startswith(word)]
         if len(rows) != 1 or rows[0]["namespace"] != placed[app] or rows[0]["port"] != CNPG_INSTANCE_PORTS["postgresql"]:
             raise Failure(f"the table's {word} is not in {placed[app]} on {CNPG_INSTANCE_PORTS['postgresql']}")
-    scaffold = (ROOT / "scripts/lib/bootstrap.sh").read_text()
-    for key, app in (("idpNamespace", "keycloak-idp"), ("fgaNamespace", "openfga")):
-        if f"  {key}: {placed[app]}\n" not in scaffold:
-            raise Failure(f"the scaffolded Suze claim does not set {key} to {placed[app]}")
-    keycloak = helm("kc", "kernel/services/keycloak-idp/manifests", "-n", placed["keycloak-idp"], "--set", f"dbHost={host}")
-    base = [d for d in keycloak if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "keycloak-idp-base-values"]
-    database = yaml.safe_load(base[0]["data"]["values.yaml"])["database"] if base else {}
-    if (database.get("hostname"), database.get("port")) != (host, CNPG_INSTANCE_PORTS["postgresql"]):
-        raise Failure(f"Keycloak's values name the database {database.get('hostname')}:{database.get('port')}")
-    openfga = helm("fga", "kernel/services/openfga/manifests", "-n", placed["openfga"], "--set", f"dbHost={host}")
-    uri = [d for d in openfga if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "openfga-sensitive-values"]
-    if not uri or f"@{host}:{CNPG_INSTANCE_PORTS['postgresql']}/openfga" not in uri[0]["spec"]["target"]["template"]["data"]["sensitive-values.yaml"]:
+    # The ApplicationSet hands the host to Keycloak's subchart directly; a
+    # rendered StatefulSet is what the pods will run.
+    keycloak = helm("gentian-idp-keycloak", "kernel/services/keycloak-idp/manifests", "-n", placed["keycloak-idp"], "--set", f"keycloakx.database.hostname={host}")
+    sets = [d for d in keycloak if d.get("kind") == "StatefulSet"]
+    env = {e["name"]: e.get("value") for c in sets[0]["spec"]["template"]["spec"]["containers"] for e in c.get("env", [])} if sets else {}
+    if (env.get("KC_DB_URL_HOST"), env.get("KC_DB_URL_PORT")) != (host, str(CNPG_INSTANCE_PORTS["postgresql"])):
+        raise Failure(f"Keycloak's pod names the database {env.get('KC_DB_URL_HOST')}:{env.get('KC_DB_URL_PORT')}")
+    openfga = helm("gentian-openfga", "kernel/services/openfga/manifests", "-n", placed["openfga"], "--set", f"dbHost={host}")
+    uri = [d for d in openfga if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "openfga-credentials"]
+    if not uri or f"@{host}:{CNPG_INSTANCE_PORTS['postgresql']}/openfga" not in uri[0]["spec"]["target"]["template"]["data"]["uri"]:
         raise Failure("OpenFGA's datastore URI does not name this server on the data port")
-    values = [d for d in openfga if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "openfga-base-values"]
-    if yaml.safe_load(values[0]["data"]["values.yaml"])["datastore"].get("migrationType") != "initContainer":
+    deployments = [d for d in openfga if d.get("kind") == "Deployment"]
+    inits = [c["name"] for d in deployments for c in d["spec"]["template"]["spec"].get("initContainers", [])]
+    if "migrate-database" not in inits:
         raise Failure("OpenFGA's migration no longer runs as an init container of its own pod: find where it runs and admit it")
 
     # The operator and the registrar: the labels the rule selects on, where

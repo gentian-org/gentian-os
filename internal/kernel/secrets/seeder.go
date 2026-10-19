@@ -621,6 +621,11 @@ type ContractCreds struct {
 }
 
 // SeedContract writes a unique password into OpenBao for an integration contract.
+//
+// The endpoint and the user are written empty with it, and are the binding's
+// to fill (IntegrationBindingReconciler): a component that maps them is
+// installed whether or not the other side of the contract is, and the
+// ExternalSecret that reads them fails on a property the path does not hold.
 func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
 	salt := ContractPath(tenant, contract)
 	g, err := s.gen(ctx, salt, "password", 40)
@@ -629,11 +634,40 @@ func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (Con
 	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"password": g.value,
+		"endpoint": "",
+		"user":     "",
 	}, g.reproducible)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
 	}
 	return ContractCreds{Password: got["password"]}, nil
+}
+
+// ClearContractEndpoint empties the endpoint of a contract no granted
+// provider answers any more, as SeedContract writes it for a consumer with
+// none: the consumer is told there is no provider, not an address nothing
+// answers at. The password stays; the user does too, it names no address.
+func (s *Seeder) ClearContractEndpoint(ctx context.Context, tenant, contract string) error {
+	path := ContractPath(tenant, contract)
+	data, err := s.w.Get(ctx, path)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("read contract(%s/%s): %w", tenant, contract, err)
+	}
+	if data["endpoint"] == "" {
+		return nil
+	}
+	cleared := make(map[string]string, len(data))
+	for k, v := range data {
+		cleared[k] = v
+	}
+	cleared["endpoint"] = ""
+	if err := s.w.Put(ctx, path, cleared); err != nil {
+		return fmt.Errorf("clear contract endpoint(%s/%s): %w", tenant, contract, err)
+	}
+	return nil
 }
 
 func (s *Seeder) Read(ctx context.Context, logicalPath string) (map[string]string, error) {

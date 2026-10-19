@@ -46,6 +46,13 @@ type IntegrationBindingSpec struct {
 	// Auth configures how the consumer authenticates to the provider.
 	// +optional
 	Auth *BindingAuth `json:"auth,omitempty"`
+
+	// Endpoint is where the provider answers the contract, copied from its
+	// profile's spec.provides entry. The consumer is told its address under
+	// the endpoint of the contract's credentials, and a grant opens the way
+	// to its port only.
+	// +optional
+	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
 }
 
 // AppEndpoint references an app instance within a namespace.

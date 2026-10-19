@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -47,26 +48,52 @@ func oidcPacksNeedEntitlementGroups(configs []oidcAppConfig) bool {
 	return false
 }
 
-func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]oidcAppConfig, error) {
-	var configs []oidcAppConfig
+// oidcClientRefusal is why one app's OIDC client cannot be made as its
+// profile declares it. It is that app's alone: the app is left out of what is
+// provisioned and named on the tenant's IdentityReady condition, and every
+// other app of the tenant is provisioned as before. Any other error -- the API
+// server not answering -- still ends the reconcile, as it is no app's.
+type oidcClientRefusal struct{ msg string }
+
+func (e *oidcClientRefusal) Error() string { return e.msg }
+
+func refuseOIDCClient(format string, args ...any) error {
+	return &oidcClientRefusal{msg: fmt.Sprintf(format, args...)}
+}
+
+// collectOIDCAppConfigs resolves the OIDC clients of the tenant's apps. refused
+// are the apps whose client cannot be made as declared (oidcClientRefusal),
+// one message each; they are not among configs.
+func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) (configs []oidcAppConfig, refused []string, err error) {
 	seen := make(map[string]struct{})
+	add := func(key string, cfg oidcAppConfig, err error) error {
+		var refusal *oidcClientRefusal
+		if stderrors.As(err, &refusal) {
+			refused = append(refused, refusal.msg)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		configs = append(configs, cfg)
+		seen[key] = struct{}{}
+		return nil
+	}
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
+			return nil, nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
 		if profile.Services() != nil &&
 			profile.Services().Identity != nil &&
 			profile.Services().Identity.OIDC != nil {
 			cfg, err := r.resolveOIDCAppConfig(ctx, tenant, app.Profile)
-			if err != nil {
-				return nil, err
+			if err := add(app.Profile, cfg, err); err != nil {
+				return nil, nil, err
 			}
-			configs = append(configs, cfg)
-			seen[app.Profile] = struct{}{}
 		}
 		for _, sidecar := range profile.Spec.Extensions {
 			if sidecar.ServiceRequirements == nil ||
@@ -79,14 +106,12 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 				continue
 			}
 			cfg, err := r.resolveSidecarOIDCAppConfig(ctx, tenant, app.Profile, sidecar)
-			if err != nil {
-				return nil, err
+			if err := add(scKey, cfg, err); err != nil {
+				return nil, nil, err
 			}
-			configs = append(configs, cfg)
-			seen[scKey] = struct{}{}
 		}
 	}
-	return configs, nil
+	return configs, refused, nil
 }
 
 // cleanupOrphanedClientJobs deletes Keycloak OIDC/SAML client provisioning Jobs for
@@ -136,7 +161,15 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs)
+	// A request-bound client is the app Composition's to compose, with the
+	// rule that narrows its https://* (OIDCRequestParameterSpec). A profile
+	// that has no Composition has its client made by a Job, which holds no
+	// such rule and would register a client the parameter binds nothing on.
+	if oidcSpec.RequestParameter != nil && profile.IsAPI() {
+		return oidcAppConfig{}, refuseOIDCClient(
+			"ComponentProfile %s: requires.services.identity.oidc.requestParameter needs the app Composition, which an API entry does not have", profileName)
+	}
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs, oidcSpec.RequestParameter != nil)
 	if err != nil {
 		return oidcAppConfig{}, err
 	}
@@ -150,13 +183,30 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if oidcSpec.OIDCPackRef != "" {
 		packKey = oidcSpec.OIDCPackRef
 	}
-	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
+	if err := r.resolveOIDCPack(ctx, &cfg, profileName, packKey); err != nil {
 		return oidcAppConfig{}, err
-	} else if ok {
+	}
+	return cfg, nil
+}
+
+// resolveOIDCPack puts the pack the profile's own catalogue holds under
+// packKey on cfg, where the app Composition looks for it (oidc.ResolvePack).
+// A profile two catalogues are labelled for is refused: which one the
+// Composition reads is not defined, so neither writer can be told the client
+// is its own.
+func (r *TenantReconciler) resolveOIDCPack(ctx context.Context, cfg *oidcAppConfig, profileName, packKey string) error {
+	pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, profileName, packKey)
+	if stderrors.Is(err, oidc.ErrCatalogAmbiguous) {
+		return refuseOIDCClient("ComponentProfile %s: %v", profileName, err)
+	}
+	if err != nil {
+		return err
+	}
+	if ok {
 		cfg.pack = &pack
 		cfg.templates = templates
 	}
-	return cfg, nil
+	return nil
 }
 
 func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
@@ -170,7 +220,15 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs)
+	// The app Composition holds the rule that narrows a request-bound
+	// client's https://* for the app's own client alone; an extension's it
+	// composes without one, so nothing would hold its request parameter
+	// (see resolveOIDCAppConfig).
+	if oidcSpec.RequestParameter != nil {
+		return oidcAppConfig{}, refuseOIDCClient(
+			"ComponentProfile %s: extension %s declares requestParameter, which only the app's own client can: the app Composition binds no request parameter on an extension's client", parentProfile, sidecar.Name)
+	}
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs, false)
 	if err != nil {
 		return oidcAppConfig{}, err
 	}
@@ -186,11 +244,10 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 		clientID:      clientID,
 		redirectURIs:  redirects,
 	}
-	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
+	// The parent's catalogue: the extension's client is declared on it, and
+	// the app Composition looks for its pack there.
+	if err := r.resolveOIDCPack(ctx, &cfg, parentProfile, packKey); err != nil {
 		return oidcAppConfig{}, err
-	} else if ok {
-		cfg.pack = &pack
-		cfg.templates = templates
 	}
 	return cfg, nil
 }
@@ -210,12 +267,18 @@ func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppC
 	return profile, nil
 }
 
+// resolveOIDCRedirectURIs is where the client's codes may be delivered: the
+// declared redirectUris, else the profile's default annotation. A
+// request-bound client needs neither -- its address is computed from each
+// request, and the Composition registers https://* for it -- so for one
+// nothing declared is no address, not a refusal.
 func (r *TenantReconciler) resolveOIDCRedirectURIs(
 	_ context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	profile *gentianov1alpha1.ComponentProfile,
 	profileName string,
 	uris []string,
+	requestBound bool,
 ) ([]string, error) {
 	if len(uris) > 0 {
 		return substituteTenantDomainInURIs(tenant, uris, r.KernelDomain, r.TenancyMode), nil
@@ -223,14 +286,17 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 	if profile != nil {
 		defaults, err := gentianov1alpha1.ProfileOIDCDefaultRedirectURIs(profile)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s on ComponentProfile %s: %w", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
+			return nil, refuseOIDCClient("parse %s on ComponentProfile %s: %v", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
 		}
 		if len(defaults) > 0 {
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
+	if requestBound {
+		return nil, nil
+	}
 	// Sidecar OIDC redirect URIs must be declared on the ComponentProfile or in the pack spec.
-	return nil, fmt.Errorf("ComponentProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
+	return nil, refuseOIDCClient("ComponentProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
 		profileName, gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs)
 }
 

@@ -83,6 +83,11 @@ case "${verb}" in
             provider.pkg.crossplane.io|function.pkg.crossplane.io)
                 [[ "${jsonpath}" == *Healthy* ]] && printf 'True'
                 exit 0 ;;
+            # The providers' role, with the checksum of the file it was
+            # applied from as last recorded (${STATE}/rbac-sha).
+            clusterrole)
+                [[ "${jsonpath}" == *source-sha* ]] && cat "${STATE}/rbac-sha" 2>/dev/null
+                exit 0 ;;
             providerconfig.*) exit 0 ;;
             managed) exit 0 ;;
             # Crossplane's own Deployments, available when ${STATE}/objects
@@ -276,6 +281,7 @@ fi
 # check()
 new_state; all_crds
 echo "mrap/gentian-platform" >> "${STATE}/objects"; activation_sha > "${STATE}/sha"
+run B-05-crossplane-providers '_b05_rbac_sha' > "${STATE}/rbac-sha"
 run B-05-crossplane-providers '_b05_tenant_apps_kubeconfig' | base64 | tr -d '\n' > "${STATE}/kubeconfig"
 out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
 if [[ "${out}" == *"rc=0"* ]]; then
@@ -283,6 +289,14 @@ if [[ "${out}" == *"rc=0"* ]]; then
 else
     bad "B-05 check: policy from this checkout, every type established: satisfied" "${out}"
 fi
+echo "0000000000000000" > "${STATE}/rbac-sha"
+out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
+if [[ "${out}" == *"rc=1"* ]]; then
+    ok "B-05 check: a providers' role applied from another version of the file is not"
+else
+    bad "B-05 check: a providers' role applied from another version of the file is not" "${out}"
+fi
+run B-05-crossplane-providers '_b05_rbac_sha' > "${STATE}/rbac-sha"
 echo "c3RhbGUK" > "${STATE}/kubeconfig"
 out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
 if [[ "${out}" == *"rc=1"* ]]; then

@@ -150,6 +150,50 @@ type TenantComponentRef struct {
 	Profile string `json:"profile"`
 }
 
+// TenantGroup is a group of the tenant's realm declared in git. The platform
+// makes it; people are put in it in the Admin Console, and an app's profile
+// or a TenantSignInFrom names it. It is not renamed or deleted from the
+// console: git holds it.
+type TenantGroup struct {
+	// Name is the group's name in the realm. Not one the platform's own
+	// groups take (gentian...).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="names beginning with gentian are the platform's own groups"
+	Name string `json:"name"`
+}
+
+// TenantSignInFrom is another tenant of this cluster whose people sign in to
+// this one with their account there, and the groups of this tenant they are
+// in for it. It takes both tenants: this one names the other here, and the
+// other names this one in its spec.signInTo. Either alone opens nothing.
+//
+// The platform makes, in the other tenant's realm, the client this realm
+// signs in with (authenticated by a JWT this realm signs: no secret), and in
+// this realm an identity provider, tenant-<other>, that trusts the other
+// realm's verified addresses and puts each person who arrives in the groups
+// named, at every sign-in. An account that is already here under the same
+// address is linked only once its owner proves it.
+type TenantSignInFrom struct {
+	// Tenant is the other tenant.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Tenant string `json:"tenant"`
+
+	// Groups are the groups of this tenant its people are in: a name of
+	// spec.groups, or members (the tenant's members, who may enter it). The
+	// tenant's administrators and its perimeter approvers are never given
+	// this way.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Groups []string `json:"groups,omitempty"`
+}
+
 // SignUpEnabled reports whether people make their own accounts in this
 // tenant's realm (spec.signUp.enabled); off unless the tenant says so.
 func (t *Tenant) SignUpEnabled() bool {
@@ -229,6 +273,30 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxItems=8
 	OrganizationCommissioners []TenantComponentRef `json:"organizationCommissioners,omitempty"`
 
+	// Groups are groups of the tenant's realm declared in git; see
+	// TenantGroup.
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	Groups []TenantGroup `json:"groups,omitempty"`
+
+	// SignInTo are other tenants of this cluster this tenant's people may
+	// sign in to with their account here: this tenant's half of the other's
+	// spec.signInFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	SignInTo []string `json:"signInTo,omitempty"`
+
+	// SignInFrom are other tenants of this cluster whose people sign in here;
+	// see TenantSignInFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=tenant
+	SignInFrom []TenantSignInFrom `json:"signInFrom,omitempty"`
+
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
 	Isolation *TenantIsolation `json:"isolation,omitempty"`
@@ -303,6 +371,14 @@ type TenantSpec struct {
 	// +kubebuilder:validation:items:Pattern=`^[a-z]{2}(-[A-Za-z0-9]{2,8})?$`
 	Locales []string `json:"locales,omitempty"`
 
+	// Country is the country the tenant is in, as an ISO 3166-1 alpha-2 code
+	// in upper case (CH, DE). A component whose profile names
+	// valueMapping.platform.countryKey is told it; the App Store app asks a
+	// store for the support offered there. Unset: no country is assumed.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z]{2}$`
+	Country string `json:"country,omitempty"`
+
 	// Privileges are the privilege requests a person granted for this
 	// tenant's components (AD-5). They live here because a grant has to
 	// survive the thing it applies to: a Component is rebuilt from its
@@ -321,6 +397,18 @@ type TenantSpec struct {
 	// +listMapKey=privilege
 	// +kubebuilder:validation:MaxItems=256
 	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
+
+	// Grants are what each app of the tenant may consume from the others,
+	// and which of them may consume from it, as the tenant's administrators
+	// granted it (can_grant). The director writes them as the patch
+	// grants.yaml beside the tenant; the operator makes each the AppGrant of
+	// its app in the tenant's namespace, and removes an AppGrant it made
+	// whose entry is gone.
+	// +optional
+	// +listType=map
+	// +listMapKey=app
+	// +kubebuilder:validation:MaxItems=256
+	Grants []TenantAppGrant `json:"grants,omitempty"`
 
 	// Exposures are the perimeter surfaces a perimeter approver published
 	// (AD-6): what this tenant has on the internet, from when, until when,
@@ -477,6 +565,28 @@ func (e *TenantExposure) Enablement() ExposureEnablement {
 // component and the privilege -- together they are what makes a grant unique,
 // and letting the API server enforce that is better than a controller
 // discovering two answers to the same question.
+// TenantAppGrant is one app's grant, with who gave it and when.
+type TenantAppGrant struct {
+	AppGrantSpec `json:",inline"`
+
+	// GrantedBy is the Keycloak subject who granted it, set by the director
+	// from the caller's token, never supplied by a caller. Empty only on a
+	// grant carried over from before grants were recorded here; its commit
+	// still names who made it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	GrantedBy string `json:"grantedBy,omitempty"`
+
+	// GrantedAt is when.
+	// +optional
+	GrantedAt *metav1.Time `json:"grantedAt,omitempty"`
+
+	// Reason in the granter's words, where they gave one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason,omitempty"`
+}
+
 type TenantPrivilegeGrant struct {
 	// Install names the Component this grant is for, which is the component's
 	// object name in the tenant's namespace.
@@ -646,11 +756,13 @@ type TenantCatalogue struct {
 }
 
 // TenantCatalogueSource is one catalogue of a tenant: an address that serves
-// index.yaml and profiles/<name>.yaml, or a directory of the cluster's own
-// deployments repository that holds them.
+// index.yaml and profiles/<name>.yaml, or an OCI artifact that holds them,
+// read with the credential of a repository the tenant declared. A catalogue
+// is never kept in the cluster's deployments repository, which holds the
+// cluster's state only: there is no field for a directory of it, and a
+// source that names one where an address or an artifact belongs is refused.
 //
-// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.path)",message="a catalogue states where it is read from once: url, or path"
-// +kubebuilder:validation:XValidation:rule="!has(self.path) || !has(self.addedBy) || self.addedBy == 'cluster'",message="a catalogue kept in the deployments repository (path) is added by the cluster's administrator: addedBy must be cluster"
+// +kubebuilder:validation:XValidation:rule="(has(self.url) ? 1 : 0) + (has(self.oci) ? 1 : 0) == 1",message="a catalogue states where it is read from once: url or oci (a directory of the deployments repository, path, is not a catalogue source)"
 type TenantCatalogueSource struct {
 	// Name is the catalogue's name: the first half of a coordinate,
 	// <name>/<app>. It is not the name of a catalogue of the whole cluster,
@@ -665,18 +777,11 @@ type TenantCatalogueSource struct {
 	// +optional
 	URL string `json:"url,omitempty"`
 
-	// Path is the directory of the cluster's own deployments repository the
-	// catalogue is kept in, in place of an address: names separated by '/',
-	// from the top of the repository, none beginning with a dot. The
-	// director reads it from the checkout it already holds. Only the
-	// cluster's administrator declares one. clusters/<cluster>/catalogue,
-	// where the director writes the profiles tenants installed, is never a
-	// catalogue: the director refuses it and does not read it, which the
-	// schema leaves to it.
-	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$`
-	// +kubebuilder:validation:MaxLength=255
+	// OCI is an OCI artifact the catalogue is kept as, in place of an
+	// address: read with the credential of a repository declared for this
+	// tenant, and with no other.
 	// +optional
-	Path string `json:"path,omitempty"`
+	OCI *CatalogueOCISource `json:"oci,omitempty"`
 
 	// AddedBy says who added it: the cluster's administrator, or the
 	// tenant's own under delegation. A tenant's administrator removes only
@@ -685,6 +790,27 @@ type TenantCatalogueSource struct {
 	// +kubebuilder:default=cluster
 	// +optional
 	AddedBy string `json:"addedBy,omitempty"`
+}
+
+// CatalogueOCISource is a catalogue kept as an OCI artifact: one layer, a
+// gzip'd tar of index.yaml and profiles/<name>.yaml, of the artifact type
+// application/vnd.gentianos.catalogue.v1.
+type CatalogueOCISource struct {
+	// Repository is the name of the repository whose credential the
+	// artifact is read with: one declared for the tenant, for a tenant's
+	// catalogue; one declared for the cluster, for a catalogue of the whole
+	// cluster. The artifact must lie inside its address.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Repository string `json:"repository"`
+
+	// Artifact is the reference, without a scheme:
+	// <registry host>/<repository>:<tag>, or @sha256:<digest> in place of
+	// or after the tag. It is pulled over https, on port 443, from a public
+	// host.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9.-]+(:443)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$`
+	// +kubebuilder:validation:MaxLength=1024
+	Artifact string `json:"artifact"`
 }
 
 // Who added a tenant's catalogue.

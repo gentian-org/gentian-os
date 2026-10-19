@@ -57,6 +57,7 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
 		return err
 	}
+	keepFinishedJobs(jobs)
 	stampScriptHashes(jobs)
 	// A Job's pod template is immutable, so re-applying a changed script does
 	// nothing to a Job that already ran: the old script stays the last thing
@@ -190,7 +191,8 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
 	}
 
-	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	// An app whose client is refused gets no Job; ensureIdentity says why.
+	oidcConfigs, _, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -318,9 +320,12 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 
 // crossplaneOwnsOIDCClient reports whether the app Composition already emits a
 // provider-keycloak Client MR, so the operator pack/client Job can be skipped.
-// Sidecars: when the parent profile has compositionRef, Crossplane owns Client MRs
-// for sidecar OIDC clients too; the operator still reconciles OIDC pack Jobs when
-// a pack catalog is configured (see collectOIDCAppConfigs).
+// That is every client without an OIDC pack of an app that has a Composition:
+// the app's own (requires.services.identity.oidc) and each extension's
+// (extensions[].kernelRequirements.identity.oidc), which app-default composes
+// beside it. A client with a pack is the pack Job's; an extension's
+// request-bound client is refused before it gets here
+// (resolveSidecarOIDCAppConfig).
 func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oidcAppConfig) bool {
 	if cfg.pack != nil {
 		return false
@@ -332,8 +337,11 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oi
 	if profile.IsAPI() {
 		return false
 	}
+	// An extension's client is declared on the parent profile, and the
+	// parent's Composition composes it. Not only where the parent names
+	// package.composition: app-default renders an app that names none.
 	if cfg.parentProfile != "" {
-		return profile.Spec.Package.Composition != ""
+		return true
 	}
 	kr := profile.Services()
 	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {
@@ -536,19 +544,35 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 // has since changed.
 const provisioningScriptHashAnnotation = "gentianos.io/script-hash"
 
-// scriptHash digests what a Job actually executes. Only the image and the
-// command line are hashed — env values (a freshly generated ROLE_PW among them)
-// change on every reconcile and would make every Job look permanently stale.
-func scriptHash(job *batchv1.Job) string {
-	h := sha256.New()
-	for _, c := range job.Spec.Template.Spec.Containers {
-		h.Write([]byte(c.Image))
-		for _, part := range append(append([]string{}, c.Command...), c.Args...) {
-			h.Write([]byte(part))
-			h.Write([]byte{0})
-		}
+// keepFinishedJobs takes the TTL off Jobs Crossplane is to hold.
+//
+// Each of these Jobs is the manifest of a provider-kubernetes Object, and an
+// Object recreates whatever it holds the moment it finds it missing. A TTL
+// therefore never retired one of them: Kubernetes deleted the finished Job,
+// the Object made it again, and the script ran again — every TTL, forever,
+// against a Keycloak or store that had long been set up. A finished Job now
+// stays, as the record that its step ran, and runs again only when what it
+// runs changes (retireStaleProvisioningJobs) or it failed
+// (waitForProvisioningJob). The builders keep their TTL for the Jobs the
+// operator makes itself, which nothing recreates.
+func keepFinishedJobs(jobs []batchv1.Job) {
+	for i := range jobs {
+		jobs[i].Spec.TTLSecondsAfterFinished = nil
 	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// scriptHash digests what a Job runs: its whole pod template — image, command,
+// arguments, and env, which is how a Job is handed its inputs (the groups a
+// realm is to have, whether its administrator needs a second factor). A
+// changed input is a changed hash, and the Job runs again with it.
+//
+// Nothing in a pod template is generated per reconcile: a credential reaches a
+// provisioning Job as a reference to the Secret its Job owns (jobSecret), never
+// as a value, so the hash is stable for as long as the inputs are.
+func scriptHash(job *batchv1.Job) string {
+	raw, _ := json.Marshal(job.Spec.Template) // a PodTemplateSpec always marshals
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func stampScriptHashes(jobs []batchv1.Job) {
@@ -561,7 +585,8 @@ func stampScriptHashes(jobs []batchv1.Job) {
 }
 
 // retireStaleProvisioningJobs deletes finished provisioning Jobs whose script no
-// longer matches the desired one, so they are re-created and re-run.
+// longer matches the desired one, so they are re-created and re-run. It is how
+// a finished Job runs again: none of them carries a TTL (keepFinishedJobs).
 //
 // Only finished Jobs are touched: a running one is either about to converge
 // anyway or is being watched by a reconcile that expects it to exist. Jobs

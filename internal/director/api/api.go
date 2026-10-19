@@ -75,6 +75,10 @@ type Repository interface {
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
+	TenantGroups(ctx context.Context, tenant string) ([]string, error)
+	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
+	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
+	SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
@@ -98,10 +102,13 @@ type Repository interface {
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
 	AddClusterCatalogueSource(ctx context.Context, name, address string, meta gitops.Meta) (gitops.Result, error)
-	AddClusterCatalogueDirectory(ctx context.Context, name, dir string, meta gitops.Meta) (gitops.Result, error)
 	RemoveClusterCatalogueSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
-	AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta gitops.Meta) (gitops.Result, error)
+	AddClusterCatalogueOCI(ctx context.Context, name string, oci gitops.CatalogueOCI, meta gitops.Meta) (gitops.Result, error)
+	AddTenantCatalogueOCI(ctx context.Context, tenant, name string, oci gitops.CatalogueOCI, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	// RegistryRepository answers a repository owner declared ("" for the
+	// cluster), as a catalogue kept as an OCI artifact is read with it.
+	RegistryRepository(ctx context.Context, owner, name string) (catalogue.DeclaredRegistry, error)
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
@@ -110,6 +117,8 @@ type Repository interface {
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
 	TenantLocales(ctx context.Context, tenant string) ([]string, error)
 	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
+	TenantCountry(ctx context.Context, tenant string) (string, error)
+	SetTenantCountry(ctx context.Context, tenant, country string, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
@@ -476,6 +485,13 @@ func (s *Server) routes() {
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// A tenant's own groups, and who signs in to it from another tenant
+		// (tenant_sign_in.go).
+		s.guarded("GET /v1/clusters/{c}/tenants/{t}/groups", "can_audit", s.clusterObject, s.tenantGroups)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/groups", "can_configure", s.clusterObject, s.setTenantGroups)
+		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
 		// A second address for one published surface, directly under the
 		// cluster's own domain. can_configure, and not the tenant's
 		// approver: a name under the cluster's domain is the cluster's to
@@ -734,6 +750,12 @@ func (s *Server) routes() {
 		// languages a tenant's people are offered is the tenant's to choose.
 		s.guarded("GET /v1/tenants/{t}/locales", "can_view", tenantObject, s.tenantLocales)
 		s.guarded("PUT /v1/tenants/{t}/locales", "can_set_policy", tenantObject, s.setTenantLocales)
+
+		// The country the tenant is in, beside its languages and changed by
+		// the same people. Declared in the manifest; a component whose
+		// profile names countryKey is told it.
+		s.guarded("GET /v1/tenants/{t}/country", "can_view", tenantObject, s.tenantCountry)
+		s.guarded("PUT /v1/tenants/{t}/country", "can_set_policy", tenantObject, s.setTenantCountry)
 
 		// The privileges this tenant's components asked for and what was
 		// answered. A profile declaring a privilege is a request (AD-5); the
@@ -1194,15 +1216,6 @@ func (s *Server) fetchEntry(
 		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
 			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
 		return nil, false
-	case errors.Is(err, gitops.ErrCatalogueDirectoryRefused):
-		// The directory was one a catalogue is read from when it was added,
-		// and what is there now is not: a symbolic link, or a name that is
-		// not a plain file's.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue's directory is not one a catalogue is read from",
-			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the directory of catalogue "+source.Name+
-			" in the deployments repository is not one a catalogue is read from: "+refusedDirectory(err)+"; nothing was installed")
-		return nil, false
 	case errors.Is(err, profilebundle.ErrRefused):
 		// The build that was asked for, and not something this cluster
 		// applies: a kind a bundle may not hold, an object that is not this
@@ -1587,7 +1600,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, `+
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", `+
 			`"brokeredTo": [{"name": "<name>", "redirectURI": "https://…", "jwksURL": "https://…"}]`)
 		return
 	}
@@ -1602,6 +1615,12 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
 		return
 	}
+	country, err := gitops.NormaliseCountry(body.Country)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.Country = country
 	// Whether its administrators approve its public addresses is the
 	// request's to say. Unsaid it is off, except for the user tenant of a
 	// single-tenancy cluster (gitops.AdminsApproveAtCreation). Settled here
@@ -1626,7 +1645,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo)}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo), "country": body.Country}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return

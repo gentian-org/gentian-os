@@ -152,12 +152,40 @@ func (r *TenantReconciler) findProviderInTenant(
 	return ""
 }
 
+// providedEndpoint is where a provider says it answers a contract: the
+// endpoint of its profile's spec.provides entry for it, or nil where it names
+// none or does not list the contract.
+func (r *TenantReconciler) providedEndpoint(ctx context.Context, providerApp, contract string) (*gentianov1alpha1.ContractEndpoint, error) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: providerApp}, profile); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get ComponentProfile %s: %w", providerApp, err)
+	}
+	for _, c := range profile.Spec.Provides {
+		if c.Name == contract && c.Endpoint != nil {
+			return c.Endpoint.DeepCopy(), nil
+		}
+	}
+	return nil, nil
+}
+
+// contractURL is the address a consumer in the same namespace calls the
+// provider's endpoint at. In-cluster rather than through the gateway: the
+// endpoint is for a machine, and a round trip out to the edge and back would
+// need a session neither app has any business holding.
+func contractURL(e *gentianov1alpha1.ContractEndpoint, namespace string) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", e.Service, namespace, e.Port, e.Path)
+}
+
 // --- Builder ----------------------------------------------------------------
 
 // buildIntegrationBinding constructs an IntegrationBinding CR.
 func buildIntegrationBinding(
 	name, nsName, tenantName, consumerApp, providerApp string,
 	integration gentianov1alpha1.IntegrationRef,
+	endpoint *gentianov1alpha1.ContractEndpoint,
 ) *gentianov1alpha1.IntegrationBinding {
 	return &gentianov1alpha1.IntegrationBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -184,6 +212,7 @@ func buildIntegrationBinding(
 				Method:    "api-key",
 				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
 			},
+			Endpoint: endpoint,
 		},
 	}
 }

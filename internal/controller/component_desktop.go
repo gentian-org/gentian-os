@@ -104,6 +104,8 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		// slice, so the index is safe: a tenant declaring nothing gets the
 		// platform's first language.
 		m.DefaultLanguageKey: locales.Normalise(tenant.Spec.Locales)[0],
+		// The tenant's country, or "" while it names none.
+		m.CountryKey: tenant.Spec.Country,
 	} {
 		if key != "" {
 			setPath(out, key, value)

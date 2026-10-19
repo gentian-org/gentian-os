@@ -364,7 +364,7 @@ func (r *ComponentReconciler) signInSidecarFor(
 		identityProvider: fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realm),
 		// The realm's signing certificate, read inside the cluster.
 		descriptorURL: fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/auth/realms/%s/protocol/saml/descriptor",
-			suzeKeycloakHTTPServiceName(), identityNamespace, realm),
+			keycloakHTTPServiceName(), identityNamespace, realm),
 		secrets:   declared.Secrets,
 		logoutURL: signInLogoutURL(comp.Name, comp.Namespace),
 		// Where the app answers. The sidecar's name at the realm and the one

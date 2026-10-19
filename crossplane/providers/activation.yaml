@@ -8,7 +8,7 @@
 # types as ManagedResourceDefinitions, and a type becomes a
 # CustomResourceDefinition with a running controller only when a policy like
 # this one names it. Together the two ship 374 managed types; the platform
-# uses the 25 below. On a managed control plane every installed type costs
+# uses the 32 below. On a managed control plane every installed type costs
 # API-server memory whether or not anything uses it.
 #
 # provider-kubernetes and provider-helm do not declare safe-start: all of
@@ -42,7 +42,7 @@ metadata:
   name: gentian-platform
 spec:
   activate:
-    # -- provider-keycloak (21 of 126) ------------------------------------
+    # -- provider-keycloak (25 of 126) ------------------------------------
     - realms.realm.keycloak.crossplane.io
     - realmevents.realm.keycloak.crossplane.io
     - requiredactions.realm.keycloak.crossplane.io
@@ -66,6 +66,10 @@ spec:
     # form subflow, and a binding of the realm to the flow once it exists.
     - subflows.authenticationflow.keycloak.crossplane.io
     - bindings.authenticationflow.keycloak.crossplane.io
+    # A realm narrows a client that declares a request parameter to the one
+    # redirect address computed from it: a client policy and its profile.
+    - clientpolicyprofiles.realm.keycloak.crossplane.io
+    - clientpolicyprofilepolicies.realm.keycloak.crossplane.io
     # -- provider-vault (7 of 248) ----------------------------------------
     - backends.auth.vault.upbound.io
     - authbackends.jwt.vault.upbound.io

@@ -27,6 +27,48 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-19** (1.3, additive: a 1.2 client reads every answer as before)
+
+1. **Support offers** (feature `support`). An app may carry `support`:
+   the partners that offer support for it, each with who they are and
+   whether the store verified them, the countries and languages covered,
+   the tiers offered, a price hint, a contact address and whether a
+   request may be sent through the API (`SupportOffer`, §5).
+   `GET /v1/apps/{catalogue}/{app}` takes `country` to list only the
+   offers that cover it.
+2. **A support request** is sent with
+   `POST /v1/apps/{catalogue}/{app}/support-requests`, signed in, naming
+   the offer and an optional message; the store answers `202 received`.
+   What the store does with it is the store's. An offer that takes no
+   request answers `422 not-requestable`.
+
+**2026-10-15** (1.2)
+
+1. **The token carries no scopes.** It says who signed in, for which
+   tenant, and until when; what that account may do for the tenant is the
+   store's to decide, from its own records. `GET /v1/meta` lists `scopes`
+   empty, and the app asks for exactly the scopes listed. The error
+   `insufficient-scope` is gone. A 1.1 app that still asks for the old
+   scopes is served as before. What `store.acquire` guarded is kept: a
+   repository credential reaches only an account that manages the tenant
+   (`403 not-tenant-manager` on `POST …/credential`).
+2. **More than one account may manage a tenant** (feature
+   `tenant-access`). The first account that signs in for a tenant holds
+   it. Another account is served — it reads the tenant's standing and
+   acquisitions — and asks to manage the tenant by acquiring for it: its
+   acquisition waits for `approval` until the holder approves or declines
+   it (`GET /v1/tenant/access`, `POST /v1/tenant/access/{subject}/approve`
+   and `…/decline`), or the store's operator does. `GET /v1/tenant`
+   carries the account's own `access.role`. Such a store does not refuse
+   with `tenant-not-claimed`.
+3. **A pending acquisition says what it waits for** (`waitingFor`):
+   `confirmation`, `approval` or `checkout`. Only while it waits for a
+   checkout does it carry `checkoutUrl`. Not additive for a 1.1 app, which
+   takes every `pending` acquisition for a checkout: an app talking to a
+   1.2 store must know `waitingFor`.
+4. `POST /v1/acquisitions` answers `202` for every acquisition not decided
+   at once, and `201` may carry a `failed` one.
+
 **2026-10-15** (1.1, additive: a 1.0 client reads every answer as before)
 
 1. **Reviews are written.** `PUT` and `DELETE /v1/apps/{catalogue}/{app}/reviews/mine`,
@@ -227,11 +269,14 @@ present. A type written `string \| null` is present and may be `null`.
 | `GET /v1/apps/{catalogue}/{app}` | **open** | One app in full: description, screenshots, versions with digests, add-ons, links |
 | `GET /v1/apps/{catalogue}/{app}/reviews` | **open** | A page of reviews and the summary of all of them |
 | `GET /v1/apps/{catalogue}/{app}/reports` | **open** | Evaluations and reports about the app |
-| `GET /v1/tenant` | `store.read` | Whether the store serves the tenant in the token, the reason if not, and notices to show |
-| `GET /v1/acquisitions` | `store.read` | What this tenant has acquired; filter `status` |
-| `POST /v1/acquisitions` | `store.acquire` | Acquire an app: `201` confirmed, `202` checkout needed, `200` already acquired |
-| `GET /v1/acquisitions/{id}` | `store.read` | One acquisition; once confirmed, its confirmation. The repository credential is in it only for a token that also carries `store.acquire` |
-| `POST /v1/acquisitions/{id}/credential` | `store.acquire` | Replaces the repository credentials now; answers the confirmation with the new ones |
+| `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask a partner for support with an app: `202 received` |
+| `GET /v1/tenant` | signed in | Whether the store serves the tenant in the token, the reason if not, notices to show, and the account's role |
+| `GET /v1/tenant/access` | signed in | Who manages the tenant; for the holder, everybody else who does or asks to |
+| `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |
+| `GET /v1/acquisitions` | signed in | What this tenant has acquired; filter `status` |
+| `POST /v1/acquisitions` | signed in | Acquire an app: `201` decided, `202` waiting (checkout, approval, confirmation), `200` already acquired |
+| `GET /v1/acquisitions/{id}` | signed in | One acquisition; once confirmed, its confirmation with the repository credential |
+| `POST /v1/acquisitions/{id}/credential` | signed in | Replaces the repository credentials now; answers the confirmation with the new ones |
 
 *Open* means no token is needed. One may be presented on the five catalogue
 reads, where it only adds `acquired`; `GET /v1/meta` ignores it.
@@ -255,9 +300,9 @@ its standing and its acquisitions.
 |---|---|
 | A **tenant** | is an organisation. The store knows it by its tenant URL |
 | An **account** | is a person, at the store's issuer |
-| Who acts for a tenant | the tenant's administrator creates an account at the store's issuer, and the store associates that account with the tenant. By default **exactly that one account** acts for the tenant |
-| More than one account per tenant | may be allowed later. It is outside this definition for now |
-| An account that is not the tenant's | is refused on the signed-in calls with the reason `tenant-not-claimed` (§4) |
+| Who acts for a tenant | the first account that signs in for the tenant **holds** it, and manages it: acquires for it |
+| More than one account per tenant | another account that signs in is served and may read; it asks to manage the tenant by acquiring for it, and its acquisition waits for `approval` until the holder (or the store's operator) approves (§4, `TenantAccess`) |
+| A store without `tenant-access` | lets exactly the one account act for the tenant, and refuses the others with the reason `tenant-not-claimed` (§4) |
 
 **What the store token is, and is not.** It authenticates the administrator
 to the store. It is valid at the store and nowhere on the cluster. It is
@@ -272,7 +317,7 @@ secret shipped to every cluster is not one — and one client id serves every
 cluster. *app* below is the App Store app's **backend**, on the cluster.
 
 ```
-1. app   → store   GET /v1/meta                         issuer, clientId, scopes
+1. app   → store   GET /v1/meta                         issuer, clientId, scopes (none from 1.2 on)
 2. app   → issuer  GET {issuer}/.well-known/oauth-authorization-server
                                                         authorization and token endpoints (RFC 8414)
    app keeps state and the PKCE verifier, with the administrator's cluster session
@@ -280,7 +325,7 @@ cluster. *app* below is the App Store app's **backend**, on the cluster.
        response_type=code
        client_id=<clientId>
        redirect_uri=https://store.<the tenant's base domain>/oauth/callback
-       scope=store.read store.acquire
+       scope=<the scopes meta lists; absent when it lists none>
        state=<random>
        code_challenge=<S256 of the verifier>  code_challenge_method=S256
        tenant_url=https://<the tenant's host>
@@ -303,7 +348,7 @@ spelling the cluster uses for the tenant in its usage statistics report
 |---|---|---|
 | a | **The backend exchanges the code and keeps the token** | Step 6 is made by the App Store app's backend on the cluster. The store token — and a refresh token, if one is issued — is kept there, bound to the administrator's cluster session, for as long as that session lasts and nowhere durable. It is never handed to the browser: not in a page, not in a cookie, not in an answer of the backend's. The browser carries the code through the redirect and nothing else |
 | b | **One redirect address per tenant** | The issuer redirects to exactly one address, the App Store app's own callback (below), not to any host under the tenant's address |
-| c | **Reading a repository credential needs `store.acquire`** | A token with `store.read` alone is never answered a `credential` (scopes, below) |
+| c | **The token says who, not what** | It carries the account and the tenant URL. What the account may do for the tenant is decided by the store, not by the token (below) |
 
 **The redirect address** is
 
@@ -326,7 +371,7 @@ What the issuer must do:
 | Treat `clientId` as a public client: no secret, `S256` required, a request with no challenge refused | The app runs on somebody else's cluster and cannot keep a secret that every cluster would share |
 | Accept a `redirect_uri` only when it is, character for character, the redirect address above computed from the request's `tenant_url`: `https`, the host `store.<host of tenant_url>`, no port, the path `/oauth/callback`, no query, no fragment. Any other host under the tenant's address is refused, and any other path on the right host | A code for a tenant is delivered only to the App Store app's backend of that tenant, and not to another app that happens to be served under the tenant's address |
 | Refuse a request with no `tenant_url`, or one not in the spelling above (`error=invalid_request`) | A token is for one tenant |
-| Bind the tenant into the token: the store's API must be able to read from the token the account (`sub`), the tenant URL (`tenant_url`), the scopes and the expiry, and act for that tenant URL and no other | Every authenticated answer is about "the tenant in the token" |
+| Bind the tenant into the token: the store's API must be able to read from the token the account (`sub`), the tenant URL (`tenant_url`) and the expiry, and act for that tenant URL and no other | Every authenticated answer is about "the tenant in the token" |
 | Issue the token even when the store does not serve the tenant, or the account is not associated with it | `GET /v1/tenant` then states the refusal and the reason, which the app shows. A sign-in that fails at the issuer can show nothing |
 
 The token is opaque to the app: it reads nothing from it and only the store
@@ -334,13 +379,12 @@ validates it, so its form (a JWT, a reference) is the store's choice. A
 refresh token may be issued; it then rotates on use and stays bound to the
 same tenant URL. Lifetimes are the store's to set (§9).
 
-| Scope | Covers |
-|---|---|
-| `store.read` | Reading what concerns the token's tenant: `GET /v1/tenant` (its standing and notices), `GET /v1/acquisitions`, and `GET /v1/acquisitions/{id}` with its confirmation — **without** any repository credential. It is also what lets the store personalise an open read (`acquired`) |
-| `store.acquire` | Changing what the tenant has at the store, and reading a repository credential: `POST /v1/acquisitions`, which may start a checkout; `POST /v1/acquisitions/{id}/credential`, which replaces a credential; and the `credential` members in the answer of `GET /v1/acquisitions/{id}`. No answer carries a `credential` to a token without this scope |
-
-No scope is needed for the open reads and none covers them: they are
-answered with no token at all. The app asks for both scopes at sign-in.
+**No scopes.** From 1.2 on the token carries none the store reads. Whether
+the account signed in manages the tenant — may acquire for it — is the
+store's to decide from its own records, and `GET /v1/tenant/access` says
+what it decided. A scope in a token would only restate a decision taken
+elsewhere, and could not follow it when the holder approves another account
+an hour after that account signed in.
 
 ### GET /v1/meta
 
@@ -353,7 +397,7 @@ cacheable for the `max-age` it states.
   "name": "Example Store",                   // shown as the title of the sign-in
   "issuer": "https://accounts.store.example",
   "clientId": "gentian-app-store",
-  "scopes": ["store.read", "store.acquire"],
+  "scopes": [],                              // none from 1.2 on
   "defaultLanguage": "en",
   "languages": ["en", "de", "fr", "it"],
   "mediaOrigins": ["https://media.store.example"],   // images come from here and nowhere else
@@ -370,12 +414,12 @@ cacheable for the `max-age` it states.
 | `name` | string ≤ 80 | yes | What the store calls itself |
 | `issuer` | URL | yes | The OAuth 2.0 issuer; its metadata is at `{issuer}/.well-known/oauth-authorization-server` |
 | `clientId` | string | yes | The public client id |
-| `scopes` | string[] | yes | The scopes the app asks for |
+| `scopes` | string[] | yes | The scopes the app asks for; empty from 1.2 on (§3) |
 | `defaultLanguage` | BCP 47 | yes | The language answered in when none asked for matches |
 | `languages` | BCP 47[] | yes | The languages the store has translations in |
 | `mediaOrigins` | origin[] | yes | Where image URLs may point. The app fixes its content security policy from it |
 | `checkoutOrigins` | origin[] | yes | Where a `checkoutUrl` may point |
-| `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`). Unknown values are ignored |
+| `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3). Unknown values are ignored |
 | `links` | object | no | `terms`, `privacy`, `support`, `account`: pages of the store's, each a URL |
 
 ## 4. Tenant standing
@@ -446,7 +490,7 @@ A tenant the store does not serve:
 | `refusal.reason` | Meaning |
 |---|---|
 | `no-reports-for-tenant` | No usage statistics report lists this URL: the cluster does not report, or the URL stated at sign-in is not the tenant's |
-| `tenant-not-claimed` | Reports exist, and the account signed in is not associated with this tenant: it is not the account of the tenant's administrator, or another the store lets act for the tenant (§3) |
+| `tenant-not-claimed` | Reports exist, and the account signed in is not associated with this tenant: it is not the account of the tenant's administrator, or another the store lets act for the tenant (§3). Not used by a store with `tenant-access`, which serves such an account and lets it ask to manage the tenant |
 | `reports-stale` | Reports exist and the latest is older than the store accepts |
 | `tenant-blocked` | The store has decided not to serve this tenant |
 
@@ -472,6 +516,26 @@ reason `tenant-not-claimed`:
   "notices": []
 }
 ```
+
+**Who manages the tenant** (feature `tenant-access`, 1.2). `GET /v1/tenant`
+carries the account's own role, `"access": {"role": "holder"}`.
+
+| Role | Meaning |
+|---|---|
+| `holder` | The first account that signed in for the tenant. Manages it, and decides who else does |
+| `manager` | Approved by the holder or the store's operator. Manages the tenant: acquires for it |
+| `requested` | Asked to manage the tenant, by acquiring for it. Its acquisitions wait for `approval` |
+| `declined` | Such a request, turned down. Its waiting acquisitions failed with `access-declined` |
+| `none` | Signed in; nothing decided. Reads the tenant's standing and acquisitions |
+
+`GET /v1/tenant/access` answers `{"role": …, "accounts": [...]}`; for the
+holder `accounts` lists every other account that manages the tenant, asks
+to, or was declined (`subject`, `name`, `email`, `role`, `since`), and is
+empty for anybody else. The holder decides with
+`POST /v1/tenant/access/{subject}/approve` or `…/decline`; any other account
+is answered `403 not-tenant-holder`. The answer is the account as it then
+stands. Approving lets the account's waiting acquisitions go on; declining
+fails them, and ends a `manager`'s management.
 
 **Notice**
 
@@ -620,7 +684,19 @@ Everything in the summary, and:
               "summary": "Edit documents in the browser."}],
   "addonOf": null,                           // the coordinate this entry extends, when it is an add-on
   "links": [{"rel": "documentation", "label": "Administration manual", "url": "https://publisher.example/docs"}],
-  "license": {"spdx": null, "name": "Example Publisher Enterprise License", "url": "https://publisher.example/license"}
+  "license": {"spdx": null, "name": "Example Publisher Enterprise License", "url": "https://publisher.example/license"},
+  "support": [                               // optional, 1.3: partners that offer support
+    {"id": "so_01JA2K7M",
+     "partner": {"slug": "example-integrations", "name": "Example Integrations GmbH",
+                 "url": "https://integrations.example",
+                 "logoUrl": "https://media.store.example/partners/example-integrations.png",
+                 "verified": true},
+     "countries": ["CH", "DE", "AT"], "languages": ["de", "en"],
+     "tiers": [{"name": "Standard", "description": "Answers on working days within one day."}],
+     "priceHint": "On request",
+     "contactUrl": "https://integrations.example/contact",
+     "requestable": true}
+  ]
 }
 ```
 
@@ -633,6 +709,30 @@ Everything in the summary, and:
 | `addonOf` | coordinate \| null | yes | When this entry is itself an add-on, what it extends |
 | `links` | Link[] | yes | |
 | `license` | `{spdx, name, url}` \| null | yes | The license the app is distributed under. `spdx` and `url` may be `null` |
+| `support` | SupportOffer[] | no | The partners that offer support, in the order to show them, in the language of the request. Absent or empty when none. Added in 1.3 |
+
+`?country=` (ISO 3166-1 alpha-2, 1.3) narrows `support` to the offers that
+cover that country, worldwide ones among them. Without it, an anonymous
+caller is shown every offer; for a signed-in caller the store may narrow them
+to a country it knows of the account (its company's), in a personalised
+answer (`Cache-Control: private, no-store`). A `country` asked always wins.
+
+**SupportOffer** (1.3, feature `support`). Plain text throughout.
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `id` | string ≤ 64 | yes | Opaque; what a support request names |
+| `partner.slug` | string | yes | Stable across offers and languages |
+| `partner.name` | string ≤ 120 | yes | |
+| `partner.url` | URL \| null | yes | The partner's page, opened in a separate window |
+| `partner.logoUrl` | URL \| null | yes | On one of `mediaOrigins`, PNG, JPEG or WebP like every image |
+| `partner.verified` | boolean | yes | Whether the store verified the partner; what that involves is the store's |
+| `countries` | ISO 3166-1 alpha-2[] | yes | The countries covered; empty means worldwide |
+| `languages` | BCP 47[] | yes | The languages support is given in |
+| `tiers` | `{name ≤ 80, description ≤ 500 \| null}`[] | yes | The levels offered |
+| `priceHint` | string ≤ 200 \| null | yes | What it costs, as the partner puts it |
+| `contactUrl` | URL \| null | yes | Opened in a separate window, never embedded |
+| `requestable` | boolean | yes | Whether `POST …/support-requests` takes a request for it |
 
 **Screenshot**
 
@@ -701,7 +801,7 @@ company, never its name), and the summary carries `recommend.yes`,
 ### PUT /v1/apps/{catalogue}/{app}/reviews/mine
 
 The signed-in person's review, written or replaced; one per person and
-entry. Scope `store.review`.
+entry.
 
 ```jsonc
 {"recommend": true,
@@ -718,7 +818,7 @@ one, and with `400` for `support` or `value` on an entry that is not `ee`.
 ### GET and PUT /v1/account/company
 
 The company the person is with: `{"name": "Acme AG", "size": "10-49",
-"industry": "information-communication"}`. `PUT` needs `store.account`.
+"industry": "information-communication"}`.
 The App Store app asks once, at the first sign-in that finds none. The
 sizes and industries, with their names, are in `GET /v1/meta`.
 
@@ -753,6 +853,22 @@ Documents somebody wrote about the app. Newest first, unpaged.
 The store states who issued a report; it does not vouch for it, and nothing
 on the cluster reads one.
 
+### POST /v1/apps/{catalogue}/{app}/support-requests
+
+Signed in (1.3, feature `support`). The person asks for one of the app's
+support offers:
+
+```jsonc
+{"offer": "so_01JA2K7M",                     // a SupportOffer id of this entry
+ "message": "We run it for sixty people and would like help with the upgrade to 32."}   // ≤ 2000, or null
+```
+
+Answered `202 {"id": "sr_01JA2M3Q", "status": "received"}`. What the store
+does with the request — passing it to the partner, and how the partner
+answers — is the store's; nothing on the cluster waits for it. `404` for no
+such app or offer, `422 not-requestable` for an offer with `requestable:
+false`, whose `contactUrl` is the way to it.
+
 ## 6. Acquisitions
 
 An **acquisition** is the store's record that a tenant has an app. Acquiring
@@ -765,7 +881,7 @@ coordinate.
 
 | Status | Meaning | Carries |
 |---|---|---|
-| `pending` | A checkout is open | `checkoutUrl` |
+| `pending` | Not decided yet; `waitingFor` says on what: `confirmation` (the store, usually within a second or two), `approval` (the account does not manage the tenant yet, §4), or `checkout` | `waitingFor`; `checkoutUrl` while it waits for a checkout |
 | `confirmed` | The tenant has the app | `confirmation` |
 | `cancelled` | The person left the checkout, or the acquisition was ended later. Ending an acquisition ends the credential issued for it (§7) | |
 | `failed` | The checkout did not complete | `failure` |
@@ -781,9 +897,10 @@ may become `cancelled`. Closed.
 | `coordinate` | coordinate | yes | |
 | `status` | see above | yes | |
 | `createdAt`, `updatedAt` | date-time | yes | `updatedAt` is when the status last changed |
-| `checkoutUrl` | URL \| null | yes | Present exactly while `pending`. On one of `checkoutOrigins`. Usable only by a person signed in to the store |
+| `waitingFor` | `confirmation` \| `approval` \| `checkout` \| null | no | What a `pending` acquisition waits for; null otherwise. Open: an unknown value is treated like `confirmation`. Added in 1.2 |
+| `checkoutUrl` | URL \| null | yes | Present exactly while `pending` and waiting for `checkout`. On one of `checkoutOrigins`. Usable only by a person signed in to the store |
 | `checkoutExpiresAt` | date-time \| null | yes | When an unfinished checkout is given up and the acquisition becomes `cancelled` |
-| `failure` | `{reason, detail}` \| null | yes | Present exactly when `failed`. `reason` is open (`payment-declined`, `checkout-expired`, `not-available`); `detail` is for the person |
+| `failure` | `{reason, detail}` \| null | yes | Present exactly when `failed`. `reason` is open (`payment-declined`, `checkout-expired`, `not-available`, `access-declined`); `detail` is for the person |
 | `confirmation` | Confirmation \| null | yes | Present exactly when `confirmed` (§7) |
 
 ### POST /v1/acquisitions
@@ -800,8 +917,8 @@ may become `cancelled`. Closed.
 
 | Answer | When | Body |
 |---|---|---|
-| `201` | Acquired now: a free app, or a paid one that needs no checkout | The acquisition, `confirmed`, with its confirmation. `Location: /v1/acquisitions/{id}` |
-| `202` | A checkout is needed | The acquisition, `pending`, with `checkoutUrl`. `Location`, and `Retry-After` |
+| `201` | Decided at once: usually a free app the account may acquire | The acquisition, `confirmed` with its confirmation, or (rarely) `failed`. `Location: /v1/acquisitions/{id}` |
+| `202` | Not decided yet: a checkout is needed, an approval, or the store's own confirmation | The acquisition, `pending`, with `waitingFor` (and `checkoutUrl` while it waits for a checkout). `Location`, and `Retry-After` |
 | `200` | The tenant has a live acquisition of this coordinate already | That acquisition. When `confirmed`, its confirmation is for the `version` asked — or the latest it covers. This is how the app obtains the digest of a newer version of an app already acquired |
 | `404 not-found` | The store lists no such coordinate | |
 | `422 not-acquirable` | The app or version exists and this tenant cannot acquire it (withdrawn, not offered to it) | |
@@ -814,6 +931,7 @@ may become `cancelled`. Closed.
   "status": "pending",
   "createdAt": "2026-10-01T09:14:03Z",
   "updatedAt": "2026-10-01T09:14:03Z",
+  "waitingFor": "checkout",
   "checkoutUrl": "https://store.example/checkout/acq_01JA2M8Y",
   "checkoutExpiresAt": "2026-10-01T10:14:03Z",
   "failure": null,
@@ -834,13 +952,11 @@ seconds. Once `confirmed` the answer carries the confirmation. `?version=`
 names the version the confirmation should be for; otherwise it is for the
 latest the acquisition covers.
 
-**Reading the repository credential needs `store.acquire`.** The operation
-itself needs only `store.read`.
-
-| The token carries | A confirmed acquisition's confirmation |
-|---|---|
-| `store.read` and `store.acquire` | carries `repository.credential`, the one valid now, on the app and on each add-on |
-| `store.read` alone | is the same with no `credential` member anywhere. The answer is `200`, not `403`: the acquisition may be read, the secret may not |
+A confirmed acquisition's confirmation carries `repository.credential`, the
+one valid now, on the app and on each add-on — for an account that manages
+the tenant (§4). For any other account it is the same with no `credential`
+member anywhere. The answer is `200`, not `403`: the acquisition may be
+read, the secret may not.
 
 An acquisition of another tenant answers `404`, not `403`.
 
@@ -863,9 +979,8 @@ An acquisition of another tenant answers `404`, not `403`.
 
 Every acquisition of the tenant in the token, in any status, newest first,
 paged; `?status=` filters. In this listing a confirmation's repositories
-**never carry a `credential`**, whatever the scopes of the token: a
-credential is handed out one acquisition at a time, by the three operations
-around it, and only to a token with `store.acquire`.
+**never carry a `credential`**: a credential is handed out one acquisition
+at a time, by the three operations around it.
 
 ### POST /v1/acquisitions/{id}/credential
 
@@ -900,7 +1015,7 @@ repository — where they are and the credential that repository checks.
   "repository": {                            // absent for an app whose artefacts are public
     "type": "oci",
     "url": "oci://registry.store.example/apps",
-    "credential": {                          // absent in GET /v1/acquisitions, and for a token without store.acquire
+    "credential": {                          // absent in GET /v1/acquisitions, and for an account not managing the tenant
       "username": "tenant-7c1d9e02ab",       // one per tenant
       "token": "…",
       "expiresAt": null                      // it does not expire
@@ -939,7 +1054,7 @@ A free app's confirmation:
 |---|---|---|---|
 | `type` | `oci` | yes | Closed, one value: an OCI registry of charts and images. It is the only type a cluster pulls a tenant's app charts and images from with a credential today. The cluster's director also knows `git`; the app refuses it from a store, because on a cluster a git repository of apps is a source of profiles, which is what a store may not supply |
 | `url` | `oci://<host>[/<path>]` | yes | No credentials in it, no trailing slash. It must contain the address the entry's profile bundle names for its chart: the same host and port, and a path that is a prefix of the chart's by whole segments. The cluster pulls from where the verified bundle says, and this only supplies the credential for that address. It must not overlap another repository the same tenant has declared: the cluster does not install a chart whose address lies inside two of a tenant's repositories, rather than guess which credential is meant. A chart inside none is pulled with no credential |
-| `credential` | Credential | no | Absent in `GET /v1/acquisitions`, and in every answer to a token without `store.acquire` |
+| `credential` | Credential | no | Absent in `GET /v1/acquisitions`, and for an account that does not manage the tenant |
 
 A repository carries no name. **The store names nothing on the cluster**;
 see "The repository's name on the cluster" below. A store hands a tenant
@@ -1071,12 +1186,14 @@ Every answer with a status of 400 or above is `application/problem+json`
 |---|---|---|
 | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields. Also an expired cursor |
 | 401 | `unauthenticated` | Signed-in calls only. No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer`. The app signs the person in again |
-| 403 | `insufficient-scope` | Signed-in calls only. The token lacks the scope the operation needs |
+| 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
+| 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
 | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why. Never from `GET /v1/tenant`, never from an open read |
-| 404 | `not-found` | No such app, acquisition or page — or one that is another tenant's |
+| 404 | `not-found` | No such app, acquisition, support offer or page — or one that is another tenant's |
 | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
 | 409 | `idempotency-conflict` | The `Idempotency-Key` was used before with a different body |
 | 422 | `not-acquirable` | The app or version exists and cannot be acquired by this tenant |
+| 422 | `not-requestable` | The support offer exists and takes no request through the API (1.3) |
 | 429 | `rate-limited` | Carries `Retry-After` |
 | 500 | `internal` | The store failed |
 | 503 | `unavailable` | Temporarily not serving. May carry `Retry-After` |

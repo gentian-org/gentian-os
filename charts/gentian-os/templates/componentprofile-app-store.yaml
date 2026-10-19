@@ -71,6 +71,9 @@ spec:
         # it is also what opens this component's way to the desktop's API
         # pods on that port, and nothing else of the desktop.
         desktopUrlKey: api.env.DESKTOP_API_URL
+        # The tenant's country (spec.country), "" while it names none: the
+        # app asks the store for the support offered there.
+        countryKey: api.env.TENANT_COUNTRY
     extraValues:
       # The name every object of the release derives from, pinned so the
       # Services the exposures below route to are known before the release

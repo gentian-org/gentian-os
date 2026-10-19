@@ -48,6 +48,19 @@ _b05_activation_current() {
     return 0
 }
 
+# The provider roles, compared the same way. A kind added to the roles in the
+# checkout (provider-kubernetes-kinds.yaml) was otherwise never applied: the
+# step found the providers healthy and skipped, and the API server went on
+# refusing every object of that kind. The checksum is recorded on the role
+# provider-kubernetes is bound to.
+_B05_RBAC_FILE="${SCRIPT_DIR}/crossplane/providers/provider-rbac.yaml"
+_B05_RBAC_ROLE="gentian-provider-kubernetes"
+_b05_rbac_sha() { sha256_of "${_B05_RBAC_FILE}" | cut -c1-16; }
+
+_b05_rbac_current() {
+    [[ "$(kubectl get clusterrole "${_B05_RBAC_ROLE}" -o jsonpath='{.metadata.annotations.gentianos\.io/source-sha}' 2>/dev/null)" == "$(_b05_rbac_sha)" ]]
+}
+
 _b05_crd_established() {
     [[ "$(kubectl get crd "$1" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)" == "True" ]]
 }
@@ -190,6 +203,7 @@ check() {
     # that makes provider-helm act as it.
     kubectl get serviceaccount "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" >/dev/null 2>&1 || return 1
     _b05_tenant_apps_current || return 1
+    _b05_rbac_current || return 1
     return 0
 }
 
@@ -226,6 +240,7 @@ apply() {
     done
     _b05_wait_activated_types || return 1
     _v5_providers_apply provider-rbac.yaml
+    kubectl annotate clusterrole "${_B05_RBAC_ROLE}" --overwrite "gentianos.io/source-sha=$(_b05_rbac_sha)" >/dev/null
     _b05_tenant_apps_apply || return 1
     _v5_providers_apply provider-configs.yaml
     # The functions the Compositions call, before B-06 applies any of them.

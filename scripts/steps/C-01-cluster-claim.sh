@@ -2,7 +2,7 @@
 # step: C-01-cluster-claim
 # phase: platform
 # requires: B-06-crossplane-definitions
-# provides: the Cluster claim of clusters/<cluster>/kernel/claims/cluster.yaml applied and its composite structurally Ready — the vault's Kubernetes auth and roles, the ESO ClusterSecretStore, the kernel config; the Keycloak-dependent parts follow the Suze claim
+# provides: the Cluster claim of clusters/<cluster>/kernel/claims/cluster.yaml applied and its composite structurally Ready — the vault's Kubernetes auth and roles, the ESO ClusterSecretStore, the kernel config; the Keycloak-dependent parts follow Keycloak (C-02)
 # mutates: the Cluster claim in the provisioning namespace and everything its composition creates
 
 # The claim comes from the deployments checkout, written by the installer's
@@ -14,7 +14,7 @@ check() {
     claim="$(gentian_cluster_claim_name 2>/dev/null)" || return 1
     xr="$(kubectl get cluster.gentianos.io "${claim}" -n "$(ns_kernel provisioning)" -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null)"
     [[ -n "${xr}" ]] || return 1
-    # Fully Ready once Keycloak answers (the Suze claim, C-02); until then,
+    # Fully Ready once Keycloak answers (the identity ApplicationSet, C-02); until then,
     # everything that does not depend on Keycloak — the same criterion the
     # apply waits for.
     kubectl get "xcluster.gentianos.io/${xr}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True ||

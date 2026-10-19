@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.1"
+  version: "1.3"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -50,8 +50,9 @@ info:
     validate, or one for a tenant it does not serve, is ignored on an open
     read: the answer is the anonymous one, not an error.
 
-    **Signed-in calls** need a token: `GET /v1/tenant` and every
-    `/v1/acquisitions` operation. The tenant's administrator signs in to
+    **Signed-in calls** need a token: `GET /v1/tenant`, every
+    `/v1/acquisitions` operation, and a request for support
+    (`POST /v1/apps/{catalogue}/{app}/support-requests`). The tenant's administrator signs in to
     the store, with an account at the store, by OAuth 2.0 authorization
     code with PKCE (see `GET /v1/meta` and the security scheme
     `storeToken`). The app is a public client and holds no client secret.
@@ -156,12 +157,14 @@ info:
     | --- | --- | --- |
     | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields |
     | 401 | `unauthenticated` | Signed-in calls only. No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer` |
-    | 403 | `insufficient-scope` | Signed-in calls only. The token lacks the scope the operation needs |
+    | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
+    | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
     | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why |
-    | 404 | `not-found` | No such app, acquisition, or page |
+    | 404 | `not-found` | No such app, acquisition, support offer, or page |
     | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
     | 409 | `idempotency-conflict` | The `Idempotency-Key` was used before with a different body |
     | 422 | `not-acquirable` | The app or the version named exists and cannot be acquired by this tenant; `detail` says why |
+    | 422 | `not-requestable` | The support offer named exists and takes no request through this API; its `contactUrl` is the way |
     | 429 | `rate-limited` | Too many requests. Carries `Retry-After` |
     | 500 | `internal` | The store failed |
     | 503 | `unavailable` | The store is temporarily not serving. May carry `Retry-After` |
@@ -227,7 +230,7 @@ tags:
   - name: acquisitions
     description: Signed in. What a tenant has acquired, and acquiring.
 security:
-  - storeToken: [store.read]
+  - storeToken: []
 paths:
   /v1/meta:
     get:
@@ -316,8 +319,117 @@ paths:
                   $ref: "#/components/examples/TenantNotClaimed"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tenant/access:
+    get:
+      tags: [tenant]
+      operationId: getTenantAccess
+      summary: Who manages the tenant in the token
+      description: |
+        The account's own role for the tenant, and — for the account that
+        holds it — every other account that manages it, asks to, or was
+        declined. Added in 1.2, with the feature `tenant-access`.
+
+        The first account that signs in for a tenant holds it. Any other
+        account may read the tenant's standing and acquisitions; it asks to
+        manage the tenant by acquiring for it, and its acquisition waits
+        for `approval` until the holder — or the store's operator —
+        approves or declines.
+      responses:
+        "200":
+          description: The tenant's access.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantAccess"
+              examples:
+                holder:
+                  value:
+                    role: holder
+                    accounts:
+                      - subject: 5d1c0a2e-0b1f-4c55-9a43-1e2f3a4b5c6d
+                        name: Grace Hopper
+                        email: grace@acme.example
+                        role: requested
+                        since: "2026-10-15T08:01:12Z"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tenant/access/{subject}/approve:
+    post:
+      tags: [tenant]
+      operationId: approveTenantAccess
+      summary: Let another account manage the tenant
+      description: |
+        By the account that holds the tenant only. The account named comes
+        to manage the tenant, and its acquisitions waiting for `approval`
+        go on. The answer is the account as it then stands; its `role` may
+        still be `requested` for a moment while the store records the
+        decision.
+      parameters:
+        - $ref: "#/components/parameters/Subject"
+      responses:
+        "200":
+          description: The account.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantAccount"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
         "403":
-          $ref: "#/components/responses/InsufficientScope"
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tenant/access/{subject}/decline:
+    post:
+      tags: [tenant]
+      operationId: declineTenantAccess
+      summary: Turn down, or end, another account's management of the tenant
+      description: |
+        By the account that holds the tenant only. The account named does
+        not manage the tenant, and its acquisitions waiting for `approval`
+        fail with `access-declined`.
+      parameters:
+        - $ref: "#/components/parameters/Subject"
+      responses:
+        "200":
+          description: The account.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantAccount"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/RateLimited"
         "500":
@@ -330,7 +442,7 @@ paths:
       operationId: listCategories
       security:
         - {}
-        - storeToken: [store.read]
+        - storeToken: []
       summary: The categories apps are filed under
       description: The whole list, unpaged; a store has tens of categories, not thousands.
       parameters:
@@ -378,7 +490,7 @@ paths:
       operationId: listApps
       security:
         - {}
-        - storeToken: [store.read]
+        - storeToken: []
       summary: List apps
       description: |
         The store's entries, one per coordinate. Filters combine with AND.
@@ -542,11 +654,25 @@ paths:
       operationId: getApp
       security:
         - {}
-        - storeToken: [store.read]
+        - storeToken: []
       summary: One app in full
+      description: |
+        `country` narrows `support` to the offers that cover that country,
+        worldwide offers among them. Without it, the store lists every
+        offer to an anonymous caller, and may narrow them for a signed-in
+        caller to a country it knows of the account (its company's); such
+        an answer is personalised and carries `Cache-Control: private,
+        no-store`. A `country` asked always wins.
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
         - $ref: "#/components/parameters/IfNoneMatch"
+        - name: country
+          in: query
+          description: |
+            The country the tenant is in, ISO 3166-1 alpha-2. Only support
+            offers that cover it. Added in 1.3, with the feature `support`.
+          schema:
+            $ref: "#/components/schemas/CountryCode"
       responses:
         "200":
           description: The entry.
@@ -585,7 +711,7 @@ paths:
       operationId: listReviews
       security:
         - {}
-        - storeToken: [store.read]
+        - storeToken: []
       summary: Reviews of an app
       description: |
         Newest first. `summary` is over every review of the entry, not over
@@ -687,7 +813,7 @@ paths:
       description: |
         One review per person and entry. `404` when they have written none.
       security:
-        - storeToken: [store.read]
+        - storeToken: []
       responses:
         "200":
           description: Their review.
@@ -725,7 +851,7 @@ paths:
         `scores.support` and `scores.value` are for an entry of edition
         `ee` and are refused (`400`) on any other.
       security:
-        - storeToken: [store.review]
+        - storeToken: []
       requestBody:
         required: true
         content:
@@ -765,7 +891,7 @@ paths:
       operationId: deleteMyReview
       summary: Withdraw the signed-in person's review
       security:
-        - storeToken: [store.review]
+        - storeToken: []
       responses:
         "204":
           description: Withdrawn, or there was none.
@@ -780,7 +906,7 @@ paths:
         `404` until they have said. The App Store app asks for it once, at
         the first sign-in that finds none.
       security:
-        - storeToken: [store.read]
+        - storeToken: []
       responses:
         "200":
           description: Their company.
@@ -804,7 +930,7 @@ paths:
         for. Its size and industry are shown with their reviews and filter
         them; its name is not shown with a review.
       security:
-        - storeToken: [store.account]
+        - storeToken: []
       requestBody:
         required: true
         content:
@@ -837,7 +963,7 @@ paths:
       operationId: listReports
       security:
         - {}
-        - storeToken: [store.read]
+        - storeToken: []
       summary: Evaluations and reports about an app
       description: |
         Documents somebody wrote about the app: a security assessment, a
@@ -892,6 +1018,63 @@ paths:
           $ref: "#/components/responses/Internal"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}/support-requests:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    post:
+      tags: [catalogue]
+      operationId: requestSupport
+      summary: Ask a partner for support with an app
+      description: |
+        The signed-in person asks for the support offer `offer` of this
+        app (`support` in `GET /v1/apps/{catalogue}/{app}`), with an
+        optional message. The store answers that it received the request;
+        what it does with it — passing it to the partner, and how the
+        partner answers the person — is the store's. Only an offer with
+        `requestable: true` takes a request; another answers `422`
+        `not-requestable`, and its `contactUrl` is the way to it. Added in
+        1.3, with the feature `support`.
+      security:
+        - storeToken: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportRequest"
+            examples:
+              request:
+                value:
+                  offer: so_01JA2K7M
+                  message: We run it for sixty people and would like help with the upgrade to 32.
+      responses:
+        "202":
+          description: Received. Nothing on the cluster waits for it.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportRequestReceipt"
+              examples:
+                received:
+                  value: {id: sr_01JA2M3Q, status: received}
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/NotRequestable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/acquisitions:
     get:
       tags: [acquisitions]
@@ -900,10 +1083,9 @@ paths:
       description: |
         Every acquisition recorded for the tenant URL in the token, in any
         status, newest first. In this listing a confirmation never carries
-        a `credential`, whatever the scopes of the token: a credential is
-        handed out one acquisition at a time, by the two `POST` operations
-        and by `GET /v1/acquisitions/{id}`, and only to a token with the
-        scope `store.acquire`.
+        a `credential`: a credential is handed out one acquisition at a
+        time, by the two `POST` operations and by
+        `GET /v1/acquisitions/{id}`.
       parameters:
         - name: status
           in: query
@@ -993,12 +1175,17 @@ paths:
         same key and the same body within 24 hours answers what the first
         one answered and creates nothing.
 
+        The account must manage the tenant (see `TenantAccess`). One that
+        does not is not refused: the acquisition waits for `approval`, and
+        the account that holds the tenant is asked to let it manage the
+        tenant.
+
         Acquiring is not installing. The store records that the tenant has
         the app and, for an app whose artefacts are in a private repository,
         mints the credential that repository checks. What the cluster does
         with the confirmation is described on the `Confirmation` schema.
       security:
-        - storeToken: [store.acquire]
+        - storeToken: []
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
         - name: Idempotency-Key
@@ -1038,7 +1225,9 @@ paths:
                 existing:
                   $ref: "#/components/examples/AcquisitionConfirmed"
         "201":
-          description: Acquired. The acquisition is `confirmed` and carries its confirmation.
+          description: |
+            Decided at once. The acquisition is `confirmed` and carries its
+            confirmation — or, rarely, `failed`, and `failure` says why.
           headers:
             Location:
               description: The acquisition, `/v1/acquisitions/{id}`.
@@ -1058,7 +1247,10 @@ paths:
                   summary: A free app; no repository and no credential
                   $ref: "#/components/examples/AcquisitionFree"
         "202":
-          description: A checkout is needed. The acquisition is `pending` and carries `checkoutUrl`.
+          description: |
+            Not decided yet. The acquisition is `pending`, and `waitingFor`
+            says on what: a checkout (then it carries `checkoutUrl`), an
+            approval, or the store's own confirmation.
           headers:
             Location:
               description: The acquisition, `/v1/acquisitions/{id}`.
@@ -1118,13 +1310,11 @@ paths:
         (and never asks more often than every two seconds). Once it is
         `confirmed` the answer carries the confirmation.
 
-        **Reading the repository credential needs the scope
-        `store.acquire`.** The operation itself needs only `store.read`.
-        Answered to a token that carries `store.acquire` as well, a
-        confirmation's repositories carry the `credential` that is valid
-        now. Answered to a token with `store.read` alone, the confirmation
-        is the same without any `credential` member — it is `200`, not
-        `403`: the acquisition may be read, the secret may not.
+        A confirmation's repositories carry the `credential` that is valid
+        now — answered to an account that manages the tenant (see
+        `TenantAccess`). Answered to any other account, the confirmation is
+        the same without any `credential` member: it is `200`, not `403`;
+        the acquisition may be read, the secret may not.
 
         The confirmation is for the latest version the acquisition covers,
         or for `version` when the query names one.
@@ -1153,11 +1343,8 @@ paths:
                 pending:
                   $ref: "#/components/examples/AcquisitionPending"
                 confirmed:
-                  summary: Confirmed, answered to a token with `store.acquire`
+                  summary: Confirmed, with the credential valid now
                   $ref: "#/components/examples/AcquisitionConfirmed"
-                confirmedReadOnly:
-                  summary: Confirmed, answered to a token with `store.read` alone; no credential
-                  $ref: "#/components/examples/AcquisitionConfirmedNoCredential"
                 cancelled:
                   summary: The person left the checkout
                   value:
@@ -1229,7 +1416,7 @@ paths:
         The confirmation is for the version the acquisition was last
         confirmed for; `version` in the query names another.
       security:
-        - storeToken: [store.acquire]
+        - storeToken: []
       parameters:
         - name: version
           in: query
@@ -1313,7 +1500,7 @@ components:
         one. The administrator signs in once; the result is the store token.
 
         1. The App Store app's backend reads `issuer`, `clientId` and
-           `scopes` from `GET /v1/meta`, and the issuer's endpoints from
+           `scopes` (empty from 1.2 on) from `GET /v1/meta`, and the issuer's endpoints from
            `{issuer}/.well-known/oauth-authorization-server` (RFC 8414). It
            makes `state` and the PKCE verifier and keeps both, with the
            administrator's cluster session.
@@ -1371,7 +1558,7 @@ components:
           spelling above (`error=invalid_request`).
         * Bind the tenant into the token: whatever form the token takes, the
           store's API must be able to read from it the account (`sub`), the
-          tenant URL (`tenant_url`), the scopes granted and the expiry, and
+          tenant URL (`tenant_url`) and the expiry, and
           must act for that tenant URL and no other. A token is for one
           tenant. A person in charge of two signs in from each.
         * Not refuse the sign-in because the store does not serve the
@@ -1382,24 +1569,23 @@ components:
         A refresh token may be issued; if it is, it rotates on use and is
         bound to the same tenant URL. Lifetimes are the store's to set.
 
-        ## Scopes
+        ## What the token does not say
 
-        * `store.read` — reading what concerns the token's tenant:
-          `GET /v1/tenant` (its standing and notices),
-          `GET /v1/acquisitions`, and `GET /v1/acquisitions/{id}` with its
-          confirmation — **without** any repository credential. It is also
-          what lets the store personalise an open read (`acquired`).
-        * `store.acquire` — changing what the tenant has at the store, and
-          reading a repository credential: `POST /v1/acquisitions`, which
-          may start a checkout; `POST /v1/acquisitions/{id}/credential`,
-          which replaces a credential; and the `credential` members in the
-          answer of `GET /v1/acquisitions/{id}`. No answer carries a
-          `credential` to a token without this scope.
-
-        No scope is needed for the open reads, and none covers them: they
-        are answered with no token at all. A client asks for both scopes at
-        sign-in.
+        What the account may do for the tenant. From 1.2 on the token
+        carries no scopes the store reads: it says who signed in, for which
+        tenant, and until when. Whether that account manages the tenant —
+        may acquire for it — is the store's to decide, from its own
+        records, and `GET /v1/tenant/access` says what it decided (see
+        `TenantAccess`).
   parameters:
+    Subject:
+      name: subject
+      in: path
+      required: true
+      description: An account at the store's issuer (`sub`), as `TenantAccount` names it.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._:@-]{1,256}$"
     AcceptLanguage:
       name: Accept-Language
       in: header
@@ -1544,22 +1730,15 @@ components:
                 title: Sign in to the store
                 status: 401
                 detail: The token has expired.
-    InsufficientScope:
-      description: The token lacks the scope the operation needs.
-      content:
-        application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-          examples:
-            scope:
-              $ref: "#/components/examples/ProblemInsufficientScope"
     Forbidden:
       description: |
         Either the store does not serve the tenant in the token
-        (`tenant-refused`, with `reason`), or the token lacks the scope the
-        operation needs (`insufficient-scope`), or a review is asked of an
-        entry no tenant of the person's acquired where the store requires
-        that (`review-not-acquired`).
+        (`tenant-refused`, with `reason`), or a review is asked of an entry
+        no tenant of the person's acquired where the store requires that
+        (`review-not-acquired`), or an account that does not hold the
+        tenant decides who manages it (`not-tenant-holder`), or an account
+        that does not manage the tenant asks for a new credential
+        (`not-tenant-manager`).
       content:
         application/problem+json:
           schema:
@@ -1575,8 +1754,6 @@ components:
                 detail: >-
                   No usage statistics report names https://acme.example. The store serves tenants of clusters that report;
                   ask the cluster's administrator whether reporting is on.
-            scope:
-              $ref: "#/components/examples/ProblemInsufficientScope"
     NotFound:
       description: No such app, acquisition or page — or one that is another tenant's.
       content:
@@ -1619,6 +1796,20 @@ components:
                 title: This version cannot be acquired
                 status: 422
                 detail: Version 29.0.1 of gentian/nextcloud-base-ee has been withdrawn.
+    NotRequestable:
+      description: The support offer named exists and takes no request through this API.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            offer:
+              value:
+                type: urn:gentian:store:problem:not-requestable
+                code: not-requestable
+                title: This offer takes no request here
+                status: 422
+                detail: Contact the partner at the address the offer names.
     RateLimited:
       description: Too many requests.
       headers:
@@ -1741,10 +1932,15 @@ components:
           description: The public client id every App Store app uses at that issuer.
         scopes:
           type: array
-          description: The scopes a client asks for.
+          description: |
+            The scopes a client asks for at sign-in. Empty from 1.2 on: the
+            token says who signed in and for which tenant, and the store
+            decides what that account may do for the tenant (see
+            `TenantAccess`). A client asks for exactly the scopes listed,
+            and none when the list is empty.
           items:
             type: string
-          examples: [[store.read, store.acquire]]
+          examples: [[]]
         defaultLanguage:
           type: string
           description: The language the store answers in when none asked for matches. BCP 47.
@@ -1803,6 +1999,11 @@ components:
             account has a company (`/v1/account/company`).
             `reports`: apps have evaluations and reports. `checkout`: an
             acquisition may answer `202` with a checkout address.
+            `tenant-access`: more than one account may manage a tenant;
+            `/v1/tenant/access` says who, and the holder approves the others.
+            `support`: apps may carry support offers (`support` on an app)
+            and a signed-in person may request one
+            (`POST /v1/apps/{catalogue}/{app}/support-requests`).
           items:
             type: string
         links:
@@ -1848,6 +2049,65 @@ components:
           description: Things the store has to tell this tenant's administrator. Shown in order. None of them blocks anything.
           items:
             $ref: "#/components/schemas/Notice"
+        access:
+          type: object
+          description: What the account signed in may do for the tenant. Added in 1.2; see `TenantAccess`.
+          required: [role]
+          properties:
+            role:
+              $ref: "#/components/schemas/TenantRole"
+    TenantRole:
+      type: string
+      description: |
+        What an account may do for a tenant. Open: a client treats a value
+        it does not know like `none`.
+
+        * `holder` — the first account that signed in for the tenant. It
+          manages the tenant and decides who else does.
+        * `manager` — an account the holder, or the store's operator,
+          approved. It manages the tenant: it may acquire for it.
+        * `requested` — an account that asked to manage the tenant, by
+          acquiring for it, and waits for approval.
+        * `declined` — such a request, turned down.
+        * `none` — signed in and nothing decided. Every account may read
+          the tenant's standing and acquisitions.
+      examples: [holder]
+    TenantAccount:
+      type: object
+      required: [subject, role, since]
+      properties:
+        subject:
+          type: string
+          description: The account at the store's issuer (`sub`).
+          maxLength: 256
+        name:
+          type: [string, "null"]
+          description: The account's name, as the store's issuer has it. Plain text.
+        email:
+          type: [string, "null"]
+          description: The account's e-mail address.
+        role:
+          $ref: "#/components/schemas/TenantRole"
+        since:
+          type: string
+          format: date-time
+          description: Since when the account has had this role.
+    TenantAccess:
+      type: object
+      description: |
+        Who manages the tenant in the token. The store decides it, from its
+        own records; the token says only who signed in.
+      required: [role, accounts]
+      properties:
+        role:
+          $ref: "#/components/schemas/TenantRole"
+        accounts:
+          type: array
+          description: |
+            For the holder: every other account that manages the tenant, asks
+            to, or was declined. Empty for anybody else.
+          items:
+            $ref: "#/components/schemas/TenantAccount"
     RefusalReason:
       type: string
       description: |
@@ -1860,7 +2120,9 @@ components:
         * `tenant-not-claimed` — reports exist, and the account signed in
           is not associated with this tenant: it is not the account of the
           tenant's administrator (or another the store lets act for the
-          tenant). With this reason `GET /v1/tenant` answers
+          tenant). A store that lets other accounts ask to manage a tenant
+          (feature `tenant-access`) does not refuse for this reason: such
+          an account is served, and its acquisitions wait for `approval`. With this reason `GET /v1/tenant` answers
           `served: false`, every `/v1/acquisitions` operation answers `403`
           `tenant-refused` — also for an `id` that exists, so that the
           account learns nothing of the tenant's acquisitions — and an open
@@ -2111,6 +2373,16 @@ components:
                 - $ref: "#/components/schemas/License"
                 - type: "null"
               description: The license the app is distributed under.
+            support:
+              type: array
+              description: |
+                The partners that offer support for the entry, in the order
+                to show them, in the language of the request; narrowed by
+                `country` when it was asked, or for a signed-in caller as the
+                operation says. Absent or empty when there are
+                none. Added in 1.3, with the feature `support`.
+              items:
+                $ref: "#/components/schemas/SupportOffer"
     Screenshot:
       type: object
       required: [url, contentType]
@@ -2430,6 +2702,113 @@ components:
           type: [string, "null"]
           description: The document's media type, when the store knows it.
           examples: [application/pdf]
+    CountryCode:
+      type: string
+      description: An ISO 3166-1 alpha-2 country code, in upper case.
+      pattern: "^[A-Z]{2}$"
+      examples: [CH]
+    SupportOffer:
+      type: object
+      description: |
+        A partner's offer of support for an entry. Plain text throughout.
+        What it costs and on which terms are between the person and the
+        partner, or the store; this API carries only what is shown.
+      required: [id, partner, countries, languages, tiers, priceHint, contactUrl, requestable]
+      properties:
+        id:
+          type: string
+          description: Opaque. What a support request names as `offer`.
+          minLength: 1
+          maxLength: 64
+        partner:
+          $ref: "#/components/schemas/SupportPartner"
+        countries:
+          type: array
+          description: The countries the offer covers. Empty means worldwide.
+          items:
+            $ref: "#/components/schemas/CountryCode"
+        languages:
+          type: array
+          description: The languages support is given in, BCP 47.
+          items:
+            type: string
+        tiers:
+          type: array
+          description: The levels of support offered, in the order to show them.
+          items:
+            $ref: "#/components/schemas/SupportTier"
+        priceHint:
+          type: [string, "null"]
+          description: What the offer costs, as the partner puts it, in a few words.
+          maxLength: 200
+        contactUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: Where to contact the partner. Opened in a separate window, never embedded.
+        requestable:
+          type: boolean
+          description: Whether a request may be sent with `POST /v1/apps/{catalogue}/{app}/support-requests`.
+    SupportPartner:
+      type: object
+      description: Who offers the support.
+      required: [slug, name, url, logoUrl, verified]
+      properties:
+        slug:
+          type: string
+          description: Stable; identifies the partner across offers and languages.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$"
+        name:
+          type: string
+          maxLength: 120
+        url:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: The partner's own page. Opened in a separate window.
+        logoUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: On one of `mediaOrigins`; `image/png`, `image/jpeg` or `image/webp` like every image. `null` when the store has none.
+        verified:
+          type: boolean
+          description: Whether the store has verified the partner. What verifying involves is the store's.
+    SupportTier:
+      type: object
+      required: [name, description]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        description:
+          type: [string, "null"]
+          maxLength: 500
+    SupportRequest:
+      type: object
+      required: [offer]
+      additionalProperties: false
+      properties:
+        offer:
+          type: string
+          description: The `id` of a support offer of this entry.
+          minLength: 1
+          maxLength: 64
+        message:
+          type: [string, "null"]
+          description: What the person wants to say to the partner. Plain text.
+          maxLength: 2000
+    SupportRequestReceipt:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          description: The store's reference for the request, to quote when following it up.
+        status:
+          type: string
+          description: Always `received` in 1.3. Open; a client treats an unknown value like `received`.
+          examples: [received]
     AcquisitionRequest:
       type: object
       required: [coordinate]
@@ -2443,7 +2822,8 @@ components:
     AcquisitionStatus:
       type: string
       description: |
-        * `pending` — a checkout is open. `checkoutUrl` is present.
+        * `pending` — not decided yet. `waitingFor` says on what; while it
+          is `checkout`, a checkout is open and `checkoutUrl` is present.
         * `confirmed` — the tenant has the app. `confirmation` is present.
         * `cancelled` — the person left the checkout, or the acquisition
           was ended later. Ending an acquisition ends the credential
@@ -2472,13 +2852,32 @@ components:
           type: string
           format: date-time
           description: When the status last changed.
+        waitingFor:
+          type: [string, "null"]
+          description: |
+            What a `pending` acquisition waits for; `null` in every other
+            status. Open: a client treats a value it does not know like
+            `confirmation`, and asks again after `Retry-After`.
+
+            * `confirmation` — the store has not decided yet. It usually
+              has within a second or two.
+            * `approval` — the account does not manage the tenant yet (see
+              `TenantAccess`). The account that holds the tenant has been
+              asked to let it, and the acquisition goes on once it has —
+              or fails with `access-declined` if it declines.
+            * `checkout` — a payment. `checkoutUrl` is present.
+
+            Added in 1.2. A 1.1 store answers every `pending` acquisition
+            at a checkout and sends no `waitingFor`.
+          enum: [confirmation, approval, checkout, null]
         checkoutUrl:
           oneOf:
             - $ref: "#/components/schemas/Url"
             - type: "null"
           description: |
             Where the person completes the acquisition, at the store.
-            Present exactly while the status is `pending`. On one of
+            Present exactly while the status is `pending` and `waitingFor`
+            is `checkout`. On one of
             `checkoutOrigins`. It is opened in a separate window and is
             usable only by a person signed in to the store.
         checkoutExpiresAt:
@@ -2492,7 +2891,7 @@ components:
           properties:
             reason:
               type: string
-              description: Open. Values include `payment-declined`, `checkout-expired`, `not-available`.
+              description: Open. Values include `payment-declined`, `checkout-expired`, `not-available`, `access-declined`.
             detail:
               type: string
               description: The reason in words, in the language of the request. Plain text.
@@ -2685,7 +3084,7 @@ components:
         `global.imagePullSecrets`.
 
         Absent from a `Repository` in `GET /v1/acquisitions`, and in every
-        answer to a token without the scope `store.acquire`.
+        answer to an account that does not manage the tenant.
       required: [username, token, expiresAt]
       properties:
         username:
@@ -2760,12 +3159,12 @@ components:
         name: Example Store
         issuer: https://accounts.store.example
         clientId: gentian-app-store
-        scopes: [store.read, store.acquire, store.review, store.account]
+        scopes: []
         defaultLanguage: en
         languages: [en, de, fr, it]
         mediaOrigins: ["https://media.store.example"]
         checkoutOrigins: ["https://store.example"]
-        features: [reviews, reports, checkout]
+        features: [reviews, reports, checkout, support]
         links:
           terms: https://store.example/terms
           privacy: https://store.example/privacy
@@ -2888,6 +3287,24 @@ components:
           spdx: null
           name: Example Publisher Enterprise License
           url: https://publisher.example/license
+        support:
+          - id: so_01JA2K7M
+            partner:
+              slug: example-integrations
+              name: Example Integrations GmbH
+              url: https://integrations.example
+              logoUrl: https://media.store.example/partners/example-integrations.png
+              verified: true
+            countries: [CH, DE, AT]
+            languages: [de, en]
+            tiers:
+              - name: Standard
+                description: Answers on working days within one day.
+              - name: Premium
+                description: Answers within four hours, every day.
+            priceHint: On request
+            contactUrl: https://integrations.example/contact
+            requestable: true
     Confirmation:
       value:
         coordinate: gentian/nextcloud-base-ee
@@ -2977,10 +3394,3 @@ components:
         checkoutExpiresAt: "2026-10-01T10:14:03Z"
         failure: null
         confirmation: null
-    ProblemInsufficientScope:
-      value:
-        type: urn:gentian:store:problem:insufficient-scope
-        code: insufficient-scope
-        title: The token does not allow this
-        status: 403
-        detail: Acquiring needs the scope store.acquire.

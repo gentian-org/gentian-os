@@ -333,14 +333,16 @@ their tenant.
 | `GET /v1/meta` | open | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on |
 | `GET /v1/categories` | open | The categories apps are filed under |
 | `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price |
-| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, license |
+| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, license; and the partners that offer support for it, narrowed to a country when asked |
 | `GET /v1/apps/{catalogue}/{app}/reviews` | open | Reviews — rating, text, the author's name as the store shows it, date — and their summary |
 | `GET /v1/apps/{catalogue}/{app}/reports` | open | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
-| `GET /v1/tenant` | `store.read` | Whether the store serves the tenant in the token; if not, the reason; and notices to show (§6.2) |
-| `GET /v1/acquisitions` | `store.read` | What this tenant has acquired |
-| `POST /v1/acquisitions` | `store.acquire` | Acquire an app. `201` with a confirmation; or `202` with a checkout address at the store; or `200` with the acquisition the tenant already has |
-| `GET /v1/acquisitions/{id}` | `store.read` | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation. Its repository credential is in it only for a token that also carries `store.acquire` |
-| `POST /v1/acquisitions/{id}/credential` | `store.acquire` | Replaces the repository credentials now (rotation) and answers the confirmation with the new ones |
+| `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask one of an app's support offers for support, with an optional message; the store answers that it received it, and what follows is the store's |
+| `GET /v1/tenant` | signed in | Whether the store serves the tenant in the token; if not, the reason; notices to show (§6.2); and the account's role for the tenant |
+| `GET /v1/tenant/access`, `POST …/{subject}/approve` and `…/decline` | signed in | Who manages the tenant; the account that holds it lets another manage it, or not |
+| `GET /v1/acquisitions` | signed in | What this tenant has acquired |
+| `POST /v1/acquisitions` | signed in, managing the tenant | Acquire an app. `201` with a confirmation; or `202` while it waits for a checkout at the store, for an approval, or for the store's own confirmation; or `200` with the acquisition the tenant already has |
+| `GET /v1/acquisitions/{id}` | signed in | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation. Its repository credential is in it only for an account that manages the tenant |
+| `POST /v1/acquisitions/{id}/credential` | signed in, managing the tenant | Replaces the repository credentials now (rotation) and answers the confirmation with the new ones |
 
 **Open** means no token is needed, and the call is never answered `401` or
 `403`. A token may be presented on a catalogue read; the store may then mark
@@ -348,12 +350,16 @@ what the token's tenant has acquired (`acquired`). That is optional
 information, present only with a token and never required, and a token the
 store cannot use is ignored there rather than refused.
 
-`store.read` covers reading what concerns the token's tenant — its standing,
-its acquisitions, and one acquisition with its confirmation, without any
-repository credential. `store.acquire` covers changing what the tenant has
-at the store — acquiring, and replacing a credential — and reading a
-repository credential: no answer carries one to a token without it. No
-scope covers the open reads: they need none.
+The token carries no scopes (from 1.2 on). It says who signed in and for
+which tenant; what that account may do for the tenant is the store's to
+decide. Every account signed in for a tenant may read its standing, its
+acquisitions, and one acquisition with its confirmation, without any
+repository credential. Only an account that **manages** the tenant — the
+first that signed in for it, which holds it, or one the holder or the
+store's operator approved — changes what the tenant has, acquiring or
+replacing a credential, and is answered a repository credential: no answer
+carries one to any other account. Another account asks to manage the tenant
+by acquiring for it, and its acquisition waits for that approval.
 
 What follows from the open half:
 
@@ -458,12 +464,14 @@ for what concerns the tenant: its standing and its acquisitions.
 
 **Who acts for a tenant at the store.** A tenant is an organisation in the
 store's records, and an account is a person; the two are separate things.
-The tenant's administrator creates an account at the store's issuer, and
-that account is associated with the tenant. By default exactly that one
-account acts for the tenant. More may be allowed later; that is outside the
-definition for now. An account that is not associated with the tenant is
-refused by the store with the reason `tenant-not-claimed` (§6.2), and
-learns nothing of what the tenant has acquired.
+The first account that signs in for a tenant holds it and manages it. A
+store with the feature `tenant-access` serves any other account signed in
+for the tenant, which reads its standing and acquisitions and asks to
+manage the tenant by acquiring for it; its acquisition waits until the
+holder, or the store's operator, approves. A store without it lets exactly
+the one account act for the tenant and refuses the others with the reason
+`tenant-not-claimed` (§6.2); they learn nothing of what the tenant has
+acquired.
 
 **What the store token is, and is not.** It authenticates the administrator
 to the store, and is valid nowhere on the cluster. It is not what pulls
@@ -492,9 +500,13 @@ The sign-in is held to three conditions:
    cluster, the cluster domain itself for the one user tenant of a
    single-tenant cluster, or the tenant's custom domain. No other host
    under the tenant's address receives a code, and no other path.
-3. **Reading a repository credential needs the scope `store.acquire`.** A
-   token with `store.read` alone is answered a confirmation without its
-   credential, and the listing of acquisitions never carries one.
+3. **A repository credential is released only to an account that manages
+   the tenant** — the one that holds it, or one the holder or the store's
+   operator approved. Any other account signed in for the tenant is
+   answered a confirmation without its credential, and the listing of
+   acquisitions never carries one. Until 1.2 this was the scope
+   `store.acquire`; the store now decides it from its own records rather
+   than from the token.
 
 This is a sign-in flow run by a component behind the edge, which AD-13
 rules out. It is the one exception AD-13 states, and the three conditions
@@ -535,8 +547,8 @@ app's description and a version's release notes — are a restricted Markdown
 subset defined in the artefact; everything else is plain. No HTML from a
 store is interpreted, no script from a store runs, and no page of a store is
 framed. Images are loaded by address from the origins the store's
-`GET /v1/meta` names and from nowhere else. Links, report documents and the
-checkout open in a separate window.
+`GET /v1/meta` names and from nowhere else. Links, report documents, a
+support partner's contact address and the checkout open in a separate window.
 
 ### 6.4 Acquiring and installing
 
@@ -597,7 +609,7 @@ outcome. The store does not tell the cluster.
 | `digest` | **what the cluster pins and verifies** (§4) |
 | `repository.type` | `oci`, and nothing else: it is the only type a tenant's app charts and images are pulled from with a credential today (§2), and the only one accepted from a store (§7) |
 | `repository.url` | the registry the bundle's chart and images are in. It must contain the chart's address — same host and port, its path a prefix by whole segments — and must not overlap another repository the tenant has declared (§2) |
-| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. The user name is one per tenant, chosen by the store. `expiresAt` is `null`: a credential does not expire, for now. Present only in an answer to a token with `store.acquire` |
+| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. The user name is one per tenant, chosen by the store. `expiresAt` is `null`: a credential does not expire, for now. Present only in an answer to an account that manages the tenant |
 | `metering` | **opaque to the cluster**, for an app priced by use only: where the app reports what it ran (`url`), the name it reports under (`install`) and the key it signs with (`key`). The App Store app sets it as the app's supplied credential `metering` at the custodian once the install has made that requirement, and keeps it nowhere; a person can replace it but never read it |
 | `addons` | add-ons the acquisition includes, each an entry of its own |
 
@@ -978,20 +990,20 @@ catalogue:
     url: https://…
   - name: in-house         # a platform administrator's own repository
     url: https://…
-  - name: private          # a directory of the cluster's deployments repository
-    path: catalogue
+  - name: private          # an OCI artifact, read with a declared repository
+    oci:
+      repository: ours
+      artifact: ghcr.io/ours/catalogue:1
 ```
 
-A source states `url` or `path`, never both. A `path` is for profiles that
-must not be public: a directory of the cluster's own deployments repository,
-holding the same `index.yaml` and `profiles/`, which the director reads from
-the checkout it already holds. It can name nothing outside that repository
-and not the directory installed profiles are written into, only the
-cluster's administrator declares one, and what is read from it is held to
-the digest and the bundle checks like bytes from an address
-([custom-catalogues.md](../custom-catalogues.md) §4.4,
-[security.md §2.17](security.md)). To the store and to an install it is a
-source like any other: a coordinate names it, and the digest pins the build.
+A source states `url` or `oci`, never both. An `oci` artifact is for
+profiles that must not be public: the same `index.yaml` and `profiles/` in
+one layer, read with the credential of a repository declared for the source's
+owner, and held to the digest and the bundle checks like bytes from an
+address ([custom-catalogues.md](../custom-catalogues.md) §4.4). A source is
+never a directory of the deployments repository, which holds the cluster's
+state only. To the store and to an install it is a source like any other: a
+coordinate names it, and the digest pins the build.
 
 A source publishes `profiles/<name>.yaml` for each entry and `index.yaml`
 beside them: name, version, edition, trust tier, digest, and nothing else.
@@ -1017,7 +1029,7 @@ exists is not rewritten.
 | | Where it is declared | Who adds it | Who installs from it |
 |---|---|---|---|
 | A catalogue of the whole cluster | `catalogue.sources` on the Cluster claim | whoever may configure the cluster | every tenant |
-| A tenant's own catalogue | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`), for an address and never for a directory of the deployments repository | that tenant only |
+| A tenant's own catalogue | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`), for an address or an OCI artifact | that tenant only |
 
 Both are written by the director's catalogue routes
 (`kubectl gentian catalogues`), are outside the store, and are documented
@@ -1116,5 +1128,6 @@ the *repository*, for pulls, with the credential the tenant holds.
 * **No writing of reviews** in this version of the API.
 * **How a store first associates the administrator's account with a
   tenant**, what it asks of an account before it confirms an app, and how
-  it prices, are the store's own. That a tenant is an organisation and
-  that one account acts for it by default is in the contract (§6.1).
+  it prices, are the store's own. That a tenant is an organisation, that
+  the first account to sign in holds it, and that only an account that
+  manages it acquires for it, is in the contract (§6.1).

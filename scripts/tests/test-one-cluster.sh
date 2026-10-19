@@ -140,7 +140,6 @@ define() {
     mkdir -p "${d}/claims"
     printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: %s\n  namespace: kernel-provisioning\nspec:\n  kernelDomain: %s\n  networkMode: tunnel\n' \
         "${name}" "${domain}" > "${d}/claims/cluster.yaml"
-    printf 'kind: Suze\nmetadata:\n  name: %s-suze\n' "${name}" > "${d}/claims/suze.yaml"
     printf 'kind: Repository\nmetadata:\n  name: deployments\n' > "${d}/claims/deployments-repository.yaml"
     printf 'image:\n  tag: develop-abc1234\n' > "${d}/values.yaml"
     g -C "${checkout}" add -A; g -C "${checkout}" commit -m "${id}"; g -C "${checkout}" push origin main

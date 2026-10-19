@@ -282,3 +282,44 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 		return err != nil
 	})
 }
+
+// A provider that names where it answers the contract has that copied onto
+// the binding, which is what the consumer's address and the port the grant
+// opens are taken from.
+func TestBindings_CarryTheProvidersEndpoint(t *testing.T) {
+	t.Parallel()
+	providerProfile := newProviderProfile("bind-ep-provider", "orders")
+	providerProfile.Spec.Provides[0].Endpoint = &gentianov1alpha1.ContractEndpoint{Service: "bind-ep-provider-api", Port: 8000}
+	if err := testClient.Create(context.Background(), providerProfile); err != nil {
+		t.Fatalf("create provider ComponentProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), providerProfile) })
+
+	consumerProfile := newConsumerProfile("bind-ep-consumer", "orders", "bind-ep-provider")
+	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
+		t.Fatalf("create consumer ComponentProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
+
+	tenantName := "bind-endpoint"
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: tenantName},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Bind Endpoint Co",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "bind-ep-provider"}, {Profile: "bind-ep-consumer"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	key := types.NamespacedName{Name: tenantName + "--bind-ep-consumer--orders", Namespace: "tenant-" + tenantName}
+	ib := &gentianov1alpha1.IntegrationBinding{}
+	waitFor(t, tenantReadyTimeout, func() bool {
+		return testClient.Get(context.Background(), key, ib) == nil
+	})
+	if e := ib.Spec.Endpoint; e == nil || e.Service != "bind-ep-provider-api" || e.Port != 8000 {
+		t.Fatalf("endpoint = %+v", ib.Spec.Endpoint)
+	}
+}

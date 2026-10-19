@@ -13,8 +13,10 @@
 #     first, and sends nothing until it is confirmed -- typed at a terminal,
 #     or --yes; without a terminal and without --yes nothing is asked at all;
 #   - a refusal is the director's own words and a non-zero exit;
-#   - `catalogues add` sends an address or a directory of the deployments
-#     repository (--path), never both, and `catalogues list` shows which;
+#   - `catalogues add` sends an address or an OCI artifact with the repository
+#     it is read with (--oci, --repository), never both, refuses --path (no
+#     catalogue is kept in the deployments repository), and `catalogues list`
+#     shows which;
 #   - `tenants create` states a switch only when it is typed, and reports
 #     what the director wrote;
 #   - `exposures requests` lists what a tenant's apps ask to have on the
@@ -53,6 +55,12 @@ cat > "${SANDBOX}/bin/kubectl" <<'STUB'
 case "$*" in
     "config current-context") echo test ;;
     "get deploy -A -l app.kubernetes.io/component=director"*) echo "kernel-control director" ;;
+    # A custodian, where credentials are set.
+    "get deploy -n kernel-control -l app.kubernetes.io/component=custodian"*) echo "custodian" ;;
+    "get deploy custodian -n kernel-control -o jsonpath="*) echo 9444 ;;
+    # And one usher beside it, which answers what the cluster holds.
+    "get deploy -A -l app.kubernetes.io/component=usher"*) echo "kernel-control usher" ;;
+    "get deploy usher -n kernel-control -o jsonpath="*) echo 8080 ;;
     "get deploy director -n kernel-control -o json")
         echo '{"spec":{"template":{"spec":{"containers":[{"env":[
             {"name":"DIRECTOR_ISSUER_BASE_URL","value":"https://id.k.example"},
@@ -105,6 +113,16 @@ gentian() {
     OUT="$(env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" \
         STUB_CALLS="${CALLS}" STUB_REPLIES="${SANDBOX}/replies" \
         bash "${REPO}/scripts/kubectl-gentian" "$@" 2>&1 </dev/null)"
+    RC=$?
+}
+
+# gentian_stdin <input> <args...> : the same, with <input> on standard input.
+gentian_stdin() {
+    local input="$1"
+    shift
+    OUT="$(printf '%s\n' "${input}" | env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" \
+        STUB_CALLS="${CALLS}" STUB_REPLIES="${SANDBOX}/replies" \
+        bash "${REPO}/scripts/kubectl-gentian" "$@" 2>&1)"
     RC=$?
 }
 
@@ -354,6 +372,17 @@ gentian tenants create acme --brokered-to name=aluvian,redirect=https://x.exampl
 refused "an outside realm without its keys' address is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
+# A country: sent upper case, refused when it is not two letters.
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","country":"CH"}'
+gentian tenants create acme --country ch
+is "create with a country sends it upper case" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"acme","displayName":"","requireMFA":true,"country":"CH"}'
+has "... and says it" "${OUT}" "Its country: CH."
+fresh
+gentian tenants create acme --country Schweiz
+refused "a country that is not an alpha-2 code is refused"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
 # The other half: a realm of another cluster whose people sign in here, as an
 # organization.
 fresh; reply PUT /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
@@ -371,6 +400,58 @@ is "organizations remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/tenan
 fresh; reply GET /v1/tenants/customers/brokered-from 200 '{"brokeredFrom":[{"name":"abc","displayName":"ABC AG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}]}'
 gentian tenants organizations customers
 has "organizations lists the sign-in alias" "${OUT}" "sign-in alias org-abc"
+
+# A tenant's own groups, and another tenant's people signing in: one request
+# each, as the director takes them.
+fresh; reply PUT /v1/clusters/c1/tenants/customers/groups 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants groups customers website-editors store-editors
+is "tenants groups sends the list" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/groups{"groups":["website-editors","store-editors"]}'
+fresh; reply PUT /v1/clusters/c1/tenants/customers/sign-in/team 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants sign-in customers --from team --groups website-editors,members
+is "tenants sign-in sends the source and its groups" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/sign-in/team{"groups":["website-editors","members"]}'
+has "... and says it is committed" "${OUT}" "People of team sign in to customers as website-editors,members: committed"
+fresh; reply DELETE /v1/clusters/c1/tenants/customers/sign-in/team 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants sign-in customers --remove team
+is "tenants sign-in --remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/clusters/c1/tenants/customers/sign-in/team "
+fresh
+gentian tenants groups customers Not_A_Label
+refused "a group name that is not a label is a usage error"
+
+# Credentials: listed by tenant; set from files and stdin, never from the
+# command line, every value without its trailing newline.
+fresh; reply GET /v1/credentials 200 '{"credentials":[{"name":"app-customers-aluvian-website-intake","tenant":"customers","satisfied":false,"fields":[{"key":"token"}]},{"name":"repository-aluvian-team","tenant":"team","satisfied":true,"fields":[{"key":"password"}]}]}'
+gentian credentials list --tenant customers
+has "credentials list names the tenant's requirement and its fields" "${OUT}" "app-customers-aluvian-website-intake"
+lacks "... and not another tenant's" "${OUT}" "repository-aluvian-team"
+printf 'sk_test_restricted\n' > "${SANDBOX}/secret-key"
+fresh; reply PUT /v1/credentials/app-customers-aluvian-website-stripe 200 '{"name":"app-customers-aluvian-website-stripe","stored":true,"validated":true}'
+gentian_stdin "pk_test_x" credentials set app-customers-aluvian-website-stripe --field secret_key=@"${SANDBOX}/secret-key" --field publishable_key=-
+is "credentials set sends every field, without trailing newlines" "$(writes | tr -d ' \n')" \
+    'PUT/v1/credentials/app-customers-aluvian-website-stripe{"fields":{"secret_key":"sk_test_restricted","publishable_key":"pk_test_x"}}'
+has "... and says it was stored and validated" "${OUT}" "Set app-customers-aluvian-website-stripe: stored and validated."
+fresh
+gentian credentials set app-customers-aluvian-website-intake --field token=plaintext
+refused "a value on the command line is refused"
+is "... and nothing is sent" "$(cat "${CALLS}")" ""
+
+# An app waiting on a privilege: what it waits for, then one PUT that answers
+# it with the person's reason.
+fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"profile":"aluvian-commerce","name":"aluvian-commerce","pendingPrivileges":["egress/intake"]}]}'
+gentian apps approve aluvian-commerce --tenant team
+has "apps approve without a request lists what the app waits for" "${OUT}" "  egress/intake"
+is "... and asks nothing to change" "$(writes)" ""
+fresh; reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve aluvian-commerce egress/intake --tenant team --reason "reads the website's order requests"
+is "apps approve sends one PUT with the reason" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake { "reason": "reads the website'"'"'s order requests"}'
+has "... and says it is committed" "${OUT}" "Approved egress/intake for aluvian-commerce in team: committed (01234567)"
+fresh
+gentian apps approve aluvian-commerce egress/intake --tenant team --reason "ok"
+refused "an approval without a reason of ten characters is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
+refused "a request of no known kind is a usage error"
 
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true
@@ -402,6 +483,17 @@ for wrong in "--admins-approve-public-addresses" "--admins-approve-public-addres
     refused "set refuses '${wrong:-nothing but a mistyped value}'"
     is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 done
+fresh; reply PUT /v1/tenants/globex/country 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants set globex --country de
+is "set --country asks the tenant's country route" "$(writes | tr -d ' \n')" 'PUT/v1/tenants/globex/country{"country":"DE"}'
+has "... and says it is committed" "${OUT}" "The country of globex is DE: committed."
+fresh; reply PUT /v1/tenants/globex/country 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants set globex --country ""
+is "set --country \"\" clears it" "$(writes | tr -d ' \n')" 'PUT/v1/tenants/globex/country{"country":""}'
+fresh
+gentian tenants set globex --country DEU
+refused "set refuses a country that is not two letters"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 fresh
 gentian tenants set globex
 refused "set with nothing to set is refused"
@@ -697,7 +789,7 @@ refused "publish is not a command"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
-echo "kubectl gentian catalogues: at an address, or in the deployments repository"
+echo "kubectl gentian catalogues: at an address, or as an OCI artifact"
 echo ""
 
 fresh; reply PUT /v1/clusters/c1/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
@@ -705,9 +797,7 @@ gentian catalogues add acme https://acme.example/apps
 is "add with an address sends the address" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/catalogues/acme{"url":"https://acme.example/apps"}'
 
 fresh; reply PUT /v1/clusters/c1/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
-gentian catalogues add acme --path catalogue
-is "add --path succeeds" "${RC}" "0"
-is "... and sends the directory and no address" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/catalogues/acme{"path":"catalogue"}'
+gentian catalogues add acme https://acme.example/apps
 has "... and names the commit" "${OUT}" "Catalogue acme added for every tenant of this cluster, as the cluster's administrator: committed (01234567)"
 
 # A private registry: declared for the tenant with its address, the token
@@ -726,39 +816,55 @@ fresh; reply DELETE /v1/tenants/demo/repositories/acme 202 '{"status":"removed",
 gentian repositories remove acme --tenant demo
 is "repositories remove asks the tenant's route" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/tenants/demo/repositories/acme'
 
-fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
-gentian catalogues add acme --path=catalogues/acme --tenant demo
-is "add --path for one tenant asks the cluster's route for that tenant" "$(tr -d ' \n' < "${CALLS}")" \
-    'PUT/v1/clusters/c1/tenants/demo/catalogues/acme{"path":"catalogues/acme"}'
-
-# A tenant's administrator is told apart by the director: the cluster's route
-# refuses them, the tenant's route is asked, and it refuses a directory.
-fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 403 '{"error":"forbidden"}'
-reply PUT /v1/tenants/demo/catalogues/acme 403 '{"error":"a catalogue kept in the deployments repository is added by the cluster administrator"}'
-gentian catalogues add acme --path catalogue --tenant demo
-refused "a tenant's administrator adding a directory is refused"
-has "... in the director's words" "${OUT}" "the director answered 403: a catalogue kept in the deployments repository is added by the cluster administrator"
-
+# A directory of the deployments repository is not a catalogue: that
+# repository holds the cluster's state only.
 fresh
-gentian catalogues add acme https://acme.example/apps --path catalogue
-refused "an address and a directory together are refused"
+gentian catalogues add acme --path catalogue
+refused "add --path is refused"
+has "... saying why" "${OUT}" "a catalogue is never kept in the deployments repository"
+gentian catalogues add acme --path=catalogues/acme --tenant demo
+refused "... for one tenant too"
 gentian catalogues add acme
-refused "neither an address nor a directory is a usage error"
-gentian catalogues add acme --path
-refused "--path without a directory is a usage error"
+refused "neither an address nor an artifact is a usage error"
 gentian catalogues remove acme --path catalogue
 refused "remove takes no --path"
 is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
 
-fresh; reply GET /v1/clusters/c1/catalogues 200 '{"cluster":"c1","catalogues":[{"name":"gentian","url":"https://apps.example","scope":"cluster","addedBy":"cluster"},{"name":"own","url":"","path":"catalogue","scope":"cluster","addedBy":"cluster"}],"tenants":[{"tenant":"demo","delegated":false,"catalogues":[{"name":"acme","url":"","path":"catalogues/acme","scope":"tenant","addedBy":"cluster"}]}]}'
+fresh; reply GET /v1/clusters/c1/catalogues 200 '{"cluster":"c1","catalogues":[{"name":"gentian","url":"https://apps.example","scope":"cluster","addedBy":"cluster"}],"tenants":[{"tenant":"demo","delegated":false,"catalogues":[{"name":"acme","url":"https://acme.example/apps","scope":"tenant","addedBy":"cluster"}]}]}'
 gentian catalogues list
 has "list shows an address as it is" "$(grep '^gentian' <<<"${OUT}" | tr -s ' ')" "gentian every tenant the cluster https://apps.example"
-has "... and a catalogue kept in the repository by its directory" "$(grep '^own' <<<"${OUT}" | tr -s ' ')" "own every tenant the cluster deployments repository: catalogue"
-has "... for a tenant as well" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme tenant demo the cluster deployments repository: catalogues/acme"
+has "... for a tenant as well" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme tenant demo the cluster https://acme.example/apps"
 
-fresh; reply GET /v1/tenants/demo/catalogues 200 '{"tenant":"demo","delegated":false,"catalogues":[{"name":"own","url":"","path":"catalogue","scope":"cluster","addedBy":"cluster"}]}'
+# A catalogue kept as an OCI artifact: the artifact and the repository it is
+# read with, nothing else. Whose repository is the route's, never the body's.
+fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 403 '{"error":"forbidden"}'
+reply PUT /v1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
+gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1 --repository acme --tenant demo
+is "add --oci succeeds through the tenant's route" "${RC}" "0"
+has "... and sends the artifact and the repository and nothing else" "$(tr -d ' \n' < "${CALLS}")" \
+    'PUT/v1/tenants/demo/catalogues/acme{"oci":{"repository":"acme","artifact":"ghcr.io/acme/catalogues/acme:1"}}'
+has "... as the tenant's administrator" "${OUT}" "Catalogue acme added for tenant demo, as the tenant's administrator"
+
+fresh; reply PUT /v1/clusters/c1/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
+gentian catalogues add acme --oci=ghcr.io/acme/catalogue@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --repository=ours
+is "add --oci for the cluster asks the cluster's route" "$(tr -d ' \n' < "${CALLS}")" \
+    'PUT/v1/clusters/c1/catalogues/acme{"oci":{"repository":"ours","artifact":"ghcr.io/acme/catalogue@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+
+fresh
+gentian catalogues add acme --oci ghcr.io/acme/catalogue:1
+refused "--oci without --repository is refused"
+gentian catalogues add acme --repository acme https://acme.example/apps
+refused "--repository without --oci is refused"
+gentian catalogues add acme https://acme.example/apps --oci ghcr.io/acme/catalogue:1 --repository acme
+refused "an address and an artifact together are refused"
+gentian catalogues remove acme --oci ghcr.io/acme/catalogue:1
+refused "remove takes no --oci"
+is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply GET /v1/tenants/demo/catalogues 200 '{"tenant":"demo","delegated":true,"catalogues":[{"name":"acme","url":"","oci":{"repository":"acme","artifact":"ghcr.io/acme/catalogue:1"},"scope":"tenant","addedBy":"tenant"}]}'
 gentian catalogues list --tenant demo
-has "list --tenant shows the directory too" "$(grep '^own' <<<"${OUT}" | tr -s ' ')" "own every tenant the cluster deployments repository: catalogue"
+has "list shows an artifact and its repository" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" \
+    "acme this tenant the tenant oci: ghcr.io/acme/catalogue:1 (repository acme)"
 
 echo ""
 echo "kubectl gentian models"

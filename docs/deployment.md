@@ -70,7 +70,6 @@ Directory layout:
         values.yaml                # Layer 3
         claims/
           cluster.yaml             # Layer 4
-          suze.yaml                # identity: Keycloak and OpenFGA
           deployments-repository.yaml   # this repository, and the director's push credential
           gentian-os-repository.yaml    # the repositories Argo CD reads
           gentian-ui-repository.yaml

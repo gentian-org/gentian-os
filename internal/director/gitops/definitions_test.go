@@ -73,8 +73,10 @@ func TestEveryKindTheDirectorWritesIsChecked(t *testing.T) {
 	}
 	// The pattern has to keep finding the kinds this package is known to
 	// write, or it has stopped matching how they are spelled.
+	// AppGrant is not among them: a grant is a patch of the Tenant, and the
+	// operator makes the AppGrant from it.
 	var missing []string
-	for _, kind := range []string{"Tenant", "TenantDomain", "AppGrant", "BackupPolicy", "PlatformSecurityPolicy", "ComponentProfile", "Repository"} {
+	for _, kind := range []string{"Tenant", "TenantDomain", "BackupPolicy", "PlatformSecurityPolicy", "ComponentProfile", "Repository"} {
 		if !found[kind] {
 			missing = append(missing, kind)
 		}
