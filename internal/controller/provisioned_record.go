@@ -45,7 +45,7 @@ func (r *TenantReconciler) recordProvisionedStores(ctx context.Context, tenant *
 	models := clusterLLMEnabled(ctx, r.Client)
 	made := map[string]backup.Provisioned{}
 	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profiles, app.Profile)
+		profile, ok := appProfileForApp(profiles, app)
 		if !ok {
 			continue
 		}

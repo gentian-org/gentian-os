@@ -99,7 +99,7 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 	}
 	var intents []ingressIntent
 	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		profile, ok := appProfileForApp(profileIndex, app)
 		if !ok {
 			continue
 		}
@@ -122,7 +122,7 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 		// inside its base and does not get a primary host of its own; what it
 		// may do is add a hostname, pointed at whichever Service it names.
 		for _, addonProfile := range app.Addons {
-			addon, ok := appProfileFromIndex(profileIndex, addonProfile)
+			addon, ok := appProfileFor(profileIndex, addonProfile, app.PinOf(addonProfile))
 			if !ok {
 				continue
 			}

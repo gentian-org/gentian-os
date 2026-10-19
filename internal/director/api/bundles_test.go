@@ -68,12 +68,19 @@ func TestABundleWithCompanionsIsCommittedWhole(t *testing.T) {
 	if strings.Count(k, "- shop.yaml") != 1 || !strings.Contains(k, "- path: shop.bundle.yaml") {
 		t.Fatalf("kustomization:\n%s", k)
 	}
-	// Nothing else is written for a companion: no file of its own.
+	// Nothing else is written for a companion: no file of its own. The one
+	// other file is the build's, under builds/.
 	listing := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "-r", "--name-only", "main", "clusters/"+dt.Cluster+"/catalogue/")
 	for _, file := range strings.Fields(listing) {
+		if filepath.Base(filepath.Dir(file)) == gitops.BuildsDir {
+			continue
+		}
 		if base := filepath.Base(file); strings.Contains(base, "shop") && base != "shop.yaml" && base != "shop.bundle.yaml" {
 			t.Fatalf("written beside the bundle: %s", file)
 		}
+	}
+	if !strings.Contains(listing, dt.CataloguePath(gitops.BuildsDir+"/"+gitops.BuildFile("shop", sha(bundle)))) {
+		t.Fatalf("the build was not written under builds/:\n%s", listing)
 	}
 	var patch struct {
 		Kind     string `json:"kind"`

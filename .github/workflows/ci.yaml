@@ -129,6 +129,14 @@ jobs:
       - name: go build
         run: go build ./... ./api/...
 
+      # Every bundle the published catalogues serve, held to this build's
+      # install and rollout checks: a platform change that breaks a published
+      # profile fails here, not at a tenant's install (docs/plans/versioning.md).
+      - name: Published catalogues conform to this platform
+        env:
+          GENTIAN_CONFORMANCE_CATALOGUES: https://gentian-org.github.io/gentian-apps,https://gentian-org.github.io/gentian-apps/develop
+        run: go test ./internal/profilebundle/ -run TestThePublishedCataloguesConform -count=1 -v
+
   # internal/controller, on its own runner beside the job above and not after
   # it: envtest's watch goroutines are incompatible with the race detector, so
   # it was always a separate `go test`, and the two share nothing but the

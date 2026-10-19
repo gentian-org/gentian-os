@@ -254,6 +254,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Which platform this cluster runs, on the Cluster claim's status: the
+	// version line every compatibility check compares against, and the
+	// build. The claim is what a person and the director read for it.
+	if err := mgr.Add(&controller.PlatformStatusWriter{
+		Reader: mgr.GetAPIReader(),
+		Writer: mgr.GetClient(),
+		Build:  buildVersion(),
+		// The platform's releases, so the status says when a newer one
+		// exists. "none" asks nothing: an air-gapped cluster.
+		ReleaseFeed: releaseFeed(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the platform status writer to manager")
+		os.Exit(1)
+	}
+
 	tenantReconciler := &controller.TenantReconciler{
 		Definitions: held,
 		Client:      mgr.GetClient(),
@@ -396,6 +411,9 @@ func main() {
 		DirectorURL:       os.Getenv("DIRECTOR_URL"),
 		UsherURL:          os.Getenv("USHER_URL"),
 		Seeder:            buildSeeder(),
+		// Runs a profile's verification command in the app's pod after a
+		// move, the way the restore does; nil skips the verification.
+		Exec:              appExecer,
 		Recorder:          mgr.GetEventRecorderFor("component"), //nolint:staticcheck
 		// What a component that asked where the App Store is gets told.
 		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
@@ -411,6 +429,14 @@ func main() {
 		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Customization")
+		os.Exit(1)
+	}
+
+	// Each build of a profile any tenant installed: its bundle read and
+	// verified once, the profile's spec written on its status for the app
+	// Composition to read when a tenant runs that build.
+	if err := (&controller.ProfileBuildReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ProfileBuild")
 		os.Exit(1)
 	}
 
@@ -700,6 +726,17 @@ func main() {
 // recorded one. An image built from a copy of the sources without their git
 // history records none, and the report then identifies the build by the
 // digest of its definitions alone.
+// releaseFeed is where the operator reads the newest release from:
+// GENTIAN_RELEASE_FEED_URL, the GitHub releases API of gentian-os by
+// default, or nothing for "none".
+func releaseFeed() string {
+	feed := envOrDefault("GENTIAN_RELEASE_FEED_URL", "https://api.github.com/repos/gentian-org/gentian-os/releases/latest")
+	if feed == "none" {
+		return ""
+	}
+	return feed
+}
+
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

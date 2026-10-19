@@ -61,6 +61,16 @@ const CatalogueDir = "catalogue"
 // pinned install against.
 func BundleFile(name string) string { return name + ".bundle.yaml" }
 
+// BuildsDir is the subdirectory of the catalogue directory that holds one
+// ProfileBuild per build any tenant installed: the bundle at its digest,
+// kept for every tenant that runs it after the profile moved on.
+const BuildsDir = "builds"
+
+// BuildFile is the file of one build, under BuildsDir.
+func BuildFile(name, digest string) string {
+	return profilebundle.BuildName(name, digest) + ".yaml"
+}
+
 // ErrBundleTooLarge is a profile whose bytes cannot be carried beside it for
 // the operator to check, and which is therefore not materialised at all: an
 // install pinned to a digest nothing can verify at rollout would be held
@@ -208,6 +218,48 @@ func (g *GitOps) ProfileDefinition(ctx context.Context, name string) (*gentianov
 	return profile, nil
 }
 
+// StoredBuild is one build the catalogue directory keeps: the bundle the
+// director wrote under builds/ when a tenant installed it, and the origin it
+// came from. For an install of a build the source no longer serves -- a
+// tenant moved back to what it ran -- which needs no fetch.
+type StoredBuild struct {
+	Body   []byte
+	Origin string
+}
+
+// BuildOnCluster reads the build of a profile at a digest from the catalogue
+// directory. ok is false when the directory holds no such build.
+func (g *GitOps) BuildOnCluster(ctx context.Context, name, digest string) (StoredBuild, bool, error) {
+	if !ValidName(name) || !digestPattern.MatchString(digest) {
+		return StoredBuild{}, false, nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepoRead(ctx); err != nil {
+		return StoredBuild{}, false, err
+	}
+	raw, err := os.ReadFile(filepath.Join(g.path, "clusters", g.cluster, CatalogueDir, BuildsDir, BuildFile(name, digest)))
+	if os.IsNotExist(err) {
+		return StoredBuild{}, false, nil
+	}
+	if err != nil {
+		return StoredBuild{}, false, err
+	}
+	var build struct {
+		Spec struct {
+			Profile, Digest, Origin, Bundle string
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(raw, &build); err != nil {
+		return StoredBuild{}, false, fmt.Errorf("catalogue: the build %s of %s does not parse: %w", shortDigest(digest), name, err)
+	}
+	body, err := base64.StdEncoding.DecodeString(build.Spec.Bundle)
+	if err != nil || build.Spec.Profile != name || build.Spec.Digest != digest || profilebundle.Digest(body) != digest {
+		return StoredBuild{}, false, fmt.Errorf("catalogue: the build %s of %s is not what it says it is", shortDigest(digest), name)
+	}
+	return StoredBuild{Body: body, Origin: build.Spec.Origin}, true, nil
+}
+
 // materialised reads one profile's presence and origin from the checkout.
 // The caller holds the lock and has synced.
 func (g *GitOps) materialised(name string) (MaterialisedProfile, error) {
@@ -311,6 +363,10 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 	if err != nil {
 		return Result{}, err
 	}
+	build, err := renderBuild(name, digest, body, origin)
+	if err != nil {
+		return Result{}, err
+	}
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -331,35 +387,38 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 	dir := filepath.Join(g.path, "clusters", g.cluster, CatalogueDir)
 	path := filepath.Join(dir, name+".yaml")
 	bundlePath := filepath.Join(dir, BundleFile(name))
+	buildPath := filepath.Join(dir, BuildsDir, BuildFile(name, digest))
 	kustomization := filepath.Join(dir, "kustomization.yaml")
 	listed, err := os.ReadFile(kustomization)
 	if err != nil && !os.IsNotExist(err) {
 		return Result{}, err
 	}
 	// The kustomization Argo syncs this directory through: the profile as a
-	// resource, its bundle as a patch on it.
+	// resource, its bundle as a patch on it, and the build as a resource of
+	// its own that stays when the profile moves on.
 	next, _ := ensureListed(string(listed), name+".yaml", listResource)
 	next, _ = ensureListed(next, BundleFile(name), listPatch)
+	next, _ = ensureListed(next, BuildsDir+"/"+BuildFile(name, digest), listResource)
 
 	same := func(file string, want []byte) bool {
 		have, err := os.ReadFile(file)
 		return err == nil && bytes.Equal(have, want)
 	}
-	if same(path, body) && same(bundlePath, bundle) && next == string(listed) {
+	if same(path, body) && same(bundlePath, bundle) && same(buildPath, build) && next == string(listed) {
 		// The same entry at the same digest. Installing what another tenant
 		// already installed is the common case on a cluster with more than
 		// one tenant, and it is not a change.
 		return Result{Status: "unchanged"}, nil
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, BuildsDir), 0o755); err != nil {
 		return Result{}, err
 	}
 	files := []string{}
 	for _, f := range []struct {
 		path string
 		want []byte
-	}{{path, body}, {bundlePath, bundle}, {kustomization, []byte(next)}} {
+	}{{path, body}, {bundlePath, bundle}, {buildPath, build}, {kustomization, []byte(next)}} {
 		if same(f.path, f.want) {
 			continue
 		}
@@ -400,6 +459,35 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 //
 // What the fetch checked is checked here again, where it is written: nothing
 // is committed that is not a bundle this origin may bring, whoever calls.
+// renderBuild is the ProfileBuild of one build: the bundle's bytes, its
+// digest and where it came from, for a tenant that runs this build after the
+// profile moved on. Fixed text rather than a marshalled object, because the
+// installer writes the same file for the profile it places and the two have
+// to agree byte for byte (scripts/lib/catalogue.sh, gentian_materialise_profile).
+func renderBuild(name, digest string, body []byte, origin string) ([]byte, error) {
+	if _, err := profilebundle.Check(body, name, origin); err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w", name, err)
+	}
+	buildName := profilebundle.BuildName(name, digest)
+	var b strings.Builder
+	b.WriteString("# One build of " + name + ": the bundle at " + shortDigest(digest) + ", kept for every tenant\n")
+	b.WriteString("# that runs it after the profile moved on. Written by the director; a build is\n")
+	b.WriteString("# its digest, so nothing edits it.\n")
+	b.WriteString("apiVersion: " + gentianov1alpha1.GroupVersion.String() + "\n")
+	b.WriteString("kind: ProfileBuild\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + buildName + "\n")
+	b.WriteString("  labels:\n")
+	b.WriteString("    " + profilebundle.ProfileLabel + ": " + name + "\n")
+	b.WriteString("    " + profilebundle.BuildLabel + ": " + buildName + "\n")
+	b.WriteString("spec:\n")
+	b.WriteString("  profile: " + name + "\n")
+	b.WriteString("  digest: " + digest + "\n")
+	b.WriteString("  origin: " + quoteScalar(origin) + "\n")
+	b.WriteString("  bundle: \"" + profilebundle.Encode(body) + "\"\n")
+	return []byte(b.String()), nil
+}
+
 func renderBundle(name string, body []byte, origin string) ([]byte, error) {
 	read, err := profilebundle.Check(body, name, origin)
 	if err != nil {
@@ -561,10 +649,18 @@ func (g *GitOps) RetireProfile(ctx context.Context, name string, meta Meta) (Res
 		}
 		next, _ := removeListed(string(listed), name+".yaml", listResource)
 		next, _ = removeListed(next, BundleFile(name), listPatch)
+		// Its builds go with it: a profile nobody has installed has no
+		// tenant left on any build of it.
+		files := []string{filepath.Join(dir, name+".yaml"), filepath.Join(dir, BundleFile(name))}
+		builds, _ := filepath.Glob(filepath.Join(dir, BuildsDir, name+"-????????????.yaml"))
+		for _, b := range builds {
+			next, _ = removeListed(next, BuildsDir+"/"+filepath.Base(b), listResource)
+			files = append(files, b)
+		}
 		next = closeEmptyLists(next)
 
 		var changed []string
-		for _, file := range []string{filepath.Join(dir, name+".yaml"), filepath.Join(dir, BundleFile(name))} {
+		for _, file := range files {
 			err := os.Remove(file)
 			if os.IsNotExist(err) {
 				continue

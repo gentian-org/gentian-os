@@ -85,8 +85,8 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, profileName, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

@@ -10,6 +10,7 @@ spec:
     namespace: tenant-demo
   profileRef:
     name: demo-app
+    build: ""
   tenantNamespace: tenant-demo
   domain: demo.platform.example.test
   # The tenant picked two of the nine staged addons.

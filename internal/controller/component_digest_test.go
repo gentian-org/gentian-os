@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,8 +57,10 @@ spec:
 // annotation. This profile states nothing the schema would default.
 func materialised(t *testing.T, bundle string) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
-	p := &gentianov1alpha1.ComponentProfile{}
-	if err := yaml.Unmarshal([]byte(bundle), p); err != nil {
+	// As the API server would store it: with the schema's defaults applied,
+	// which is what the bundle is compared with at rollout.
+	p, err := profilebundle.ReadProfile([]byte(bundle))
+	if err != nil {
 		t.Fatal(err)
 	}
 	p.Annotations = map[string]string{profilebundle.Annotation: profilebundle.Encode([]byte(bundle))}
@@ -86,7 +89,7 @@ func startDigestHarness(t *testing.T, profile *gentianov1alpha1.ComponentProfile
 	comp.Spec.ProfileRef.Digest = pinned
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(tenant.DeepCopy(), profile, comp).
-		WithStatusSubresource(&gentianov1alpha1.Component{}).Build()
+		WithStatusSubresource(&gentianov1alpha1.Component{}, &gentianov1alpha1.TenantExport{}).Build()
 	recorder := record.NewFakeRecorder(16)
 	return &digestHarness{t: t, c: c, comp: comp, recorder: recorder,
 		r: &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", Recorder: recorder}}
@@ -453,5 +456,64 @@ func TestAnUnpinnedAddonIsActivatedAsBefore(t *testing.T) {
 	}
 	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
 		t.Fatalf("a pin for an addon that is not activated held the base: %+v", ready)
+	}
+}
+
+// profileBuildOf is the ProfileBuild the director writes for a bundle.
+func profileBuildOf(t *testing.T, bundle string) *gentianov1alpha1.ProfileBuild {
+	t.Helper()
+	p := &gentianov1alpha1.ComponentProfile{}
+	if err := yaml.Unmarshal([]byte(bundle), p); err != nil {
+		t.Fatal(err)
+	}
+	digest := profilebundle.Digest([]byte(bundle))
+	return &gentianov1alpha1.ProfileBuild{
+		ObjectMeta: metav1.ObjectMeta{Name: profilebundle.BuildName(p.Name, digest), Labels: map[string]string{
+			profilebundle.ProfileLabel: p.Name, profilebundle.BuildLabel: profilebundle.BuildName(p.Name, digest)}},
+		Spec: gentianov1alpha1.ProfileBuildSpec{Profile: p.Name, Digest: digest, Origin: "cluster/gentian",
+			Bundle: profilebundle.Encode([]byte(bundle))},
+	}
+}
+
+// The install is pinned to one build and the profile on the cluster is
+// another -- a second tenant moved it -- but the cluster holds the pinned
+// build as a ProfileBuild. The instance is rendered from that build, not
+// held, and not from the profile: one tenant's move does not touch another.
+func TestAComponentPinnedToAnotherBuildRendersFromItsProfileBuild(t *testing.T) {
+	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
+	pinned := profilebundle.Digest([]byte(wikiBundle))
+	h := startDigestHarness(t, materialised(t, newer), pinned)
+	if err := h.c.Create(context.Background(), profileBuildOf(t, wikiBundle)); err != nil {
+		t.Fatal(err)
+	}
+	got := h.reconcile()
+	if ready := componentReadyCondition(got); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("condition = %+v, want the release under way", ready)
+	}
+	if h.releasedVersion() != "1.0.0" {
+		t.Fatalf("release at %q, want the pinned build's 1.0.0 and not the profile's 2.0.0", h.releasedVersion())
+	}
+	if e := h.events(); len(e) != 0 {
+		t.Fatalf("events for an install rendered from its build: %v", e)
+	}
+}
+
+// A ProfileBuild whose bundle is not the digest it claims vouches for
+// nothing: the instance is held as it is without a build.
+func TestATamperedProfileBuildHoldsTheInstance(t *testing.T) {
+	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
+	pinned := profilebundle.Digest([]byte(wikiBundle))
+	h := startDigestHarness(t, materialised(t, newer), pinned)
+	build := profileBuildOf(t, wikiBundle)
+	build.Spec.Bundle = profilebundle.Encode([]byte(strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "6.6.6"`)))
+	if err := h.c.Create(context.Background(), build); err != nil {
+		t.Fatal(err)
+	}
+	ready := componentReadyCondition(h.reconcile())
+	if ready == nil || ready.Reason != profilebundle.ReasonMismatch || !strings.Contains(ready.Message, "ProfileBuild") {
+		t.Fatalf("condition = %+v, want %s naming the ProfileBuild", ready, profilebundle.ReasonMismatch)
+	}
+	if h.releasedVersion() != "" {
+		t.Fatalf("rendered from a build that is not what it says: release %q", h.releasedVersion())
 	}
 }

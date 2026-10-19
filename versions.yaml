@@ -61,6 +61,10 @@ argocd:
   manifest: "v3.5.0"
   # argo-helm supplies argocd-image-updater; ArgoCD itself installs from manifests.
   repo: https://argoproj.github.io/argo-helm
+  # The image updater's chart, from that repository. Pinned like everything
+  # else: a re-run compares the release with it and upgrades a cluster that
+  # is behind, and an air-gapped mirror knows what to hold.
+  imageUpdaterChart: "1.3.2"
 
 openbao:
   cli: "v2.5.0"

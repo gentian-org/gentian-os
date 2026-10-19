@@ -20,6 +20,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/platformversion"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -122,9 +123,16 @@ type entryOut struct {
 	// Digest is the build the source lists: what an install of this entry
 	// from here sends back.
 	Digest string `json:"digest,omitempty"`
+	// Platform is the floor the build declares, spec.requires.platform, as
+	// the index repeats it.
+	Platform string `json:"platform,omitempty"`
+	// Unmet is why this cluster cannot install the entry although it is
+	// listed: "needs platform 0.6; this cluster is 0.5". Empty when it can.
+	Unmet string `json:"unmet,omitempty"`
 	// Installable says this entry can be installed from this list: it states
-	// its digest, which is what an install from a source is pinned to. False
-	// sends the person to the store.
+	// its digest, which is what an install from a source is pinned to, and
+	// its floor is not above this platform. False sends the person to the
+	// store, or says what the cluster lacks.
 	Installable bool `json:"installable"`
 }
 
@@ -312,6 +320,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 	}
 	entries := make([]entryOut, 0, len(listing.Entries))
 	for _, e := range listing.Entries {
+		unmet := platformversion.Unmet(e.Platform)
 		entries = append(entries, entryOut{
 			Coordinate: name + "/" + e.Name,
 			Name:       e.Name,
@@ -319,9 +328,12 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 			Edition:    string(e.Edition),
 			TrustTier:  e.TrustTier,
 			Digest:     e.Digest,
+			Platform:   e.Platform,
+			Unmet:      unmet,
 			// Without a digest there is nothing to pin an install to, and
-			// the store is the route.
-			Installable: e.Digest != "",
+			// the store is the route; a floor above this platform is said,
+			// and the install would be refused.
+			Installable: e.Digest != "" && unmet == "",
 		})
 	}
 	s.json(w, http.StatusOK, map[string]any{

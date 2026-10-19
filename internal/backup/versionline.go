@@ -13,13 +13,15 @@ package backup
 import (
 	"strconv"
 	"strings"
+
+	"github.com/gentian-org/gentian-os/internal/platformversion"
 )
 
 // PlatformVersionLine is the version line of this platform: the major and
 // minor version of the release it is built towards. An export writes it
 // into the manifest (operatorVersion); a restore compares a bundle's with it.
-// It moves when a release starts a new line, with the chart's version.
-const PlatformVersionLine = "0.5"
+// It is platformversion.Line, which moves with the chart's version.
+const PlatformVersionLine = platformversion.Line
 
 // VersionLine is a platform version line, major and minor.
 type VersionLine struct {

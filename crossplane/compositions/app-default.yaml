@@ -36,6 +36,22 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
+            # The build this tenant runs, when it is not the profile's
+            # current one (spec.profileRef.build, set by the operator). Its
+            # profileSpec replaces the ComponentProfile's spec below, so the
+            # Composition renders the same build the operator rolls out.
+            # A claim that names no build matches nothing here.
+            - kind: ProfileBuild
+              into: profileBuild
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/profile-build
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.build
             # Reads the gentian-kernel-services ConfigMap (the control namespace) to make
             # cluster-specific infrastructure endpoints available for extraValues
             # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
@@ -182,6 +198,26 @@ spec:
             {{- end }}
             {{- $profile   := index $profiles 0 }}
             {{- $pSpec     := dig "spec" dict $profile }}
+            {{- /* The tenant's own build, when the claim names one: the spec is
+                 the build's, and the profile's metadata stays the profile's,
+                 which is the app's identity across every build. A claim that
+                 names a build the cluster does not hold renders nothing, as a
+                 missing profile does: the operator writes the name only after
+                 it has read and verified the build. */}}
+            {{- $builds := dig "profileBuild" list $extraRes }}
+            {{- if and (ne (dig "profileRef" "build" "" $spec) "") (eq (len $builds) 0) }}
+              {{- fail (printf "ProfileBuild %q not found in cluster" (dig "profileRef" "build" "" $spec)) }}
+            {{- end }}
+            {{- if gt (len $builds) 0 }}
+              {{- /* The operator writes the spec it read out of the verified
+                   bundle onto the build's status; a build it has not read yet,
+                   or refused, has none, and nothing is rendered from it. */}}
+              {{- $buildSpec := dig "status" "profileSpec" nil (index $builds 0) }}
+              {{- if not $buildSpec }}
+                {{- fail (printf "ProfileBuild %q is not verified yet" (dig "profileRef" "build" "" $spec)) }}
+              {{- end }}
+              {{- $pSpec = $buildSpec }}
+            {{- end }}
             {{- $package   := dig "package" dict $pSpec }}
             {{- $vm        := dig "valueMapping" dict $package }}
             {{- $appSecrets := dig "secrets" "generated" list $pSpec }}

@@ -281,7 +281,13 @@ type CustomizationRecord struct {
 	TargetProfile string `json:"targetProfile"`
 	Rung          string `json:"rung"`
 	Scope         string `json:"scope"`
-	Owner         string `json:"owner"`
+	// Tenants is the list a tenant-scoped record names; empty for one of
+	// profile or platform scope, which applies to every tenant.
+	Tenants []string `json:"tenants,omitempty"`
+	// UpgradeRisk is the record's own estimate of what the next upstream
+	// version costs; what makes an app default to a manual move.
+	UpgradeRisk string `json:"upgradeRisk,omitempty"`
+	Owner       string `json:"owner"`
 	ReviewBy      string `json:"reviewBy"`
 	Phase         string `json:"phase"`
 	// The four the reconciler decides. Read, not recomputed: it holds the
@@ -325,7 +331,8 @@ func (s *Service) CustomizationDebtReport(ctx context.Context) (*CustomizationDe
 		record := CustomizationRecord{
 			Name: c.Name, Namespace: c.Namespace, Summary: c.Spec.Summary,
 			TargetProfile: c.Spec.Target.Profile, Rung: string(c.Spec.Rung),
-			Scope: string(c.Spec.Scope), Owner: c.Spec.Owner, ReviewBy: c.Spec.ReviewBy,
+			Scope: string(c.Spec.Scope), Tenants: c.Spec.Tenants, UpgradeRisk: string(c.Spec.UpgradeRisk),
+			Owner: c.Spec.Owner, ReviewBy: c.Spec.ReviewBy,
 			Phase:                string(c.Status.Phase),
 			ReviewOverdue:        c.Status.ReviewOverdue,
 			UpstreamStale:        c.Status.UpstreamStale,

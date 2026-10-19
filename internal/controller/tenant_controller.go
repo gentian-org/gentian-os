@@ -1347,7 +1347,7 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		entry := map[string]interface{}{"profile": app.Profile}
-		profile, exists := appProfileFromIndex(profileIndex, app.Profile)
+		profile, exists := appProfileForApp(profileIndex, app)
 		if exists {
 			// ApiProfiles run no workload; keep them out of the XTenant so the
 			// composition creates no App claim / Helm release for them.

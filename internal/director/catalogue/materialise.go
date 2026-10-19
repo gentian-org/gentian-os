@@ -249,6 +249,29 @@ func (f *Fetcher) Fetch(ctx context.Context, src Source, name, digest string) (*
 	return &Profile{Name: bundle.Name, Body: body, Digest: "sha256:" + got, Companions: companions, Definition: definition}, nil
 }
 
+// FromStored reads a bundle the cluster already holds, as Fetch reads one a
+// source serves: checked against the digest and against what a bundle may
+// hold, and refused the same way. For a build a tenant moves back to.
+func FromStored(body []byte, name, digest, origin string) (*Profile, error) {
+	got := profilebundle.Digest(body)
+	if got != digest {
+		return nil, fmt.Errorf("%w: the stored build of %s", ErrDigestMismatch, name)
+	}
+	bundle, err := profilebundle.Check(body, name, origin)
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w", name, err)
+	}
+	companions := make([]string, 0, len(bundle.Companions))
+	for _, c := range bundle.Companions {
+		companions = append(companions, c.Kind+" "+c.Name)
+	}
+	definition, err := profilebundle.ReadProfile(body)
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w: its profile cannot be read as a ComponentProfile: %v", name, profilebundle.ErrRefused, err)
+	}
+	return &Profile{Name: bundle.Name, Body: body, Digest: digest, Companions: companions, Definition: definition}, nil
+}
+
 // CanonicalDigest returns a digest in the one spelling that is recorded,
 // "sha256:<lowercase hex>", or an error if it is not a sha256 digest.
 func CanonicalDigest(digest string) (string, error) {

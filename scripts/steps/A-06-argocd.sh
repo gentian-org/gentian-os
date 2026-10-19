@@ -35,7 +35,30 @@ check() {
         # And the diff computed the way the sync applies: see _a06_install.
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.controller\.diff\.server\.side}' 2>/dev/null)" == "true" ]] &&
         [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]] &&
+        # And the versions: a cluster behind the pin is upgraded by a re-run,
+        # which is the whole of how a cluster takes a newer release
+        # (docs/plans/versioning.md). Argo CD's own by the server's image,
+        # since the manifests carry no release record; the updater's by its
+        # Helm release, like every other pinned chart.
+        _a06_versions_current &&
         _a06_repo_credentials_ok
+}
+
+# _a06_versions_current -- Argo CD runs the pinned manifest's version and the
+# image updater's release is at the pinned chart.
+_a06_versions_current() {
+    local ns image want
+    ns="$(_argocd_ns)"
+    want="$(gentian_pin argocd manifest)"
+    image="$(kubectl get deployment argocd-server -n "${ns}" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
+    [[ "${image##*:}" == "${want}" ]] || return 1
+    # The updater's chart, read off the Deployment the chart labels with its
+    # name and version (helm.sh/chart): the driver does not configure helm
+    # for check(), and the label says the same thing.
+    local chart
+    chart="$(kubectl get deployment -n "${ns}" -l app.kubernetes.io/name=argocd-image-updater \
+        -o jsonpath='{.items[0].metadata.labels.helm\.sh/chart}' 2>/dev/null)"
+    [[ "${chart}" == "argocd-image-updater-$(gentian_pin argocd imageUpdaterChart)" ]]
 }
 
 # check()'s last question: a credential for every repository Argo CD reads
@@ -125,7 +148,7 @@ _a06_install() {
     helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
     helm repo update argo >/dev/null
     _helm_retry upgrade --install argocd-image-updater argo/argocd-image-updater \
-        --namespace "${ns}" \
+        --namespace "${ns}" --version "$(gentian_pin argocd imageUpdaterChart)" \
         --set "config.argocd\.namespace=${ns}" \
         --set "config.watch\.namespaces=${ns}" \
         --wait --timeout 5m

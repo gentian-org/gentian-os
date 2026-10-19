@@ -18,6 +18,7 @@ spec:
     namespace: tenant-acme
   profileRef:
     name: demo-app
+    build: ""
   tenantNamespace: tenant-acme
   domain: acme.platform.example.test
   pullSecrets:

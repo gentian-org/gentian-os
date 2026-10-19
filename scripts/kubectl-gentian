@@ -917,7 +917,7 @@ _apps_offers() {
     for name in ${names}; do
         if listing="$( (_call GET "/v1/tenants/${t}/catalogues/${name}/entries") 2>/dev/null)"; then
             entries="$(jq -n --argjson have "${entries}" --argjson got "${listing}" --arg s "${name}" \
-                '$have + [$got.entries[] | {source: $s, name, version: (.version // ""), edition: (.edition // ""), digest: (.digest // "")}]')"
+                '$have + [$got.entries[] | {source: $s, name, version: (.version // ""), edition: (.edition // ""), digest: (.digest // ""), platform: (.platform // ""), unmet: (.unmet // "")}]')"
         else
             unread="$(jq -n --argjson have "${unread}" --arg s "${name}" '$have + [$s]')"
         fi
@@ -949,13 +949,16 @@ cmd_apps_list() {
         die "${t} has no catalogue to install from: the cluster's administrator adds one (kubectl gentian catalogues add <name> <https-url> [--tenant ${t}])"
     installed="$(_call GET "/v1/tenants/${t}/apps")" || exit 1
     # INSTALLED: yes is this build; "other build" is the app at another digest;
-    # unpinned is the app installed with no digest.
+    # unpinned is the app installed with no digest. PLATFORM is the floor the
+    # build declares (spec.requires.platform); one this cluster does not meet
+    # is marked, and the director refuses to install it.
     jq -rn --argjson o "${offers}" --argjson i "${installed}" '
         ($i.apps | map({key: .profile, value: (.digest // "")}) | from_entries) as $have
-        | (["SOURCE","APP","VERSION","EDITION","DIGEST","INSTALLED"] | @tsv),
+        | (["SOURCE","APP","VERSION","EDITION","PLATFORM","DIGEST","INSTALLED"] | @tsv),
           ($o.entries[] | .name as $n | .digest as $d | [.source, $n,
               (if .version == "" then "-" else .version end),
               (if .edition == "" then "-" else .edition end),
+              (if .platform == "" then "-" elif .unmet != "" then (.platform + " (not met)") else .platform end),
               (if $d == "" then "-" else $d[0:19] end),
               (if ($have | has($n) | not) then "-"
                elif $have[$n] == "" then "unpinned"
@@ -2212,11 +2215,111 @@ cmd_exposures() {
     esac
 }
 
+# apps outdated: which installed apps are behind the build their catalogue
+# offers, and what keeps them there (the director's report). For the whole
+# cluster, or one tenant with --tenant.
+cmd_apps_outdated() {
+    local t="" a json=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            --json) json=1; shift ;;
+            *) shift ;;
+        esac
+    done
+    need jq
+    _connect
+    local answer
+    if [[ -n "${t}" ]]; then
+        answer="$(_call GET "/v1/tenants/${t}/updates")" || exit 1
+    else
+        answer="$(_call GET "/v1/clusters/${_CLUSTER}/updates")" || exit 1
+    fi
+    if [[ -n "${json}" ]]; then printf '%s\n' "${answer}"; return 0; fi
+    jq -r '
+        (["TENANT","APP","MODE","PINNED","RUNNING","NEWEST","STATE"] | @tsv),
+        (.entries[] | [.tenant, .profile, (.mode + " (" + .modeFrom + ")"),
+            (if .pinned == "" then "-" else .pinned[0:19] end),
+            (if (.running // "") == "" then "-" else .running[0:19] end),
+            (if (.newest // "") == "" then "-" else (.newest[0:19] + (if .newestVersion then " " + .newestVersion else "" end)) end),
+            (if .unmet then "cannot: " + .unmet
+             elif .outdated and ((.held // []) | length) > 0 then "outdated, held: " + ((.held // []) | join("; "))
+             elif .outdated then "outdated"
+             elif (.rollout.phase // "") == "Exporting" or (.rollout.phase // "") == "Rolling" then "moving"
+             else "current" end)] | @tsv)' <<<"${answer}" | column -t -s $'\t'
+    local partial unread
+    partial="$(jq -r '.partial // empty' <<<"${answer}")"
+    [[ -z "${partial}" ]] || echo "Partial: ${partial}" >&2
+    unread="$(jq -r '(.unread // []) | join(", ")' <<<"${answer}")"
+    [[ -z "${unread}" ]] || echo "Not read, the director could not reach them: ${unread}." >&2
+    if [[ -z "${t}" ]]; then
+        jq -r '"Policy: mode " + .policy.mode + (if .policy.window then " in the window " + .policy.window.start + "-" + .policy.window.end + " " + (.policy.window.timezone // "UTC") else ", any time" end) + (if .windowOpen then " (open now)" else " (closed now)" end)' <<<"${answer}"
+    fi
+}
+
+# apps move-outdated: move every outdated app -- or those of --tenant and
+# --app -- to the newest build its catalogue offers. The cluster
+# administrator's act; each move exports first, verifies after and rolls back
+# by itself (kubectl gentian apps outdated shows how each went).
+cmd_apps_move_outdated() {
+    local t="" app="" a
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            --app) app="${2:?}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    need jq
+    _connect
+    local body answer
+    body="$(jq -n --arg t "${t}" --arg a "${app}" '{tenants: (if $t == "" then [] else [$t] end), apps: (if $a == "" then [] else [$a] end)}')"
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/move-outdated" "${body}")" || exit 1
+    jq -r '(.moved[] | "Moving " + .profile + " in " + .tenant + " to " + .to[0:19] + ": " + .status + (if .detail != "" then " (" + .detail + ")" else "" end)),
+           (.skipped[] | "Not moved: " + .profile + " in " + .tenant + ": " + .status + (if .detail then " -- " + .detail else "" end))' <<<"${answer}"
+    [[ "$(jq -r '.moved | length' <<<"${answer}")" != "0" ]] || echo "Nothing to move."
+}
+
+# apps update-mode <app> --tenant <t> --mode latest|manual|tenant|default:
+# how one tenant's app moves to newer builds, set by the cluster's
+# administrator. "default" removes the override and the cluster's policy
+# applies again.
+cmd_apps_update_mode() {
+    local app="${1:-}"
+    [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps update-mode <app> --tenant <tenant> --mode latest|manual|tenant|default"
+    shift
+    local t mode="" a
+    t="$(_tenant_flag "$@")"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --mode) mode="${2:?}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    case "${mode}" in
+        latest|manual|tenant) ;;
+        default) mode="" ;;
+        *) die "--mode is latest, manual, tenant or default" ;;
+    esac
+    need jq
+    _connect
+    local answer
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${t}/apps/${app}/update-mode" "$(jq -n --arg m "${mode}" '{mode: $m}')")" || exit 1
+    if [[ -n "${mode}" ]]; then
+        echo "${app} in ${t} moves to newer builds in ${mode} mode: $(jq -r '.status' <<<"${answer}")."
+    else
+        echo "${app} in ${t} moves to newer builds as the cluster's policy says: $(jq -r '.status' <<<"${answer}")."
+    fi
+}
+
 cmd_apps() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
         list) cmd_apps_list "$@" ;;
+        outdated) cmd_apps_outdated "$@" ;;
+        move-outdated) cmd_apps_move_outdated "$@" ;;
+        update-mode) cmd_apps_update_mode "$@" ;;
         install|uninstall)
             local app="${1:-}"
             [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps ${sub} <app> --tenant <tenant>"

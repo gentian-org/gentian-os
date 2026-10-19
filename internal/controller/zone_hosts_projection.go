@@ -146,8 +146,8 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// A service or a shared backend is in nobody's zone.
 			continue
 		}
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, comp.Spec.ProfileRef.Name, comp.Spec.ProfileRef.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

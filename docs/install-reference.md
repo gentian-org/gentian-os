@@ -26,7 +26,11 @@ requires and provides in a header and implements up to three verbs:
 | `destroy()` | Undo it |
 
 `check()` is why re-running works: each step asks the *cluster* whether its work
-is present, so there is no state file on your machine to fall out of sync.
+is present, so there is no state file on your machine to fall out of sync. It
+asks for the version too, where there is one: a pin moved in `versions.yaml`
+or `crossplane/providers/providers.yaml`, or a bootstrap Application's
+template changed, is applied by the next run, which is how a cluster takes a
+newer release ([versioning.md](plans/versioning.md)).
 
 One program therefore covers three directions:
 
