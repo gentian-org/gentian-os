@@ -88,6 +88,10 @@ cat <<'GENTIAN_INFO_EOF' | rclone rcat "%s:%s/%s/bundle-info.json"
 GENTIAN_INFO_EOF
 echo "wrote bundle info"%s`, bundleRemote, p.Bucket, p.Prefix, string(encodedInfo), signature), bundleEnv(p))
 	writeInfo.VolumeMounts = nil
-	job.Spec.Template.Spec.Containers = append(job.Spec.Template.Spec.Containers, writeInfo)
+	// Hardened like the containers uploadJob made: appended after it, this
+	// one was not, and the tenant baseline policy refused the whole pod --
+	// so no export ever finished, and no move ever started
+	// (gentian-disallow-privilege-escalation, on the Job's second container).
+	job.Spec.Template.Spec.Containers = hardened(append(job.Spec.Template.Spec.Containers, writeInfo))
 	return job, nil
 }
