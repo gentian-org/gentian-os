@@ -109,7 +109,12 @@ type provisioningJobSecrets map[types.NamespacedName]map[string][]byte
 // OIDC client with. A Job not made yet is passed over: the operator watches
 // the Jobs in the platform namespaces, and the one Crossplane makes brings
 // the tenant back here. Until its Secret is there the Job's pod waits, which
-// kubelet retries; a finished Job needs none.
+// kubelet retries.
+//
+// A Job that has succeeded needs its Secret no more, and its Secret is
+// removed: these Jobs stay once they have run (keepFinishedJobs), and the
+// credential is not to stay with them. A Job that runs again is a new Job,
+// and is handed the credential again.
 func (r *TenantReconciler) ensureProvisioningJobSecrets(ctx context.Context, handoffs provisioningJobSecrets) error {
 	for key, data := range handoffs {
 		job := &batchv1.Job{}
@@ -120,12 +125,45 @@ func (r *TenantReconciler) ensureProvisioningJobSecrets(ctx context.Context, han
 		if err != nil {
 			return err
 		}
-		if job.DeletionTimestamp != nil || jobIsComplete(job) {
+		if job.DeletionTimestamp != nil {
+			continue
+		}
+		if jobIsComplete(job) {
+			if err := deleteJobSecret(ctx, r.Client, job); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := ensureJobSecret(ctx, r.Client, job, jobSecret(job, data)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// deleteJobSecret removes the Secret a Job read its credential from, once the
+// Job is done with it. Only the Secret this Job owns is removed: one of the
+// same name owned by an earlier Job is that Job's, and goes with it.
+func deleteJobSecret(ctx context.Context, c client.Client, job *batchv1.Job) error {
+	secret := &corev1.Secret{}
+	err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: job.Namespace}, secret)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owned := false
+	for _, ref := range secret.OwnerReferences {
+		if ref.Kind == "Job" && ref.UID == job.UID {
+			owned = true
+		}
+	}
+	if !owned {
+		return nil
+	}
+	if err := c.Delete(ctx, secret, client.Preconditions{UID: &secret.UID}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("remove the credential of finished Job %s/%s: %w", job.Namespace, job.Name, err)
 	}
 	return nil
 }

@@ -2330,8 +2330,8 @@ spec:
 
             {{- /* ── Emit post-install bootstrap Job ─────────────────────────────── */}}
             {{- /* spec.hooks.postInstall: app-specific bootstrap that must           */}}
-            {{- /* happen via the app's own admin API rather than Helm values. Job is */}}
-            {{- /* retried via ttlSecondsAfterFinished + reconcile, so Script must be */}}
+            {{- /* happen via the app's own admin API rather than Helm values. A      */}}
+            {{- /* failing pod is retried (backoffLimit), so Script must be           */}}
             {{- /* idempotent and exit non-zero if a dependency isn't ready yet. See */}}
             {{- /* app-profile-guide.md, "Post-install bootstrap jobs".               */}}
             {{- $pij := dig "hooks" "postInstall" dict $pSpec }}
@@ -2410,6 +2410,19 @@ spec:
             {{- $pijEnv = append $pijEnv (dict "name" (upper $s.name) "key" (printf "internal-%s" $s.name)) }}
             {{- end }}
             {{- end }}
+            {{- /* The Job runs once, and again only when what it runs changes.
+
+                 It carries no ttlSecondsAfterFinished: its Object recreates
+                 whatever goes missing, so a TTL deleted the finished Job, the
+                 Object made it again, and the bootstrap ran again every ten
+                 minutes, forever. A Job's pod template is immutable, and the
+                 script is in a ConfigMap the template only names, so a change
+                 reaches the cluster as a new Job: the digest of everything
+                 the Job runs is in its name and in its Object's, the new
+                 Object makes the new Job, and the old Object is removed with
+                 the Job it held. */}}
+            {{- $pijRun := dict "image" $pijImage "script" $pijScript "env" $pijEnv "envFrom" $pijEnvFrom "serviceAccountName" $pijSA "readOnlyPVC" $pijPVC }}
+            {{- $pijDigest := substr 0 8 (sha256sum (toJson $pijRun)) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -2435,22 +2448,21 @@ spec:
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-job
-              name: {{ $xrName }}-post-install-job
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-job-{{ $pijDigest }}
+              name: {{ $xrName }}-post-install-job-{{ $pijDigest }}
             spec:
               forProvider:
                 manifest:
                   apiVersion: batch/v1
                   kind: Job
                   metadata:
-                    name: {{ $app }}-post-install
+                    name: {{ $app }}-post-install-{{ $pijDigest }}
                     namespace: {{ $ns }}
                     labels:
                       app.kubernetes.io/managed-by: gentian-os
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       metadata:

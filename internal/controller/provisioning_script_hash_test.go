@@ -44,14 +44,27 @@ func TestScriptHash_ChangesWithTheScript(t *testing.T) {
 	}
 }
 
-// ROLE_PW is regenerated on every reconcile when no seeder supplies it. Hashing
-// env would make every Job permanently stale and delete them in a loop.
-func TestScriptHash_IgnoresEnvChurn(t *testing.T) {
+// A Job is handed its inputs in env — the groups a realm is to have, whether
+// its administrator needs a second factor. A changed input is a Job that has
+// to run again, exactly like a changed script: no TTL re-runs it any more.
+func TestScriptHash_ChangesWithAnInput(t *testing.T) {
 	t.Parallel()
-	a := jobRunning("same script", corev1.EnvVar{Name: "ROLE_PW", Value: "first"})
-	b := jobRunning("same script", corev1.EnvVar{Name: "ROLE_PW", Value: "second"})
+	a := jobRunning("same script", corev1.EnvVar{Name: "TENANT_ADMIN_REQUIRE_MFA", Value: "true"})
+	b := jobRunning("same script", corev1.EnvVar{Name: "TENANT_ADMIN_REQUIRE_MFA", Value: "false"})
+	if scriptHash(&a) == scriptHash(&b) {
+		t.Fatal("a changed input produced the same hash, so the Job would never be re-run with it")
+	}
+}
+
+// The hash of an unchanged Job is the same on every reconcile; a hash that
+// moved by itself would retire every finished Job on every pass, which is the
+// endless re-run this hash exists to end.
+func TestScriptHash_IsStableForAnUnchangedJob(t *testing.T) {
+	t.Parallel()
+	a := jobRunning("same script", corev1.EnvVar{Name: "GENTIAN_GROUPS_JSON", Value: `[{"name":"g"}]`})
+	b := jobRunning("same script", corev1.EnvVar{Name: "GENTIAN_GROUPS_JSON", Value: `[{"name":"g"}]`})
 	if scriptHash(&a) != scriptHash(&b) {
-		t.Fatal("env churn changed the hash; provisioning Jobs would be deleted every reconcile")
+		t.Fatal("the same Job hashed differently twice")
 	}
 }
 
