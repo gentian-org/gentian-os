@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.2"
+  version: "1.3"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -50,8 +50,9 @@ info:
     validate, or one for a tenant it does not serve, is ignored on an open
     read: the answer is the anonymous one, not an error.
 
-    **Signed-in calls** need a token: `GET /v1/tenant` and every
-    `/v1/acquisitions` operation. The tenant's administrator signs in to
+    **Signed-in calls** need a token: `GET /v1/tenant`, every
+    `/v1/acquisitions` operation, and a request for support
+    (`POST /v1/apps/{catalogue}/{app}/support-requests`). The tenant's administrator signs in to
     the store, with an account at the store, by OAuth 2.0 authorization
     code with PKCE (see `GET /v1/meta` and the security scheme
     `storeToken`). The app is a public client and holds no client secret.
@@ -159,10 +160,11 @@ info:
     | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
     | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
     | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why |
-    | 404 | `not-found` | No such app, acquisition, or page |
+    | 404 | `not-found` | No such app, acquisition, support offer, or page |
     | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
     | 409 | `idempotency-conflict` | The `Idempotency-Key` was used before with a different body |
     | 422 | `not-acquirable` | The app or the version named exists and cannot be acquired by this tenant; `detail` says why |
+    | 422 | `not-requestable` | The support offer named exists and takes no request through this API; its `contactUrl` is the way |
     | 429 | `rate-limited` | Too many requests. Carries `Retry-After` |
     | 500 | `internal` | The store failed |
     | 503 | `unavailable` | The store is temporarily not serving. May carry `Retry-After` |
@@ -654,9 +656,19 @@ paths:
         - {}
         - storeToken: []
       summary: One app in full
+      description: |
+        `country` narrows `support` to the offers that cover that country,
+        worldwide offers among them. Without it every offer is listed.
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
         - $ref: "#/components/parameters/IfNoneMatch"
+        - name: country
+          in: query
+          description: |
+            The country the tenant is in, ISO 3166-1 alpha-2. Only support
+            offers that cover it. Added in 1.3, with the feature `support`.
+          schema:
+            $ref: "#/components/schemas/CountryCode"
       responses:
         "200":
           description: The entry.
@@ -1000,6 +1012,63 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}/support-requests:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    post:
+      tags: [catalogue]
+      operationId: requestSupport
+      summary: Ask a partner for support with an app
+      description: |
+        The signed-in person asks for the support offer `offer` of this
+        app (`support` in `GET /v1/apps/{catalogue}/{app}`), with an
+        optional message. The store answers that it received the request;
+        what it does with it — passing it to the partner, and how the
+        partner answers the person — is the store's. Only an offer with
+        `requestable: true` takes a request; another answers `422`
+        `not-requestable`, and its `contactUrl` is the way to it. Added in
+        1.3, with the feature `support`.
+      security:
+        - storeToken: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportRequest"
+            examples:
+              request:
+                value:
+                  offer: so_01JA2K7M
+                  message: We run it for sixty people and would like help with the upgrade to 32.
+      responses:
+        "202":
+          description: Received. Nothing on the cluster waits for it.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportRequestReceipt"
+              examples:
+                received:
+                  value: {id: sr_01JA2M3Q, status: received}
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/NotRequestable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/Unavailable"
   /v1/acquisitions:
@@ -1723,6 +1792,20 @@ components:
                 title: This version cannot be acquired
                 status: 422
                 detail: Version 29.0.1 of gentian/nextcloud-base-ee has been withdrawn.
+    NotRequestable:
+      description: The support offer named exists and takes no request through this API.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            offer:
+              value:
+                type: urn:gentian:store:problem:not-requestable
+                code: not-requestable
+                title: This offer takes no request here
+                status: 422
+                detail: Contact the partner at the address the offer names.
     RateLimited:
       description: Too many requests.
       headers:
@@ -1914,6 +1997,9 @@ components:
             acquisition may answer `202` with a checkout address.
             `tenant-access`: more than one account may manage a tenant;
             `/v1/tenant/access` says who, and the holder approves the others.
+            `support`: apps may carry support offers (`support` on an app)
+            and a signed-in person may request one
+            (`POST /v1/apps/{catalogue}/{app}/support-requests`).
           items:
             type: string
         links:
@@ -2283,6 +2369,15 @@ components:
                 - $ref: "#/components/schemas/License"
                 - type: "null"
               description: The license the app is distributed under.
+            support:
+              type: array
+              description: |
+                The partners that offer support for the entry, in the order
+                to show them, in the language of the request; narrowed by
+                `country` when it was asked. Absent or empty when there are
+                none. Added in 1.3, with the feature `support`.
+              items:
+                $ref: "#/components/schemas/SupportOffer"
     Screenshot:
       type: object
       required: [url, contentType]
@@ -2602,6 +2697,113 @@ components:
           type: [string, "null"]
           description: The document's media type, when the store knows it.
           examples: [application/pdf]
+    CountryCode:
+      type: string
+      description: An ISO 3166-1 alpha-2 country code, in upper case.
+      pattern: "^[A-Z]{2}$"
+      examples: [CH]
+    SupportOffer:
+      type: object
+      description: |
+        A partner's offer of support for an entry. Plain text throughout.
+        What it costs and on which terms are between the person and the
+        partner, or the store; this API carries only what is shown.
+      required: [id, partner, countries, languages, tiers, priceHint, contactUrl, requestable]
+      properties:
+        id:
+          type: string
+          description: Opaque. What a support request names as `offer`.
+          minLength: 1
+          maxLength: 64
+        partner:
+          $ref: "#/components/schemas/SupportPartner"
+        countries:
+          type: array
+          description: The countries the offer covers. Empty means worldwide.
+          items:
+            $ref: "#/components/schemas/CountryCode"
+        languages:
+          type: array
+          description: The languages support is given in, BCP 47.
+          items:
+            type: string
+        tiers:
+          type: array
+          description: The levels of support offered, in the order to show them.
+          items:
+            $ref: "#/components/schemas/SupportTier"
+        priceHint:
+          type: [string, "null"]
+          description: What the offer costs, as the partner puts it, in a few words.
+          maxLength: 200
+        contactUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: Where to contact the partner. Opened in a separate window, never embedded.
+        requestable:
+          type: boolean
+          description: Whether a request may be sent with `POST /v1/apps/{catalogue}/{app}/support-requests`.
+    SupportPartner:
+      type: object
+      description: Who offers the support.
+      required: [slug, name, url, logoUrl, verified]
+      properties:
+        slug:
+          type: string
+          description: Stable; identifies the partner across offers and languages.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$"
+        name:
+          type: string
+          maxLength: 120
+        url:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: The partner's own page. Opened in a separate window.
+        logoUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: On one of `mediaOrigins`; `image/png`, `image/jpeg` or `image/webp` like every image. `null` when the store has none.
+        verified:
+          type: boolean
+          description: Whether the store has verified the partner. What verifying involves is the store's.
+    SupportTier:
+      type: object
+      required: [name, description]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        description:
+          type: [string, "null"]
+          maxLength: 500
+    SupportRequest:
+      type: object
+      required: [offer]
+      additionalProperties: false
+      properties:
+        offer:
+          type: string
+          description: The `id` of a support offer of this entry.
+          minLength: 1
+          maxLength: 64
+        message:
+          type: [string, "null"]
+          description: What the person wants to say to the partner. Plain text.
+          maxLength: 2000
+    SupportRequestReceipt:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          description: The store's reference for the request, to quote when following it up.
+        status:
+          type: string
+          description: Always `received` in 1.3. Open; a client treats an unknown value like `received`.
+          examples: [received]
     AcquisitionRequest:
       type: object
       required: [coordinate]
@@ -2957,7 +3159,7 @@ components:
         languages: [en, de, fr, it]
         mediaOrigins: ["https://media.store.example"]
         checkoutOrigins: ["https://store.example"]
-        features: [reviews, reports, checkout]
+        features: [reviews, reports, checkout, support]
         links:
           terms: https://store.example/terms
           privacy: https://store.example/privacy
@@ -3080,6 +3282,24 @@ components:
           spdx: null
           name: Example Publisher Enterprise License
           url: https://publisher.example/license
+        support:
+          - id: so_01JA2K7M
+            partner:
+              slug: example-integrations
+              name: Example Integrations GmbH
+              url: https://integrations.example
+              logoUrl: https://media.store.example/partners/example-integrations.png
+              verified: true
+            countries: [CH, DE, AT]
+            languages: [de, en]
+            tiers:
+              - name: Standard
+                description: Answers on working days within one day.
+              - name: Premium
+                description: Answers within four hours, every day.
+            priceHint: On request
+            contactUrl: https://integrations.example/contact
+            requestable: true
     Confirmation:
       value:
         coordinate: gentian/nextcloud-base-ee
