@@ -811,3 +811,21 @@ func TestTheAddressingStyleReachesRclone(t *testing.T) {
 		}
 	}
 }
+
+// Every container of the manifest Job is hardened, the one appended after
+// the upload included: the tenant baseline policy refuses the whole pod for
+// one container without allowPrivilegeEscalation false, and an export that
+// never writes its manifest never finishes.
+func TestEveryContainerOfTheManifestJobIsHardened(t *testing.T) {
+	job, err := ManifestJob(params(), &Manifest{SchemaVersion: ManifestSchemaVersion, Tenant: "demo", Export: "nightly"},
+		NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
+	if err != nil {
+		t.Fatalf("ManifestJob: %v", err)
+	}
+	for _, c := range job.Spec.Template.Spec.Containers {
+		sc := c.SecurityContext
+		if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || sc.SeccompProfile == nil {
+			t.Errorf("container %s is not hardened: %+v", c.Name, sc)
+		}
+	}
+}
