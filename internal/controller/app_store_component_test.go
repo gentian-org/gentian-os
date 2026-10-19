@@ -300,6 +300,8 @@ func TestTheAppStoreIsToldEveryFactItsChartReads(t *testing.T) {
 		// chose is stored.
 		"api": map[string]interface{}{"env": map[string]interface{}{
 			"ENVIRONMENT": "production", "DESKTOP_API_URL": "http://desktop-gentian-portal-api:8000",
+			// The tenant's country; the fixture names none.
+			"TENANT_COUNTRY": "",
 		}},
 		"director": map[string]interface{}{"url": "http://gentian-os-director.kernel-control.svc.cluster.local:8080", "cluster": "c1"},
 		"custodian":     map[string]interface{}{"url": "http://gentian-os-custodian.kernel-control.svc.cluster.local:9444"},
