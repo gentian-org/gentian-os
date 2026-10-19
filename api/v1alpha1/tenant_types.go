@@ -398,6 +398,18 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxItems=256
 	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
 
+	// Grants are what each app of the tenant may consume from the others,
+	// and which of them may consume from it, as the tenant's administrators
+	// granted it (can_grant). The director writes them as the patch
+	// grants.yaml beside the tenant; the operator makes each the AppGrant of
+	// its app in the tenant's namespace, and removes an AppGrant it made
+	// whose entry is gone.
+	// +optional
+	// +listType=map
+	// +listMapKey=app
+	// +kubebuilder:validation:MaxItems=256
+	Grants []TenantAppGrant `json:"grants,omitempty"`
+
 	// Exposures are the perimeter surfaces a perimeter approver published
 	// (AD-6): what this tenant has on the internet, from when, until when,
 	// and who said so.
@@ -553,6 +565,28 @@ func (e *TenantExposure) Enablement() ExposureEnablement {
 // component and the privilege -- together they are what makes a grant unique,
 // and letting the API server enforce that is better than a controller
 // discovering two answers to the same question.
+// TenantAppGrant is one app's grant, with who gave it and when.
+type TenantAppGrant struct {
+	AppGrantSpec `json:",inline"`
+
+	// GrantedBy is the Keycloak subject who granted it, set by the director
+	// from the caller's token, never supplied by a caller. Empty only on a
+	// grant carried over from before grants were recorded here; its commit
+	// still names who made it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	GrantedBy string `json:"grantedBy,omitempty"`
+
+	// GrantedAt is when.
+	// +optional
+	GrantedAt *metav1.Time `json:"grantedAt,omitempty"`
+
+	// Reason in the granter's words, where they gave one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason,omitempty"`
+}
+
 type TenantPrivilegeGrant struct {
 	// Install names the Component this grant is for, which is the component's
 	// object name in the tenant's namespace.

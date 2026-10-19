@@ -904,7 +904,7 @@ A contract is a name (`file-store`, `project-management`) two profiles agree on.
 |---|---|---|---|---|
 | **Declaration** | `ComponentProfile` | Cluster (one per catalogue entry) | The catalogue's maintainer; it reaches the cluster in a bundle fetched from a catalogue | **Implemented** |
 | **Wiring** | `IntegrationBinding` | Tenant namespace, one per consumer and contract | The operator, when the consumer and a provider are both in `Tenant.spec.apps` | **Implemented** |
-| **Grant** | `AppGrant` | Tenant namespace, one per consuming app | The director, as a commit, for a person who holds `can_grant` on the tenant. Nothing else writes one | **Partial** |
+| **Grant** | `AppGrant` | Tenant namespace, one per consuming app | The director commits it into the Tenant (`spec.grants`, the patch `grants.yaml`), for a person who holds `can_grant` on the tenant, with who granted it (from the token) and when, and a reason where one is given; the operator makes the `AppGrant` from it and removes one whose entry is gone. Nothing else writes one | **Partial** |
 
 Do not conflate them:
 

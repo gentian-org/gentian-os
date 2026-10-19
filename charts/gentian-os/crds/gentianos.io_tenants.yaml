@@ -668,6 +668,103 @@ spec:
                 - install
                 - exposureName
                 x-kubernetes-list-type: map
+              grants:
+                description: |-
+                  Grants are what each app of the tenant may consume from the others,
+                  and which of them may consume from it, as the tenant's administrators
+                  granted it (can_grant). The director writes them as the patch
+                  grants.yaml beside the tenant; the operator makes each the AppGrant of
+                  its app in the tenant's namespace, and removes an AppGrant it made
+                  whose entry is gone.
+                items:
+                  description: |-
+                    TenantPrivilegeGrant is one grant, against one of the tenant's components.
+
+                    The fields of PrivilegeGrant are spelled out rather than embedded so that
+                    this is one flat object in the CRD and the two list map keys can be the
+                    component and the privilege -- together they are what makes a grant unique,
+                    and letting the API server enforce that is better than a controller
+                    discovering two answers to the same question.
+                    TenantAppGrant is one app's grant, with who gave it and when.
+                  properties:
+                    allowConsumers:
+                      description: AllowConsumers controls which other installed apps
+                        may invoke this app's provides contracts.
+                      items:
+                        description: AllowConsumerSpec permits another installed app
+                          to call a provided contract.
+                        properties:
+                          app:
+                            description: App is the consumer ComponentProfile name.
+                            type: string
+                          contract:
+                            description: Contract matches ComponentProfile.spec.provides[].name.
+                            type: string
+                          scope:
+                            description: Scope lists approved capability strings for
+                              the consumer.
+                            items:
+                              type: string
+                            minItems: 1
+                            type: array
+                        required:
+                        - app
+                        - contract
+                        - scope
+                        type: object
+                      type: array
+                    app:
+                      description: App is the installed ComponentProfile name (matches
+                        Tenant.spec.apps[].profile).
+                      type: string
+                    consume:
+                      description: |-
+                        Consume lists contract capabilities this app may use from providers in the tenant.
+                        Each entry must be a subset of ComponentProfile.spec.integrations.
+                      items:
+                        description: ConsumeGrantSpec is the tenant-approved consumption
+                          grant for one contract.
+                        properties:
+                          contract:
+                            description: Contract matches IntegrationBinding.spec.contract.
+                            type: string
+                          granted:
+                            description: Granted lists approved capability strings
+                              (subset of the binding declaration).
+                            items:
+                              type: string
+                            minItems: 1
+                            type: array
+                        required:
+                        - contract
+                        - granted
+                        type: object
+                      type: array
+                    grantedAt:
+                      description: GrantedAt is when.
+                      format: date-time
+                      type: string
+                    grantedBy:
+                      description: |-
+                        GrantedBy is the Keycloak subject who granted it, set by the director
+                        from the caller's token, never supplied by a caller. Empty only on a
+                        grant carried over from before grants were recorded here; its commit
+                        still names who made it.
+                      maxLength: 256
+                      type: string
+                    reason:
+                      description: Reason in the granter's words, where they gave
+                        one.
+                      maxLength: 2000
+                      type: string
+                  required:
+                  - app
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - app
+                x-kubernetes-list-type: map
               groups:
                 description: |-
                   Groups are groups of the tenant's realm declared in git; see
@@ -834,14 +931,6 @@ spec:
                   an app can be uninstalled and reinstalled and re-asking for an approval
                   that was already given is how approvals become a formality.
                 items:
-                  description: |-
-                    TenantPrivilegeGrant is one grant, against one of the tenant's components.
-
-                    The fields of PrivilegeGrant are spelled out rather than embedded so that
-                    this is one flat object in the CRD and the two list map keys can be the
-                    component and the privilege -- together they are what makes a grant unique,
-                    and letting the API server enforce that is better than a controller
-                    discovering two answers to the same question.
                   properties:
                     approvedAt:
                       format: date-time

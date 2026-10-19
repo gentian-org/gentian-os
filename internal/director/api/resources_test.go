@@ -585,28 +585,62 @@ func TestAGrantIsCommittedAndWithdrawn(t *testing.T) {
 
 	before := h.tip(t)
 	code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom,
-		`{"consume":[{"contract":"files","granted":["read"]}],"allowConsumers":[{"app":"tasks","contract":"notes","scope":["read"]}]}`)
+		`{"consume":[{"contract":"files","granted":["read"]}],"allowConsumers":[{"app":"tasks","contract":"notes","scope":["read"]}],"reason":"notes attach files"}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
 		t.Fatalf("grant: %d %v", code, body)
 	}
-	grant := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grant-notes.yaml")
-	for _, want := range []string{"kind: AppGrant", "name: notes", "namespace: tenant-demo", "app: notes", "contract: files", "- read", "app: tasks"} {
-		if !strings.Contains(grant, want) {
-			t.Errorf("grant is missing %q:\n%s", want, grant)
+	// A patch of the Tenant, with who granted it and when, from the token.
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	for _, want := range []string{"kind: Tenant", "name: demo", "app: notes", "contract: files", "- read", "app: tasks",
+		"grantedBy: tom", "grantedAt:", "reason: notes attach files"} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("grants.yaml is missing %q:\n%s", want, grants)
 		}
 	}
+	if strings.Contains(grants, "namespace:") {
+		t.Errorf("the grant is a namespaced object again:\n%s", grants)
+	}
 	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
-	if !strings.Contains(kustomization, "- grant-notes.yaml") {
-		t.Fatalf("the grant is not applied:\n%s", kustomization)
+	if !strings.Contains(kustomization, "grants.yaml") {
+		t.Fatalf("the grants are not applied:\n%s", kustomization)
 	}
 
-	// Withdrawing takes the file and the listing away, which withdraws
-	// everything it permitted.
+	// Withdrawing takes the entry away -- the last one, the patch -- which
+	// withdraws everything it permitted.
 	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/grants/notes", tom, ""); code != http.StatusAccepted {
 		t.Fatalf("withdraw: %d", code)
 	}
-	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "grant-notes.yaml") {
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "grants.yaml") {
 		t.Fatalf("the grant survived being withdrawn:\n%s", out)
+	}
+}
+
+// A grant file from before grants were a patch of the Tenant -- which Argo
+// CD could not apply -- is carried over into grants.yaml and removed, in the
+// same commit as the next grant.
+func TestAnOldGrantFileIsCarriedOverByTheNextGrant(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	dir := "clusters/" + dt.Cluster + "/tenants/demo"
+	kustomization := "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- tenant.yaml\n"
+	dt.Commit(t, h.remote, map[string]string{
+		dir + "/grant-old.yaml": "apiVersion: gentianos.io/v1alpha1\nkind: AppGrant\nmetadata:\n  name: old\n  namespace: tenant-demo\n" +
+			"spec:\n  app: old\n  consume:\n  - contract: files\n    granted:\n      - \"read\"\n",
+		dir + "/kustomization.yaml": strings.Replace(kustomization, "resources:\n", "resources:\n- grant-old.yaml\n", 1),
+	})
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom, `{"consume":[{"contract":"files","granted":["read"]}]}`); code != http.StatusAccepted {
+		t.Fatalf("grant: %d %v", code, body)
+	}
+	grants := dt.RemoteFile(t, h.remote, dir+"/grants.yaml")
+	if !strings.Contains(grants, "app: old") || !strings.Contains(grants, "app: notes") {
+		t.Fatalf("grants.yaml:\n%s", grants)
+	}
+	out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:"+dir)
+	if strings.Contains(out, "grant-old.yaml") {
+		t.Fatalf("the old grant file is still there:\n%s", out)
+	}
+	if k := dt.RemoteFile(t, h.remote, dir+"/kustomization.yaml"); strings.Contains(k, "grant-old.yaml") {
+		t.Fatalf("the kustomization still lists the old file:\n%s", k)
 	}
 }
 

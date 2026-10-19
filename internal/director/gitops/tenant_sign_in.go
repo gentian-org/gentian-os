@@ -228,8 +228,8 @@ func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, gro
 		message = fmt.Sprintf("People of tenant %s no longer sign in to tenant %s", source, target)
 	}
 	return g.writeTenantFilesLocked(ctx, message, meta,
-		tenantFileWrite{tenant: target, name: SignInFile, body: renderSignIn(target, tdoc)},
-		tenantFileWrite{tenant: source, name: SignInFile, body: renderSignIn(source, sdoc)})
+		tenantFileWrite{tenant: target, name: SignInFile, body: renderSignIn(target, tdoc), list: listPatch},
+		tenantFileWrite{tenant: source, name: SignInFile, body: renderSignIn(source, sdoc), list: listPatch})
 }
 
 func writeTenantHead(b *strings.Builder, tenant string) {
@@ -269,6 +269,9 @@ func renderSignIn(tenant string, doc signInPatch) string {
 // body is empty.
 type tenantFileWrite struct {
 	tenant, name, body string
+	// list is how the kustomization lists the file: a resource or a patch,
+	// said every time (the zero value is a resource).
+	list kustomizationList
 }
 
 // writeTenantFilesLocked writes several tenants' patches, and keeps each
@@ -306,13 +309,13 @@ func (g *GitOps) writeTenantFilesLocked(ctx context.Context, message string, met
 			if missing {
 				continue
 			}
-			listed, changedList = removeListed(string(kustomization), w.name, listPatch)
+			listed, changedList = removeListed(string(kustomization), w.name, w.list)
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return Result{}, err
 			}
 			changedFile = true
 		} else {
-			listed, changedList = ensureListed(string(kustomization), w.name, listPatch)
+			listed, changedList = ensureListed(string(kustomization), w.name, w.list)
 			if string(existing) != w.body {
 				if err := os.WriteFile(path, []byte(w.body), 0o644); err != nil {
 					return Result{}, err
