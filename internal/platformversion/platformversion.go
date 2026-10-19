@@ -27,11 +27,6 @@ import (
 	"strings"
 )
 
-// Line is the version line this platform is built towards. It moves with
-// the chart's version: the release commit that cuts X.Y.0 and the commit
-// after it, which sets the chart to X.(Y+1).0-dev, both change it.
-const Line = "0.5"
-
 // Version is a version line, major and minor.
 type Version struct {
 	Major, Minor int
