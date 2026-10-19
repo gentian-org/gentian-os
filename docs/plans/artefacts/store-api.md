@@ -27,6 +27,21 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-19** (1.3, additive: a 1.2 client reads every answer as before)
+
+1. **Support offers** (feature `support`). An app may carry `support`:
+   the partners that offer support for it, each with who they are and
+   whether the store verified them, the countries and languages covered,
+   the tiers offered, a price hint, a contact address and whether a
+   request may be sent through the API (`SupportOffer`, §5).
+   `GET /v1/apps/{catalogue}/{app}` takes `country` to list only the
+   offers that cover it.
+2. **A support request** is sent with
+   `POST /v1/apps/{catalogue}/{app}/support-requests`, signed in, naming
+   the offer and an optional message; the store answers `202 received`.
+   What the store does with it is the store's. An offer that takes no
+   request answers `422 not-requestable`.
+
 **2026-10-15** (1.2)
 
 1. **The token carries no scopes.** It says who signed in, for which
@@ -254,6 +269,7 @@ present. A type written `string \| null` is present and may be `null`.
 | `GET /v1/apps/{catalogue}/{app}` | **open** | One app in full: description, screenshots, versions with digests, add-ons, links |
 | `GET /v1/apps/{catalogue}/{app}/reviews` | **open** | A page of reviews and the summary of all of them |
 | `GET /v1/apps/{catalogue}/{app}/reports` | **open** | Evaluations and reports about the app |
+| `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask a partner for support with an app: `202 received` |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant in the token, the reason if not, notices to show, and the account's role |
 | `GET /v1/tenant/access` | signed in | Who manages the tenant; for the holder, everybody else who does or asks to |
 | `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |
@@ -403,7 +419,7 @@ cacheable for the `max-age` it states.
 | `languages` | BCP 47[] | yes | The languages the store has translations in |
 | `mediaOrigins` | origin[] | yes | Where image URLs may point. The app fixes its content security policy from it |
 | `checkoutOrigins` | origin[] | yes | Where a `checkoutUrl` may point |
-| `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`). Unknown values are ignored |
+| `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3). Unknown values are ignored |
 | `links` | object | no | `terms`, `privacy`, `support`, `account`: pages of the store's, each a URL |
 
 ## 4. Tenant standing
@@ -668,7 +684,19 @@ Everything in the summary, and:
               "summary": "Edit documents in the browser."}],
   "addonOf": null,                           // the coordinate this entry extends, when it is an add-on
   "links": [{"rel": "documentation", "label": "Administration manual", "url": "https://publisher.example/docs"}],
-  "license": {"spdx": null, "name": "Example Publisher Enterprise License", "url": "https://publisher.example/license"}
+  "license": {"spdx": null, "name": "Example Publisher Enterprise License", "url": "https://publisher.example/license"},
+  "support": [                               // optional, 1.3: partners that offer support
+    {"id": "so_01JA2K7M",
+     "partner": {"slug": "example-integrations", "name": "Example Integrations GmbH",
+                 "url": "https://integrations.example",
+                 "logoUrl": "https://media.store.example/partners/example-integrations.png",
+                 "verified": true},
+     "countries": ["CH", "DE", "AT"], "languages": ["de", "en"],
+     "tiers": [{"name": "Standard", "description": "Answers on working days within one day."}],
+     "priceHint": "On request",
+     "contactUrl": "https://integrations.example/contact",
+     "requestable": true}
+  ]
 }
 ```
 
@@ -681,6 +709,27 @@ Everything in the summary, and:
 | `addonOf` | coordinate \| null | yes | When this entry is itself an add-on, what it extends |
 | `links` | Link[] | yes | |
 | `license` | `{spdx, name, url}` \| null | yes | The license the app is distributed under. `spdx` and `url` may be `null` |
+| `support` | SupportOffer[] | no | The partners that offer support, in the order to show them, in the language of the request. Absent or empty when none. Added in 1.3 |
+
+`?country=` (ISO 3166-1 alpha-2, 1.3) narrows `support` to the offers that
+cover that country, worldwide ones among them.
+
+**SupportOffer** (1.3, feature `support`). Plain text throughout.
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `id` | string ≤ 64 | yes | Opaque; what a support request names |
+| `partner.slug` | string | yes | Stable across offers and languages |
+| `partner.name` | string ≤ 120 | yes | |
+| `partner.url` | URL \| null | yes | The partner's page, opened in a separate window |
+| `partner.logoUrl` | URL \| null | yes | On one of `mediaOrigins`, PNG, JPEG or WebP like every image |
+| `partner.verified` | boolean | yes | Whether the store verified the partner; what that involves is the store's |
+| `countries` | ISO 3166-1 alpha-2[] | yes | The countries covered; empty means worldwide |
+| `languages` | BCP 47[] | yes | The languages support is given in |
+| `tiers` | `{name ≤ 80, description ≤ 500 \| null}`[] | yes | The levels offered |
+| `priceHint` | string ≤ 200 \| null | yes | What it costs, as the partner puts it |
+| `contactUrl` | URL \| null | yes | Opened in a separate window, never embedded |
+| `requestable` | boolean | yes | Whether `POST …/support-requests` takes a request for it |
 
 **Screenshot**
 
@@ -800,6 +849,22 @@ Documents somebody wrote about the app. Newest first, unpaged.
 
 The store states who issued a report; it does not vouch for it, and nothing
 on the cluster reads one.
+
+### POST /v1/apps/{catalogue}/{app}/support-requests
+
+Signed in (1.3, feature `support`). The person asks for one of the app's
+support offers:
+
+```jsonc
+{"offer": "so_01JA2K7M",                     // a SupportOffer id of this entry
+ "message": "We run it for sixty people and would like help with the upgrade to 32."}   // ≤ 2000, or null
+```
+
+Answered `202 {"id": "sr_01JA2M3Q", "status": "received"}`. What the store
+does with the request — passing it to the partner, and how the partner
+answers — is the store's; nothing on the cluster waits for it. `404` for no
+such app or offer, `422 not-requestable` for an offer with `requestable:
+false`, whose `contactUrl` is the way to it.
 
 ## 6. Acquisitions
 
@@ -1121,10 +1186,11 @@ Every answer with a status of 400 or above is `application/problem+json`
 | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
 | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
 | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why. Never from `GET /v1/tenant`, never from an open read |
-| 404 | `not-found` | No such app, acquisition or page — or one that is another tenant's |
+| 404 | `not-found` | No such app, acquisition, support offer or page — or one that is another tenant's |
 | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
 | 409 | `idempotency-conflict` | The `Idempotency-Key` was used before with a different body |
 | 422 | `not-acquirable` | The app or version exists and cannot be acquired by this tenant |
+| 422 | `not-requestable` | The support offer exists and takes no request through the API (1.3) |
 | 429 | `rate-limited` | Carries `Retry-After` |
 | 500 | `internal` | The store failed |
 | 503 | `unavailable` | Temporarily not serving. May carry `Retry-After` |
