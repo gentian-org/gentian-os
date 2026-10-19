@@ -756,12 +756,13 @@ type TenantCatalogue struct {
 }
 
 // TenantCatalogueSource is one catalogue of a tenant: an address that serves
-// index.yaml and profiles/<name>.yaml, an OCI artifact that holds them, read
-// with the credential of a repository the tenant declared, or a directory of
-// the cluster's own deployments repository that holds them.
+// index.yaml and profiles/<name>.yaml, or an OCI artifact that holds them,
+// read with the credential of a repository the tenant declared. A catalogue
+// is never kept in the cluster's deployments repository, which holds the
+// cluster's state only: there is no field for a directory of it, and a
+// source that names one where an address or an artifact belongs is refused.
 //
-// +kubebuilder:validation:XValidation:rule="(has(self.url) ? 1 : 0) + (has(self.path) ? 1 : 0) + (has(self.oci) ? 1 : 0) == 1",message="a catalogue states where it is read from once: url, oci or path"
-// +kubebuilder:validation:XValidation:rule="!has(self.path) || !has(self.addedBy) || self.addedBy == 'cluster'",message="a catalogue kept in the deployments repository (path) is added by the cluster's administrator: addedBy must be cluster"
+// +kubebuilder:validation:XValidation:rule="(has(self.url) ? 1 : 0) + (has(self.oci) ? 1 : 0) == 1",message="a catalogue states where it is read from once: url or oci (a directory of the deployments repository, path, is not a catalogue source)"
 type TenantCatalogueSource struct {
 	// Name is the catalogue's name: the first half of a coordinate,
 	// <name>/<app>. It is not the name of a catalogue of the whole cluster,
@@ -781,22 +782,6 @@ type TenantCatalogueSource struct {
 	// tenant, and with no other.
 	// +optional
 	OCI *CatalogueOCISource `json:"oci,omitempty"`
-
-	// Path is the directory of the cluster's own deployments repository the
-	// catalogue is kept in, in place of an address. Deprecated: the
-	// deployments repository holds what the cluster is, and a catalogue
-	// whose profiles must not be public is an OCI artifact (oci). It is
-	// read as before until it is removed. Names separated by '/',
-	// from the top of the repository, none beginning with a dot. The
-	// director reads it from the checkout it already holds. Only the
-	// cluster's administrator declares one. clusters/<cluster>/catalogue,
-	// where the director writes the profiles tenants installed, is never a
-	// catalogue: the director refuses it and does not read it, which the
-	// schema leaves to it.
-	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$`
-	// +kubebuilder:validation:MaxLength=255
-	// +optional
-	Path string `json:"path,omitempty"`
 
 	// AddedBy says who added it: the cluster's administrator, or the
 	// tenant's own under delegation. A tenant's administrator removes only

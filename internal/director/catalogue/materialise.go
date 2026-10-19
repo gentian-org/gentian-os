@@ -80,43 +80,19 @@ type Source struct {
 	Name string
 	// URL is the base address its index and profiles are served from.
 	URL string
-	// Dir is the directory of the cluster's own deployments repository that
-	// holds its index and profiles, for a catalogue kept there instead of at
-	// an address.
-	Dir string
 	// OCI is the artifact the catalogue is kept as, and the repository it is
-	// read with (oci.go). A source has one of URL, Dir and OCI.
+	// read with (oci.go). A source has one of URL and OCI.
 	OCI *OCISource
 }
 
-// Repository is the cluster's own deployments repository as a catalogue kept
-// in it is read: one file of one directory, from the checkout the director
-// already holds, at the commit it is at (gitops.CatalogueFile).
-//
-// It is not a second way in. What is read is the same two kinds of file an
-// address serves, and the bytes are held to everything bytes from an address
-// are held to: the digest the install named, and what a bundle of that origin
-// may bring. That they come from the cluster's own repository earns them
-// nothing.
-type Repository interface {
-	// CatalogueFile returns at most limit+1 bytes of dir/file. A file that
-	// is not there is fs.ErrNotExist.
-	CatalogueFile(ctx context.Context, dir, file string, limit int) ([]byte, error)
-}
-
 // read is one file of a source, at most limit bytes of it: fetched from its
-// address, or read from its directory of the deployments repository. A file
-// the source does not have is fs.ErrNotExist.
+// address, or pulled from its artifact. A file the source does not have is
+// fs.ErrNotExist.
 func (f *Fetcher) read(ctx context.Context, src Source, file, what string, limit int) ([]byte, error) {
 	var body []byte
 	var err error
 	if src.OCI != nil {
 		body, err = f.ociFile(ctx, src, file)
-	} else if src.Dir != "" {
-		if f.Repo == nil {
-			return nil, fmt.Errorf("catalogue: %s is kept in the deployments repository, which this director does not read catalogues from", src.Name)
-		}
-		body, err = f.Repo.CatalogueFile(ctx, src.Dir, file, limit)
 	} else {
 		body, err = f.served(ctx, src.URL, file, limit)
 	}
@@ -173,9 +149,6 @@ type Fetcher struct {
 	// Vet checks an address when a catalogue is added: as it is written, and
 	// what its host resolves to.
 	Vet func(ctx context.Context, address string) error
-	// Repo reads a catalogue kept in the cluster's own deployments
-	// repository. Nil is a director that reads none from there.
-	Repo Repository
 	// Registries answers the repository, and its credential, a catalogue
 	// kept as an OCI artifact is read with. Nil is a director that reads no
 	// such catalogue.

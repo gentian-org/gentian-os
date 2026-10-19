@@ -150,11 +150,12 @@ spec:
                       type: array
                       description: >
                         The catalogues this cluster knows. Each states where
-                        it is read from once: url, oci, or path. An entry
-                        whose url is not https, whose oci is not an artifact
-                        and a repository, whose path is not a directory a
-                        catalogue is read from, which states more than one,
-                        or which has no name, is ignored.
+                        it is read from once: url or oci. An entry whose url
+                        is not https, whose oci is not an artifact and a
+                        repository, which states both or neither, or which
+                        has no name, is ignored. A catalogue is never kept in
+                        the deployments repository, which holds the
+                        cluster's state only.
                       items:
                         type: object
                         required:
@@ -204,24 +205,6 @@ spec:
                                   The reference without a scheme:
                                   <registry host>/<repository>:<tag>, or
                                   @sha256:<digest> in place of or after the tag.
-                          path:
-                            type: string
-                            maxLength: 255
-                            pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$'
-                            description: >
-                              Deprecated: the deployments repository holds what
-                              the cluster is, and a catalogue whose profiles
-                              must not be public is an OCI artifact (oci). Read
-                              as before until it is removed.
-                              In place of url: the directory of this cluster's
-                              own deployments repository the catalogue is kept
-                              in, named from the top of the repository, as in
-                              "catalogue". The director reads index.yaml and
-                              profiles/<name>.yaml there from the checkout it
-                              already holds; nothing is fetched, and the bytes
-                              are held to the digest like any other. It cannot
-                              be clusters/<cluster>/catalogue, where the
-                              director writes the profiles tenants installed.
                 kernelDomain:
                   type: string
                   description: >

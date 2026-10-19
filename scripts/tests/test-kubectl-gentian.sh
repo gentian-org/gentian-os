@@ -13,9 +13,10 @@
 #     first, and sends nothing until it is confirmed -- typed at a terminal,
 #     or --yes; without a terminal and without --yes nothing is asked at all;
 #   - a refusal is the director's own words and a non-zero exit;
-#   - `catalogues add` sends an address, an OCI artifact with the repository
-#     it is read with (--oci, --repository), or a directory of the deployments
-#     repository (--path), never two, and `catalogues list` shows which;
+#   - `catalogues add` sends an address or an OCI artifact with the repository
+#     it is read with (--oci, --repository), never both, refuses --path (no
+#     catalogue is kept in the deployments repository), and `catalogues list`
+#     shows which;
 #   - `tenants create` states a switch only when it is typed, and reports
 #     what the director wrote;
 #   - `exposures requests` lists what a tenant's apps ask to have on the
@@ -788,7 +789,7 @@ refused "publish is not a command"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
-echo "kubectl gentian catalogues: at an address, or in the deployments repository"
+echo "kubectl gentian catalogues: at an address, or as an OCI artifact"
 echo ""
 
 fresh; reply PUT /v1/clusters/c1/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
@@ -796,9 +797,7 @@ gentian catalogues add acme https://acme.example/apps
 is "add with an address sends the address" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/catalogues/acme{"url":"https://acme.example/apps"}'
 
 fresh; reply PUT /v1/clusters/c1/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
-gentian catalogues add acme --path catalogue
-is "add --path succeeds" "${RC}" "0"
-is "... and sends the directory and no address" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/catalogues/acme{"path":"catalogue"}'
+gentian catalogues add acme https://acme.example/apps
 has "... and names the commit" "${OUT}" "Catalogue acme added for every tenant of this cluster, as the cluster's administrator: committed (01234567)"
 
 # A private registry: declared for the tenant with its address, the token
@@ -817,39 +816,24 @@ fresh; reply DELETE /v1/tenants/demo/repositories/acme 202 '{"status":"removed",
 gentian repositories remove acme --tenant demo
 is "repositories remove asks the tenant's route" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/tenants/demo/repositories/acme'
 
-fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
-gentian catalogues add acme --path=catalogues/acme --tenant demo
-is "add --path for one tenant asks the cluster's route for that tenant" "$(tr -d ' \n' < "${CALLS}")" \
-    'PUT/v1/clusters/c1/tenants/demo/catalogues/acme{"path":"catalogues/acme"}'
-
-# A tenant's administrator is told apart by the director: the cluster's route
-# refuses them, the tenant's route is asked, and it refuses a directory.
-fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 403 '{"error":"forbidden"}'
-reply PUT /v1/tenants/demo/catalogues/acme 403 '{"error":"a catalogue kept in the deployments repository is added by the cluster administrator"}'
-gentian catalogues add acme --path catalogue --tenant demo
-refused "a tenant's administrator adding a directory is refused"
-has "... in the director's words" "${OUT}" "the director answered 403: a catalogue kept in the deployments repository is added by the cluster administrator"
-
+# A directory of the deployments repository is not a catalogue: that
+# repository holds the cluster's state only.
 fresh
-gentian catalogues add acme https://acme.example/apps --path catalogue
-refused "an address and a directory together are refused"
+gentian catalogues add acme --path catalogue
+refused "add --path is refused"
+has "... saying why" "${OUT}" "a catalogue is never kept in the deployments repository"
+gentian catalogues add acme --path=catalogues/acme --tenant demo
+refused "... for one tenant too"
 gentian catalogues add acme
-refused "neither an address nor a directory is a usage error"
-gentian catalogues add acme --path
-refused "--path without a directory is a usage error"
+refused "neither an address nor an artifact is a usage error"
 gentian catalogues remove acme --path catalogue
 refused "remove takes no --path"
 is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
 
-fresh; reply GET /v1/clusters/c1/catalogues 200 '{"cluster":"c1","catalogues":[{"name":"gentian","url":"https://apps.example","scope":"cluster","addedBy":"cluster"},{"name":"own","url":"","path":"catalogue","scope":"cluster","addedBy":"cluster"}],"tenants":[{"tenant":"demo","delegated":false,"catalogues":[{"name":"acme","url":"","path":"catalogues/acme","scope":"tenant","addedBy":"cluster"}]}]}'
+fresh; reply GET /v1/clusters/c1/catalogues 200 '{"cluster":"c1","catalogues":[{"name":"gentian","url":"https://apps.example","scope":"cluster","addedBy":"cluster"}],"tenants":[{"tenant":"demo","delegated":false,"catalogues":[{"name":"acme","url":"https://acme.example/apps","scope":"tenant","addedBy":"cluster"}]}]}'
 gentian catalogues list
 has "list shows an address as it is" "$(grep '^gentian' <<<"${OUT}" | tr -s ' ')" "gentian every tenant the cluster https://apps.example"
-has "... and a catalogue kept in the repository by its directory" "$(grep '^own' <<<"${OUT}" | tr -s ' ')" "own every tenant the cluster deployments repository: catalogue"
-has "... for a tenant as well" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme tenant demo the cluster deployments repository: catalogues/acme"
-
-fresh; reply GET /v1/tenants/demo/catalogues 200 '{"tenant":"demo","delegated":false,"catalogues":[{"name":"own","url":"","path":"catalogue","scope":"cluster","addedBy":"cluster"}]}'
-gentian catalogues list --tenant demo
-has "list --tenant shows the directory too" "$(grep '^own' <<<"${OUT}" | tr -s ' ')" "own every tenant the cluster deployments repository: catalogue"
+has "... for a tenant as well" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme tenant demo the cluster https://acme.example/apps"
 
 # A catalogue kept as an OCI artifact: the artifact and the repository it is
 # read with, nothing else. Whose repository is the route's, never the body's.

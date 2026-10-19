@@ -405,32 +405,10 @@ func TestEveryHolderOfAReservedAddressIsAPlatformProfile(t *testing.T) {
 	}
 }
 
-// A directory of the deployments repository is a catalogue's only when it is
-// written as plain names from the top of the repository, and is not where
-// the director writes the profiles tenants installed.
-func TestWhichDirectoryMayBeACatalogues(t *testing.T) {
-	for _, dir := range []string{"catalogue", "catalogues/acme", "private/catalogue_2.d/apps-1", "clusters/c1/tenants", "clusters/catalogue", "a"} {
-		if err := CheckCatalogueDirectory(dir); err != nil {
-			t.Errorf("%q is refused: %v", dir, err)
-		}
-	}
-	for _, dir := range []string{
-		"", " ", "/", "/catalogue", "catalogue/", "a//b", ".", "..", "../x", "a/..", "a/../b", "a/./b", ".git", "a/.git/config", "a/.b",
-		`a\b`, "a b", "a\tb", "a\x00b", "a:b", "a@b", "a?b", "a#b", "a%2fb", "~", "~/x", "$HOME", "ä",
-		"clusters/c1/catalogue", "clusters/c1/catalogue/x", "clusters/other/catalogue", "CLUSTERS/c1/CATALOGUE",
-		strings.Repeat("a/", 127) + "aa",
-	} {
-		err := CheckCatalogueDirectory(dir)
-		if !errors.Is(err, ErrCatalogueDirectoryRefused) {
-			t.Errorf("%q: %v, want it refused", dir, err)
-		}
-	}
-}
-
-// What is read of a declared source is one address or one directory. A
-// source that states both, a directory no catalogue is read from, and a
-// directory a tenant's manifest says the tenant added, are not read.
-func TestASourceStatesAnAddressOrADirectory(t *testing.T) {
+// What is read of a declared source is one address. A directory of the
+// deployments repository is not a catalogue source: an entry that names one
+// in place of an address is not read, whoever the manifest says added it.
+func TestADirectoryIsNotASource(t *testing.T) {
 	manifest := strings.Replace(directorWritten, "  apps: []\n", `  catalogue:
     delegated: true
     sources:
@@ -441,13 +419,6 @@ func TestASourceStatesAnAddressOrADirectory(t *testing.T) {
       - name: stated
         path: catalogue
         addedBy: cluster
-      - name: both
-        url: https://fine.example.com
-        path: catalogue
-      - name: up
-        path: ../catalogue
-      - name: installed
-        path: clusters/c1/catalogue
       - name: theirs
         path: catalogue
         addedBy: tenant
@@ -460,51 +431,16 @@ func TestASourceStatesAnAddressOrADirectory(t *testing.T) {
 	}
 	var said []string
 	for _, src := range got.Sources {
-		said = append(said, src.Name+"="+src.URL+src.Path+"="+src.AddedBy)
+		said = append(said, src.Name+"="+src.URL+"="+src.AddedBy)
 	}
-	if want := "address=https://fine.example.com=cluster directory=catalogues/acme=cluster stated=catalogue=cluster"; strings.Join(said, " ") != want {
+	if want := "address=https://fine.example.com=cluster"; strings.Join(said, " ") != want {
 		t.Fatalf("read %v\nwant %s", said, want)
 	}
 }
 
-// A directory is written into a manifest so that it reads back as the same
-// text, whatever YAML would otherwise make of the name; and a source somebody
-// wrote by hand with both an address and a directory survives an edit of the
-// list as it was.
-func TestADirectoryIsWrittenSoThatItReadsBack(t *testing.T) {
-	sources := []CatalogueSource{
-		{Name: "plain", Path: "catalogue"},
-		{Name: "nested", Path: "catalogues/acme"},
-		{Name: "word", Path: "on"},
-		{Name: "number", Path: "2024"},
-		{Name: "nothing", Path: "null"},
-		{Name: "address", URL: "https://fine.example.com"},
-		{Name: "both", URL: "https://fine.example.com", Path: "catalogue"},
-	}
-	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1\nspec:\n  kernelDomain: k.example\n"
-	out, err := setClaimSources(claim, sources)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"        path: catalogue\n", "        path: catalogues/acme\n", `        path: "on"`, `        path: "2024"`, `        path: "null"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the claim is missing %q:\n%s", want, out)
-		}
-	}
-	back, err := claimCatalogueSources(out)
-	if err != nil || len(back) != len(sources) {
-		t.Fatalf("read back %v, %v", back, err)
-	}
-	for i := range sources {
-		if back[i] != sources[i] {
-			t.Errorf("source %d read back as %+v, was %+v", i, back[i], sources[i])
-		}
-	}
-}
-
-// An artifact is a third way a source says where it is read from, and still
-// one of them: one that states an address or a directory beside it, or an
-// artifact that is not one, is not read. A tenant's administrator may have
+// An artifact is the other way a source says where it is read from, and still
+// one of them: one that states an address beside it, or an artifact that is
+// not one, is not read. A tenant's administrator may have
 // added one, as they may an address.
 func TestASourceStatesAnArtifactAndItsRepository(t *testing.T) {
 	manifest := strings.Replace(directorWritten, "  apps: []\n", `  catalogue:
@@ -521,11 +457,6 @@ func TestASourceStatesAnArtifactAndItsRepository(t *testing.T) {
           artifact: "ghcr.io/acme/catalogue@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       - name: with-address
         url: https://fine.example.com
-        oci:
-          repository: acme
-          artifact: ghcr.io/acme/catalogue:1
-      - name: with-directory
-        path: catalogue
         oci:
           repository: acme
           artifact: ghcr.io/acme/catalogue:1

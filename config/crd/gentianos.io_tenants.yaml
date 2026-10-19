@@ -422,9 +422,11 @@ spec:
                     items:
                       description: |-
                         TenantCatalogueSource is one catalogue of a tenant: an address that serves
-                        index.yaml and profiles/<name>.yaml, an OCI artifact that holds them, read
-                        with the credential of a repository the tenant declared, or a directory of
-                        the cluster's own deployments repository that holds them.
+                        index.yaml and profiles/<name>.yaml, or an OCI artifact that holds them,
+                        read with the credential of a repository the tenant declared. A catalogue
+                        is never kept in the cluster's deployments repository, which holds the
+                        cluster's state only: there is no field for a directory of it, and a
+                        source that names one where an address or an artifact belongs is refused.
                       properties:
                         addedBy:
                           default: cluster
@@ -472,22 +474,6 @@ spec:
                           - artifact
                           - repository
                           type: object
-                        path:
-                          description: |-
-                            Path is the directory of the cluster's own deployments repository the
-                            catalogue is kept in, in place of an address. Deprecated: the
-                            deployments repository holds what the cluster is, and a catalogue
-                            whose profiles must not be public is an OCI artifact (oci). It is
-                            read as before until it is removed. Names separated by '/',
-                            from the top of the repository, none beginning with a dot. The
-                            director reads it from the checkout it already holds. Only the
-                            cluster's administrator declares one. clusters/<cluster>/catalogue,
-                            where the director writes the profiles tenants installed, is never a
-                            catalogue: the director refuses it and does not read it, which the
-                            schema leaves to it.
-                          maxLength: 255
-                          pattern: ^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$
-                          type: string
                         url:
                           description: URL is the https address the catalogue is served
                             from.
@@ -498,15 +484,11 @@ spec:
                       - name
                       type: object
                       x-kubernetes-validations:
-                      - message: 'a catalogue states where it is read from once: url,
-                          oci or path'
-                        rule: '(has(self.url) ? 1 : 0) + (has(self.path) ? 1 : 0)
-                          + (has(self.oci) ? 1 : 0) == 1'
-                      - message: 'a catalogue kept in the deployments repository (path)
-                          is added by the cluster''s administrator: addedBy must be
-                          cluster'
-                        rule: '!has(self.path) || !has(self.addedBy) || self.addedBy
-                          == ''cluster'''
+                      - message: 'a catalogue states where it is read from once: url
+                          or oci (a directory of the deployments repository, path,
+                          is not a catalogue source)'
+                        rule: '(has(self.url) ? 1 : 0) + (has(self.oci) ? 1 : 0) ==
+                          1'
                     type: array
                     x-kubernetes-list-map-keys:
                     - name

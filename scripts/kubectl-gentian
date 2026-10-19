@@ -55,9 +55,6 @@
 #   kubectl gentian catalogues add <name> --oci <artifact> --repository <repository> [--tenant <tenant>]
 #                                  a catalogue kept as an OCI artifact, read with the credential of a
 #                                  repository declared for the tenant (or, without --tenant, for the cluster)
-#   kubectl gentian catalogues add <name> --path <directory> [--tenant <tenant>]   (deprecated)
-#                                  a catalogue kept in a directory of the cluster's own
-#                                  deployments repository; the cluster's administrator only
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
@@ -1105,7 +1102,7 @@ _optional_tenant_flag() {
 # Where a catalogue is read from, as the lists show it: its https address, the
 # artifact it is kept as and the repository it is read with, or the directory
 # of the cluster's own deployments repository it is kept in.
-_CATALOGUE_WHERE='def where: if .oci then "oci: " + .oci.artifact + " (repository " + .oci.repository + ")" elif (.path // "") != "" then "deployments repository: " + .path else (.url // "") end;'
+_CATALOGUE_WHERE='def where: if .oci then "oci: " + .oci.artifact + " (repository " + .oci.repository + ")" else (.url // "") end;'
 
 # catalogues list: with --tenant, what that tenant installs from -- the
 # cluster's catalogues and its own. Without, everything the cluster declares:
@@ -1283,19 +1280,16 @@ cmd_catalogues() {
             esac
             ;;
         add|remove)
-            local name="" address="" dir="" artifact="" repository="" t="" a
+            local name="" address="" artifact="" repository="" t=""
             local add_usage="usage: kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
-       kubectl gentian catalogues add <name> --oci <host>/<path>:<tag> --repository <declared repository> [--tenant <tenant>]
-       kubectl gentian catalogues add <name> --path <directory of the deployments repository> [--tenant <tenant>]   (deprecated)"
+       kubectl gentian catalogues add <name> --oci <host>/<path>:<tag> --repository <declared repository> [--tenant <tenant>]"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --tenant|-t) t="${2:?}"; shift 2 ;;
-                    --path)
-                        [[ "${sub}" == "add" ]] || die "unknown option $1"
-                        dir="${2:?${add_usage}}"; shift 2 ;;
-                    --path=*)
+                    --path|--path=*)
                         [[ "${sub}" == "add" ]] || die "unknown option ${1%%=*}"
-                        dir="${1#*=}"; shift ;;
+                        die "a catalogue is never kept in the deployments repository, which holds the cluster's state only; publish it as an OCI artifact (--oci) or at an https address.
+${add_usage}" ;;
                     --oci)
                         [[ "${sub}" == "add" ]] || die "unknown option $1"
                         artifact="${2:?${add_usage}}"; shift 2 ;;
@@ -1318,13 +1312,10 @@ cmd_catalogues() {
                 esac
             done
             if [[ "${sub}" == "add" ]]; then
-                # One of the three: an address, an artifact, or a directory of
-                # the repository.
+                # One of the two: an address or an artifact.
                 [[ -n "${name}" ]] || die "${add_usage}"
-                local stated=0
-                for a in "${address}" "${dir}" "${artifact}"; do [[ -z "${a}" ]] || stated=$((stated + 1)); done
-                [[ "${stated}" -eq 1 ]] ||
-                    die "a catalogue is at an https address, an OCI artifact (--oci) or a directory of the deployments repository (--path): one of them.
+                [[ -n "${address}" && -z "${artifact}" ]] || [[ -z "${address}" && -n "${artifact}" ]] ||
+                    die "a catalogue is at an https address or an OCI artifact (--oci): one of them.
 ${add_usage}"
                 [[ -z "${artifact}" || -n "${repository}" ]] ||
                     die "an OCI artifact is read with a declared repository's credential: name it with --repository.
@@ -1335,8 +1326,6 @@ ${add_usage}"
                 if [[ -n "${artifact}" ]]; then
                     _catalogues_change add PUT "${name}" "${t}" \
                         "$(jq -n --arg r "${repository}" --arg a "${artifact}" '{oci: {repository: $r, artifact: $a}}')"
-                elif [[ -n "${dir}" ]]; then
-                    _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg p "${dir}" '{path: $p}')"
                 else
                     _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg u "${address}" '{url: $u}')"
                 fi

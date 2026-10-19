@@ -304,8 +304,6 @@ kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue       
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant demo   # for demo only
 kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --repository acme --tenant demo   # an artifact, read with demo's repository acme
 kubectl gentian catalogues add ours --oci ghcr.io/ours/catalogue:1 --repository ours   # for every tenant, read with the cluster's repository ours
-kubectl gentian catalogues add own --path catalogue                    # deprecated: a directory of the deployments repository, for every tenant
-kubectl gentian catalogues add own --path catalogues/demo --tenant demo   # the same, for demo only
 kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
@@ -318,7 +316,6 @@ kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc   # one 
 $ kubectl gentian catalogues list
 CATALOGUE  FOR           ADDED BY     ADDRESS
 gentian    every tenant  the cluster  https://gentian-org.github.io/gentian-apps
-own        every tenant  the cluster  deployments repository: catalogue
 acme       tenant demo   the tenant   https://acme.github.io/acme-catalogue
 private    tenant demo   the tenant   oci: ghcr.io/acme/catalogues/acme:1.0.0 (repository acme)
 Tenants whose administrators may add catalogues of their own: demo.
@@ -329,17 +326,15 @@ when the person is one, and otherwise as the tenant's administrator: that is
 refused unless the tenant is delegated, and removes only what the tenant
 added. Without `--tenant`, `add` and `remove` change the Cluster claim
 (`spec.catalogue.sources`), which is also where a catalogue for the whole
-cluster can be written before the install, as a `name` and a `url`, a `name`
-and an `oci` (`repository`, `artifact`), or a `name` and a `path`. An address
+cluster can be written before the install, as a `name` and a `url`, or a
+`name` and an `oci` (`repository`, `artifact`). An address
 must be a public https one; anything else is refused. An `--oci` artifact is
 `<registry host>/<repository>:<tag>` or `@sha256:<digest>`, on a public
 registry, inside the address of the `--repository` named, which is declared for
 the tenant with `--tenant` and for the cluster without
-([custom-catalogues.md §4.5](custom-catalogues.md)). A `--path` is a directory that exists in the deployments repository,
-named from its top without `..` or a leading `/`, and not
-`clusters/<cluster>/catalogue`; it is the cluster's administrator's to add,
-with or without `--tenant`
-([custom-catalogues.md §4.4](custom-catalogues.md)).
+([custom-catalogues.md §4.4](custom-catalogues.md)). A catalogue is never a
+directory of the deployments repository, which holds the cluster's state only;
+`--path` is refused.
 [custom-catalogues.md](custom-catalogues.md) says how to build and publish a
 catalogue.
 

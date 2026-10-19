@@ -96,9 +96,9 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 		return Listing{}, fmt.Errorf("%w: this director fetches from no catalogue", ErrNotFound)
 	}
 	// By the catalogue and by where it is read from: a catalogue removed and
-	// added again at another address, or in another directory, is another
+	// added again at another address, or as another artifact, is another
 	// catalogue under the same name.
-	key := src.Key + "\n" + src.URL + "\n" + src.Dir
+	key := src.Key + "\n" + src.URL
 	if src.OCI != nil {
 		key += "\n" + ociKey(src)
 	}

@@ -102,10 +102,8 @@ type Repository interface {
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
 	AddClusterCatalogueSource(ctx context.Context, name, address string, meta gitops.Meta) (gitops.Result, error)
-	AddClusterCatalogueDirectory(ctx context.Context, name, dir string, meta gitops.Meta) (gitops.Result, error)
 	RemoveClusterCatalogueSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
-	AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta gitops.Meta) (gitops.Result, error)
 	AddClusterCatalogueOCI(ctx context.Context, name string, oci gitops.CatalogueOCI, meta gitops.Meta) (gitops.Result, error)
 	AddTenantCatalogueOCI(ctx context.Context, tenant, name string, oci gitops.CatalogueOCI, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	// RegistryRepository answers a repository owner declared ("" for the
@@ -1217,15 +1215,6 @@ func (s *Server) fetchEntry(
 			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
 			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
-		return nil, false
-	case errors.Is(err, gitops.ErrCatalogueDirectoryRefused):
-		// The directory was one a catalogue is read from when it was added,
-		// and what is there now is not: a symbolic link, or a name that is
-		// not a plain file's.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue's directory is not one a catalogue is read from",
-			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the directory of catalogue "+source.Name+
-			" in the deployments repository is not one a catalogue is read from: "+refusedDirectory(err)+"; nothing was installed")
 		return nil, false
 	case errors.Is(err, profilebundle.ErrRefused):
 		// The build that was asked for, and not something this cluster

@@ -261,15 +261,8 @@ func run(log *slog.Logger) error {
 	// The fetcher connects to public https addresses and to nothing else
 	// (internal/director/catalogue/address.go): an address somebody typed
 	// must not be a way to reach into the cluster this process runs in.
-	//
-	// A catalogue may instead be kept in a directory of the deployments
-	// repository itself, for profiles that must not be public. That is read
-	// from the checkout this process already holds, with the credential it
-	// already has: no address, and no request to anywhere
-	// (internal/director/gitops/catalogue_directory.go).
 	entries := catalogue.NewFetcher()
-	entries.Repo = repo
-	// A catalogue may also be an OCI artifact, read with the credential of
+	// A catalogue may instead be an OCI artifact, read with the credential of
 	// a repository its owner declared: a tenant's for a tenant's catalogue,
 	// the cluster's for one of the whole cluster. The declaration is read
 	// from git, and answers only the owner's own repository
@@ -300,12 +293,8 @@ func run(log *slog.Logger) error {
 			"error", err)
 	}
 	for _, src := range catalogues.Sources {
-		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL, "path", src.Path,
+		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL,
 			"artifact", src.OCI.Artifact, "repository", src.OCI.Repository)
-		if src.Path != "" {
-			log.Warn("a catalogue kept in the deployments repository is deprecated; publish it as an OCI artifact",
-				"catalogue", src.Name, "path", src.Path)
-		}
 	}
 	if storeURL == "" {
 		// Worth one line: without it the cluster's own catalogue view can
