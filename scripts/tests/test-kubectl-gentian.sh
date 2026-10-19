@@ -370,6 +370,17 @@ gentian tenants create acme --brokered-to name=aluvian,redirect=https://x.exampl
 refused "an outside realm without its keys' address is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
+# A country: sent upper case, refused when it is not two letters.
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","country":"CH"}'
+gentian tenants create acme --country ch
+is "create with a country sends it upper case" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"acme","displayName":"","requireMFA":true,"country":"CH"}'
+has "... and says it" "${OUT}" "Its country: CH."
+fresh
+gentian tenants create acme --country Schweiz
+refused "a country that is not an alpha-2 code is refused"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
 # The other half: a realm of another cluster whose people sign in here, as an
 # organization.
 fresh; reply PUT /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
@@ -470,6 +481,17 @@ for wrong in "--admins-approve-public-addresses" "--admins-approve-public-addres
     refused "set refuses '${wrong:-nothing but a mistyped value}'"
     is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 done
+fresh; reply PUT /v1/tenants/globex/country 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants set globex --country de
+is "set --country asks the tenant's country route" "$(writes | tr -d ' \n')" 'PUT/v1/tenants/globex/country{"country":"DE"}'
+has "... and says it is committed" "${OUT}" "The country of globex is DE: committed."
+fresh; reply PUT /v1/tenants/globex/country 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants set globex --country ""
+is "set --country \"\" clears it" "$(writes | tr -d ' \n')" 'PUT/v1/tenants/globex/country{"country":""}'
+fresh
+gentian tenants set globex --country DEU
+refused "set refuses a country that is not two letters"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 fresh
 gentian tenants set globex
 refused "set with nothing to set is refused"

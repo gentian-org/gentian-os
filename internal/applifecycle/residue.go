@@ -98,8 +98,8 @@ const (
 const oidcRule = "A client is configured from the OIDCPackCatalog that carries its profile's label, an extension's " +
 	"from its parent profile's; the app's Composition and the identity Job read that one catalog and no other. " +
 	"So a pack catalog on this list is still in effect (yes) when it is the only one labelled for a profile that " +
-	"is installed; contested when another catalog carries the same label, and which is read is not defined; and " +
-	"no otherwise."
+	"is installed; contested when another catalog carries the same label, and the profile's clients are then " +
+	"refused until one of the two is removed; and no otherwise."
 
 // catalogueApplication is what the name of the Argo CD Application that
 // applies the catalogue directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
@@ -147,7 +147,7 @@ type ResidueOIDC struct {
 	// pack for, when it is in effect.
 	Clients []string `json:"clients"`
 	// Contested are the client ids it holds a pack for when another catalog
-	// carries the same profile's label, and may be read instead.
+	// carries the same profile's label: refused until one of the two goes.
 	Contested []string `json:"contested"`
 	// Composition is the installed profile whose Composition reads this
 	// catalog by its label; empty when none does.

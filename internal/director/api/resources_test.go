@@ -420,6 +420,64 @@ func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
 	}
 }
 
+// A tenant's country is set and cleared by whoever may set its policy, as a
+// commit of spec.country; a member may read it and not change it.
+func TestATenantsCountryIsCommittedAndReadBack(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	mia := h.token(t, "tenant-demo", "mia")
+
+	code, body := h.do(t, "GET", "/v1/tenants/demo/country", mia, "")
+	if code != http.StatusOK || body["country"] != "" {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/country", mia, `{"country":"CH"}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a member set the country: %d", code)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":"Schweiz"}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("a country that is no code: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{}`); code != http.StatusBadRequest {
+		t.Fatalf("a body without a country: %d %v", code, body)
+	}
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":"ch"}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("write: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); !strings.Contains(manifest, `country: "CH"`) {
+		t.Fatalf("the country is not in the manifest:\n%s", manifest)
+	}
+	if _, body = h.do(t, "GET", "/v1/tenants/demo/country", tom, ""); body["country"] != "CH" {
+		t.Fatalf("read back: %v", body)
+	}
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":""}`); code != http.StatusAccepted {
+		t.Fatalf("clear: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "country:") {
+		t.Fatalf("a cleared country is still in the manifest:\n%s", manifest)
+	}
+}
+
+// A tenant is created with its country, and a country that is no code is
+// refused before anything is committed.
+func TestATenantIsCreatedWithItsCountry(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	tenants := "/v1/clusters/" + dt.Cluster + "/tenants"
+	before := h.tip(t)
+	if code, out := h.do(t, "POST", tenants, alice, `{"name":"acme","country":"CHE"}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("an alpha-3 code = %d %v", code, out)
+	}
+	code, out := h.do(t, "POST", tenants, alice, `{"name":"acme","country":"de"}`)
+	if code != http.StatusAccepted || out["country"] != "DE" {
+		t.Fatalf("create = %d %v", code, out)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("acme")); !strings.Contains(manifest, `country: "DE"`) {
+		t.Fatalf("the country is not in the manifest:\n%s", manifest)
+	}
+}
+
 func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
 	h, _ := startWithOperator(t)
 	before := h.tip(t)

@@ -1117,6 +1117,12 @@ type PlatformValueMapping struct {
 	// +optional
 	DefaultLanguageKey string `json:"defaultLanguageKey,omitempty"`
 
+	// CountryKey receives the tenant's country (spec.country), an ISO 3166-1
+	// alpha-2 code in upper case, and the empty string while the tenant names
+	// none.
+	// +optional
+	CountryKey string `json:"countryKey,omitempty"`
+
 	// HostKey receives the host this component answers on in its zone: the
 	// host of its first gateway entry, as the operator routes it. A component
 	// that has to spell its own address -- a redirect address it states to a
