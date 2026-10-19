@@ -33,6 +33,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
@@ -268,6 +269,24 @@ func run(log *slog.Logger) error {
 	// (internal/director/gitops/catalogue_directory.go).
 	entries := catalogue.NewFetcher()
 	entries.Repo = repo
+	// A catalogue may also be an OCI artifact, read with the credential of
+	// a repository its owner declared: a tenant's for a tenant's catalogue,
+	// the cluster's for one of the whole cluster. The declaration is read
+	// from git, and answers only the owner's own repository
+	// (gitops.RegistryRepository); the credential from the vault, where this
+	// process logs in as itself to a role that reads repository
+	// credentials and nothing else (cluster-default, director-repository-read).
+	// Without a vault address, a catalogue artifact can be read only from a
+	// repository that declares no credential.
+	registries := catalogue.VaultRegistries{Declared: repo.RegistryRepository}
+	if addr := os.Getenv("DIRECTOR_BAO_ADDR"); addr != "" {
+		vault := secrets.NewKVClient(addr, envOr("DIRECTOR_BAO_ROLE", "gentian-os-director"),
+			envOr("DIRECTOR_BAO_TOKEN_FILE", "/var/run/secrets/gentian/openbao/token"))
+		registries.Read = vault.Get
+	} else {
+		log.Info("no vault address (DIRECTOR_BAO_ADDR): a catalogue kept as an OCI artifact is read only from a repository without a credential")
+	}
+	entries.Registries = registries
 	var storeURL string
 	readSources, cancelRead := context.WithTimeout(context.Background(), time.Minute)
 	catalogues, err := repo.Catalogue(readSources)
@@ -281,7 +300,12 @@ func run(log *slog.Logger) error {
 			"error", err)
 	}
 	for _, src := range catalogues.Sources {
-		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL, "path", src.Path)
+		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL, "path", src.Path,
+			"artifact", src.OCI.Artifact, "repository", src.OCI.Repository)
+		if src.Path != "" {
+			log.Warn("a catalogue kept in the deployments repository is deprecated; publish it as an OCI artifact",
+				"catalogue", src.Name, "path", src.Path)
+		}
 	}
 	if storeURL == "" {
 		// Worth one line: without it the cluster's own catalogue view can

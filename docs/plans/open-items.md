@@ -1432,11 +1432,14 @@ the code or its commit, the entry says so.
       and is reached another way.
     - **c. A catalogue's address must be public `https` on port 443**,
       for the cluster's administrator too
-      (`internal/director/catalogue/address.go`). The owner had said that
-      a tenant's administrator, once delegated, can do what they want.
-      A private catalogue goes through the deployments repository
-      (AD-14). A no means the director fetches from addresses inside the
-      cluster or a private network when asked.
+      (`internal/director/catalogue/address.go`). **Answered by the owner
+      2026-10-19: yes.** Addresses stay public-only — https, port 443,
+      public hosts, no redirects, no proxy — for everybody. What is
+      private reaches a cluster through a catalogue kept as an OCI
+      artifact, read with the credential of a repository its owner
+      declared, which a delegated tenant's administrator may add as well
+      (AD-14, [custom-catalogues.md §4.5](../custom-catalogues.md)); never
+      through a private network address.
     - **d. Reserved address names beyond those asked for.** The owner
       asked for the critical names including desktop and console. Also
       reserved: `auth`, `login`, `signin`, `sign-in`, `sso`, `account`,
@@ -1527,10 +1530,6 @@ the code or its commit, the entry says so.
 - **The director reads the cluster's catalogue sources from the claim in
   git.** An edit made outside the director reaches it with the next commit it
   reads.
-- **A private catalogue for a tenant's own administrator.** A catalogue in
-  the deployments repository is the cluster administrator's to declare, also
-  for one tenant; a tenant's administrator adds public addresses only, and
-  no credential is sent to a catalogue.
 - **A Cluster-claim setting for the mail proxy's load balancer** -- the PROXY
   header from a load balancer that is itself a proxy, the addresses it may
   come from, and the pinned mail address. They are values of the mail

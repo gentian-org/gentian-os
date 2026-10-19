@@ -977,6 +977,63 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── The director's identity at the vault: repository credentials ─
+                 A catalogue may be an OCI artifact read with the credential
+                 of a repository its owner declared (docs/custom-catalogues.md
+                 §4.5), so the director reads that credential when it pulls
+                 one. This is all it may read: the credential of a
+                 repository, a tenant's or the cluster's, at the one path each
+                 is kept at. No other path of a tenant or of the kernel, no
+                 metadata, no write, no token of its own to hand out.
+
+                 Which repository's credential a catalogue is read with is
+                 the director's to decide, by where the catalogue is declared:
+                 a tenant's catalogue with a repository of that tenant, one of
+                 the whole cluster with one of the cluster's. The policy
+                 cannot see that, so it bounds what a director that got it
+                 wrong could read, and the code holds it to the rule.
+
+                 Bound to the director's own ServiceAccount, and to a token
+                 issued for the vault's audience: the director's pod mounts no
+                 token the API server accepts. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-director-repository-read
+              name: {{ $name }}-policy-director-repository-read
+            spec:
+              forProvider:
+                name: director-repository-read
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/repositories/+" { capabilities = ["read"] }
+                  path "{{ $kvMount }}/data/gentian-os/kernel/repositories/+"    { capabilities = ["read"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-director
+              name: {{ $name }}-auth-role-director
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: gentian-os-director
+                boundServiceAccountNames:
+                  - gentian-os-director
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                audience: vault://gentian-os-director
+                tokenPolicies:
+                  - director-repository-read
+                tokenTtl: 900
+              providerConfigRef:
+                name: openbao
+
             {{- /* ── cert-manager's identity at the vault: the internal CA ──────
                  gentian-ca is the vault's PKI engine (pki-internal, made by
                  the installer's B-08), and cert-manager asks it to sign

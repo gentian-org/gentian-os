@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 )
 
 // A repository, as a commit.
@@ -501,4 +503,56 @@ func renderRepository(doc map[string]any, tenant, name string, d RepositoryDecla
 	b.WriteString("# vault, under the path below, and is set at the custodian.\n")
 	b.Write(raw)
 	return b.String(), nil
+}
+
+// ErrRepositoryNotRegistry is a repository a catalogue names that is not an
+// OCI registry.
+var ErrRepositoryNotRegistry = errors.New("the repository is not an OCI registry")
+
+// RegistryRepository answers one repository owner declared, as a catalogue
+// kept as an OCI artifact is read with it: its address, and where its
+// credential is. owner is a tenant, or "" for the cluster.
+//
+// It answers owner's own repository and nothing else. A name declared by
+// somebody else -- another tenant, the cluster for a tenant, a tenant for the
+// cluster -- or by more than one is ErrRepositoryNotFound, in the words a name
+// nobody declared is answered in. The credential's path is the one derived
+// for owner (RepositoryVaultPath); a declaration that states another is
+// refused rather than followed, since it is the declaration's word only.
+func (g *GitOps) RegistryRepository(ctx context.Context, owner, name string) (catalogue.DeclaredRegistry, error) {
+	if owner != "" && !ValidName(owner) {
+		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, owner)
+	}
+	if !ValidName(name) {
+		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: no such repository: %s", ErrRepositoryNotFound, name)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepoRead(ctx); err != nil {
+		return catalogue.DeclaredRegistry{}, err
+	}
+	found, err := g.declaredRepositories(name)
+	if err != nil {
+		return catalogue.DeclaredRegistry{}, err
+	}
+	if len(found) != 1 || found[0].tenantDir != owner || found[0].specTenant() != owner {
+		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: %s", ErrRepositoryNotFound, name)
+	}
+	spec, _ := found[0].doc["spec"].(map[string]any)
+	if kind, _ := spec["type"].(string); kind != "oci" {
+		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: %s is a repository of type %q; a catalogue is read from a registry (type oci)",
+			ErrRepositoryNotRegistry, name, kind)
+	}
+	out := catalogue.DeclaredRegistry{URL: found[0].url()}
+	if cred, ok := spec["credential"].(map[string]any); ok {
+		path, _ := cred["vaultPath"].(string)
+		if path != RepositoryVaultPath(owner, name) {
+			return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: the credential of %s is declared at %q, not where the director reads it (%s)",
+				catalogue.ErrRegistryRefused, name, path, RepositoryVaultPath(owner, name))
+		}
+		out.VaultPath = path
+		authType, _ := cred["authType"].(string)
+		out.Bearer = authType == "bearer"
+	}
+	return out, nil
 }

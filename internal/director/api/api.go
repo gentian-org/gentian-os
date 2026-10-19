@@ -106,6 +106,11 @@ type Repository interface {
 	RemoveClusterCatalogueSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta gitops.Meta) (gitops.Result, error)
+	AddClusterCatalogueOCI(ctx context.Context, name string, oci gitops.CatalogueOCI, meta gitops.Meta) (gitops.Result, error)
+	AddTenantCatalogueOCI(ctx context.Context, tenant, name string, oci gitops.CatalogueOCI, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	// RegistryRepository answers a repository owner declared ("" for the
+	// cluster), as a catalogue kept as an OCI artifact is read with it.
+	RegistryRepository(ctx context.Context, owner, name string) (catalogue.DeclaredRegistry, error)
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)

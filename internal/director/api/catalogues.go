@@ -54,13 +54,17 @@ import (
 //   - for one tenant, added by that tenant's own administrator -- possible
 //     only where the cluster's administrator delegated it to that tenant.
 //
-// And it is read from one of two places: an https address, or a directory of
-// the cluster's own deployments repository (gitops/catalogue_directory.go).
-// The second is the cluster administrator's to declare, for the whole
-// cluster or for one tenant, and never a tenant's administrator's: the
-// repository is not theirs. It changes where the bytes come from and nothing
-// else -- a catalogue kept there is a catalogue of the cluster or of a
-// tenant exactly as one at an address is.
+// And it is read from one of three places: an https address; an OCI artifact,
+// read with the credential of a repository its owner declared
+// (catalogue/oci.go); or a directory of the cluster's own deployments
+// repository (gitops/catalogue_directory.go), which is deprecated. An
+// artifact is added by whoever may add an address, and is read with the
+// credential of the owner's repository only: the cluster's for a catalogue of
+// the cluster, the tenant's for one of a tenant. A directory is the cluster
+// administrator's to declare, and never a tenant's administrator's: the
+// repository is not theirs. Each changes where the bytes come from and
+// nothing else -- a catalogue kept in either is a catalogue of the cluster or
+// of a tenant exactly as one at an address is.
 //
 // To a tenant, another tenant's catalogue does not exist: it is not listed,
 // a coordinate that names it is refused in the words an unknown catalogue is
@@ -80,12 +84,38 @@ type catalogueOut struct {
 	// Path is the directory of the cluster's own deployments repository it
 	// is kept in, for a catalogue that has no address.
 	Path string `json:"path,omitempty"`
+	// OCI is the artifact it is kept as, and the repository it is read
+	// with, for a catalogue that has no address.
+	OCI *ociOut `json:"oci,omitempty"`
 	// Scope is "cluster" for a catalogue every tenant sees and "tenant" for
 	// one only this tenant does.
 	Scope string `json:"scope"`
 	// AddedBy is who added it: "cluster" for the cluster's administrator,
 	// "tenant" for the tenant's own.
 	AddedBy string `json:"addedBy"`
+}
+
+type ociOut struct {
+	Repository string `json:"repository"`
+	Artifact   string `json:"artifact"`
+}
+
+// ociOutOf is an artifact as the lists show it; nil for a catalogue that is
+// none.
+func ociOutOf(o gitops.CatalogueOCI) *ociOut {
+	if !o.Set() {
+		return nil
+	}
+	return &ociOut{Repository: o.Repository, Artifact: o.Artifact}
+}
+
+// ociSource is an artifact as it is pulled: with the owner whose repository
+// it is read with, which is where it is declared and nothing it says.
+func ociSource(owner string, o gitops.CatalogueOCI) *catalogue.OCISource {
+	if !o.Set() {
+		return nil
+	}
+	return &catalogue.OCISource{Owner: owner, Repository: o.Repository, Artifact: o.Artifact}
 }
 
 type entryOut struct {
@@ -153,8 +183,11 @@ func (s *Server) visibleSources(ctx context.Context, tenant string) ([]visibleSo
 			continue
 		}
 		out = append(out, visibleSource{
-			Source: catalogue.Source{Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL, Dir: src.Path},
-			scope:  scopeCluster, addedBy: string(gitops.ByCluster),
+			Source: catalogue.Source{
+				Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL, Dir: src.Path,
+				OCI: ociSource("", src.OCI),
+			},
+			scope: scopeCluster, addedBy: string(gitops.ByCluster),
 		})
 	}
 	for _, src := range own.Sources {
@@ -162,8 +195,11 @@ func (s *Server) visibleSources(ctx context.Context, tenant string) ([]visibleSo
 			continue
 		}
 		out = append(out, visibleSource{
-			Source: catalogue.Source{Key: profilebundle.TenantOrigin(tenant, src.Name), Name: src.Name, URL: src.URL, Dir: src.Path},
-			scope:  scopeTenant, addedBy: src.AddedBy,
+			Source: catalogue.Source{
+				Key: profilebundle.TenantOrigin(tenant, src.Name), Name: src.Name, URL: src.URL, Dir: src.Path,
+				OCI: ociSource(tenant, src.OCI),
+			},
+			scope: scopeTenant, addedBy: src.AddedBy,
 		})
 	}
 	return out, own.Delegated, nil
@@ -193,7 +229,11 @@ func (s *Server) listCatalogues(w http.ResponseWriter, r *http.Request, _ call) 
 	}
 	out := make([]catalogueOut, 0, len(sources))
 	for _, src := range sources {
-		out = append(out, catalogueOut{Name: src.Name, URL: src.URL, Path: src.Dir, Scope: src.scope, AddedBy: src.addedBy})
+		var oci *ociOut
+		if src.OCI != nil {
+			oci = &ociOut{Repository: src.OCI.Repository, Artifact: src.OCI.Artifact}
+		}
+		out = append(out, catalogueOut{Name: src.Name, URL: src.URL, Path: src.Dir, OCI: oci, Scope: src.scope, AddedBy: src.addedBy})
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant": tenant, "storeUrl": s.cfg.StoreURL, "delegated": delegated, "catalogues": out,
@@ -212,7 +252,9 @@ func (s *Server) listClusterCatalogues(w http.ResponseWriter, r *http.Request, _
 	}
 	own := make([]catalogueOut, 0, len(cluster.Sources))
 	for _, src := range cluster.Sources {
-		own = append(own, catalogueOut{Name: src.Name, URL: src.URL, Path: src.Path, Scope: scopeCluster, AddedBy: string(gitops.ByCluster)})
+		own = append(own, catalogueOut{
+			Name: src.Name, URL: src.URL, Path: src.Path, OCI: ociOutOf(src.OCI), Scope: scopeCluster, AddedBy: string(gitops.ByCluster),
+		})
 	}
 	perTenant, err := s.cfg.Repo.TenantCatalogues(ctx)
 	if err != nil {
@@ -228,7 +270,9 @@ func (s *Server) listClusterCatalogues(w http.ResponseWriter, r *http.Request, _
 	for name, c := range perTenant {
 		entry := tenantOut{Tenant: name, Delegated: c.Delegated, Catalogues: make([]catalogueOut, 0, len(c.Sources))}
 		for _, src := range c.Sources {
-			entry.Catalogues = append(entry.Catalogues, catalogueOut{Name: src.Name, URL: src.URL, Path: src.Path, Scope: scopeTenant, AddedBy: src.AddedBy})
+			entry.Catalogues = append(entry.Catalogues, catalogueOut{
+				Name: src.Name, URL: src.URL, Path: src.Path, OCI: ociOutOf(src.OCI), Scope: scopeTenant, AddedBy: src.AddedBy,
+			})
 		}
 		tenants = append(tenants, entry)
 	}
@@ -260,6 +304,13 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the directory of catalogue "+src.Name+
 			" in the deployments repository is not one a catalogue is read from: "+refusedDirectory(err))
+		return
+	case errors.Is(err, catalogue.ErrRegistryRefused), errors.Is(err, catalogue.ErrArtifactRefused):
+		// An artifact that is not a catalogue, or a repository it can no
+		// longer be read with. The owner has to act, so the reason is said.
+		s.cfg.Log.WarnContext(r.Context(), "a catalogue artifact could not be read",
+			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the catalogue "+src.Name+" could not be read: "+err.Error())
 		return
 	case err != nil:
 		// The source is somebody else's web server and it is allowed to be
@@ -299,11 +350,13 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 // remove with addedBy: tenant and are refused unless the tenant is delegated.
 // Nothing in a request body says whose a catalogue is or who added it.
 
-// catalogueRequest says where the catalogue is: at an https address, or in a
-// directory of the cluster's own deployments repository. One of the two.
+// catalogueRequest says where the catalogue is: at an https address, as an
+// OCI artifact read with a declared repository, or in a directory of the
+// cluster's own deployments repository. One of the three.
 type catalogueRequest struct {
-	URL  string `json:"url"`
-	Path string `json:"path"`
+	URL  string               `json:"url"`
+	Path string               `json:"path"`
+	OCI  *gitops.CatalogueOCI `json:"oci"`
 }
 
 // vetted reads where a request says the catalogue is and checks it.
@@ -316,16 +369,36 @@ type catalogueRequest struct {
 // mayNameDirectory is false on the route a tenant's own administrator
 // reaches. The deployments repository is the cluster administrator's, and
 // what is read from it is not a tenant's to say, delegated or not.
-func (s *Server) vetted(w http.ResponseWriter, r *http.Request, mayNameDirectory bool) (catalogueRequest, bool) {
+//
+// owner is whose repositories an artifact may be read with: the tenant the
+// route names, or "" on the cluster's own route. It is the route's, never the
+// body's. An artifact is checked as it is written, by what its registry's
+// host resolves to, and against the repository it names: one owner
+// declared, a registry, whose address the artifact lies inside. Whether the
+// credential is set is not asked here, so that a repository can be declared,
+// the catalogue added and the credential set in any order; it is asked on
+// every pull.
+func (s *Server) vetted(w http.ResponseWriter, r *http.Request, mayNameDirectory bool, owner string) (catalogueRequest, bool) {
 	var body catalogueRequest
-	if err := decode(r, &body); err != nil || (body.URL == "") == (body.Path == "") {
+	stated := 0
+	err := decode(r, &body)
+	for _, set := range []bool{body.URL != "", body.Path != "", body.OCI != nil} {
+		if set {
+			stated++
+		}
+	}
+	if err != nil || stated != 1 {
 		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"url": "https://<host>/<path>"}, or {"path": "<directory of the deployments repository>"}`)
+			`body must be {"url": "https://<host>/<path>"}, {"oci": {"repository": "<declared repository>", "artifact": "<host>/<path>:<tag>"}}, `+
+				`or {"path": "<directory of the deployments repository>"}`)
 		return catalogueRequest{}, false
 	}
 	if s.cfg.Catalogue == nil || s.cfg.Catalogue.Vet == nil {
 		s.fail(w, r, http.StatusServiceUnavailable, "this director fetches from no catalogue, so none can be added")
 		return catalogueRequest{}, false
+	}
+	if body.OCI != nil {
+		return s.vettedOCI(w, r, *body.OCI, owner)
 	}
 	if body.Path != "" {
 		if !mayNameDirectory {
@@ -351,14 +424,43 @@ func (s *Server) vetted(w http.ResponseWriter, r *http.Request, mayNameDirectory
 	return catalogueRequest{URL: strings.TrimSuffix(body.URL, "/")}, true
 }
 
+// vettedOCI is vetted for an artifact.
+func (s *Server) vettedOCI(w http.ResponseWriter, r *http.Request, oci gitops.CatalogueOCI, owner string) (catalogueRequest, bool) {
+	name := r.PathValue("s")
+	if s.cfg.Catalogue.Registries == nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "this director reads no repository credential, so no catalogue kept as an OCI artifact can be added")
+		return catalogueRequest{}, false
+	}
+	if err := gitops.CheckCatalogueOCI(oci); err != nil {
+		s.catalogueError(w, r, name, err)
+		return catalogueRequest{}, false
+	}
+	ref, _ := catalogue.ParseOCIReference(oci.Artifact)
+	if err := s.cfg.Catalogue.Vet(r.Context(), "https://"+ref.Host+"/"); err != nil {
+		s.catalogueError(w, r, name, err)
+		return catalogueRequest{}, false
+	}
+	declared, err := s.cfg.Repo.RegistryRepository(r.Context(), owner, oci.Repository)
+	if err == nil {
+		err = catalogue.CheckArtifactInRegistry(ref, declared.URL)
+	}
+	if err != nil {
+		s.catalogueError(w, r, name, err)
+		return catalogueRequest{}, false
+	}
+	return catalogueRequest{OCI: &oci}, true
+}
+
 func (s *Server) addClusterCatalogue(w http.ResponseWriter, r *http.Request, c call) {
-	where, ok := s.vetted(w, r, true)
+	where, ok := s.vetted(w, r, true, "")
 	if !ok {
 		return
 	}
 	var res gitops.Result
 	var err error
-	if where.Path != "" {
+	if where.OCI != nil {
+		res, err = s.cfg.Repo.AddClusterCatalogueOCI(r.Context(), r.PathValue("s"), *where.OCI, c.meta)
+	} else if where.Path != "" {
 		res, err = s.cfg.Repo.AddClusterCatalogueDirectory(r.Context(), r.PathValue("s"), where.Path, c.meta)
 	} else {
 		res, err = s.cfg.Repo.AddClusterCatalogueSource(r.Context(), r.PathValue("s"), where.URL, c.meta)
@@ -401,13 +503,17 @@ func (s *Server) addTenantCatalogueBy(w http.ResponseWriter, r *http.Request, c 
 			return
 		}
 	}
-	where, ok := s.vetted(w, r, by == gitops.ByCluster)
+	where, ok := s.vetted(w, r, by == gitops.ByCluster, tenant)
 	if !ok {
 		return
 	}
 	var res gitops.Result
 	var err error
-	if where.Path != "" {
+	if where.OCI != nil {
+		// Read with a repository of this tenant's, whoever adds it: the
+		// owner is the route's tenant (vetted), and so is the manifest.
+		res, err = s.cfg.Repo.AddTenantCatalogueOCI(r.Context(), tenant, r.PathValue("s"), *where.OCI, by, c.meta)
+	} else if where.Path != "" {
 		// Reached only as the cluster's administrator (vetted), and the
 		// method takes no role to get wrong.
 		res, err = s.cfg.Repo.AddTenantCatalogueDirectory(r.Context(), tenant, r.PathValue("s"), where.Path, c.meta)
@@ -482,6 +588,18 @@ func (s *Server) catalogueError(w http.ResponseWriter, r *http.Request, name str
 		s.fail(w, r, http.StatusUnprocessableEntity, "this address is not one a catalogue is fetched from: "+
 			strings.TrimPrefix(err.Error(), catalogue.ErrAddressRefused.Error()+": ")+
 			". A catalogue is a public https address; nothing was added")
+	case errors.Is(err, catalogue.ErrArtifactRefused):
+		s.fail(w, r, http.StatusUnprocessableEntity, "this artifact is not one a catalogue is pulled from: "+
+			strings.TrimPrefix(err.Error(), catalogue.ErrArtifactRefused.Error()+": ")+
+			". A catalogue artifact is <registry host>/<repository>:<tag> or @sha256:<digest>; nothing was added")
+	case errors.Is(err, gitops.ErrRepositoryNotFound):
+		// Said as "no such repository" whoever else may have the name: that a
+		// name is another tenant's, or the cluster's, is not this caller's to
+		// learn.
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue names a repository that is not declared for "+ownerOf(r)+
+			"; declare it first (kubectl gentian repositories declare <name> --url oci://<registry>/<path>"+tenantFlag(r)+"). Nothing was added")
+	case errors.Is(err, gitops.ErrRepositoryNotRegistry), errors.Is(err, catalogue.ErrRegistryRefused):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue cannot be read with this repository: "+firstLine(err)+". Nothing was added")
 	case errors.Is(err, gitops.ErrCatalogueDirectoryRefused):
 		s.fail(w, r, http.StatusUnprocessableEntity, "this directory is not one a catalogue is read from: "+refusedDirectory(err)+
 			". A catalogue kept in the deployments repository is a directory of it holding index.yaml and profiles/; nothing was added")
@@ -501,6 +619,22 @@ func (s *Server) catalogueError(w http.ResponseWriter, r *http.Request, name str
 	default:
 		s.repoError(w, r, err)
 	}
+}
+
+// ownerOf and tenantFlag say whose repositories a route's catalogue may be
+// read with, for a message.
+func ownerOf(r *http.Request) string {
+	if t := r.PathValue("t"); t != "" {
+		return "tenant " + t
+	}
+	return "the cluster"
+}
+
+func tenantFlag(r *http.Request) string {
+	if t := r.PathValue("t"); t != "" {
+		return " --tenant " + t
+	}
+	return ""
 }
 
 // refusedDirectory is why a directory was refused, without the words every

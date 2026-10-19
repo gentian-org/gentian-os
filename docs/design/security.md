@@ -502,7 +502,7 @@ They are plain `networking.k8s.io/v1` NetworkPolicy and name no address block, s
 | --- | --- | --- |
 | `kernel-gitops` | Nothing by these rules. Argo CD's own manifest ships a policy per component, and those stand: the console (8080) stays open to any source, as upstream has it | No: a rule for the whole namespace would widen upstream's |
 | `kernel-provisioning` | 9443 from any source (Crossplane's and its providers' webhooks, called by the API server) | Yes |
-| `kernel-secrets` | The vault, 8200: the operator and the custodian by label, and the provisioning namespace (provider-vault). 10250 from any source (External Secrets' webhook) | Yes (External Secrets reads the vault) |
+| `kernel-secrets` | The vault, 8200: the operator, the custodian and the director by label, and the provisioning namespace (provider-vault). 10250 from any source (External Secrets' webhook) | Yes (External Secrets reads the vault) |
 | `kernel-seal` | The seal, 8200: the secrets namespace | Yes |
 | `kernel-data` | 9443 from any source (CloudNativePG's webhook). The kernel's PostgreSQL keeps its own policy (§2.8) | Yes |
 | `kernel-authentication` | Keycloak, 8080: the edge namespace, the control namespace's programs, the provisioning namespace, tenant namespaces, the mail namespaces. Its management port (9000) and 8443: nobody | Yes (the realm Jobs) |
@@ -727,7 +727,7 @@ So an app that declares it can open the mailbox of a person who signed in to it,
 
 ### 2.17 A catalogue kept in the deployments repository
 
-A catalogue is a public https address, and no credential is sent to one. For profiles that must not be public, a catalogue may instead be a directory of the cluster's own deployments repository ([custom-catalogues.md §4.4](../custom-catalogues.md)). The director reads that repository already; this lets what it reads there be installed from, and nothing more.
+A catalogue at an https address is public, and no credential is sent to one. For profiles that must not be public, a catalogue is an OCI artifact read with a declared repository's credential (§2.18). It may still be a directory of the cluster's own deployments repository ([custom-catalogues.md §4.4](../custom-catalogues.md)), which is deprecated: the director reads that repository already; this lets what it reads there be installed from, and nothing more.
 
 | Control | State |
 | --- | --- |
@@ -738,6 +738,21 @@ A catalogue is a public https address, and no credential is sent to one. For pro
 | Only the cluster's administrator declares one (`can_configure` on the cluster), for the cluster or for one tenant. A tenant's administrator is refused with or without delegation, and an entry stating a directory and `addedBy: tenant` is not read | Built |
 | No more trust than an address the cluster's administrator added: the digest pins the install, the bytes are held to it, the bundle checks run, the origin is recorded, a tenant's catalogue brings no companion and its profiles install in that tenant only | Built: one code path after the bytes are read |
 | The schema states the same rules for a Tenant's sources (`url` or `path`, a `path` only with `addedBy: cluster`) | Built (`TenantCatalogueSource`) |
+
+### 2.18 A catalogue kept as an OCI artifact
+
+A catalogue whose profiles must not be public is an OCI artifact on a registry that asks for a credential, read with the credential of a repository its owner declared ([custom-catalogues.md §4.5](../custom-catalogues.md)). The director reads that credential from the vault, which it does for nothing else. Addresses stay public: what is private arrives through the credential, never through a private network address.
+
+| Control | State |
+| --- | --- |
+| A tenant's catalogue is read with a repository declared for that tenant, a catalogue of the whole cluster with one declared for the cluster; the owner is where the catalogue is declared, never what it says. Any other name is refused as a repository nobody declared, when it is added and on every pull | Built (`gitops.RegistryRepository`, `catalogue.VaultRegistries`) |
+| The credential is read at the one path the owner's repository credentials are kept at (`gentian-os/tenants/<t>/repositories/<name>`, `gentian-os/kernel/repositories/<name>`); a declaration naming another path is refused before the vault is asked | Built |
+| The director's role at the vault, `gentian-os-director`, bound to its ServiceAccount and to a token of the vault's audience, holds `director-repository-read`: read on those two paths, and no metadata, no write, no other path | Built (`cluster-default.yaml`); held by `make test-policy-openbao`. The policy cannot tell one tenant from another: that the director uses a tenant's credential for that tenant's catalogue only is the code above |
+| The credential is sent only for an artifact inside the repository's address, to that registry, and to a token realm of the registry's registrable domain; a single-token credential is never traded at a realm | Built (`catalogue/oci.go`) |
+| The registry is held to the address rules ([custom-catalogues.md §7](../custom-catalogues.md)): https on 443, public host, checked in the dialer, no proxy. A manifest is not redirected; a layer's redirect is followed to a public https host only, without the credential, at most three hops | Built. The layer's redirect is the one exception to "no redirects": a registry such as `ghcr.io` serves no blob without it, and the bytes are held to the layer's digest |
+| Manifest and layer are held to their digests; the manifest is a catalogue's (type, one layer); the tar is plain relative files (no `..`, absolute path, link or device), at most 10 MiB packed, 32 MiB unpacked, 4096 entries, 1 MiB a file | Built |
+| Who may add one is who may add an address, delegation included; whether the credential is set is not asked when it is added | Built |
+| A taken-over director reads every repository credential of the cluster | Accepted (AD-14, changed 2026-10-19): the policy bounds it to repository credentials |
 
 What it does not change: whoever can push to the deployments repository can put any profile into such a directory, and into the cluster directly (§2.11). The catalogue is no stronger than the repository, and its index is not signed. Whoever may view a tenant (`can_view`) can read the name, version, edition and digest of every entry of a catalogue that tenant sees, as for a catalogue at an address; a profile itself reaches the cluster when somebody who may install apps installs it, and is then one object for the whole cluster like every profile. A directory declared for the whole cluster is therefore listed to every tenant; one that only a tenant should see is declared for that tenant.
 
@@ -1271,6 +1286,10 @@ Who may read what:
   - *The cluster's own registry credential* (`Repository` without a tenant,
     with a `namespaceSelector`) is a kernel path. Where its selector matches
     a tenant's namespace, no pull Secret arrives there any more.
+- **The director reads repository credentials**, a tenant's and the
+  cluster's, under `director-repository-read` (`cluster-default.yaml`), to
+  pull a catalogue kept as an OCI artifact (§2.18). Read only, on
+  `tenants/+/repositories/+` and `kernel/repositories/+`, and nothing else.
 - Per-`(tenant, app)` policies, so that no app can read a sibling app's paths,
   are a target — the layout above is shaped for them.
 
