@@ -185,13 +185,7 @@ func (s *Server) visibleSources(ctx context.Context, tenant string) ([]visibleSo
 		if twice[src.Name] {
 			continue
 		}
-		out = append(out, visibleSource{
-			Source: catalogue.Source{
-				Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL,
-				OCI: ociSource("", src.OCI),
-			},
-			scope: scopeCluster, addedBy: string(gitops.ByCluster),
-		})
+		out = append(out, clusterSource(src))
 	}
 	for _, src := range own.Sources {
 		if twice[src.Name] {
@@ -206,6 +200,20 @@ func (s *Server) visibleSources(ctx context.Context, tenant string) ([]visibleSo
 		})
 	}
 	return out, own.Delegated, nil
+}
+
+// clusterSource is one of the cluster's catalogues as it is fetched from:
+// an address or an artifact, read with a repository of the cluster's. Every
+// reader of the cluster's catalogues builds its source here, so none of them
+// knows fewer kinds of catalogue than the others.
+func clusterSource(src gitops.CatalogueSource) visibleSource {
+	return visibleSource{
+		Source: catalogue.Source{
+			Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL,
+			OCI: ociSource("", src.OCI),
+		},
+		scope: scopeCluster, addedBy: string(gitops.ByCluster),
+	}
 }
 
 // resolveSource answers the catalogue a name means to a tenant, or false.
