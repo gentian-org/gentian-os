@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
@@ -246,4 +247,52 @@ func TestAnArtifactIsReadWithItsRepositoryOnEveryPull(t *testing.T) {
 	if len(vault.paths()) != 0 || len(reg.Requests()) != 0 {
 		t.Fatalf("asked the vault %v and the registry %v", vault.paths(), reg.Requests())
 	}
+}
+
+// An import obtains the builds its bundle records from the cluster's
+// catalogues of every kind: from one kept as an artifact as from one at an
+// address, with the same fetcher, read with the cluster's repository and no
+// other.
+func TestAnImportMaterialisesAProfileFromAnArtifactOfTheCluster(t *testing.T) {
+	defer api.SetImportPoll(20 * time.Millisecond)()
+	reg := dt.NewRegistry(t)
+	reg.Login = [2]string{"cluster-bot", "cluster-secret"}
+	reg.Push(t, "registry.example.com", "ours/catalogue", "1", dt.CatalogueLayer(t, map[string]string{
+		"index.yaml":            "entries:\n  - name: element\n    version: \"1.0.0\"\n    edition: ce\n    digest: " + sha(elementProfile) + "\n",
+		"profiles/element.yaml": elementProfile,
+	}))
+	vault := &fakeVault{data: map[string]map[string]string{
+		"gentian-os/kernel/repositories/ours": {"username": "cluster-bot", "password": "cluster-secret"},
+	}}
+	op := &importingOperator{declared: true,
+		manifest: `{"schemaVersion":2,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd",` +
+			`"apps":[{"profile":"element","digest":"` + sha(elementProfile) + `","catalogue":"theirs"}]},"apps":[]}`}
+	h := startWith(t, op, withRegistry(reg, vault))
+	alice := h.token(t, "gentian", "alice")
+	declare(t, h, "/v1/clusters/"+dt.Cluster+"/repositories/ours", alice, "oci://registry.example.com/ours")
+	if code, out := h.do(t, "PUT", clusterCatalogues+"/ours", alice, ociBody("ours", "registry.example.com/ours/catalogue:1")); code != http.StatusAccepted {
+		t.Fatalf("add the cluster's artifact: %d %v", code, out)
+	}
+
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, goodImport+`}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("import = %d %v", code, body)
+	}
+	got := dt.RemoteFile(t, h.remote, dt.CataloguePath("element.yaml"))
+	if sha(strings.TrimRight(got, "\n")+"\n") != sha(elementProfile) {
+		t.Fatalf("the profile committed for the import is not the build the bundle records:\n%s", got)
+	}
+	if bundle := dt.RemoteFile(t, h.remote, dt.CataloguePath(gitops.BundleFile("element"))); !strings.Contains(bundle, profilebundle.OriginAnnotation+": cluster/ours") {
+		t.Errorf("the profile is not recorded as fetched from the cluster's artifact:\n%s", bundle)
+	}
+	asked := vault.paths()
+	if len(asked) == 0 {
+		t.Fatal("the artifact was pulled without its repository's credential")
+	}
+	for _, path := range asked {
+		if path != "gentian-os/kernel/repositories/ours" {
+			t.Fatalf("the vault was asked for %s", path)
+		}
+	}
+	waitImport(t, h, alice, "imported", "ready")
 }
