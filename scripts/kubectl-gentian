@@ -1211,8 +1211,8 @@ cmd_catalogues_residue_list() {
         printf '%s' "${answer}" | jq -r '.residue[] |
             "  " + .kind + "/" + .name + ": " + .reason
             + (if .oidc == null then "" else
-                 (if (.oidc.clients | length) > 0 then "; the only pack for: " + (.oidc.clients | join(", ")) else "" end)
-                 + (if (.oidc.contested | length) > 0 then "; another catalog also holds: " + (.oidc.contested | join(", ")) else "" end)
+                 (if (.oidc.clients | length) > 0 then "; configures: " + (.oidc.clients | join(", ")) else "" end)
+                 + (if (.oidc.contested | length) > 0 then "; another catalog carries the same label, so these clients are refused until one is removed: " + (.oidc.contested | join(", ")) else "" end)
                  + (if (.oidc.composition // "") != "" then "; read by the Composition of " + .oidc.composition else "" end)
                end)
             + (if (.companions // []) | length > 0 then "; its bundle brings " + (.companions | join(", ")) + ", which stay" else "" end)

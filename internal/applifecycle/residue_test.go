@@ -356,7 +356,7 @@ func TestTheResidueListHoldsEachClassAndNothingThatIsOwned(t *testing.T) {
 func TestAResidualPackCatalogSaysWhetherItIsStillInEffect(t *testing.T) {
 	w := residueWorld(t,
 		// Labelled for shop, which is installed and has its own catalog:
-		// two carry shop's label, and which is read is not defined.
+		// two carry shop's label, and shop's clients are refused.
 		packs("shop-old-oidc", of("shop"), "shop-admin"),
 		// Labelled for drive, installed, and the only one: in effect.
 		packs("drive-oidc", of("drive"), "drive"),

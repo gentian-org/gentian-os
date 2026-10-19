@@ -868,13 +868,13 @@ cannot be read owns nobody knows what, so nothing that names it is listed; and w
 retains could not be read, no profile is listed as unused. The list says which of the two it could
 not establish.
 
-**`IN EFFECT` is the one column that says a leftover still changes behaviour.** A client is configured
-from the first `OIDCPackCatalog` on the cluster that holds a pack under its client id, whoever
-brought the catalog, and an app's Composition reads the catalog that carries its profile's label. A
-leftover pack catalog is `YES` when it is the only one holding one of its client ids, or the only
-one labelled for an installed profile; `contested` when another catalog holds the same, and which
-is read is then not defined; `no` otherwise. Removing one that is in effect changes what the next
-sign-in client is given.
+**`IN EFFECT` is the one column that says a leftover still changes behaviour.** An app's clients are
+configured from the one `OIDCPackCatalog` that carries its profile's label (an extension's, from its
+parent profile's), and from no other. A leftover pack catalog is `YES` when it is the only one
+labelled for an installed profile; `contested` when another catalog carries the same label, and the
+profile's clients are then refused (the tenant's `IdentityReady` is `False`, `OIDCClientRefused`)
+until one of the two is removed; `no` otherwise. Removing one that is in effect changes what the
+next sign-in client is given.
 
 Removing asks for the name typed again, and removes exactly the one object named:
 

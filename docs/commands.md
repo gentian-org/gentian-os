@@ -345,14 +345,14 @@ KIND/NAME                               NAMESPACE            PROFILE     WHY    
 ComponentProfile/acme-notes             -                    acme-notes  unused profile  2026-09-30  -
 Composition/app-odoo                    -                    -           unowned         2026-07-02  -
 ConfigMap/element-ce.portal-bridge-sso  kernel-provisioning  element-ce  dropped         2026-10-07  -
-OIDCPackCatalog/gentian-element-oidc    -                    -           unowned         2026-07-02  contested
-OIDCPackCatalog/xwiki-ce-oidc           -                    xwiki-ce    orphaned        2026-08-14  YES
+OIDCPackCatalog/gentian-element-oidc    -                    element-ce  dropped         2026-07-02  contested
+OIDCPackCatalog/xwiki-ce-oidc           -                    xwiki-ce    orphaned        2026-08-14  no
 
   ComponentProfile/acme-notes: unused profile: no tenant has it installed or switched on as an add-on, and no tenant retains data for it; its bundle brings Composition app-acme-notes, which stay
   Composition/app-odoo: not owned by any bundle: it names no profile, and no bundle on this cluster brings it
   ConfigMap/element-ce.portal-bridge-sso: it carries the label gentianos.io/profile-name: element-ce, and the bundle now materialised for element-ce does not bring it
-  OIDCPackCatalog/gentian-element-oidc: not owned by any bundle: it names no profile, and no bundle on this cluster brings it; another catalog also holds: element
-  OIDCPackCatalog/xwiki-ce-oidc: it carries the label gentianos.io/profile-name: xwiki-ce, and no profile xwiki-ce is on this cluster; the only pack for: xwiki
+  OIDCPackCatalog/gentian-element-oidc: it carries the label gentianos.io/profile-name: element-ce, and the bundle now materialised for element-ce does not bring it; another catalog carries the same label, so these clients are refused until one is removed: element; read by the Composition of element-ce
+  OIDCPackCatalog/xwiki-ce-oidc: it carries the label gentianos.io/profile-name: xwiki-ce, and no profile xwiki-ce is on this cluster
 
 Nothing here is removed automatically. To remove one:
   kubectl gentian catalogues residue remove <kind>/<name>
