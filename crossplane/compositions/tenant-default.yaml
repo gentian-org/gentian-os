@@ -1252,6 +1252,47 @@ spec:
                   userinfo.token.claim: "false"
               providerConfigRef:
                 name: keycloak
+            {{- /* Who the person is, for the app: their groups of this realm,
+                 their address and their name, in the access token the app is
+                 handed. The exchange client has no default scope beyond
+                 basic, and the bouncer takes a token that names this one
+                 scope and no other, so what the app reads has to come from
+                 here. They are what the app learns of a person signing in to
+                 it directly, where the realm's default scopes give them: an
+                 editor check by group (a CMS's), and who did what. Into the
+                 access token only; the scope's name in it stays this one. The
+                 config is Keycloak's own for these mapper types, every key it
+                 writes back, so the provider does not update them forever. */}}
+            {{- range $m := (list
+                  (dict "name" "groups" "type" "oidc-group-membership-mapper" "config" (dict "claim.name" "groups" "full.path" "false" "multivalued" "true"))
+                  (dict "name" "email" "type" "oidc-usermodel-attribute-mapper" "config" (dict "claim.name" "email" "user.attribute" "email" "jsonType.label" "String"))
+                  (dict "name" "full name" "type" "oidc-full-name-mapper" "config" (dict))) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}-{{ $m.name | replace " " "-" }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}-{{ $m.name | replace " " "-" }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: {{ $m.name | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.type }}
+                config:
+                  {{- range $k, $v := $m.config }}
+                  {{ $k }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
 
