@@ -34,9 +34,6 @@ import (
 // because a Composition can select an object and read its fields and can do
 // nothing else: it cannot decode a bundle or apply a schema's defaults. The
 // operator can, and does it once per build rather than once per render.
-//
-// +kubebuilder:rbac:groups=gentianos.io,resources=profilebuilds,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gentianos.io,resources=profilebuilds/status,verbs=get;update;patch
 type ProfileBuildReconciler struct {
 	// Definitions holds this reconciler while the cluster's definitions
 	// would drop what it writes (the status of a kind this build adds). Nil
@@ -46,6 +43,9 @@ type ProfileBuildReconciler struct {
 }
 
 const profileBuildVerified = "Verified"
+
+// +kubebuilder:rbac:groups=gentianos.io,resources=profilebuilds,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=profilebuilds/status,verbs=get;update;patch
 
 // Reconcile writes the build's status.
 func (r *ProfileBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
