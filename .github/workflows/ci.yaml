@@ -95,10 +95,10 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.verified != 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: go.mod
           # Cached below instead. setup-go's cache is keyed on go.sum alone and
@@ -111,7 +111,7 @@ jobs:
       # A key per commit and a prefix to restore from, so each run starts from
       # the last run's build cache and leaves its own behind.
       - name: Go caches
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: |
             ~/.cache/go-build
@@ -139,16 +139,16 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.verified != 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Go caches
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: |
             ~/.cache/go-build
@@ -191,10 +191,10 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.verified != 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
@@ -211,28 +211,28 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.verified != 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         with:
           version: v2.11
 
       # A module of its own, with its own license header to check.
       - name: golangci-lint (api)
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         with:
           version: v2.11
           working-directory: api
 
       - name: yamllint
-        uses: ibiqlik/action-yamllint@v3
+        uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c  # v3.1.1
         with:
           config_file: .yamllint.yml
 
@@ -326,7 +326,7 @@ jobs:
     runs-on: macos-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: bash version on the runner
         run: /bin/bash --version | head -1
@@ -354,11 +354,11 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       # GHCR login occasionally times out from GitHub-hosted runners; retry before failing.
       - name: Log in to GHCR
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
         with:
           timeout_minutes: 2
           max_attempts: 5
@@ -368,7 +368,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
         with:
           images: ghcr.io/gentian-org/gentian-os
 
@@ -376,11 +376,11 @@ jobs:
       # list and produces an amd64-only image, silently — which is the same
       # failure mode as the single-arch digest pin this change exists to fix.
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
       - name: Build image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -421,7 +421,7 @@ jobs:
       packages: write
     steps:
       - name: Log in to GHCR
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
         with:
           timeout_minutes: 2
           max_attempts: 5
@@ -431,7 +431,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
         with:
           images: ghcr.io/gentian-org/gentian-os
           tags: |
@@ -457,7 +457,7 @@ jobs:
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
       - name: Tag the image
         env:
@@ -478,10 +478,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Log in to GHCR
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
         with:
           timeout_minutes: 2
           max_attempts: 5
@@ -491,7 +491,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
         with:
           images: ghcr.io/gentian-org/keycloak-event-listener
           tags: |
@@ -500,14 +500,14 @@ jobs:
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
       # The provider jar is a Keycloak plugin: it is copied into the running
       # Keycloak's providers directory by an init container, so the image only
       # has to carry the file. It is architecture-independent, but the copy
       # runs beside Keycloak, so it is built for the same platforms.
       - name: Build and push the listener image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: kernel/extensions/keycloak-event-listener
           platforms: linux/amd64,linux/arm64
@@ -527,10 +527,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Log in to GHCR
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
         with:
           timeout_minutes: 2
           max_attempts: 5
@@ -540,7 +540,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
         with:
           images: ghcr.io/gentian-org/storage-tools
           tags: |
@@ -549,12 +549,12 @@ jobs:
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
       # What the Jobs that move a tenant's objects run (rclone, age, tar),
       # tagged as the operator is, so the operator names its own build's.
       - name: Build and push the storage tools image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: kernel/images/storage-tools
           platforms: linux/amd64,linux/arm64
@@ -573,10 +573,10 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.verified != 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
