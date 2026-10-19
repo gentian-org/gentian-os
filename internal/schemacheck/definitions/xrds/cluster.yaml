@@ -150,10 +150,11 @@ spec:
                       type: array
                       description: >
                         The catalogues this cluster knows. Each states where
-                        it is read from once: url, or path. An entry whose url
-                        is not https, whose path is not a directory a
-                        catalogue is read from, which states both, or which
-                        has no name, is ignored.
+                        it is read from once: url, oci, or path. An entry
+                        whose url is not https, whose oci is not an artifact
+                        and a repository, whose path is not a directory a
+                        catalogue is read from, which states more than one,
+                        or which has no name, is ignored.
                       items:
                         type: object
                         required:
@@ -171,11 +172,47 @@ spec:
                               bytes are untrusted -- the digest an install
                               asks for is what admits them -- so this may be
                               any host.
+                          oci:
+                            type: object
+                            required:
+                              - repository
+                              - artifact
+                            description: >
+                              In place of url: an OCI artifact the catalogue
+                              is kept as (artifact type
+                              application/vnd.gentianos.catalogue.v1, one
+                              layer, a gzip'd tar of index.yaml and
+                              profiles/), read with the credential of a
+                              repository declared for the cluster. The
+                              registry is held to the rules of an address:
+                              https on 443, a public host. The bytes are held
+                              to the digest like any other.
+                            properties:
+                              repository:
+                                type: string
+                                maxLength: 63
+                                pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                                description: >
+                                  The name of a repository declared for the
+                                  cluster (not for a tenant), whose address the
+                                  artifact lies inside.
+                              artifact:
+                                type: string
+                                maxLength: 1024
+                                pattern: '^[a-z0-9.-]+(:443)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$'
+                                description: >
+                                  The reference without a scheme:
+                                  <registry host>/<repository>:<tag>, or
+                                  @sha256:<digest> in place of or after the tag.
                           path:
                             type: string
                             maxLength: 255
                             pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$'
                             description: >
+                              Deprecated: the deployments repository holds what
+                              the cluster is, and a catalogue whose profiles
+                              must not be public is an OCI artifact (oci). Read
+                              as before until it is removed.
                               In place of url: the directory of this cluster's
                               own deployments repository the catalogue is kept
                               in, named from the top of the repository, as in

@@ -1434,11 +1434,14 @@ the code or its commit, the entry says so.
       and is reached another way.
     - **c. A catalogue's address must be public `https` on port 443**,
       for the cluster's administrator too
-      (`internal/director/catalogue/address.go`). The owner had said that
-      a tenant's administrator, once delegated, can do what they want.
-      A private catalogue goes through the deployments repository
-      (AD-14). A no means the director fetches from addresses inside the
-      cluster or a private network when asked.
+      (`internal/director/catalogue/address.go`). **Answered by the owner
+      2026-10-19: yes.** Addresses stay public-only — https, port 443,
+      public hosts, no redirects, no proxy — for everybody. What is
+      private reaches a cluster through a catalogue kept as an OCI
+      artifact, read with the credential of a repository its owner
+      declared, which a delegated tenant's administrator may add as well
+      (AD-14, [custom-catalogues.md §4.5](../custom-catalogues.md)); never
+      through a private network address.
     - **d. Reserved address names beyond those asked for.** The owner
       asked for the critical names including desktop and console. Also
       reserved: `auth`, `login`, `signin`, `sign-in`, `sso`, `account`,
@@ -1529,10 +1532,6 @@ the code or its commit, the entry says so.
 - **The director reads the cluster's catalogue sources from the claim in
   git.** An edit made outside the director reaches it with the next commit it
   reads.
-- **A private catalogue for a tenant's own administrator.** A catalogue in
-  the deployments repository is the cluster administrator's to declare, also
-  for one tenant; a tenant's administrator adds public addresses only, and
-  no credential is sent to a catalogue.
 - **A Cluster-claim setting for the mail proxy's load balancer** -- the PROXY
   header from a load balancer that is itself a proxy, the addresses it may
   come from, and the pinned mail address. They are values of the mail
@@ -2261,6 +2260,7 @@ Closed in the code or in the documents. None has been seen on a cluster.
 
 | Date | What | Commit |
 | --- | --- | --- |
+| 2026-10-19 | A private catalogue for a tenant's own administrator: a catalogue may be an OCI artifact read with the credential of a repository its owner declared, added under delegation like an address; the deployments-repository directory is deprecated (AD-14, decision 52 c) | `be746b35` |
 | 2026-10-11 | The director commits a tenant's password policy again; the registrar's action for it is gone and its Keycloak client is no longer granted `manage-realm`; the tenant Composition always declares the realm's password policy. The documents say so (defect 25) | `24123aef`, `5fd8b15f`, `eec19bad`, `a84fadd7` |
 | 2026-10-11 | The check that a per-tenant L3 customization runs in the tenant's own namespace is written again. It is still applied nowhere (decision 49) | `d7b25cd9` |
 | 2026-10-11 | The store API documents, a test and a comment name no company and carry no commercial terms | `cbd3d530` |

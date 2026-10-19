@@ -501,3 +501,94 @@ func TestADirectoryIsWrittenSoThatItReadsBack(t *testing.T) {
 		}
 	}
 }
+
+// An artifact is a third way a source says where it is read from, and still
+// one of them: one that states an address or a directory beside it, or an
+// artifact that is not one, is not read. A tenant's administrator may have
+// added one, as they may an address.
+func TestASourceStatesAnArtifactAndItsRepository(t *testing.T) {
+	manifest := strings.Replace(directorWritten, "  apps: []\n", `  catalogue:
+    delegated: true
+    sources:
+      - name: artifact
+        oci:
+          repository: acme
+          artifact: ghcr.io/acme/catalogue:1
+        addedBy: tenant
+      - name: pinned
+        oci:
+          repository: acme
+          artifact: "ghcr.io/acme/catalogue@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      - name: with-address
+        url: https://fine.example.com
+        oci:
+          repository: acme
+          artifact: ghcr.io/acme/catalogue:1
+      - name: with-directory
+        path: catalogue
+        oci:
+          repository: acme
+          artifact: ghcr.io/acme/catalogue:1
+      - name: no-repository
+        oci:
+          artifact: ghcr.io/acme/catalogue:1
+      - name: no-tag
+        oci:
+          repository: acme
+          artifact: ghcr.io/acme/catalogue
+      - name: private
+        oci:
+          repository: acme
+          artifact: 10.0.0.5/acme/catalogue:1
+      - name: scheme
+        oci:
+          repository: acme
+          artifact: oci://ghcr.io/acme/catalogue:1
+  apps: []
+`, 1)
+	got, err := parseTenantCatalogue(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var said []string
+	for _, src := range got.Sources {
+		said = append(said, src.Name+"="+src.OCI.Repository+"="+src.AddedBy)
+	}
+	if want := "artifact=acme=tenant pinned=acme=cluster"; strings.Join(said, " ") != want {
+		t.Fatalf("read %v\nwant %s", said, want)
+	}
+}
+
+// An artifact is written so that it reads back as the same source, and a
+// tenant's manifest keeps who added it.
+func TestAnArtifactIsWrittenSoThatItReadsBack(t *testing.T) {
+	sources := []CatalogueSource{
+		{Name: "tagged", OCI: CatalogueOCI{Repository: "acme", Artifact: "ghcr.io/acme/catalogue:1.0.0"}},
+		{Name: "pinned", OCI: CatalogueOCI{Repository: "on", Artifact: "ghcr.io/acme/catalogue@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},
+		{Name: "address", URL: "https://fine.example.com"},
+	}
+	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1\nspec:\n  kernelDomain: k.example\n"
+	out, err := setClaimSources(claim, sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := claimCatalogueSources(out)
+	if err != nil || len(back) != len(sources) {
+		t.Fatalf("read back %v, %v", back, err)
+	}
+	for i := range sources {
+		if back[i] != sources[i] {
+			t.Errorf("source %d read back as %+v, was %+v:\n%s", i, back[i], sources[i], out)
+		}
+	}
+	tenant, err := setTenantCatalogue(directorWritten, TenantCatalogue{Delegated: true, Sources: []TenantCatalogueSource{
+		{Name: "theirs", OCI: CatalogueOCI{Repository: "acme", Artifact: "ghcr.io/acme/catalogue:1"}, AddedBy: "tenant"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseTenantCatalogue(tenant)
+	if err != nil || len(got.Sources) != 1 || got.Sources[0].OCI.Artifact != "ghcr.io/acme/catalogue:1" || got.Sources[0].AddedBy != "tenant" {
+		t.Fatalf("read back %+v %v:\n%s", got, err, tenant)
+	}
+}

@@ -422,8 +422,9 @@ spec:
                     items:
                       description: |-
                         TenantCatalogueSource is one catalogue of a tenant: an address that serves
-                        index.yaml and profiles/<name>.yaml, or a directory of the cluster's own
-                        deployments repository that holds them.
+                        index.yaml and profiles/<name>.yaml, an OCI artifact that holds them, read
+                        with the credential of a repository the tenant declared, or a directory of
+                        the cluster's own deployments repository that holds them.
                       properties:
                         addedBy:
                           default: cluster
@@ -443,10 +444,41 @@ spec:
                           maxLength: 63
                           pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
                           type: string
+                        oci:
+                          description: |-
+                            OCI is an OCI artifact the catalogue is kept as, in place of an
+                            address: read with the credential of a repository declared for this
+                            tenant, and with no other.
+                          properties:
+                            artifact:
+                              description: |-
+                                Artifact is the reference, without a scheme:
+                                <registry host>/<repository>:<tag>, or @sha256:<digest> in place of
+                                or after the tag. It is pulled over https, on port 443, from a public
+                                host.
+                              maxLength: 1024
+                              pattern: ^[a-z0-9.-]+(:443)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$
+                              type: string
+                            repository:
+                              description: |-
+                                Repository is the name of the repository whose credential the
+                                artifact is read with: one declared for the tenant, for a tenant's
+                                catalogue; one declared for the cluster, for a catalogue of the whole
+                                cluster. The artifact must lie inside its address.
+                              maxLength: 63
+                              pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                              type: string
+                          required:
+                          - artifact
+                          - repository
+                          type: object
                         path:
                           description: |-
                             Path is the directory of the cluster's own deployments repository the
-                            catalogue is kept in, in place of an address: names separated by '/',
+                            catalogue is kept in, in place of an address. Deprecated: the
+                            deployments repository holds what the cluster is, and a catalogue
+                            whose profiles must not be public is an OCI artifact (oci). It is
+                            read as before until it is removed. Names separated by '/',
                             from the top of the repository, none beginning with a dot. The
                             director reads it from the checkout it already holds. Only the
                             cluster's administrator declares one. clusters/<cluster>/catalogue,
@@ -467,8 +499,9 @@ spec:
                       type: object
                       x-kubernetes-validations:
                       - message: 'a catalogue states where it is read from once: url,
-                          or path'
-                        rule: has(self.url) != has(self.path)
+                          oci or path'
+                        rule: '(has(self.url) ? 1 : 0) + (has(self.path) ? 1 : 0)
+                          + (has(self.oci) ? 1 : 0) == 1'
                       - message: 'a catalogue kept in the deployments repository (path)
                           is added by the cluster''s administrator: addedBy must be
                           cluster'

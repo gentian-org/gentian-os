@@ -21,8 +21,9 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// A tenant's catalogue states where it is read from once -- an https address
-// or a directory of the cluster's deployments repository -- and a directory
+// A tenant's catalogue states where it is read from once -- an https address,
+// an OCI artifact with its repository, or a directory of the cluster's
+// deployments repository -- and a directory
 // only as the cluster's administrator's. The schema says so, so that a
 // manifest written by hand is refused when it is applied and not only left
 // unread by the director. Asked as a dry run: nothing is created.
@@ -47,6 +48,18 @@ func TestTheTenantSchemaAdmitsACatalogueAtAnAddressOrInADirectory(t *testing.T) 
 		"another repository's address":  {gentianov1alpha1.TenantCatalogueSource{Name: "a", Path: "git@example.com:other/repository.git"}, false},
 		"a directory with a doubled /":  {gentianov1alpha1.TenantCatalogueSource{Name: "a", Path: "catalogue//profiles"}, false},
 		"a directory with a trailing /": {gentianov1alpha1.TenantCatalogueSource{Name: "a", Path: "catalogue/"}, false},
+		"an artifact":                   {gentianov1alpha1.TenantCatalogueSource{Name: "a", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme", Artifact: "ghcr.io/acme/catalogue:1"}}, true},
+		"an artifact the tenant added":  {gentianov1alpha1.TenantCatalogueSource{Name: "a", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme", Artifact: "ghcr.io/acme/catalogue:1"}, AddedBy: "tenant"}, true},
+		"an artifact by digest": {gentianov1alpha1.TenantCatalogueSource{Name: "a", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme",
+			Artifact: "ghcr.io/acme/catalogue@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}, true},
+		"an artifact and an address":  {gentianov1alpha1.TenantCatalogueSource{Name: "a", URL: "https://catalogue.example.com", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme", Artifact: "ghcr.io/acme/catalogue:1"}}, false},
+		"an artifact and a directory": {gentianov1alpha1.TenantCatalogueSource{Name: "a", Path: "catalogue", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme", Artifact: "ghcr.io/acme/catalogue:1"}}, false},
+		"an artifact with a scheme": {gentianov1alpha1.TenantCatalogueSource{Name: "a", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme",
+			Artifact: "oci://ghcr.io/acme/catalogue:1"}}, false},
+		"an artifact with no repository": {gentianov1alpha1.TenantCatalogueSource{Name: "a", OCI: &gentianov1alpha1.CatalogueOCISource{
+			Artifact: "ghcr.io/acme/catalogue:1"}}, false},
+		"an artifact on another port": {gentianov1alpha1.TenantCatalogueSource{Name: "a", OCI: &gentianov1alpha1.CatalogueOCISource{Repository: "acme",
+			Artifact: "ghcr.io:5000/acme/catalogue:1"}}, false},
 	} {
 		tenant := &gentianov1alpha1.Tenant{
 			ObjectMeta: metav1.ObjectMeta{Name: "catalogue-schema"},

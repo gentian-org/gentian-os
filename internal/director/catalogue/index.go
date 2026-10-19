@@ -99,6 +99,9 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 	// added again at another address, or in another directory, is another
 	// catalogue under the same name.
 	key := src.Key + "\n" + src.URL + "\n" + src.Dir
+	if src.OCI != nil {
+		key += "\n" + ociKey(src)
+	}
 	if cached, ok := f.cached(key); ok {
 		return serve(cached), nil
 	}

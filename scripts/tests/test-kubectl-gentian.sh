@@ -13,8 +13,9 @@
 #     first, and sends nothing until it is confirmed -- typed at a terminal,
 #     or --yes; without a terminal and without --yes nothing is asked at all;
 #   - a refusal is the director's own words and a non-zero exit;
-#   - `catalogues add` sends an address or a directory of the deployments
-#     repository (--path), never both, and `catalogues list` shows which;
+#   - `catalogues add` sends an address, an OCI artifact with the repository
+#     it is read with (--oci, --repository), or a directory of the deployments
+#     repository (--path), never two, and `catalogues list` shows which;
 #   - `tenants create` states a switch only when it is typed, and reports
 #     what the director wrote;
 #   - `exposures requests` lists what a tenant's apps ask to have on the
@@ -849,6 +850,37 @@ has "... for a tenant as well" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme t
 fresh; reply GET /v1/tenants/demo/catalogues 200 '{"tenant":"demo","delegated":false,"catalogues":[{"name":"own","url":"","path":"catalogue","scope":"cluster","addedBy":"cluster"}]}'
 gentian catalogues list --tenant demo
 has "list --tenant shows the directory too" "$(grep '^own' <<<"${OUT}" | tr -s ' ')" "own every tenant the cluster deployments repository: catalogue"
+
+# A catalogue kept as an OCI artifact: the artifact and the repository it is
+# read with, nothing else. Whose repository is the route's, never the body's.
+fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 403 '{"error":"forbidden"}'
+reply PUT /v1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
+gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1 --repository acme --tenant demo
+is "add --oci succeeds through the tenant's route" "${RC}" "0"
+has "... and sends the artifact and the repository and nothing else" "$(tr -d ' \n' < "${CALLS}")" \
+    'PUT/v1/tenants/demo/catalogues/acme{"oci":{"repository":"acme","artifact":"ghcr.io/acme/catalogues/acme:1"}}'
+has "... as the tenant's administrator" "${OUT}" "Catalogue acme added for tenant demo, as the tenant's administrator"
+
+fresh; reply PUT /v1/clusters/c1/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
+gentian catalogues add acme --oci=ghcr.io/acme/catalogue@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --repository=ours
+is "add --oci for the cluster asks the cluster's route" "$(tr -d ' \n' < "${CALLS}")" \
+    'PUT/v1/clusters/c1/catalogues/acme{"oci":{"repository":"ours","artifact":"ghcr.io/acme/catalogue@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+
+fresh
+gentian catalogues add acme --oci ghcr.io/acme/catalogue:1
+refused "--oci without --repository is refused"
+gentian catalogues add acme --repository acme https://acme.example/apps
+refused "--repository without --oci is refused"
+gentian catalogues add acme https://acme.example/apps --oci ghcr.io/acme/catalogue:1 --repository acme
+refused "an address and an artifact together are refused"
+gentian catalogues remove acme --oci ghcr.io/acme/catalogue:1
+refused "remove takes no --oci"
+is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply GET /v1/tenants/demo/catalogues 200 '{"tenant":"demo","delegated":true,"catalogues":[{"name":"acme","url":"","oci":{"repository":"acme","artifact":"ghcr.io/acme/catalogue:1"},"scope":"tenant","addedBy":"tenant"}]}'
+gentian catalogues list --tenant demo
+has "list shows an artifact and its repository" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" \
+    "acme this tenant the tenant oci: ghcr.io/acme/catalogue:1 (repository acme)"
 
 echo ""
 echo "kubectl gentian models"

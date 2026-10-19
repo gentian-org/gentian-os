@@ -82,6 +82,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
     evidence:
       - charts/gentian-os/templates/custodian.yaml:1
+  director:
+    what: the director
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: director}
+    evidence:
+      - charts/gentian-os/templates/director.yaml:1
   cert-manager:
     what: cert-manager's controller
     namespace: kernel-edge
@@ -277,6 +283,9 @@ namespaces:
               - peer: custodian
                 why: relays a person's credential writes (BAO_ADDR)
                 evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]
+              - peer: director
+                why: reads the credential of a repository a catalogue artifact is pulled with (DIRECTOR_BAO_ADDR)
+                evidence: [charts/gentian-os/templates/director.yaml:286, internal/kernel/secrets/openbao.go:246]
               - peer: provisioning
                 why: provider-vault configures mounts, policies and roles
                 evidence: [crossplane/providers/provider-configs.yaml:34, scripts/steps/B-05-crossplane-providers.sh:115]

@@ -289,18 +289,22 @@ kubectl gentian apps uninstall xwiki-ce --tenant demo
 
 ### Catalogues
 
-A catalogue is an https address apps are installed from, or a directory of the
-cluster's own deployments repository for profiles that must not be public. The
-cluster's administrator adds one for every tenant or for one tenant; a
-tenant's own administrator adds an address for their tenant where the
-cluster's administrator delegated that, and never a directory.
+A catalogue is an https address apps are installed from, or, for profiles that
+must not be public, an OCI artifact read with the credential of a declared
+repository. A directory of the cluster's own deployments repository is still
+read, and deprecated. The cluster's administrator adds one for every tenant or
+for one tenant; a tenant's own administrator adds an address or an artifact for
+their tenant where the cluster's administrator delegated that, and never a
+directory.
 
 ```bash
 kubectl gentian catalogues list                        # everything the cluster declares
 kubectl gentian catalogues list --tenant demo          # what demo installs from
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue                 # for every tenant
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant demo   # for demo only
-kubectl gentian catalogues add own --path catalogue                    # a directory of the deployments repository, for every tenant
+kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --repository acme --tenant demo   # an artifact, read with demo's repository acme
+kubectl gentian catalogues add ours --oci ghcr.io/ours/catalogue:1 --repository ours   # for every tenant, read with the cluster's repository ours
+kubectl gentian catalogues add own --path catalogue                    # deprecated: a directory of the deployments repository, for every tenant
 kubectl gentian catalogues add own --path catalogues/demo --tenant demo   # the same, for demo only
 kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
@@ -316,6 +320,7 @@ CATALOGUE  FOR           ADDED BY     ADDRESS
 gentian    every tenant  the cluster  https://gentian-org.github.io/gentian-apps
 own        every tenant  the cluster  deployments repository: catalogue
 acme       tenant demo   the tenant   https://acme.github.io/acme-catalogue
+private    tenant demo   the tenant   oci: ghcr.io/acme/catalogues/acme:1.0.0 (repository acme)
 Tenants whose administrators may add catalogues of their own: demo.
 ```
 
@@ -324,9 +329,13 @@ when the person is one, and otherwise as the tenant's administrator: that is
 refused unless the tenant is delegated, and removes only what the tenant
 added. Without `--tenant`, `add` and `remove` change the Cluster claim
 (`spec.catalogue.sources`), which is also where a catalogue for the whole
-cluster can be written before the install, as a `name` and a `url`, or a
-`name` and a `path`. An address must be a public https one; anything else is
-refused. A `--path` is a directory that exists in the deployments repository,
+cluster can be written before the install, as a `name` and a `url`, a `name`
+and an `oci` (`repository`, `artifact`), or a `name` and a `path`. An address
+must be a public https one; anything else is refused. An `--oci` artifact is
+`<registry host>/<repository>:<tag>` or `@sha256:<digest>`, on a public
+registry, inside the address of the `--repository` named, which is declared for
+the tenant with `--tenant` and for the cluster without
+([custom-catalogues.md §4.5](custom-catalogues.md)). A `--path` is a directory that exists in the deployments repository,
 named from its top without `..` or a leading `/`, and not
 `clusters/<cluster>/catalogue`; it is the cluster's administrator's to add,
 with or without `--tenant`

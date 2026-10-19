@@ -756,10 +756,11 @@ type TenantCatalogue struct {
 }
 
 // TenantCatalogueSource is one catalogue of a tenant: an address that serves
-// index.yaml and profiles/<name>.yaml, or a directory of the cluster's own
-// deployments repository that holds them.
+// index.yaml and profiles/<name>.yaml, an OCI artifact that holds them, read
+// with the credential of a repository the tenant declared, or a directory of
+// the cluster's own deployments repository that holds them.
 //
-// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.path)",message="a catalogue states where it is read from once: url, or path"
+// +kubebuilder:validation:XValidation:rule="(has(self.url) ? 1 : 0) + (has(self.path) ? 1 : 0) + (has(self.oci) ? 1 : 0) == 1",message="a catalogue states where it is read from once: url, oci or path"
 // +kubebuilder:validation:XValidation:rule="!has(self.path) || !has(self.addedBy) || self.addedBy == 'cluster'",message="a catalogue kept in the deployments repository (path) is added by the cluster's administrator: addedBy must be cluster"
 type TenantCatalogueSource struct {
 	// Name is the catalogue's name: the first half of a coordinate,
@@ -775,8 +776,17 @@ type TenantCatalogueSource struct {
 	// +optional
 	URL string `json:"url,omitempty"`
 
+	// OCI is an OCI artifact the catalogue is kept as, in place of an
+	// address: read with the credential of a repository declared for this
+	// tenant, and with no other.
+	// +optional
+	OCI *CatalogueOCISource `json:"oci,omitempty"`
+
 	// Path is the directory of the cluster's own deployments repository the
-	// catalogue is kept in, in place of an address: names separated by '/',
+	// catalogue is kept in, in place of an address. Deprecated: the
+	// deployments repository holds what the cluster is, and a catalogue
+	// whose profiles must not be public is an OCI artifact (oci). It is
+	// read as before until it is removed. Names separated by '/',
 	// from the top of the repository, none beginning with a dot. The
 	// director reads it from the checkout it already holds. Only the
 	// cluster's administrator declares one. clusters/<cluster>/catalogue,
@@ -795,6 +805,27 @@ type TenantCatalogueSource struct {
 	// +kubebuilder:default=cluster
 	// +optional
 	AddedBy string `json:"addedBy,omitempty"`
+}
+
+// CatalogueOCISource is a catalogue kept as an OCI artifact: one layer, a
+// gzip'd tar of index.yaml and profiles/<name>.yaml, of the artifact type
+// application/vnd.gentianos.catalogue.v1.
+type CatalogueOCISource struct {
+	// Repository is the name of the repository whose credential the
+	// artifact is read with: one declared for the tenant, for a tenant's
+	// catalogue; one declared for the cluster, for a catalogue of the whole
+	// cluster. The artifact must lie inside its address.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Repository string `json:"repository"`
+
+	// Artifact is the reference, without a scheme:
+	// <registry host>/<repository>:<tag>, or @sha256:<digest> in place of
+	// or after the tag. It is pulled over https, on port 443, from a public
+	// host.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9.-]+(:443)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$`
+	// +kubebuilder:validation:MaxLength=1024
+	Artifact string `json:"artifact"`
 }
 
 // Who added a tenant's catalogue.

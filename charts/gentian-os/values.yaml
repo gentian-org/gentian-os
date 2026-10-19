@@ -188,6 +188,13 @@ director:
   # director commits unsigned -- which is a cluster whose AppProject carries
   # no signing policy either.
   signingKeySecret: "gentian-director-signing"
+  # The vault role the director logs in to, and the audience of the token it
+  # logs in with. The role reads repository credentials and nothing else,
+  # for catalogues kept as OCI artifacts (cluster-default,
+  # director-repository-read). The director reaches the vault at
+  # openbao.address; empty there, it reads no credential.
+  vaultRole: gentian-os-director
+  vaultAudience: vault://gentian-os-director
 
   committer:
     name: gentian-director
