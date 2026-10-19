@@ -23,6 +23,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;create;update;patch;delete
+
 // A tenant's grants (spec.grants), as the AppGrants of its namespace.
 //
 // The director writes a grant into the Tenant, with who granted it and when;
