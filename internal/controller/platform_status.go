@@ -40,9 +40,6 @@ import (
 // claim's status is Crossplane's copy of its composite's; written at start
 // and then on a timer, because the composition writes the composite's status
 // too and may one day replace it whole.
-//
-// +kubebuilder:rbac:groups=gentianos.io,resources=xclusters,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gentianos.io,resources=xclusters/status,verbs=get;update;patch
 type PlatformStatusWriter struct {
 	// Reader reads the claim and its composite, uncached: one get each, on
 	// a timer.
@@ -96,6 +93,14 @@ func (w *PlatformStatusWriter) Start(ctx context.Context) error {
 		}
 	}
 }
+
+// The markers stand alone, a blank line away from any declaration:
+// controller-gen collects rbac markers at package level and skips one
+// absorbed into a doc comment (scripts/gen/gen-clusterrole.py), and the
+// role then lacks the right in silence.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=xclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=xclusters/status,verbs=get;update;patch
 
 // WriteOnce writes the status on every Cluster claim's composite. A claim
 // whose composite does not exist yet is skipped and written on the next

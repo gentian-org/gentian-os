@@ -339,11 +339,13 @@ rules:
     - integrationbindings/status
     - mailboxremovals/status
     - platformsecuritypolicies/status
+    - profilebuilds/status
     - resourceplans/status
     - tenantexports/status
     - tenantexportschedules/status
     - tenantrestores/status
     - tenants/status
+    - xclusters/status
     verbs:
     - get
     - update
@@ -358,6 +360,7 @@ rules:
     - resourceplans
     - tenantdomains
     - xapps
+    - xclusters
     verbs:
     - get
     - list
