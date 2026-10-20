@@ -5,6 +5,11 @@
 # asks admission to check the signature on those images and no other: a
 # third-party image has no gentian-org signature to check.
 #
+# The signature is read in cosign's legacy form, the sha256-<digest>.sig tag,
+# which is what Kyverno 1.13's default verifier understands; CI writes that
+# form on purpose (--new-bundle-format=false). The Sigstore bundle form, type
+# SigstoreBundle here, comes with the Kyverno upgrade.
+#
 # Audit, not Enforce, to begin with: a report per unsigned pod, nothing
 # refused. Images built before the signing landed are unsigned and still
 # run; once every image a cluster runs is signed the action moves to Enforce
