@@ -50,6 +50,7 @@ CLAIM_BACKED=(
     NODE_IP
     STORAGE_CLASS
     MAIL_SERVICE_MODE
+    SECRETS_AT_REST
 )
 
 # This file names every variable it looks for, so scanning itself would report
@@ -83,6 +84,7 @@ xrd_default() {
         NODE_IP)           field=nodeIp ;;
         STORAGE_CLASS)     field=storageClass ;;
         MAIL_SERVICE_MODE) field=mail.serviceMode ;;
+        SECRETS_AT_REST)   field=controlPlane.secretsAtRest ;;
         *) return 0 ;;
     esac
     python3 - "${field}" <<'PYEOF'

@@ -1575,6 +1575,26 @@ _claim_cluster_fields() {
     fi
 
     printf '\n'
+    printf '  # Whether Kubernetes Secrets are encrypted at rest in etcd. On a managed\n'
+    printf '  # control plane nothing in the cluster can see this, so the claim records\n'
+    printf '  # it: provider (the provider states it; say where under evidence),\n'
+    printf '  # cluster (your own API server runs --encryption-provider-config) or\n'
+    printf '  # none. Pre-flight reads it and warns until it is provider or cluster.\n'
+    if [[ -n "${SECRETS_AT_REST:-}" ]]; then
+        printf '  controlPlane:\n'
+        printf '    secretsAtRest: %s\n' "${SECRETS_AT_REST}"
+        if [[ -n "${SECRETS_AT_REST_EVIDENCE:-}" ]]; then
+            printf '    evidence: "%s"\n' "${SECRETS_AT_REST_EVIDENCE//\"/\\\"}"
+        else
+            printf '    # evidence: where the provider states it, and when it was read\n'
+        fi
+    else
+        printf '  # controlPlane:\n'
+        printf '  #   secretsAtRest: provider | cluster | none\n'
+        printf '  #   evidence: where the provider states it, and when it was read\n'
+    fi
+
+    printf '\n'
     printf '  # How traffic reaches this cluster.\n'
     printf '  #   tunnel     behind a reverse proxy or tunnel; nodeIp is not used\n'
     printf '  #   static-ip  DNS points straight at nodeIp, which is then required\n'

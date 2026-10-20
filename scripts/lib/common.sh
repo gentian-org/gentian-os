@@ -1104,6 +1104,8 @@ load_deployments_cluster_settings() {
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
+        claim_setting SECRETS_AT_REST   controlPlane.secretsAtRest "${claim_file}"
+        claim_setting SECRETS_AT_REST_EVIDENCE controlPlane.evidence "${claim_file}"
         # Two the shell read only from install.env while the Cluster Composition
         # read them from the claim — certManager.letsencryptEmail at
         # cluster-default.yaml:33, openbao.kvMount at :27. Not an override, which
@@ -1544,6 +1546,17 @@ prompt_cluster_settings() {
     prompt_claim_value TENANCY_MODE "tenancyMode" multi "multi single"
     explain_tenancy_mode
     prompt_claim_value SECRET_MODE "secretMode" derived "derived random"
+    if [[ -z "${SECRETS_AT_REST:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        info "  controlPlane.secretsAtRest — are Kubernetes Secrets encrypted at rest in etcd?"
+        info "    provider : a managed control plane whose provider states it (you will be asked where)."
+        info "    cluster  : your own API server runs with --encryption-provider-config."
+        info "    none     : not encrypted, or not known. Pre-flight warns on every run until it is."
+        info "  The platform cannot see this on a managed control plane; the claim records your answer."
+    fi
+    prompt_claim_value SECRETS_AT_REST "controlPlane.secretsAtRest" none "provider cluster none"
+    if [[ "${SECRETS_AT_REST:-}" == "provider" ]]; then
+        prompt_claim_value SECRETS_AT_REST_EVIDENCE "controlPlane.evidence (where the provider states it, and when)" ""
+    fi
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == acme-* ]]; then
         # Production on every stage: see the scaffold in bootstrap.sh for why
         # staging stopped being the dev default.
@@ -1839,6 +1852,85 @@ force_reconcile_failed_helm_releases() {
 # =============================================================================
 # 0. Pre-flight checks
 # =============================================================================
+# secrets_at_rest_verdict — one word for what is known about Secret encryption
+# in etcd (roadmap 1.18, certification plan C9).
+#
+#   flag      the API server is visible and runs --encryption-provider-config
+#             (kubeadm's static pod) or --secrets-encryption (k3s, rke2)
+#   no-flag   the API server is visible and runs without either
+#   provider  nothing visible; the claim says the provider encrypts
+#   cluster   nothing visible; the claim says this cluster's API server does
+#   none      nothing visible; the claim says it is not encrypted
+#   unknown   nothing visible and nothing attested
+#
+# What the API server runs with wins over the claim: an attestation is for the
+# control plane nobody here can read. Pre-flight has only kubectl, and a managed
+# control plane shows no API server pod and no node arguments, which is the
+# case the claim's controlPlane.secretsAtRest exists for.
+secrets_at_rest_verdict() {
+    local args
+    args="$(kubectl get pods -n kube-system -l component=kube-apiserver \
+        -o jsonpath='{range .items[*]}{.spec.containers[0].command}{.spec.containers[0].args}{end}' 2>/dev/null || true)"
+    if [[ -n "${args}" ]]; then
+        [[ "${args}" == *encryption-provider-config* ]] && { echo flag; return 0; }
+        echo no-flag; return 0
+    fi
+    args="$(kubectl get nodes \
+        -o jsonpath='{range .items[*]}{.metadata.annotations.k3s\.io/node-args}{.metadata.annotations.rke2\.io/node-args}{end}' 2>/dev/null || true)"
+    if [[ -n "${args}" ]]; then
+        [[ "${args}" == *secrets-encryption* ]] && { echo flag; return 0; }
+        echo no-flag; return 0
+    fi
+    case "${SECRETS_AT_REST:-}" in
+        provider|cluster|none) echo "${SECRETS_AT_REST}" ;;
+        *) echo unknown ;;
+    esac
+}
+
+# check_secrets_at_rest — the pre-flight line for the verdict above.
+#
+# A warning, not a refusal, by default: the development clusters this is first
+# run on do not encrypt, and a pre-flight that refused them would be switched
+# off rather than acted on. GENTIAN_REQUIRE_SECRET_ENCRYPTION=true makes every
+# verdict but flag, cluster and provider a refusal; it becomes the default once
+# the clusters that run this have it (roadmap 1.18).
+check_secrets_at_rest() {
+    local verdict msg
+    verdict="$(secrets_at_rest_verdict)"
+    case "${verdict}" in
+        flag)
+            success "Secrets encrypted at rest: the API server runs with an encryption provider"
+            return 0 ;;
+        cluster)
+            success "Secrets encrypted at rest: attested on the claim (controlPlane.secretsAtRest: cluster)${SECRETS_AT_REST_EVIDENCE:+ — ${SECRETS_AT_REST_EVIDENCE}}"
+            return 0 ;;
+        provider)
+            success "Secrets encrypted at rest: the provider's, per the claim${SECRETS_AT_REST_EVIDENCE:+ — ${SECRETS_AT_REST_EVIDENCE}}"
+            [[ -z "${SECRETS_AT_REST_EVIDENCE:-}" ]] && warn "  controlPlane.evidence is empty: say where the provider states it, so the claim is the record."
+            return 0 ;;
+        no-flag)
+            msg="the API server runs without an encryption provider: every Secret sits in etcd as plain base64" ;;
+        none)
+            msg="not encrypted, as the claim records (controlPlane.secretsAtRest: none)" ;;
+        *)
+            msg="unknown: the control plane is managed and the claim does not say what its provider does" ;;
+    esac
+    local say=warn rc=0
+    if [[ "${GENTIAN_REQUIRE_SECRET_ENCRYPTION:-false}" == "true" ]]; then say=error; rc=1; fi
+    "${say}" "Secrets at rest: ${msg}."
+    case "${verdict}" in
+        no-flag)
+            "${say}" "  Give the API server an EncryptionConfiguration (aescbc or secretbox with a local key, or a"
+            "${say}" "  KMS provider), restart it, then run scripts/tools/rewrite-secrets.sh --apply: a Secret"
+            "${say}" "  written before the change stays plain in etcd until it is written again." ;;
+        *)
+            "${say}" "  Ask the provider whether etcd is encrypted at rest and with whose keys, and record the answer"
+            "${say}" "  on the Cluster claim: spec.controlPlane.secretsAtRest (provider | cluster | none) and evidence." ;;
+    esac
+    [[ ${rc} -eq 1 ]] && "${say}" "  GENTIAN_REQUIRE_SECRET_ENCRYPTION=true made this a refusal."
+    return ${rc}
+}
+
 check_prereqs() {
     banner "Pre-flight checks"
 
@@ -1913,6 +2005,7 @@ check_prereqs() {
         else
             success "Kubernetes ${k8s_major}.${k8s_minor} (1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer required)"
         fi
+        check_secrets_at_rest || missing=$((missing + 1))
         # These two HEAL rather than check: they delete orphaned webhooks and
         # re-reconcile failed Releases. Preflight runs before the --dry-run gate,
         # so without this guard `--dry-run` would mutate the cluster — which is
