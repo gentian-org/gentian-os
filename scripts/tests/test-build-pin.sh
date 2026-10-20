@@ -80,7 +80,7 @@ source "scripts/steps/${STEP}.sh"
 check; echo "rc=$?"' 2>&1 | tail -1
 }
 
-NEW=test-cb-bbbbbbb; OLD=test-cb-aaaaaaa
+NEW=develop-bbbbbbb; OLD=develop-aaaaaaa
 out="$(verdict B-01-bootstrap-apps GENTIAN_OS_IMAGE_TAG=${NEW} PINNED=${NEW})"
 check "B-01: the Application names this checkout's build: satisfied" '[[ "${out}" == "rc=0" ]]' "${out}"
 out="$(verdict B-01-bootstrap-apps GENTIAN_OS_IMAGE_TAG=${NEW} PINNED=${OLD})"

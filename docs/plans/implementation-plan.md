@@ -796,12 +796,12 @@ convenience rather than a control.
 Found the hard way on 2026-09-24, twice in one afternoon, and it cost more
 time than anything else in this plan.
 
-- The operator and the director follow the **mutable** `:test-cb` tag.
+- The operator and the director follow the **mutable** branch tag.
   Nothing rolls them when CI overwrites it, and a pod that restarts for an
   unrelated reason silently picks up whatever the tag meant at that second.
   The director spent an afternoon serving a binary from before the branch
   because it restarted while CI was still building. The bootstrap chart is
-  written to add Argo CD Image Updater annotations that pin `test-cb-<sha>`;
+  written to add Argo CD Image Updater annotations that pin `<branch>-<sha>`;
   on this cluster the Application carries none.
 - The administration console's chart pinned the **mutable** image tag `0.1.0`.
   With `imagePullPolicy: IfNotPresent` the node kept its cached copy and went

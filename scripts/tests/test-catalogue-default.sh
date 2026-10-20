@@ -62,14 +62,12 @@ is "main reads the released catalogue" \
     "$(run GENTIAN_OS_BRANCH=main -- gentian_catalogue_url)" "${RELEASED}"
 is "develop reads the development catalogue" \
     "$(run GENTIAN_OS_BRANCH=develop -- gentian_catalogue_url)" "${DEVELOP}"
-is "test-cb reads the development catalogue" \
-    "$(run GENTIAN_OS_BRANCH=test-cb -- gentian_catalogue_url)" "${DEVELOP}"
 is "a feature branch reads the development catalogue" \
     "$(run GENTIAN_OS_BRANCH=feat/x -- gentian_catalogue_url)" "${DEVELOP}"
 is "a branch that only begins like a tag is a branch" \
     "$(run GENTIAN_OS_BRANCH=v05 -- gentian_catalogue_url)" "${DEVELOP}"
 is "GENTIAN_CATALOGUE_URL wins over a branch" \
-    "$(run GENTIAN_OS_BRANCH=test-cb GENTIAN_CATALOGUE_URL=https://c.example/x -- gentian_catalogue_url)" "https://c.example/x"
+    "$(run GENTIAN_OS_BRANCH=develop GENTIAN_CATALOGUE_URL=https://c.example/x -- gentian_catalogue_url)" "https://c.example/x"
 is "GENTIAN_CATALOGUE_URL wins over a release tag" \
     "$(run GENTIAN_OS_BRANCH=v0.5.0 GENTIAN_CATALOGUE_URL=https://c.example/x -- gentian_catalogue_url)" "https://c.example/x"
 
@@ -77,7 +75,7 @@ is "GENTIAN_CATALOGUE_URL wins over a release tag" \
 # cluster follows. A checkout with no branch to read gets the released one.
 CO="${SANDBOX}/co"
 g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
-g init -b test-cb "${CO}"; g -C "${CO}" commit --allow-empty -m seed
+g init -b develop "${CO}"; g -C "${CO}" commit --allow-empty -m seed
 is "no setting, a checkout on a branch: the development catalogue" \
     "$(run -- "SCRIPT_DIR='${CO}' gentian_catalogue_url")" "${DEVELOP}"
 g -C "${CO}" checkout --detach
@@ -85,12 +83,12 @@ is "no setting, a detached checkout: the released catalogue" \
     "$(run -- "SCRIPT_DIR='${CO}' gentian_catalogue_url")" "${RELEASED}"
 
 # What reaches the claim: the address, and above it the reason.
-section="$(run GENTIAN_OS_BRANCH=test-cb -- _claim_catalogue_section)"
+section="$(run GENTIAN_OS_BRANCH=develop -- _claim_catalogue_section)"
 is "the claim names the development catalogue for a branch" \
     "$(grep -E '^        url: ' <<<"${section}")" "        url: ${DEVELOP}"
 is "the claim says why, above the address" \
     "$(grep -B1 -E '^        url: ' <<<"${section}" | head -n 1)" \
-    "        # The development catalogue: this cluster was installed from the gentian-os branch test-cb, not from a release."
+    "        # The development catalogue: this cluster was installed from the gentian-os branch develop, not from a release."
 section="$(run GENTIAN_OS_BRANCH=v0.5.0 -- _claim_catalogue_section)"
 is "the claim names the released catalogue for a release" \
     "$(grep -E '^        url: ' <<<"${section}")" "        url: ${RELEASED}"
@@ -104,7 +102,7 @@ is "an address somebody set is recorded as set" \
 
 # The section parses, and sits where the claim expects it.
 if command -v yq >/dev/null 2>&1; then
-    printf 'spec:%s\n' "$(run GENTIAN_OS_BRANCH=test-cb -- _claim_catalogue_section)" > "${SANDBOX}/new.yaml"
+    printf 'spec:%s\n' "$(run GENTIAN_OS_BRANCH=develop -- _claim_catalogue_section)" > "${SANDBOX}/new.yaml"
     is "the section is yaml, with the address under spec.catalogue.sources" \
         "$(run -- "yq_get '.spec.catalogue.sources[0].url' '${SANDBOX}/new.yaml'")" "${DEVELOP}"
 fi
@@ -113,18 +111,18 @@ fi
 CLAIM="${SANDBOX}/cluster.yaml"
 printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  catalogue:\n    sources:\n      - name: gentian\n        url: %s\n' "${RELEASED}" > "${CLAIM}"
 before="$(cat "${CLAIM}")"
-run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
+run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
 is "a claim that names a catalogue is not rewritten" "$(cat "${CLAIM}")" "${before}"
 
 # Two addresses earlier installs wrote never served anything. A claim that
 # still names them is left as it is, and the installer says so.
 if command -v yq >/dev/null 2>&1; then
-    said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+    said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
     is "a claim naming a catalogue that serves is not warned about" \
         "$(grep -c 'never served' <<<"${said}")" "0"
     printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  catalogue:\n    storeUrl: https://gentian.org/apps\n    sources:\n      - name: gentian\n        url: https://store.gentian.org/catalogue\n' > "${CLAIM}"
     before="$(cat "${CLAIM}")"
-    said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+    said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
     is "a claim naming the retired store and catalogue is warned about, once each" \
         "$(grep -c 'never served' <<<"${said}")" "2"
     is "the warning names the store a new claim would name" \
@@ -139,14 +137,14 @@ fi
 # and nothing else of the claim moves.
 printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  certificates:\n    issuerMode: acme-dns01\n    dnsProvider: cloudflare\n    # Set false where something else already owns these records.\n    externalDns: true\n  catalogue:\n    sources:\n      - name: gentian\n        url: %s\n' "${RELEASED}" > "${CLAIM}"
 want="$(grep -v '^    externalDns: true$' "${CLAIM}")"
-said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
 is "a claim that carries certificates.externalDns loses that line and no other" "$(cat "${CLAIM}")" "${want}"
 is "and the installer says so" "$(grep -c 'removed certificates.externalDns' <<<"${said}")" "1"
-said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
 is "a second run finds nothing to remove" "$(grep -c 'externalDns' <<<"${said}")" "0"
 printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  certificates:\n    issuerMode: acme-dns01\n    # externalDns: true         let external-dns write this zone.\n  catalogue: {}\n' > "${CLAIM}"
 before="$(cat "${CLAIM}")"
-run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
+run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
 is "a claim that only mentions it in a comment is left as it is" "$(cat "${CLAIM}")" "${before}"
 
 # spec.hideVendorPromotions is no field of the Branding any more. The file is
