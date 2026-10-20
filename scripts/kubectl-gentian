@@ -1020,16 +1020,25 @@ _apps_install() {
     # The one spelling a manifest carries, so what is printed is what is recorded.
     digest="$(printf '%s' "${digest}" | tr '[:upper:]' '[:lower:]')"
     [[ "${digest}" == sha256:* ]] || digest="sha256:${digest}"
-    local body answer status commit
+    local body answer status commit message
     body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" \
         '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end)')"
     answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
     status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
     commit="$(printf '%s' "${answer}" | jq -r '.commit // "" | .[0:8]')"
+    message="$(printf '%s' "${answer}" | jq -r '.message // ""')"
     echo "Pinned ${from}/${app}  version ${version:--}  ${digest:0:19}"
     case "${status}" in
         already_installed)
             echo "${app} is already installed in ${t} at this build; nothing was committed." ;;
+        retried)
+            # The pinned build, whose move the platform rolled back or could
+            # not start: the director asked for the move once more.
+            if [[ -n "${commit}" ]]; then
+                echo "${app} in ${t}: ${message}. Committed (${commit}); the platform exports, rolls the build out and verifies it again."
+            else
+                echo "${app} in ${t}: ${message}. The retry was asked for a moment ago; nothing new was committed."
+            fi ;;
         *)
             if [[ "${everyone}" == "true" ]]; then
                 echo "Installing ${app} into ${t} for everyone: committed (${commit:-no commit id}); the platform installs it and grants it to every member."
@@ -2256,6 +2265,13 @@ cmd_apps_outdated() {
              elif (.rollout.phase // "") == "RolledBack" then "rolled back: " + (.rollout.message // .rollout.reason // "")
              elif (.rollout.phase // "") == "Failed" then "move failed: " + (.rollout.message // .rollout.reason // "")
              else "current" end)] | @tsv)' <<<"${answer}" | column -t -s $'\t'
+    # A move to the pinned build that ended badly is tried again by
+    # installing that build again; a build that keeps failing is never
+    # retried by the platform on its own.
+    jq -r '.entries[] | select(((.rollout.phase // "") == "RolledBack" or (.rollout.phase // "") == "Failed") and .rollout.target == .pinned)
+        | "kubectl gentian apps install " + .profile + " --tenant " + .tenant
+          + (if (.newest // "") != "" and .newest != .pinned then " --digest " + .pinned else "" end)
+          + " retries the move to " + .pinned[0:19]' <<<"${answer}"
     local partial unread
     partial="$(jq -r '.partial // empty' <<<"${answer}")"
     [[ -z "${partial}" ]] || echo "Partial: ${partial}" >&2
@@ -2267,7 +2283,8 @@ cmd_apps_outdated() {
 }
 
 # apps move-outdated: move every outdated app -- or those of --tenant and
-# --app -- to the newest build its catalogue offers. The cluster
+# --app -- to the newest build its catalogue offers, and try once more every
+# move to a pinned build that was rolled back or did not start. The cluster
 # administrator's act; each move exports first, verifies after and rolls back
 # by itself (kubectl gentian apps outdated shows how each went).
 cmd_apps_move_outdated() {
@@ -2284,7 +2301,9 @@ cmd_apps_move_outdated() {
     local body answer
     body="$(jq -n --arg t "${t}" --arg a "${app}" '{tenants: (if $t == "" then [] else [$t] end), apps: (if $a == "" then [] else [$a] end)}')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/move-outdated" "${body}")" || exit 1
-    jq -r '(.moved[] | "Moving " + .profile + " in " + .tenant + " to " + .to[0:19] + ": " + .status + (if .detail != "" then " (" + .detail + ")" else "" end)),
+    jq -r '(.moved[] | if .status == "retried"
+               then "Retrying " + .profile + " in " + .tenant + " at " + .to[0:19] + ": " + (.message // "") + (if (.detail // "") != "" then " (" + .detail + ")" else "" end)
+               else "Moving " + .profile + " in " + .tenant + " to " + .to[0:19] + ": " + .status + (if (.detail // "") != "" then " (" + .detail + ")" else "" end) end),
            (.skipped[] | "Not moved: " + .profile + " in " + .tenant + ": " + .status + (if .detail then " -- " + .detail else "" end))' <<<"${answer}"
     [[ "$(jq -r '.moved | length' <<<"${answer}")" != "0" ]] || echo "Nothing to move."
 }

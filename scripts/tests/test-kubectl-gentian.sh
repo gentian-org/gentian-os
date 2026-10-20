@@ -26,7 +26,10 @@
 #     for an entry the director does not list; and approves an entry for the
 #     cluster's main address only after printing the director's rule in full
 #     and only with --acknowledge-main-address-rule, which --yes does not say;
-#   - `exposures publish` is not a command and sends nothing.
+#   - `exposures publish` is not a command and sends nothing;
+#   - a move the platform rolled back is retried by `apps install` of the
+#     pinned build and by `apps move-outdated`, which print the director's
+#     answer, and `apps outdated` gives the command that retries it.
 #
 # The plugin itself runs, against a kubectl and a curl that stand in for the
 # cluster and the director and write down every request. No cluster, no
@@ -944,6 +947,39 @@ echo ""
 fresh; reply DELETE /v1/clusters/c1/tenants/ghost 202 '{"status":"orphan-removed","detail":"ghost was not in git, but the cluster still ran it: it is being deleted now."}'
 gentian tenants retire ghost --yes
 has "a tenant git lacks but the cluster runs is removed, and the command says so" "${OUT}" "the cluster still ran it"
+
+echo ""
+echo "kubectl gentian apps: a move that was rolled back is tried again"
+echo ""
+
+PINNED="sha256:abababababababababababababababababababababababababababababababab"
+OLD="sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+apps_catalogue() {
+    reply GET /v1/tenants/acme/catalogues 200 '{"catalogues":[{"name":"gentian"}]}'
+    reply GET /v1/tenants/acme/catalogues/gentian/entries 200 '{"entries":[{"name":"notes","version":"2.0.0","digest":"'"${PINNED}"'"}]}'
+}
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"retried","commit":"0123456789abcdef","message":"retrying the move that was rolled back: the verification command failed"}'
+gentian apps install notes --tenant acme
+has "installing the pinned build again prints the director's retry" "${OUT}" "notes in acme: retrying the move that was rolled back: the verification command failed. Committed (01234567)"
+lacks "... and not that nothing was committed" "${OUT}" "nothing was committed"
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 200 '{"status":"already_installed"}'
+gentian apps install notes --tenant acme
+has "a current app installed again commits nothing" "${OUT}" "notes is already installed in acme at this build; nothing was committed."
+
+fresh
+reply POST /v1/clusters/c1/actions/move-outdated 202 '{"moved":[{"tenant":"acme","profile":"notes","to":"'"${PINNED}"'","status":"retried","detail":"0123456789abcdef","message":"retrying the move that did not start: the export before the move failed"}],"skipped":[]}'
+gentian apps move-outdated
+has "move-outdated prints a retry as one" "${OUT}" "Retrying notes in acme at ${PINNED:0:19}: retrying the move that did not start: the export before the move failed (0123456789abcdef)"
+
+fresh
+reply GET /v1/clusters/c1/updates 200 '{"cluster":"c1","policy":{"mode":"latest"},"windowOpen":true,"entries":[{"tenant":"acme","profile":"notes","pinned":"'"${PINNED}"'","running":"'"${OLD}"'","newest":"'"${PINNED}"'","outdated":false,"mode":"latest","modeFrom":"cluster","rollout":{"target":"'"${PINNED}"'","phase":"RolledBack","message":"the build did not come up within 15m0s"},"ready":true}]}'
+gentian apps outdated
+has "outdated says the move was rolled back" "${OUT}" "rolled back: the build did not come up within 15m0s"
+has "... and how to try it again" "${OUT}" "kubectl gentian apps install notes --tenant acme retries the move to ${PINNED:0:19}"
 
 echo ""
 echo ""

@@ -161,6 +161,15 @@ operation `POST /v1/tenants/{t}/apps/{p}` with a digest:
 `rollbackLimit` leaves the default composition; the move's own rollback
 replaces it and does not uninstall a release at revision 1.
 
+A move that was rolled back, or did not start because its export failed,
+stays where it ended until it is asked for again. Asking again is installing
+the pinned build once more, or "move to the newest build" (`apps
+move-outdated`), which takes in every such move: the director writes a fresh
+`movedAt` and `movedBy` on the entry, with the pin unchanged, and the operator
+starts the move from step 2. Who may ask is who may move the app (§4). The
+platform's `latest` mover never asks again by itself, so a build that keeps
+failing is not tried over and over; the report lists it as rolled back.
+
 ## 6. Order of work
 
 Five pieces, ordered by what reads what. Each is one pull request series and

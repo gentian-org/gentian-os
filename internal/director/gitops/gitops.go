@@ -576,6 +576,48 @@ func (g *GitOps) InstallFrom(
 	})
 }
 
+// RetryMove asks again for a move the platform rolled back or could not
+// start: the app stays pinned to digest, and its entry records a fresh move
+// (movedAt, movedBy), which is what the operator takes as a request to try
+// once more (docs/plans/versioning.md §5). Whether the last move to digest
+// did end badly is the caller's to have read from the cluster; this only
+// refuses an entry that is not pinned to digest, so a retry can never move a
+// pin. The status is "retried".
+func (g *GitOps) RetryMove(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
+	if !ValidName(profile) {
+		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
+	}
+	if !digestPattern.MatchString(digest) {
+		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
+	}
+	msg := fmt.Sprintf("fix(%s): retry the move of %s to %s (via %s)", tenant, profile, shortDigest(digest), meta.actor())
+	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		lines := strings.Split(text, "\n")
+		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
+			return "", "", false, ErrNotInstalled
+		}
+		if pinned := appEntryValue(lines, profile, "digest"); pinned != digest {
+			return "", "", false, fmt.Errorf("%w: %s is pinned to %q, not %s", ErrNotPinnedThere, profile, pinned, shortDigest(digest))
+		}
+		after := "digest"
+		if appEntryHasKey(lines, profile, "catalogue") {
+			after = "catalogue"
+		}
+		var stamped bool
+		lines, stamped = setAppEntryKey(lines, profile, appMovedAtKey, meta.movedAt(), after)
+		lines, _ = setAppEntryKey(lines, profile, appMovedByKey, meta.mover(), appMovedAtKey)
+		if !stamped {
+			// Asked again within the second the last request was written
+			// in: that request is the one the operator answers.
+			return text, "retried", false, nil
+		}
+		return strings.Join(lines, "\n"), "retried", true, nil
+	})
+}
+
+// ErrNotPinnedThere is a retry of a move to a build the app is not pinned to.
+var ErrNotPinnedThere = errors.New("the app is not pinned to that build")
+
 // appDefaultGrantKey is the key of an app's entry that says every member of
 // the tenant has access to it by default.
 const appDefaultGrantKey = "defaultGrant"
@@ -599,6 +641,22 @@ func appEntryHasKey(lines []string, profile, key string) bool {
 		}
 	}
 	return false
+}
+
+// appEntryValue is the value of one scalar key of an app's entry, "" when
+// the entry does not carry it.
+func appEntryValue(lines []string, profile, key string) string {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return ""
+	}
+	for i := start + 1; i < end; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if indentOf(lines[i]) == keyIndent && strings.HasPrefix(trimmed, key+":") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, key+":")), `"'`)
+		}
+	}
+	return ""
 }
 
 // setAppEntryKey makes one scalar key of an app's entry equal to value, and

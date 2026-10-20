@@ -830,7 +830,9 @@ the app's data is exported first, to the platform's own storage; the new build r
 release is ready the profile's `restore.verify` command runs; a build that does not come up within
 fifteen minutes or does not verify is rolled back, and the instance runs the build it ran. The
 Component's `status.rollout` records the build it runs, the move's target, its phase and why it
-ended as it did; `kubectl gentian apps outdated` reads it for every tenant.
+ended as it did; `kubectl gentian apps outdated` reads it for every tenant. A move that ended badly
+is tried again only when somebody asks: installing the pinned build again, or `kubectl gentian apps
+move-outdated`.
 
 Who may move an app is its update mode's to say: the cluster's policy on the claim
 (`spec.catalogue.updates`), an override per tenant and app (`kubectl gentian apps update-mode`),
