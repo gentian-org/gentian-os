@@ -124,6 +124,25 @@ jobs:
           # then until someone intervened by hand. Overwriting is the agreed
           # behaviour -- test-cb always ends up equal to develop -- so parking
           # it now lasts only until the next develop commit.
+          # test-cb is a pointer moved onto develop, never a branch with work
+          # of its own -- except while something is tested straight from it.
+          # Then it holds commits develop does not, and moving it would throw
+          # them away: that happened once. Refuse, and say so; the pointer
+          # catches up when that work is merged into develop.
+          git fetch --quiet origin "+refs/heads/test-cb:refs/remotes/origin/test-cb" || true
+          if [[ -n "${before}" ]] && ! git merge-base --is-ancestor "${before}" "${SHA}" 2>/dev/null; then
+            ahead="$(git rev-list --count "${SHA}..${before}" 2>/dev/null || echo '?')"
+            echo "::warning::test-cb (${before:0:7}) carries ${ahead} commit(s) develop lacks; not moved."
+            {
+              echo "### test-cb not moved"
+              echo
+              echo "\`test-cb\` is at \`${before}\`, which is not an ancestor of \`${SHA}\`:"
+              echo "it carries ${ahead} commit(s) develop does not have. Merge test-cb into"
+              echo "develop first; the pointer then follows."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
           git push --force origin "${SHA}:refs/heads/test-cb"
 
           {
