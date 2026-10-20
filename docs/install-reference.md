@@ -297,6 +297,7 @@ The template carries one line per setting; the reasoning is here.
 | `TENANCY_MODE`, `SECRET_MODE` | Not for `install.env`. Step 0 asks for both; an unattended first run exports them (`multi` or `single`; `derived` or `random`). They are written to the Cluster claim (`spec.tenancyMode`, `spec.secretMode`), which owns them from then on. See *Tenancy modes* and *What the master password does* below. |
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `GENTIAN_OPERATOR_OBJECTS_WAIT_SECS` | How long `E-05` waits for the catalogue and every tenant declared in git to be synced -- their Argo CD Applications are asked again when a sync failed, as on a fresh install, where they first run before the operator's CRDs exist -- before it fails naming each with Argo CD's message. 600 by default. |
+| `GENTIAN_REQUIRE_SECRET_ENCRYPTION` | `true` makes pre-flight refuse a cluster whose Secrets are not encrypted at rest; unset or `false`, it warns. See *Secrets at rest* below. |
 | `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([design/security.md §2.7](design/security.md)). |
 | `GENTIAN_NO_USAGE_STATISTICS` | `1` turns the usage statistics report off, as `--no-usage-statistics` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered: no tenant gets the App Store app — [design/operations.md §6.2](design/operations.md). |
@@ -305,6 +306,39 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalogue (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is one profile, the Operations Console's, from `https://catalogue.aluvian.io/profiles/operations-console.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
 | `CROSSPLANE_ACTIVATE_ALL` | `true` installs every resource type of every Crossplane provider, as installs did before; unset, only the types `crossplane/providers/activation.yaml` names exist. The way back if a fresh install waits on a type that list lacks — see *Provider resource types* below. |
 | `GENTIAN_OS_IMAGE_TAG` | Leave it unset — see *Image tags* below. |
+
+### Secrets at rest
+
+Kubernetes holds every Secret in etcd, and encrypts it there only when the
+API server runs with an encryption provider. The platform cannot set that on
+a control plane it does not run, and cannot see it either: a managed API
+server shows no pod and no flags from inside the cluster. So two things
+answer for it.
+
+Where pre-flight can see the API server -- kubeadm's static pod, k3s's or
+rke2's node arguments -- it reads the flags, and what they say wins. Where it
+cannot, it reads the Cluster claim:
+
+```yaml
+spec:
+  controlPlane:
+    secretsAtRest: provider      # provider | cluster | none
+    evidence: "Provider security page §3, read 2026-10-20"
+```
+
+`provider` says the provider states it, and `evidence` says where; `cluster`
+says your own API server runs the provider and you set it; `none` says it is
+not encrypted, or not known. Step 0 asks for the value, and the claim is
+committed, so the answer is dated. Pre-flight prints a warning on every run
+until the verdict is `provider`, `cluster` or a visible flag;
+`GENTIAN_REQUIRE_SECRET_ENCRYPTION=true` turns the warning into a refusal.
+
+Switching the provider on encrypts what is written from then on and nothing
+else: a Secret written before stays plain in etcd until it is written again.
+`scripts/tools/rewrite-secrets.sh` lists those Secrets, and with `--apply`
+writes each one again unchanged, so the API server encrypts it. Run it once,
+after the API server restarted with the provider. Whether etcd really holds
+ciphertext is checked by whoever runs etcd, with `etcdctl get` on one key.
 
 ### How Argo CD gets a repository's credential
 
