@@ -156,6 +156,101 @@ func TestOnlyKnownSettingsAndKnownValues(t *testing.T) {
 	}
 }
 
+// The first list-valued setting. Inserted under its parent when the claim
+// lacks it, as a block list; replaced whole when it is there; a commented
+// placeholder is its home like a scalar's; the same list again is no commit;
+// an empty list is written as one. Read back joined, the shape the API and
+// the installer carry it in.
+func TestAListSettingIsWrittenAsABlockAndReadBackJoined(t *testing.T) {
+	t.Parallel()
+	out, changed, err := setClaimList(claimFixture, "certificates.dnsZones", []string{"gentian.org", "example.ch"})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if !strings.Contains(out, "    dnsProvider: cloudflare\n    dnsZones:\n      - gentian.org\n      - example.ch\n  mail:") {
+		t.Fatalf("list not written under certificates:\n%s", out)
+	}
+	var claim map[string]any
+	if err := yaml.Unmarshal([]byte(out), &claim); err != nil {
+		t.Fatalf("result is not YAML: %v\n%s", err, out)
+	}
+	spec := claim["spec"].(map[string]any)
+	if got, _ := lookupPath(spec, []string{"certificates", "dnsZones"}); got != "gentian.org,example.ch" {
+		t.Fatalf("read back %q", got)
+	}
+
+	// The same list again changes nothing, whatever the spacing it came in.
+	again, changed, err := setClaimList(out, "certificates.dnsZones", splitItems("gentian.org, example.ch"))
+	if err != nil || changed || again != out {
+		t.Fatalf("the same list must not be a commit: changed=%v err=%v", changed, err)
+	}
+
+	// A different list replaces the whole block, and nothing after it moves.
+	shorter, changed, err := setClaimList(out, "certificates.dnsZones", []string{"example.ch"})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if strings.Contains(shorter, "gentian.org") || !strings.Contains(shorter, "    dnsZones:\n      - example.ch\n  mail:\n    serviceMode: system") {
+		t.Fatalf("list not replaced:\n%s", shorter)
+	}
+
+	// Emptied, it is an empty list, not an absent key: set to nothing is a
+	// real answer.
+	none, changed, err := setClaimList(shorter, "certificates.dnsZones", nil)
+	if err != nil || !changed || !strings.Contains(none, "    dnsZones: []\n  mail:") {
+		t.Fatalf("empty list: changed=%v err=%v\n%s", changed, err, none)
+	}
+	// And a flow list is read as one, so filling it again is a change from [].
+	filled, changed, err := setClaimList(none, "certificates.dnsZones", []string{"gentian.org"})
+	if err != nil || !changed || !strings.Contains(filled, "    dnsZones:\n      - gentian.org\n") {
+		t.Fatalf("from []: changed=%v err=%v\n%s", changed, err, filled)
+	}
+	if _, changed, _ = setClaimList(none, "certificates.dnsZones", nil); changed {
+		t.Fatal("[] set to [] must not be a commit")
+	}
+}
+
+// The claim scaffold documents dnsZones as a commented key. Choosing it uses
+// that line, as for a scalar, and the comments around it survive.
+func TestACommentedListPlaceholderBecomesTheList(t *testing.T) {
+	t.Parallel()
+	fixture := strings.Replace(claimFixture, "    dnsProvider: cloudflare\n",
+		"    dnsProvider: cloudflare\n    # dnsZones:                 zones of tenants served on a domain of\n    #                           their own\n", 1)
+	out, changed, err := setClaimList(fixture, "certificates.dnsZones", []string{"gentian.org"})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if !strings.Contains(out, "    dnsProvider: cloudflare\n    dnsZones:\n      - gentian.org\n    #                           their own\n") {
+		t.Fatalf("placeholder not used:\n%s", out)
+	}
+	if strings.Count(out, "dnsZones") != 1 {
+		t.Fatal("the list was added beside its placeholder instead of in it")
+	}
+	var probe map[string]any
+	if err := yaml.Unmarshal([]byte(out), &probe); err != nil {
+		t.Fatalf("result is not YAML: %v\n%s", err, out)
+	}
+}
+
+// What a list setting takes: zone names, each checked, and nothing else.
+func TestAListSettingChecksEveryItem(t *testing.T) {
+	t.Parallel()
+	s, ok := settingByPath("certificates.dnsZones")
+	if !ok || !s.List || s.InstallStep != "B-01" {
+		t.Fatalf("certificates.dnsZones should be a list the installer reads at B-01: %+v", s)
+	}
+	for _, good := range []string{"gentian.org", "gentian.org,example.ch", " gentian.org , example.ch ", ""} {
+		if err := validateSetting(s, good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"gentian", "www.gentian.org/", "Gentian.org", "a b.org"} {
+		if err := validateSetting(s, bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
 // Values that YAML would read as something other than a string are quoted,
 // and ordinary ones are left as a person would write them.
 func TestScalarsAreQuotedOnlyWhenTheyMustBe(t *testing.T) {

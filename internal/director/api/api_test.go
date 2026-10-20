@@ -774,6 +774,30 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 		t.Fatalf("the setting did not land: %q", found)
 	}
 
+	// A list setting travels as one comma-separated value both ways, and a
+	// setting the installer reads says which step applies it: the commit is
+	// in git, the cluster has nothing of it until B-01 runs again.
+	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
+		`{"settings":{"certificates.dnsZones":"gentian.org, example.ch"}}`)
+	if code != http.StatusAccepted || body["installStep"] != "B-01" {
+		t.Fatalf("write of a list setting: %d %v", code, body)
+	}
+	_, body = h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/settings", alice, "")
+	for _, s := range body["settings"].([]any) {
+		m := s.(map[string]any)
+		if m["path"] != "certificates.dnsZones" {
+			continue
+		}
+		if m["value"] != "gentian.org,example.ch" || m["list"] != true || m["installStep"] != "B-01" {
+			t.Fatalf("the list setting reads back as %v", m)
+		}
+	}
+	// An item that is not a zone name is refused, and nothing is written.
+	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
+		`{"settings":{"certificates.dnsZones":"gentian"}}`); code != http.StatusBadRequest {
+		t.Fatalf("a non-zone was accepted as a DNS zone: %d", code)
+	}
+
 	// A setting outside the allowlist is refused rather than written.
 	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
 		`{"settings":{"masterPasswordSecretRef.name":"mine"}}`); code != http.StatusBadRequest {

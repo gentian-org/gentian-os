@@ -660,13 +660,13 @@ func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time
 	}
 	return g.apply(ctx, tenant, fmt.Sprintf("Purge tenant %s: delete its data when it is retired", tenant), meta,
 		func(text string) (string, string, bool, error) {
-			out, policyChanged, err := setKeyPath(text, "spec", []string{"deletionPolicy"}, "Delete")
+			out, policyChanged, err := setKeyPath(text, "spec", []string{"deletionPolicy"}, scalarLeaf("Delete"))
 			if err != nil {
 				return "", "", false, err
 			}
 			if opts.KeepBundles {
 				var kept bool
-				out, kept, err = setKeyPath(out, "spec", []string{"deletion", "keepBundles"}, "true")
+				out, kept, err = setKeyPath(out, "spec", []string{"deletion", "keepBundles"}, scalarLeaf("true"))
 				if err != nil {
 					return "", "", false, err
 				}
@@ -674,7 +674,7 @@ func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time
 			}
 			marked := tenantPurgeRequested(out)
 			if !marked {
-				out, _, err = setKeyPath(out, "metadata", []string{"annotations", PurgeAnnotation}, now.UTC().Format(time.RFC3339))
+				out, _, err = setKeyPath(out, "metadata", []string{"annotations", PurgeAnnotation}, scalarLeaf(now.UTC().Format(time.RFC3339)))
 				if err != nil {
 					return "", "", false, err
 				}
