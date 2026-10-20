@@ -40,45 +40,56 @@ Framework columns name the ISO 27001:2022 Annex A control and the SOC 2
 Trust Services criterion the item satisfies. Roadmap and gap numbers are
 given where the item is already tracked.
 
-| # | Item | Fix | ISO | SOC 2 | Wave |
+| # | Item | Fix | ISO | SOC 2 | Step |
 | --- | --- | --- | --- | --- | --- |
-| C1 | Repository governance | **Done 2026-10-19** (gentian-os#308). Rulesets on every default and release branch: pull request, no bypass actors, status checks required, release tags immutable. Second factor required at the organisation level; default member permission `read`. Dependabot alerts and security updates on. `CODEOWNERS` and `SECURITY.md` in each repository. Third-party Actions pinned by commit SHA. CONTRIBUTING no longer asks for `Signed-off-by`. Open: one approval per pull request, which needs a second maintainer; until then the Statement of Applicability records segregation of duties as not achievable and the automated checks as the compensating control | A.8.32, A.5.15 | CC8.1, CC6.1 | 0 |
-| C2 | Dependency hygiene | In place: CodeQL default setup, Dependabot alerts and security updates, the Actions ecosystem in `dependabot.yml`. To add: the `gomod`, `pip` and `npm` ecosystems, with `target-branch: develop` while `develop` is the integration branch, or a promotion of `develop` so that the default branch is what runs. Installs honour the lockfile: `uv sync --frozen`, `npm ci`, lockfile copied into the image. Base images pinned by digest and bumped by the same bot. `govulncheck`, `pip-audit` and `npm audit` as CI jobs, advisory first, blocking after the backlog is clear. Open alerts are triaged against `develop`, not the default branch | A.8.8 | CC7.1 | 0 |
-| C3 | Fail-closed UI authentication (defence in depth) | The platform deployment is authenticated at the gateway and configured with an issuer, so this hardens the backends against a misconfiguration rather than closing a live hole: `auth.py` returns 503 on every protected route when the issuer is unset and `AUTH_DISABLED` is not explicitly true; the production validator runs by default and `local` is the opt-out; the desktop profile sets `ENVIRONMENT: production` like the other two; the admin console's extensions route requires a caller; a test asserts the anonymous path is gone. Remove the tracked scratch scripts and the dead `portal-bridge.php` from the desktop | A.8.5 | CC6.1 | 0 |
-| C4 | Documentation accuracy | [security-principles.md](../security-principles.md) §6 and §7 and the kube-oidc-proxy comment describe default-deny at every layer, a joined three-log audit and API auditing as present; they are targets. Say so, and point to this plan. Create `docs/compliance/controls.md` as roadmap 5.5 specifies, one row per control with mechanism and evidence query, starting from §1 above | A.5.37 | CC2.2 | 0 |
+| C1 | Repository governance | **Done 2026-10-19** (gentian-os#308). Rulesets on every default and release branch: pull request, no bypass actors, status checks required, release tags immutable. Second factor required at the organisation level; default member permission `read`. Dependabot alerts and security updates on. `CODEOWNERS` and `SECURITY.md` in each repository. Third-party Actions pinned by commit SHA. CONTRIBUTING no longer asks for `Signed-off-by`. Open: one approval per pull request, which needs a second maintainer; until then the Statement of Applicability records segregation of duties as not achievable and the automated checks as the compensating control | A.8.32, A.5.15 | CC8.1, CC6.1 | done |
+| C2 | Dependency hygiene | In place: CodeQL default setup, Dependabot alerts and security updates, the Actions ecosystem in `dependabot.yml`. To add: the `gomod`, `pip` and `npm` ecosystems, with `target-branch: develop` while `develop` is the integration branch, or a promotion of `develop` so that the default branch is what runs. Installs honour the lockfile: `uv sync --frozen`, `npm ci`, lockfile copied into the image. Base images pinned by digest and bumped by the same bot. `govulncheck`, `pip-audit` and `npm audit` as CI jobs, advisory first, blocking after the backlog is clear. Open alerts are triaged against `develop`, not the default branch | A.8.8 | CC7.1 | 1 |
+| C3 | Fail-closed UI authentication (defence in depth) | The platform deployment is authenticated at the gateway and configured with an issuer, so this hardens the backends against a misconfiguration rather than closing a live hole: `auth.py` returns 503 on every protected route when the issuer is unset and `AUTH_DISABLED` is not explicitly true; the production validator runs by default and `local` is the opt-out; the desktop profile sets `ENVIRONMENT: production` like the other two; the admin console's extensions route requires a caller; a test asserts the anonymous path is gone. Remove the tracked scratch scripts and the dead `portal-bridge.php` from the desktop | A.8.5 | CC6.1 | 4 |
+| C4 | Documentation accuracy | [security-principles.md](../security-principles.md) §6 and §7 and the kube-oidc-proxy comment describe default-deny at every layer, a joined three-log audit and API auditing as present; they are targets. Say so, and point to this plan. Create `docs/compliance/controls.md` as roadmap 5.5 specifies, one row per control with mechanism and evidence query, starting from §1 above | A.5.37 | CC2.2 | 1 |
 | C5 | Image scanning, SBOM, signing (roadmap 5.3, G11) | Trivy on every image built in CI; `sbom: true` and `provenance: true` on the existing build-push steps; cosign keyless signatures; a Kyverno `verifyImages` rule in the kernel baseline, audit mode first; the catalogue validators require image digests, not tags | A.8.8, A.8.29 | CC7.1 | 1 |
-| C6 | Administrator second factor and break-glass (roadmap 5.5) | A realm-wide rule, or a Cluster claim setting, that requires TOTP of every member of an administrator group and of the kernel realm, so that enrolment is required of people added after activation and not only of the account the installer activates; a default tenant `passwordPolicy` instead of the empty one; break-glass as a group membership with reason and expiry, removed by the registrar at expiry; a per-service OpenFGA client, read-only where the service only checks; the operator's Keycloak credential rotated and scoped (G20) | A.5.17, A.8.2, A.8.5 | CC6.1, CC6.2, CC6.3 | 1 |
-| C7 | Transport encryption inside the cluster | `sslmode=require` with the OpenBao-issued CA on every kernel database connection; Argo CD behind the gateway with TLS to the server; MariaDB `require_secure_transport` for tenant engines. Workload mTLS stays G8 | A.8.24 | CC6.7 | 1 |
-| C8 | Log store and alerting (roadmap 5.1, G10) | One collector per node (Vector or Fluent Bit) into an append-only store with twelve-month retention and object lock; bouncer decisions, director commits, registrar record, Keycloak events (with `eventsExpiration` set to match) and gateway access logs all keyed by the request id; the platform installs Prometheus and Alertmanager with rules for the kernel services, and the alert route is a Cluster claim field | A.8.15, A.8.16 | CC7.2, CC7.3 | 2 |
+| C6 | Administrator second factor and break-glass (roadmap 5.5) | A realm-wide rule, or a Cluster claim setting, that requires TOTP of every member of an administrator group and of the kernel realm, so that enrolment is required of people added after activation and not only of the account the installer activates; a default tenant `passwordPolicy` instead of the empty one; break-glass as a group membership with reason and expiry, removed by the registrar at expiry; a per-service OpenFGA client, read-only where the service only checks; the operator's Keycloak credential rotated and scoped (G20) | A.5.17, A.8.2, A.8.5 | CC6.1, CC6.2, CC6.3 | 4 |
+| C7 | Transport encryption inside the cluster | `sslmode=require` with the OpenBao-issued CA on every kernel database connection; Argo CD behind the gateway with TLS to the server; MariaDB `require_secure_transport` for tenant engines. Workload mTLS stays G8 | A.8.24 | CC6.7 | 4 |
+| C8 | Log store and alerting (roadmap 5.1, G10) | One collector per node (Vector or Fluent Bit) into an append-only store with twelve-month retention and object lock; bouncer decisions, director commits, registrar record, Keycloak events (with `eventsExpiration` set to match) and gateway access logs all keyed by the request id; the platform installs Prometheus and Alertmanager with rules for the kernel services, and the alert route is a Cluster claim field | A.8.15, A.8.16 | CC7.2, CC7.3 | 3 |
 | C9 | Secret encryption at rest (G17, roadmap 1.18) | Installer step that enables the provider's KMS or an `EncryptionConfiguration` for Secrets, with a `check()` that reads one back from etcd; documented as a prerequisite where the platform cannot set it | A.8.24 | CC6.7 | 2 |
-| C10 | Backups that prove themselves (roadmap 5.2) | CNPG `barmanObjectStore` for the kernel and tenant Postgres clusters; scheduled OpenBao Raft snapshots to the same bucket; a `BackupPolicy` rendered for every tenant by default; a monthly restore drill into a scratch namespace that writes a signed result; recovery point and time objectives stated per cluster in the claim and measured by the drill | A.8.13, A.8.14 | A1.2, A1.3 | 2 |
-| C11 | Deletion and residency records (roadmap 5.5) | Tenant deletion removes OpenFGA tuples, Redis keys and rights; an import re-queues approvals on the receiving cluster; a signed record per deletion and export; a `residency` field on the Cluster claim shown to tenants and in exports | A.8.10, A.5.34 | C1.2, P4.3 | 2 |
-| C12 | Kernel-tier isolation (G28) | Kernel NetworkPolicies on by default with the egress half derived from `requires`; a startup check that the CNI enforces NetworkPolicy | A.8.22 | CC6.6 | 2 |
-| C13 | Availability baseline | Decide whether the Availability criterion is in scope for the first period. If yes: Keycloak, OpenFGA, the operator and the kernel CNPG cluster at two or more replicas with PodDisruptionBudgets, OpenBao Raft with three members, requests and limits on every kernel service. If no: say so in the system description and keep single replicas | A.8.14 | A1.1 | 3 |
+| C10 | Backups that prove themselves (roadmap 5.2) | CNPG `barmanObjectStore` for the kernel and tenant Postgres clusters; scheduled OpenBao Raft snapshots to the same bucket; a `BackupPolicy` rendered for every tenant by default; a monthly restore drill into a scratch namespace that writes a signed result; recovery point and time objectives stated per cluster in the claim and measured by the drill | A.8.13, A.8.14 | A1.2, A1.3 | 6 |
+| C11 | Deletion and residency records (roadmap 5.5) | Tenant deletion removes OpenFGA tuples, Redis keys and rights; an import re-queues approvals on the receiving cluster; a signed record per deletion and export; a `residency` field on the Cluster claim shown to tenants and in exports | A.8.10, A.5.34 | C1.2, P4.3 | 5 |
+| C12 | Kernel-tier isolation (G28) | Kernel NetworkPolicies on by default with the egress half derived from `requires`; a startup check that the CNI enforces NetworkPolicy | A.8.22 | CC6.6 | 4 |
+| C13 | Availability baseline | Decide whether the Availability criterion is in scope for the first period. If yes: Keycloak, OpenFGA, the operator and the kernel CNPG cluster at two or more replicas with PodDisruptionBudgets, OpenBao Raft with three members, requests and limits on every kernel service. If no: say so in the system description and keep single replicas | A.8.14 | A1.1 | 7 |
 
-## 3. Waves
+## 3. Sequence
 
-A wave is done when its evidence can be pulled for an arbitrary week of the
-period, not when the code merges.
+A step is done when its evidence can be pulled for an arbitrary week of the
+period, not when the code merges. The order was agreed on 2026-10-20; C1
+landed the day before.
 
-**Wave 0 — settings and small code.** C1 (done), C2, C3, C4. GitHub settings, a
-handful of config and auth changes, a doc correction. No architecture
-change. After this wave every merge, dependency bump and authentication
-decision leaves a record.
-
-**Wave 1 — identity and supply chain.** C5, C6, C7. Signed and scanned
-images, enforced second factor, break-glass with expiry, encrypted database
-connections. After this wave the privileged-access and vulnerability
-populations are complete.
-
-**Wave 2 — the evidence store.** C8, C9, C10, C11, C12. The log store is
-the single largest build item and the one that starts the Type II clock
-(roadmap 5.4). Backups and deletion records join it so that the same store
-holds every population.
-
-**Wave 3 — assurance.** C13 decided and, if in scope, built. Type I
-readiness assessment against `docs/compliance/controls.md`; the Statement
-of Applicability maps to the same rows. Then the Type II period runs.
+1. **Vulnerability management** — C2, C4, C5. Gated by `develop` becoming
+   the default branch, so that the scanners and Dependabot describe the code
+   that runs. C4 rides along because an auditor reads the documents before
+   the code.
+2. **Secret encryption at rest** — C9. A cluster setting with a check, or a
+   documented prerequisite where the platform cannot set it.
+3. **The evidence store** — C8. The single largest build and the one that
+   starts the Type II clock (roadmap 5.4): two of the five logs exist only
+   on stdout today. Retention is designed for personal data from the start,
+   since step 5 reaches back into it: a stated basis for the twelve months,
+   and an expiry on Keycloak's events.
+4. **Access control** — C6, C7, C3, C12. The realm-wide second-factor rule
+   and break-glass with expiry; the master administrator credential retired
+   to break-glass behind per-service clients (G20); encrypted database
+   connections; the UI backends hardened; kernel-tier isolation. Rotation of
+   the platform master password is a design decision for
+   [architectural-decisions.md](architectural-decisions.md), not a build
+   item here.
+5. **Data lifecycle and data protection** — C11, with the company half
+   (retention and erasure in the company services, the processing register,
+   processor agreements under the GDPR and the Swiss nDSG) outside this
+   repository. Both halves share the deletion record.
+6. **Backups that prove themselves** — C10, as a recurring drill whose first
+   run is the stress test, on the cloud cluster rather than a lab host, and
+   measured against recovery objectives stated per cluster.
+7. **Assurance** — C13 decided and, if in scope, built. Type I readiness
+   assessment against `docs/compliance/controls.md`; the Statement of
+   Applicability maps to the same rows. Then the Type II period runs.
 
 ## 4. Not planned here
 
