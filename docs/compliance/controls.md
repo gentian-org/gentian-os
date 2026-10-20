@@ -1,0 +1,42 @@
+# Control catalogue
+
+One row per control objective: the principle it serves
+([security-principles.md](../security-principles.md)), the mechanism that
+implements it, the query that produces its evidence, and what is still
+missing, named by its item in [plans/certification.md](../plans/certification.md)
+or its gap in [plans/security-gap-closing.md](../plans/security-gap-closing.md).
+This is the system description an ISO 27001 Statement of Applicability and
+a SOC 2 report map to (roadmap §5.4). A row changes only when the code does;
+[design/security.md §3.0](../design/security.md) holds the finer-grained
+status per mechanism.
+
+An evidence query is what an auditor runs, or is shown, to pull the records
+of an arbitrary week. "None yet" means the control may operate but leaves no
+record an auditor can sample, which for both frameworks is the same as not
+operating.
+
+| # | Control objective | Principle | Mechanism | Evidence query | Missing |
+| --- | --- | --- | --- | --- | --- |
+| K1 | Changes reach a cluster only through a reviewed, CI-checked pull request | 9 | Rulesets on `main` and `develop` of gentian-os, gentian-ui and gentian-apps: pull request, required status checks, no bypass; release tags immutable | `gh api repos/gentian-org/<repo>/rulesets`; `gh pr list --state merged` with each PR's checks | A second approver (one maintainer today), recorded as a compensating-control exception |
+| K2 | Every change to declared state names the person and the relation that allowed it | 7, 9 | The director commits to the deployments repository with a `Gentian-Authz:` trailer and an OpenPGP signature; Argo CD verifies through `AppProject.spec.sourceIntegrity` | `git log --show-signature` on the deployments repository; `argocd app get` showing the signature policy | Verification on a running cluster not yet shown |
+| K3 | What runs is what CI built | 9 | Immutable image tags (`<branch>-<sha>`, semver) published by digest; profiles pin bundles by digest; `lint-image-pins` bans `latest` | Catalogue index digests; `kubectl get pods -o jsonpath='{..imageID}'` | Image signatures, SBOM and provenance, admission verification (C5) |
+| K4 | Third-party code is scanned and known vulnerabilities are fixed within a stated time | 9 | CodeQL default setup; Dependabot alerts and security updates; Actions pinned by commit | `gh api repos/gentian-org/<repo>/code-scanning/alerts`; `gh api repos/gentian-org/<repo>/dependabot/alerts` with `fixed_at` | Lockfile-enforced builds, dependency scanners in CI, a fix SLA (C2) |
+| K5 | Images are scanned before release | 9 | — | — | C5 |
+| K6 | Identity is a verified claim set from a known issuer | 1 | Keycloak realm per tenant and a kernel realm; RS256 verification against the issuer's keys in every service; the gateway's OIDC session in front of every `authMode: oidc` route | Realm export; `kubectl get securitypolicy -A` | — |
+| K7 | Every request to a protected route is decided by policy, and the decision fails closed | 2, 3 | OpenFGA model (`authz/model/v1/model.fga`) with CI tests; `Check` in bouncer, director, custodian, usher and registrar; `failOpen: false` at the gateway | CI run of the authorization policy tests; the model's tests | The decision log, today stdout only (C8, G10) |
+| K8 | Administrators enrol a second factor | 1 | `CONFIGURE_TOTP` required at the activation of every administrator account, the platform's included, unless the tenant manifest opts out | Keycloak: the account's credentials of type `otp`; the tenant manifest's `spec.admin.requireMFA` | A realm-wide rule for people added to an administrator group after activation (C6) |
+| K9 | Privileged credentials are few, scoped and rotated | 5, 8 | OpenBao holds kernel credentials; the custodian rotates external ones | OpenBao audit of the paths; rotation dates | The operator acts as Keycloak's master administrator; OpenFGA has one shared write key; no master-password rotation (C6, G20) |
+| K10 | Break-glass access is time-bound and recorded | 5, 7 | `break_glass` relation in the model; the installer's break-glass signing key | — | The workflow with reason and expiry (C6) |
+| K11 | Changes to a person's identity and rights are recorded with who asked and what allowed it | 7 | Registrar record, 400-day retention (`internal/registrar/record`); Keycloak user and admin events on in tenant realms | `select * from actions where at between …` on the registrar database; Keycloak events API | Events exported and retained outside Keycloak (C8); expiry set (step 3) |
+| K12 | Who holds access is reviewed on an interval and the review is recorded | 5 | — | — | C6, roadmap 5.5 |
+| K13 | Tenants are isolated from each other and from the kernel | 6 | Namespace per tenant with default-deny ingress and egress; Kyverno pod-security policies in Enforce; LimitRange; per-tenant OpenBao store and policy | `kubectl get networkpolicy -n <tenant>`; `kubectl get clusterpolicy`; `bao policy read <tenant>` | Kernel-tier policies on by default and kernel egress (C12, G28) |
+| K14 | Secrets are held in a vault and reach a workload only through its tenant's store | 8 | OpenBao with transit auto-unseal; External Secrets Operator with one store, role and policy per tenant | `kubectl get externalsecret -A`; OpenBao policies | Per-app policies (G12) |
+| K15 | Secrets are encrypted at rest | 8 | — | `kubectl get secret` read back from etcd is ciphertext | C9, G17 |
+| K16 | Data in transit is encrypted | 6 | cert-manager with Let's Encrypt at the edge; internal CA from OpenBao PKI | Certificate inventory; `openssl s_client` against each public host | Database connections use `sslmode=disable`; no mTLS (C7, G8) |
+| K17 | Tenant data is backed up, encrypted, and shown to restore | 8 | `BackupPolicy`, `TenantExport`, `TenantRestore`: age-encrypted bundles, signed manifests, retention tiers | `kubectl get tenantexport -A`; the restore drill's signed result | Kernel Postgres and OpenBao backup; the recurring drill and its record; stated recovery objectives (C10) |
+| K18 | Security-relevant events are retained for the period and cannot be altered | 7 | — | — | C8: the single store with twelve-month retention and object lock |
+| K19 | Availability and capacity are monitored and alerted on | — | Operator metrics (ServiceMonitor off by default) | — | Prometheus, Alertmanager and rules installed by the platform (C8) |
+| K20 | Deleting a tenant removes its data and its rights, and leaves a record | 8 | App purge, tenant retire and delete with purge, mailbox archive or delete | Director change log entry for the deletion | OpenFGA tuples and Redis keys survive deletion; no signed deletion record (C11) |
+| K21 | Where a tenant's data resides is declared | 9 | — | — | C11: a `residency` field on the Cluster claim |
+| K22 | A vulnerability can be reported privately and is answered within a stated time | — | `SECURITY.md` in each repository; GitHub private vulnerability reporting enabled | `gh api repos/gentian-org/<repo>/private-vulnerability-reporting` | — |
+| K23 | The documentation describes the controls as they are | — | This catalogue; [design/security.md §3.0](../design/security.md); the *Today* notes in the principles | Reviewed at each release | — |

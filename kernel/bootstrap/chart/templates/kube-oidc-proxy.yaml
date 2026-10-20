@@ -11,8 +11,11 @@
 #
 # So a proxy stands in front: it verifies the realm's token, and forwards the
 # request to the API server with impersonation headers naming the person and
-# their groups. RBAC and the audit log see a human. The pod itself holds only
-# the right to impersonate -- it cannot read a single Secret on its own.
+# their groups. RBAC sees a human, and so does the API server's audit log
+# where the provider writes one: the platform configures no audit policy of
+# its own, since it does not own the control plane (certification plan C8).
+# The pod itself holds only the right to impersonate -- it cannot read a
+# single Secret on its own.
 #
 # The implementation is the maintained fork of jetstack's kube-oidc-proxy,
 # which the archived original names as its successor.
