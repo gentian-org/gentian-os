@@ -2285,9 +2285,13 @@ spec:
             {{- /* The chart creates services named <app>-release-<component>.      */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}
-            {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
-            {{- /* creates a Service with the correct name, so emitting our own      */}}
-            {{- /* Object with the same name would conflict with Helm ownership.     */}}
+            {{- /* Skip a name the chart makes itself: fullnameOverride, or          */}}
+            {{- /* fullnameOverride-<component> (a chart with a Service per          */}}
+            {{- /* component). An Object of that name made first -- while the        */}}
+            {{- /* release waits for a credential -- leaves a Service Helm does not  */}}
+            {{- /* own, and the install is refused ("exists and cannot be imported   */}}
+            {{- /* into the current release"); made after, it is applied over the   */}}
+            {{- /* chart's own Service.                                               */}}
             {{- /* This is the one read AD-4 did not simply move. AppProfile had a
                  single spec.ingress with serviceName and servicePort;
                  ComponentProfile has a list of exposures, each naming the Service
@@ -2304,7 +2308,15 @@ spec:
             {{- end }}
             {{- $stableSvcName  := dig "service" "" $backend }}
             {{- $fullnameOverride := dig "fullnameOverride" "" $extraVals }}
-            {{- if and $stableSvcName (ne $stableSvcName $fullnameOverride) }}
+            {{- $chartOwned := dict }}
+            {{- if $fullnameOverride }}
+              {{- range $n := list $stableSvcName (printf "%s-api" $app) }}
+                {{- if or (eq $n $fullnameOverride) (hasPrefix (printf "%s-" $fullnameOverride) $n) }}
+                  {{- $_ := set $chartOwned $n true }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if and $stableSvcName (not (hasKey $chartOwned $stableSvcName)) }}
             {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
             {{- $svcPort   := default 80 (dig "port" 0 $backend | int) }}
             ---
@@ -2336,6 +2348,7 @@ spec:
             {{- /* Stable alias for companion API service (e.g. app-store-api). */}}
             {{- $apiSvcName := printf "%s-api" $app }}
             {{- $apiSvcPort := 8000 }}
+            {{- if not (hasKey $chartOwned $apiSvcName) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -2362,6 +2375,7 @@ spec:
                       protocol: TCP
               providerConfigRef:
                 name: kubernetes
+            {{- end }}
             {{- end }}
 
             {{- /* ── Emit post-install bootstrap Job ─────────────────────────────── */}}
