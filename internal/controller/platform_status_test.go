@@ -61,7 +61,7 @@ func TestThePlatformsVersionIsWrittenOnTheClaimsComposite(t *testing.T) {
 		t.Fatal(err)
 	}
 	platform, _, _ := unstructured.NestedStringMap(got.Object, "status", "platform")
-	if platform["versionLine"] != platformversion.Line || platform["build"] != "abc1234" || platform["reportedAt"] != "2026-10-19T12:00:00Z" {
+	if platform["version"] != platformversion.ChartVersion || platform["versionLine"] != platformversion.Line || platform["build"] != "abc1234" || platform["reportedAt"] != "2026-10-19T12:00:00Z" {
 		t.Fatalf("status.platform = %v", platform)
 	}
 	// And what the feed says is newest, beside it.
