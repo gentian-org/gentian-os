@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -376,5 +377,48 @@ func TestAnInstallForEveryoneIsWrittenOnTheEntry(t *testing.T) {
 	}
 	if !granted("jitsi") || granted("element") {
 		t.Fatal("the grant landed on the wrong entry")
+	}
+}
+
+// A retry of a move writes a fresh record of the move on the entry and leaves
+// the pin where it is; it is refused for an app that is not pinned to the
+// build named, so it can never move a pin.
+func TestARetryOfAMoveStampsTheEntryAndKeepsThePin(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	pinned := "sha256:" + strings.Repeat("ab", 32)
+	other := "sha256:" + strings.Repeat("cd", 32)
+
+	if _, err := g.InstallFrom(ctx, "demo", "element", pinned, "main", nil, meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := g.RetryMove(ctx, "demo", "element", pinned, meta("u-bob"))
+	if err != nil || !res.Changed || res.Status != "retried" {
+		t.Fatalf("retry = %+v %v", res, err)
+	}
+	got := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+	if !strings.Contains(got, "    digest: "+pinned+"\n    catalogue: main\n    movedAt: ") || !strings.Contains(got, "    movedBy: ") {
+		t.Fatalf("the entry after the retry:\n%s", got)
+	}
+	if subject := dt.Git(t, dt.Clone(t, remote), "log", "-1", "--format=%s"); !strings.Contains(subject, "retry the move of element to sha256:abababababab") {
+		t.Fatalf("the commit says %q", subject)
+	}
+
+	// Asked again later, the stamp is a new one.
+	stamped := regexp.MustCompile(`movedAt: .*`).ReplaceAllString(got, "movedAt: 2026-01-01T00:00:00Z")
+	dt.Commit(t, remote, map[string]string{dt.TenantPath("demo"): stamped})
+	if res, err := g.RetryMove(ctx, "demo", "element", pinned, meta("u-bob")); err != nil || !res.Changed {
+		t.Fatalf("a later retry = %+v %v", res, err)
+	}
+	if got := dt.RemoteFile(t, remote, dt.TenantPath("demo")); strings.Contains(got, "2026-01-01T00:00:00Z") {
+		t.Fatalf("the later retry kept the old stamp:\n%s", got)
+	}
+
+	if _, err := g.RetryMove(ctx, "demo", "element", other, meta("u-bob")); !errors.Is(err, gitops.ErrNotPinnedThere) {
+		t.Fatalf("a retry to another build: err = %v", err)
+	}
+	if _, err := g.RetryMove(ctx, "demo", "jitsi", pinned, meta("u-bob")); !errors.Is(err, gitops.ErrNotInstalled) {
+		t.Fatalf("a retry of an app not installed: err = %v", err)
 	}
 }

@@ -57,6 +57,7 @@ type Authenticator interface {
 // Repository is the git backend.
 type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
+	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
@@ -990,6 +991,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// may move it is the app's update mode's to say (updates.go): under
 	// tenant mode whoever may install here, otherwise the cluster's
 	// administrator. Asked before anything is fetched or written.
+	//
+	// So is an app installed at this very build whose move to it the
+	// platform rolled back or could not start: installing it again is how
+	// that move is asked for once more.
+	var retry *rolloutView
 	if body.Digest != "" {
 		apps, err := s.cfg.Repo.Apps(ctx, tenant)
 		if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
@@ -997,10 +1003,16 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 		for _, app := range apps {
-			if app.Profile == profile && app.Digest != "" && app.Digest != body.Digest {
-				if !s.moveAllowed(w, r, c, tenant, app) {
-					return
+			if app.Profile != profile || app.Digest == "" {
+				continue
+			}
+			if app.Digest == body.Digest {
+				if retry = s.endedBadly(ctx, tenant, profile, body.Digest); retry == nil {
+					continue
 				}
+			}
+			if !s.moveAllowed(w, r, c, tenant, app) {
+				return
 			}
 		}
 	}
@@ -1086,7 +1098,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	}
 
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
-	s.written(w, r, res, err)
+	if err != nil || retry == nil {
+		s.written(w, r, res, err)
+		return
+	}
+	s.retryMove(w, r, c, tenant, profile, body.Digest, retry)
 }
 
 // refusedInPlatformTenant answers an app or an add-on asked for in the

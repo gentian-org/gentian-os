@@ -351,13 +351,66 @@ func (s *Server) newestFor(ctx context.Context, sources []visibleSource, app git
 	return visibleSource{}, catalogue.IndexEntry{}, false
 }
 
+// endedBadly is the last move of a tenant's app to digest when the operator
+// reports it rolled back or not started, and nil otherwise: a move under way,
+// one that is done, one to another build, or a cluster that cannot be asked.
+func (s *Server) endedBadly(ctx context.Context, tenant, profile, digest string) *rolloutView {
+	rollouts, _, _ := s.clusterSide(ctx)
+	ro, ok := rollouts[tenant+"/"+profile]
+	if !ok || ro.Target != digest || (ro.Phase != "RolledBack" && ro.Phase != "Failed") {
+		return nil
+	}
+	return &rolloutView{Target: ro.Target, Phase: ro.Phase, Reason: ro.Reason, Message: ro.Message, MovedAt: ro.MovedAt, MovedBy: ro.MovedBy}
+}
+
+// retryMessage says which move is being asked for again, and why it ended.
+func retryMessage(ro *rolloutView) string {
+	why := ro.Message
+	if why == "" {
+		why = ro.Reason
+	}
+	if ro.Phase == "Failed" {
+		return "retrying the move that did not start: " + why
+	}
+	return "retrying the move that was rolled back: " + why
+}
+
+// retryMove answers an install of the build an app is pinned to, whose move
+// to it ended badly: the entry records a fresh move, and the operator starts
+// it again (internal/controller/component_move.go).
+func (s *Server) retryMove(w http.ResponseWriter, r *http.Request, c call, tenant, profile, digest string, ro *rolloutView) {
+	res, err := s.cfg.Repo.RetryMove(r.Context(), tenant, profile, digest, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	answer := map[string]any{"status": res.Status, "message": retryMessage(ro)}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	s.json(w, http.StatusAccepted, answer)
+}
+
+// retryable is an entry whose last move, to the build it is pinned to, was
+// rolled back or did not start: current by the catalogue, and not running
+// what it is pinned to.
+func retryable(e updateEntry) bool {
+	return !e.Outdated && e.Pinned != "" && e.Rollout != nil && e.Rollout.Target == e.Pinned &&
+		(e.Rollout.Phase == "RolledBack" || e.Rollout.Phase == "Failed")
+}
+
 // moveOutdated moves every outdated app the body names -- all of them when
 // it names none -- to the newest build its catalogue offers, by the one
 // operation an install is (install), under the cluster administrator's
 // right. Apps held by their mode are moved too: this is the administrator
 // acting, which every mode allows. An app whose newest build this platform
 // does not admit, or whose move to that build is under way, is skipped and
-// said.
+// said. An app whose last move, to the build it is pinned to, was rolled back
+// or did not start is asked to move once more, and reported as "retried".
+// Only here and by an install of that build: the platform's own mover never
+// retries, so a build that keeps failing is not tried again and again.
 func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
 		Tenants []string `json:"tenants"`
@@ -391,10 +444,23 @@ func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 		To      string `json:"to,omitempty"`
 		Status  string `json:"status"`
 		Detail  string `json:"detail,omitempty"`
+		Message string `json:"message,omitempty"`
 	}
 	moved, skipped := []outcome{}, []outcome{}
 	for _, e := range report.Entries {
-		if !e.Outdated || !wanted(body.Tenants, e.Tenant) || !wanted(body.Apps, e.Profile) {
+		if !wanted(body.Tenants, e.Tenant) || !wanted(body.Apps, e.Profile) {
+			continue
+		}
+		if retryable(e) {
+			res, err := s.cfg.Repo.RetryMove(r.Context(), e.Tenant, e.Profile, e.Pinned, c.meta)
+			if err != nil {
+				skipped = append(skipped, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Pinned, Status: "refused", Detail: err.Error()})
+				continue
+			}
+			moved = append(moved, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Pinned, Status: res.Status, Detail: res.Commit, Message: retryMessage(e.Rollout)})
+			continue
+		}
+		if !e.Outdated {
 			continue
 		}
 		if e.Rollout != nil && e.Rollout.Target == e.Newest && (e.Rollout.Phase == "Exporting" || e.Rollout.Phase == "Rolling") {
