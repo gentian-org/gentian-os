@@ -107,6 +107,15 @@ until it is done.
   - Use a `kubectl` no more than one minor version away from the cluster's.
     An older one still works for most things and prints a warning about
     version skew on every call.
+  - **Secrets encrypted at rest.** Kubernetes stores every Secret in etcd,
+    and without an encryption provider at the API server that is plain
+    base64 for anyone who holds an etcd snapshot. On your own control plane,
+    give the API server an `EncryptionConfiguration` before installing; on a
+    managed one, ask the provider and record the answer when step 0 asks for
+    `controlPlane.secretsAtRest`. Pre-flight warns until the claim says
+    `provider` or `cluster`, or the API server's flags show it. Switched on
+    after the fact, run `scripts/tools/rewrite-secrets.sh --apply` once: a
+    Secret written before stays plain until it is written again.
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
   crossplane python3 age age-keygen`. Pre-flight checks and names any that are
   missing, and refuses to start without them. `bao` (the OpenBao CLI) is the

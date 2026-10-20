@@ -529,6 +529,32 @@ spec:
                     One key is read on every platform: metallb. MetalLB's
                     namespace is exempt from the baseline policies wherever it
                     exists, unless this is "false".
+                controlPlane:
+                  type: object
+                  description: >
+                    What is known about the control plane the platform does not
+                    run. A managed API server cannot be inspected from inside
+                    the cluster, so the claim records it and pre-flight reads it
+                    (scripts/lib/common.sh, check_secrets_at_rest). The claim
+                    is committed, so the record is dated and reviewable.
+                  properties:
+                    secretsAtRest:
+                      type: string
+                      enum: [provider, cluster, none]
+                      description: >
+                        Whether Kubernetes Secrets are encrypted at rest in
+                        etcd. provider: a managed control plane whose provider
+                        states it; say where under evidence. cluster: your own
+                        API server runs with --encryption-provider-config.
+                        none: not encrypted, or not known. Unset is unknown.
+                        Where the API server is visible, what it runs with
+                        wins over this field.
+                    evidence:
+                      type: string
+                      description: >
+                        Where the provider states it and when it was read, or
+                        where the cluster's EncryptionConfiguration lives. Free
+                        text; it is what an auditor is shown.
                 addressRef:
                   type: string
                   description: >
