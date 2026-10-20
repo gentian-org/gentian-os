@@ -156,9 +156,23 @@ _v5_render() {
     printf 'installer:\n  username: %s\n' \
         "$(jq -Rn --arg u "$(_v5_installer_username)" '$u')" > "${installer_values}"
 
+    # The zones external-dns may write besides the kernel domain's: the
+    # claim's certificates.dnsZones, read as one comma-joined value
+    # (claim_list_setting). A values file for the same reason as above --
+    # --set-string would split the list at its commas and read the second
+    # zone as a second key.
+    local dns_zones_values="${tmp}/dns-zones.yaml" _zone
+    {
+        echo "dnsZones:"
+        printf '%s\n' "${DNS_ZONES:-}" | tr ',' '\n' | while IFS= read -r _zone; do
+            _zone="${_zone// /}"
+            [[ -n "${_zone}" ]] && printf '  - "%s"\n' "${_zone}"
+        done
+    } > "${dns_zones_values}"
+
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-        -f "${signing_values}" -f "${installer_values}" \
+        -f "${signing_values}" -f "${installer_values}" -f "${dns_zones_values}" \
         --set-string "dnsProvider=$(gentian_dns_provider)" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \

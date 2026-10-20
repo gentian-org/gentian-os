@@ -79,6 +79,22 @@ report_unset="$(render true true true --set-string usageStatistics.url=)"
 check "usage statistics report: an empty address from the installer is the default" \
     "$(has "${report_unset}" 'url: "https://statistics\.aluvian\.io/api/v1/usage-statistics"$' && echo 1 || echo 0)"
 
+# external-dns's zone filter: the kernel domain's walk, then the zones the
+# claim lists (certificates.dnsZones) for tenants served on a domain of
+# their own. Passed as a list, the way B-01 writes its values file; nothing
+# listed is the walk alone.
+zones_of() { awk '/^        domainFilters:$/{f=1;next} f&&/^          - /{print $2;next} f{exit}' <<<"$1" | tr '\n' ' '; }
+# A provider named, since "none" installs no external-dns at all.
+filter_default="$(zones_of "$(render true true true --set-string dnsProvider=cloudflare)")"
+check "external-dns: no dnsZones renders the kernel domain's walk alone" \
+    "$([[ "${filter_default}" == "k.example " ]] && echo 1 || echo 0)"
+filter_zones="$(zones_of "$(render true true true --set-string dnsProvider=cloudflare --set 'dnsZones={gentian.org,example.ch}')")"
+check "external-dns: the claim's dnsZones follow the walk, in order" \
+    "$([[ "${filter_zones}" == "k.example gentian.org example.ch " ]] && echo 1 || echo 0)"
+filter_empty="$(zones_of "$(render true true true --set-string dnsProvider=cloudflare --set 'dnsZones=null')")"
+check "external-dns: an empty dnsZones list is the walk alone" \
+    "$([[ "${filter_empty}" == "k.example " ]] && echo 1 || echo 0)"
+
 # The model gateway's console (llm.<kernelDomain>) is a claim decision, off
 # unless the claim says true. The installer reads the claim's answer, passes
 # it on as it is, and says so once where the cluster serves models and the
@@ -114,6 +130,32 @@ no_models="$(console_claim false)"
 check "console: a cluster that serves no models is told nothing about it" \
     "$(has "${no_models}" '^LLM_CONSOLE=false$' && [[ "$(said "${no_models}")" == 0 ]] && echo 1 || echo 0)"
 check "console: no run reads an unset variable" "$(has "${unstated}${stated_on}${no_models}" 'unbound variable' && echo 0 || echo 1)"
+
+# The claim's certificates.dnsZones reaches the installer as one comma-joined
+# value, DNS_ZONES, which B-01 turns back into the chart's list; a claim that
+# lists none leaves it unset. The library's own reader over a throwaway claim.
+zones_claim() { # [zone...] -- prints DNS_ZONES=<value>
+    local dir="${TMP}/deployments-zones" claims z
+    claims="${dir}/clusters/c1/kernel/claims"
+    rm -rf "${dir}"; mkdir -p "${claims}" "${TMP}/home"
+    {
+        printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1\nspec:\n  kernelDomain: k.example\n'
+        if [[ $# -gt 0 ]]; then
+            printf '  certificates:\n    dnsZones:\n'
+            for z in "$@"; do printf '      - %s\n' "${z}"; done
+        fi
+    } > "${claims}/cluster.yaml"
+    # shellcheck disable=SC2016
+    env -i HOME="${TMP}/home" PATH="${PATH}" SCRIPT_DIR="$(pwd)" \
+        GENTIAN_DEPLOYMENTS_PATH="${dir}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 KERNEL_DOMAIN=k.example \
+        bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
+                 load_deployments_cluster_settings
+                 echo "DNS_ZONES=${DNS_ZONES:-unset}"' 2>&1
+}
+check "dnsZones: the claim's list reads as one comma-joined value" \
+    "$(has "$(zones_claim gentian.org example.ch)" '^DNS_ZONES=gentian.org,example.ch$' && echo 1 || echo 0)"
+check "dnsZones: a claim that lists none leaves DNS_ZONES unset" \
+    "$(has "$(zones_claim)" '^DNS_ZONES=unset$' && echo 1 || echo 0)"
 
 echo ""
 if (( fail > 0 )); then

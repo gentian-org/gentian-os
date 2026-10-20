@@ -1676,6 +1676,18 @@ _claim_cluster_fields() {
             printf '    # of the zone, pointing at the tunnel. dnsProvider:\n'
         fi
         printf '    # none is the one setting that leaves the records to somebody else.\n'
+        if [[ -n "${DNS_ZONES:-}" ]]; then
+            printf '    # Zones external-dns may write besides this one: tenants served on\n'
+            printf '    # a domain of their own. The DNS credential has to cover them.\n'
+            printf '    dnsZones:\n'
+            printf '%s\n' "${DNS_ZONES}" | tr ',' '\n' | while IFS= read -r _z; do
+                [[ -n "${_z}" ]] && printf '      - %s\n' "${_z}"
+            done
+        else
+            printf '    # dnsZones:                 zones external-dns may write besides\n'
+            printf '    #                           this one: tenants served on a domain of\n'
+            printf '    #                           their own; the credential must cover them\n'
+        fi
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
     fi
