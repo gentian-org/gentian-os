@@ -998,6 +998,21 @@ claim_map_setting() {
     export "${var?}"
 }
 
+# claim_list_setting VAR field claim_file — a list-valued claim field, joined.
+#
+# certificates.dnsZones is a list of names. Joined with commas, the shape the
+# map settings above already travel in, so B-01 passes it with one
+# --set-string and the chart splits it; a list through --set would need
+# Helm's own brace syntax and a second encoding.
+claim_list_setting() {
+    local var="$1" field="$2" claim_file="$3" value
+    [[ -n "${!var:-}" ]] && return 0
+    value="$(yq_get ".spec.${field} | join(\",\")" "${claim_file}" 2>/dev/null || true)"
+    [[ -z "${value}" || "${value}" == "null" ]] && return 0
+    printf -v "${var}" '%s' "${value}"
+    export "${var?}"
+}
+
 # resolve_deployments_path — where the deployments checkout is, settled once.
 #
 # Its own function because two callers need it in a fixed order: step 0
@@ -1084,7 +1099,7 @@ load_deployments_cluster_settings() {
     local v
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
-             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
+             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
              LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
@@ -1173,6 +1188,7 @@ load_deployments_cluster_settings() {
         claim_setting     METALLB_ALLOWED platformParams.metallb "${claim_file}"
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
+        claim_list_setting DNS_ZONES      certificates.dnsZones    "${claim_file}"
 
         # lbProvider was PLATFORM's name while the edge load balancer was the
         # only thing it selected. Kept readable so a claim written before the

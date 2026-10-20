@@ -225,6 +225,17 @@ spec:
           - {{ $suffix }}
         {{- end }}
         {{- end }}
+        {{- /*
+        Then the zones the claim names (certificates.dnsZones): a tenant
+        served on a domain of its own, in a zone that is not the kernel
+        domain's, is routed by the operator and gets its certificate, but
+        its records fall outside the walk above and external-dns skips them
+        without a word. Each listed zone is a zone, so it needs no walk;
+        the DNS credential has to cover it.
+        */}}
+        {{- range $zone := (.Values.dnsZones | default list) }}
+          - {{ $zone }}
+        {{- end }}
         {{- if $cred }}
         env:
           {{- range $var, $key := (or $extdns.env $extdns.secretKeys) }}

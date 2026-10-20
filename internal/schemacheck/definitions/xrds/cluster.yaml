@@ -1057,6 +1057,22 @@ spec:
                         Azure's subscription and resource group, the nameserver
                         for a self-hosted zone. Required keys are declared per
                         provider in kernel/platforms.yaml.
+                    dnsZones:
+                      type: array
+                      description: >
+                        Zones external-dns may write besides the kernel
+                        domain's: the registrable domains of the tenants this
+                        cluster serves on a domain of their own (a
+                        TenantDomain whose zone is not the kernel domain's).
+                        external-dns filters by zone, and a record outside the
+                        filter is skipped without a word; the operator routes
+                        such a tenant and its certificate is issued, and
+                        nothing resolves. The DNS credential has to cover
+                        every zone listed. Read by the installer when it
+                        installs external-dns (step B-01).
+                      items:
+                        type: string
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$'
                     caBundleSecretRef:
                       type: object
                       description: >

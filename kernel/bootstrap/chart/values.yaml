@@ -11,6 +11,10 @@ storageClass: ""
 dnsProvider: none
 dnsProviders: {}
 kernelDomain: ""
+# Zones external-dns may write besides the kernel domain's (the claim's
+# certificates.dnsZones): the zones of tenants served on a domain of their
+# own. A list; B-01 writes it from the claim. Empty is the kernel domain alone.
+dnsZones: []
 # The cluster's id in gentian-deployments: what external-dns owns records as,
 # so two clusters never fight over one zone.
 cluster: ""
