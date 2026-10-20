@@ -2620,11 +2620,11 @@ gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
 # It is not the only case where the ref cannot be RESOLVED, and that gap is what
 # _verify_gentian_os_ref_exists below closes. A ref only has to be spellable to
 # get this far; it has to actually EXIST on GENTIAN_OS_REPO for a single
-# Application to sync. `GENTIAN_OS_BRANCH=cb-test` against a remote whose branch
-# is `test-cb` is two transposed characters, and it installed a whole cluster:
-# every bootstrap Application sat SYNC=Unknown, HEALTH=Healthy — healthy because
-# it owns nothing yet, not because anything worked — until B-01 timed out after
-# 300s on a StatefulSet that was never going to appear. ArgoCD's own error names
+# Application to sync. `GENTIAN_OS_BRANCH=devleop` against a remote whose branch
+# is `develop` is two transposed characters, and it installs a whole cluster:
+# every bootstrap Application sits SYNC=Unknown, HEALTH=Healthy — healthy because
+# it owns nothing yet, not because anything worked — until B-01 times out after
+# 300s on a StatefulSet that is never going to appear. ArgoCD's own error names
 # the repo and not the ref ("failed to get git client for repo ..."), so the
 # search starts at credentials and network and reaches the typo last.
 #
@@ -2744,7 +2744,7 @@ _verify_gentian_os_ref_exists() {
         error "  not on the remote, so push it, or name a published ref instead."
     else
         error "  This came from install.env. Check it against the list below — a"
-        error "  transposition (cb-test for test-cb) reads correctly right up until"
+        error "  transposition (devleop for develop) reads correctly right up until"
         error "  nothing syncs."
     fi
 
@@ -2779,7 +2779,6 @@ _verify_gentian_os_ref_exists() {
 # The mapping is CI's own, from .github/workflows/ci.yaml:
 #   v1.2.3        → 1.2.3    type=semver publishes the version, not the tag name
 #   main/develop  → same     type=ref,event=branch — the moving branch tag
-#   test-cb       → test-cb  likewise; it publishes because a cluster tracks it
 #   feat/xyz      → none     a feature branch builds the image and pushes nothing
 #
 # Exported, not printed, because two callers need the same answer: the preflight
@@ -2843,7 +2842,7 @@ resolve_gentian_os_image_tag() {
             # that the cluster no longer runs it silently.
             warn "CI publishes no image for ${GENTIAN_OS_BRANCH} — the operator will run develop."
             warn "  Set GENTIAN_OS_IMAGE_TAG in install.env to choose another, or track a"
-            warn "  branch CI publishes from (main, develop, test-cb)."
+            warn "  branch CI publishes from (main, develop)."
             export GENTIAN_OS_IMAGE_TAG="develop"
             ;;
         *)

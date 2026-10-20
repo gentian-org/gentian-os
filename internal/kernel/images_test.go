@@ -42,8 +42,8 @@ func TestTheStorageToolsFollowTheOperatorsTag(t *testing.T) {
 		want string
 	}{
 		{nil, StorageToolsRepository + ":" + string(appVersion[1])},
-		{[]string{"image.tag=test-cb-0123abc"}, StorageToolsRepository + ":test-cb-0123abc"},
-		{[]string{"image.tag=test-cb-0123abc", "image.digest=sha256:" + strings.Repeat("0", 64)}, StorageToolsRepository + ":test-cb-0123abc"},
+		{[]string{"image.tag=develop-0123abc"}, StorageToolsRepository + ":develop-0123abc"},
+		{[]string{"image.tag=develop-0123abc", "image.digest=sha256:" + strings.Repeat("0", 64)}, StorageToolsRepository + ":develop-0123abc"},
 		{[]string{"provisioners.storageTools=registry.example.org/tools:1"}, "registry.example.org/tools:1"},
 	} {
 		args := []string{"template", "gentian-os", chart, "-s", "templates/deployment.yaml"}

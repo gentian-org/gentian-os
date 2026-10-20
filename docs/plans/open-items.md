@@ -7,7 +7,7 @@ the decisions that wait for the owner. An item leaves the list when the
 thing works on a cluster, not when the code exists.
 
 **Last checked** on 2026-10-11 against commit `5a265734` of branch
-`test-cb`. No cluster was used for the check. Where an entry rests on the
+`develop`. No cluster was used for the check. Where an entry rests on the
 user-interface repository (`gentian-ui`) or the catalogue repository
 (`gentian-apps`), it was read on their branch `develop` at `3c7130ac` and
 `a04b9f6`, and the entry says so.
@@ -359,7 +359,7 @@ Carried over from before, and still not shown:
   provider-helm, the pod under the Kyverno baseline, the NetworkPolicy under
   Calico (the master's address names a Service, the filer is reached at the
   pod), and an app writing to its bucket.
-- Four follow-ups to it, decided by the owner and built on `test-cb`, never
+- Four follow-ups to it, decided by the owner and built on `develop`, never
   run on a cluster: (2) an app's S3 key pair reaches the Job that makes its
   identity in a Secret of the Job's name that the Job owns, never in a Job
   spec, the provisioning ConfigMap or a composed Object; (3) the object
@@ -376,7 +376,7 @@ Carried over from before, and still not shown:
   styles. *Needs a cluster:* the bucket Job's pod waiting for its Secret and
   starting once the operator has made it, the Secret collected with the Job,
   and the per-run NetworkPolicy under Calico.
-- Two more, decided by the owner and built on `test-cb`, never run on a
+- Two more, decided by the owner and built on `develop`, never run on a
   cluster. (6) The internal CA `gentian-ca` on every cluster, in every issuer
   mode (on `private-ca` it stays the person's CA), its key generated once in
   the vault's PKI engine (`pki-internal`) and never out of it, cert-manager
@@ -403,26 +403,26 @@ Carried over from before, and still not shown:
   its NetworkPolicy path, gentian-ca Ready after B-08 and C-01 on each issuer
   mode, the store's certificates issued, a self-signed cluster's existing CA
   imported, and an existing cluster's vault moving to `openbao-ca` with its
-  stores and the custodian following. *Resolved on `test-cb`:* the sidecar
+  stores and the custodian following. *Resolved on `develop`:* the sidecar
   `tls-reload` signals the vault when `openbao-tls` renews; a vault pod
   started before it has none until its next restart (operations.md §8.2). *Not
   migrated:* a cluster that ran the KV-based CA (72c3807a, on no live
   cluster) keeps that KV path and gets a new CA from the engine.
-  *Resolved on `test-cb`:* a Certificate or CertificateRequest naming
+  *Resolved on `develop`:* a Certificate or CertificateRequest naming
   `gentian-ca`, or an Ingress asking the ingress-shim for it, is refused
   outside the kernel and system namespaces (`gentian-restrict-internal-ca`),
   and the tenant AppProject no longer allows ClusterIssuers. Shown with the
   Kyverno CLI. *Needs a cluster:* the policy Ready, a tenant's Certificate
   for `gentian-ca` refused, the store's certificates still issued, and the
   live AppProject without ClusterIssuer after the claim reconciles.
-  *Resolved on `test-cb`:* the tenant AppProject deploys into `tenant-*`
+  *Resolved on `develop`:* the tenant AppProject deploys into `tenant-*`
   only, no longer the Argo CD namespace; and a namespace's tier label is set
   only by the installer, provider-kubernetes, the operator and
   `system:masters` (`gentian-namespace-tier`, security.md §12.4). Shown
   against an API server. *Needs a cluster:* a fresh install and a re-run
   passing with the guard in place, tenants' and DMZ namespaces still
   composed, and the live AppProject without the Argo CD namespace.
-  *Resolved on `test-cb`:* a tenant's chart is installed as
+  *Resolved on `develop`:* a tenant's chart is installed as
   `provider-helm-tenant-apps` through the ProviderConfig `tenant-apps`,
   with rights in tenant namespaces only (security.md §12.4). Shown against
   an API server. *Open:* a profile bundle's own Composition (Element's,
@@ -431,7 +431,7 @@ Carried over from before, and still not shown:
   every catalogue app installing and upgrading under it, an existing
   release taken over without a reinstall, and a tenant deleted with its
   apps.
-  *Resolved on `test-cb`:* a namespace's `gentianos.io/function` is set only
+  *Resolved on `develop`:* a namespace's `gentianos.io/function` is set only
   by the installer, provider-kubernetes and `system:masters`, and its
   `mac-waiver.gentianos.io/*` labels only by the operator and
   `system:masters` (`gentian-namespace-tier`). Shown against an API server.

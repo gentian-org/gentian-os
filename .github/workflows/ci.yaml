@@ -11,11 +11,6 @@ on:
     branches:
       - main
       - develop
-      # test-cb is the pointer branch the test.gentian-os.org test cluster tracks.
-      # It is only ever force-pushed to the tip of whatever feature branch is
-      # under test — nothing is merged out of it — so it needs the same
-      # published image any tracked branch needs. See the publish job below.
-      - test-cb
     tags: ["v*"]
   pull_request:
     branches:
@@ -24,7 +19,7 @@ on:
   workflow_dispatch:
 
 # A newer commit on a branch replaces the run of the older one: only the tip
-# is what anybody waits for, test-cb's included. main, develop and release tags
+# is what anybody waits for. main, develop and release tags
 # are never cancelled — each of their commits publishes an image something may
 # pin, and what such a run started it finishes.
 concurrency:
@@ -37,63 +32,28 @@ concurrency:
 jobs:
   # What this run has to do, decided in one place and read by the jobs below.
   #
-  #   publish    main, develop, test-cb and release tags push an image. Every
-  #              other ref, and every pull request, builds one and pushes
-  #              nothing.
-  #   verified   test-cb only. It is a pointer branch: it is moved to a commit
-  #              of develop or of a feature branch, and that commit has usually
-  #              been through this workflow already. Running the same checks on
-  #              the same commit again told nobody anything and doubled the time
-  #              a commit took to reach the cluster. So a push to test-cb whose
-  #              commit already has a successful push run skips the checks and
-  #              only builds and publishes test-cb-<sha>.
-  #
-  #              Push runs only: a pull request's run checks the merge with its
-  #              base, which is a different tree from the commit it names. And a
-  #              commit with no such run — pushed to test-cb first, or while its
-  #              own run is still going — is checked in full, as is every run
-  #              whose answer could not be fetched.
+  #   publish    main, develop and release tags push an image. Every other
+  #              ref, and every pull request, builds one and pushes nothing.
   plan:
     name: Plan
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
+    permissions: {}
     outputs:
       publish: ${{ steps.decide.outputs.publish }}
-      verified: ${{ steps.decide.outputs.verified }}
     steps:
       - id: decide
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           publish=false
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
             case "${GITHUB_REF}" in
-              refs/heads/main|refs/heads/develop|refs/heads/test-cb|refs/tags/v*) publish=true ;;
+              refs/heads/main|refs/heads/develop|refs/tags/v*) publish=true ;;
             esac
           fi
-
-          verified=false
-          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/test-cb" ]; then
-            prior="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yaml/runs?head_sha=${GITHUB_SHA}&event=push&status=success&per_page=100" \
-              --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})] | length")" || prior=0
-            if [ "${prior:-0}" -gt 0 ]; then
-              verified=true
-              echo "${GITHUB_SHA} already passed ${prior} push run(s) of this workflow; the checks are skipped." >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-
-          {
-            echo "publish=${publish}"
-            echo "verified=${verified}"
-          } >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
 
   go:
     name: Go — vet, build, test
     runs-on: ubuntu-latest
-    needs: [plan]
-    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
@@ -144,8 +104,6 @@ jobs:
   envtest:
     name: Go — controller tests (envtest)
     runs-on: ubuntu-latest
-    needs: [plan]
-    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
@@ -196,8 +154,6 @@ jobs:
   generate:
     name: Verify generated files
     runs-on: ubuntu-latest
-    needs: [plan]
-    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
@@ -216,8 +172,6 @@ jobs:
   lint:
     name: Lint — Go, YAML, shell
     runs-on: ubuntu-latest
-    needs: [plan]
-    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
@@ -448,8 +402,6 @@ jobs:
   govulncheck:
     name: Go — govulncheck
     runs-on: ubuntu-latest
-    needs: [plan]
-    if: needs.plan.outputs.verified != 'true'
     permissions:
       contents: read
     steps:
@@ -463,8 +415,7 @@ jobs:
   # Gives the image built above its tags, which is what publishes it: a cluster
   # follows tags. It waits for the Go jobs and for lint — the authorization
   # policy tests are in lint — so no tag exists for a commit that failed any of
-  # them. On a commit test-cb was moved to after it had already passed, those
-  # jobs are skipped and the earlier run is the answer (see plan).
+  # them.
   publish:
     name: Docker publish
     runs-on: ubuntu-latest
@@ -473,10 +424,9 @@ jobs:
       ${{ !cancelled()
       && needs.plan.outputs.publish == 'true'
       && needs.docker.result == 'success'
-      && (needs.plan.outputs.verified == 'true'
-      || (needs.go.result == 'success'
+      && needs.go.result == 'success'
       && needs.envtest.result == 'success'
-      && needs.lint.result == 'success')) }}
+      && needs.lint.result == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -508,14 +458,6 @@ jobs:
             # in kernel/bootstrap/chart/templates/gentian-os.yaml: the moving
             # `develop` tag can never resolve to a new value, so tracking it
             # meant image.tag never changed and new builds never deployed.
-            #
-            # test-cb publishes because a cluster tracks it: without a
-            # test-cb-<sha> tag in GHCR, the allow-tags regexp matches no
-            # candidate and the cluster keeps running whatever it ran before,
-            # silently. It is a flat name on purpose — docker/metadata-action
-            # slugifies {{branch}}, so a branch with a "/" publishes
-            # feat-xyz-<sha> while the regexp interpolates the raw "feat/xyz"
-            # and never matches.
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
       - name: Set up Buildx
@@ -583,7 +525,6 @@ jobs:
             ${{ github.event_name != 'pull_request'
             && (github.ref == 'refs/heads/main'
             || github.ref == 'refs/heads/develop'
-            || github.ref == 'refs/heads/test-cb'
             || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -597,7 +538,6 @@ jobs:
           github.event_name != 'pull_request'
           && (github.ref == 'refs/heads/main'
           || github.ref == 'refs/heads/develop'
-          || github.ref == 'refs/heads/test-cb'
           || startsWith(github.ref, 'refs/tags/v'))
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
       - name: Sign the image
@@ -605,7 +545,6 @@ jobs:
           github.event_name != 'pull_request'
           && (github.ref == 'refs/heads/main'
           || github.ref == 'refs/heads/develop'
-          || github.ref == 'refs/heads/test-cb'
           || startsWith(github.ref, 'refs/tags/v'))
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -615,7 +554,6 @@ jobs:
           github.event_name != 'pull_request'
           && (github.ref == 'refs/heads/main'
           || github.ref == 'refs/heads/develop'
-          || github.ref == 'refs/heads/test-cb'
           || startsWith(github.ref, 'refs/tags/v'))
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -673,7 +611,6 @@ jobs:
             ${{ github.event_name != 'pull_request'
             && (github.ref == 'refs/heads/main'
             || github.ref == 'refs/heads/develop'
-            || github.ref == 'refs/heads/test-cb'
             || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -687,7 +624,6 @@ jobs:
           github.event_name != 'pull_request'
           && (github.ref == 'refs/heads/main'
           || github.ref == 'refs/heads/develop'
-          || github.ref == 'refs/heads/test-cb'
           || startsWith(github.ref, 'refs/tags/v'))
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
       - name: Sign the image
@@ -695,7 +631,6 @@ jobs:
           github.event_name != 'pull_request'
           && (github.ref == 'refs/heads/main'
           || github.ref == 'refs/heads/develop'
-          || github.ref == 'refs/heads/test-cb'
           || startsWith(github.ref, 'refs/tags/v'))
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -705,7 +640,6 @@ jobs:
           github.event_name != 'pull_request'
           && (github.ref == 'refs/heads/main'
           || github.ref == 'refs/heads/develop'
-          || github.ref == 'refs/heads/test-cb'
           || startsWith(github.ref, 'refs/tags/v'))
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -718,8 +652,6 @@ jobs:
   crossplane-unit:
     name: Crossplane — unit tests (render + functions + schema)
     runs-on: ubuntu-latest
-    needs: [plan]
-    if: needs.plan.outputs.verified != 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 

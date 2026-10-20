@@ -20,7 +20,7 @@ they are, for every kind of app the platform can carry.
 - Appendix A classifies every app in the catalogue. Appendix B lists sources.
 
 What is fact and what is proposal. Statements about the platform describe
-the code on the branch `test-cb` of this repository and the catalogue on the
+the code on the branch `develop` of this repository and the catalogue on the
 branch `v05` of `gentian-apps`, both as of 2026-10-08. Statements about an
 app's abilities come from the vendor's documentation or source code for the
 version the catalogue pins; Appendix B has the links. Anything that is a
