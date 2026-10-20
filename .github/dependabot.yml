@@ -1,12 +1,36 @@
 version: 2
+# One grouped pull request per ecosystem and week. The version comment
+# beside each pinned Action or base image is what Dependabot reads and
+# rewrites. Security updates are opened as they appear, outside the groups.
 updates:
-  # Keeps the commit SHAs the workflows pin their Actions to current. One
-  # grouped pull request a week; the version comment beside each SHA is
-  # what Dependabot reads and rewrites.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     groups:
       actions:
+        patterns: ["*"]
+
+  # The operator and the api module share one go.work; Dependabot sees two
+  # modules and the group keeps a bump of a shared dependency in one PR.
+  - package-ecosystem: gomod
+    directories:
+      - /
+      - /api
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Base images, pinned by digest in every Dockerfile.
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /kernel/extensions/keycloak-event-listener
+      - /kernel/images/storage-tools
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
         patterns: ["*"]

@@ -359,6 +359,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -390,6 +391,10 @@ jobs:
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
+          # An SBOM and a SLSA provenance attestation travel with the image
+          # (certification plan C5).
+          sbom: true
+          provenance: mode=max
           context: .
           platforms: linux/amd64,linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
@@ -406,6 +411,48 @@ jobs:
             ${{ needs.plan.outputs.publish == 'true'
             && 'type=image,name=ghcr.io/gentian-org/gentian-os,push-by-digest=true,name-canonical=true,push=true'
             || 'type=cacheonly' }}
+
+      # The published image, signed with this workflow's identity and scanned
+      # (certification plan C5). Only where the build pushed: a pull request's
+      # image exists nowhere to be signed. The scan is advisory until the backlog
+      # it finds is triaged; dropping continue-on-error makes it block.
+      - name: Install cosign
+        if: needs.plan.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+      - name: Sign the image
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/gentian-org/gentian-os@${DIGEST}"
+      - name: Scan the image
+        if: needs.plan.outputs.publish == 'true'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ghcr.io/gentian-org/gentian-os@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # Known vulnerabilities in the Go dependency graph, from the Go vulnerability
+  # database, reported against the symbols the code actually reaches. Advisory:
+  # it reports and does not fail the run until what it finds on its first runs
+  # is triaged (certification plan C2); dropping continue-on-error makes it
+  # block.
+  govulncheck:
+    name: Go — govulncheck
+    runs-on: ubuntu-latest
+    needs: [plan]
+    if: needs.plan.outputs.verified != 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f  # v1.1.0
+        continue-on-error: true
+        with:
+          go-version-file: go.mod
+          go-package: ./...
 
   # Gives the image built above its tags, which is what publishes it: a cluster
   # follows tags. It waits for the Go jobs and for lint — the authorization
@@ -427,6 +474,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - name: Log in to GHCR
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
@@ -485,6 +533,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
@@ -515,8 +564,13 @@ jobs:
       # has to carry the file. It is architecture-independent, but the copy
       # runs beside Keycloak, so it is built for the same platforms.
       - name: Build and push the listener image
+        id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
+          # An SBOM and a SLSA provenance attestation travel with the image
+          # (certification plan C5).
+          sbom: true
+          provenance: mode=max
           context: kernel/extensions/keycloak-event-listener
           platforms: linux/amd64,linux/arm64
           push: >-
@@ -528,12 +582,50 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # The published image, signed with this workflow's identity and scanned
+      # (certification plan C5). Only where the build pushed: a pull request's
+      # image exists nowhere to be signed. The scan is advisory until the backlog
+      # it finds is triaged; dropping continue-on-error makes it block.
+      - name: Install cosign
+        if: >-
+          github.event_name != 'pull_request'
+          && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/test-cb'
+          || startsWith(github.ref, 'refs/tags/v'))
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+      - name: Sign the image
+        if: >-
+          github.event_name != 'pull_request'
+          && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/test-cb'
+          || startsWith(github.ref, 'refs/tags/v'))
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/gentian-org/keycloak-event-listener@${DIGEST}"
+      - name: Scan the image
+        if: >-
+          github.event_name != 'pull_request'
+          && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/test-cb'
+          || startsWith(github.ref, 'refs/tags/v'))
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ghcr.io/gentian-org/keycloak-event-listener@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
   storage-tools:
     name: Storage tools image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
@@ -562,8 +654,13 @@ jobs:
       # What the Jobs that move a tenant's objects run (rclone, age, tar),
       # tagged as the operator is, so the operator names its own build's.
       - name: Build and push the storage tools image
+        id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
+          # An SBOM and a SLSA provenance attestation travel with the image
+          # (certification plan C5).
+          sbom: true
+          provenance: mode=max
           context: kernel/images/storage-tools
           platforms: linux/amd64,linux/arm64
           push: >-
@@ -574,6 +671,43 @@ jobs:
             || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The published image, signed with this workflow's identity and scanned
+      # (certification plan C5). Only where the build pushed: a pull request's
+      # image exists nowhere to be signed. The scan is advisory until the backlog
+      # it finds is triaged; dropping continue-on-error makes it block.
+      - name: Install cosign
+        if: >-
+          github.event_name != 'pull_request'
+          && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/test-cb'
+          || startsWith(github.ref, 'refs/tags/v'))
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+      - name: Sign the image
+        if: >-
+          github.event_name != 'pull_request'
+          && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/test-cb'
+          || startsWith(github.ref, 'refs/tags/v'))
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/gentian-org/storage-tools@${DIGEST}"
+      - name: Scan the image
+        if: >-
+          github.event_name != 'pull_request'
+          && (github.ref == 'refs/heads/main'
+          || github.ref == 'refs/heads/develop'
+          || github.ref == 'refs/heads/test-cb'
+          || startsWith(github.ref, 'refs/tags/v'))
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ghcr.io/gentian-org/storage-tools@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
 
   crossplane-unit:
     name: Crossplane — unit tests (render + functions + schema)
