@@ -2,7 +2,7 @@
 # BUILDPLATFORM keeps the compile on the native runner while GOARCH targets the
 # requested platform — a cross-compile, not emulation, which for a static Go
 # binary is both correct and far faster than running the toolchain under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder
 ARG TARGETARCH
 
 WORKDIR /workspace
