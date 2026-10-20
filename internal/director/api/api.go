@@ -1641,6 +1641,14 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 		if c.Default != "" {
 			entry["default"] = c.Default
 		}
+		if c.List {
+			entry["list"] = true
+		}
+		// A setting the installer reads: the commit changes nothing on the
+		// cluster until that step runs again, and a console has to say so.
+		if c.InstallStep != "" {
+			entry["installStep"] = c.InstallStep
+		}
 		if v, ok := values[c.Path]; ok {
 			entry["value"] = v
 		}
@@ -1913,7 +1921,27 @@ func (s *Server) setClusterSettings(w http.ResponseWriter, r *http.Request, c ca
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	}
+	// A change to a setting the installer reads lands in git like any other
+	// and reaches the cluster only when that step runs again: the answer
+	// names the step, so the caller is not left waiting for Argo CD.
+	if err == nil && res.Changed {
+		if step := installStepOf(body.Settings); step != "" {
+			s.json(w, http.StatusAccepted, map[string]any{"status": res.Status, "commit": res.Commit, "installStep": step})
+			return
+		}
+	}
 	s.written(w, r, res, err)
+}
+
+// installStepOf is the installer step the settings named need, if any of
+// them is read by the installer rather than the operator.
+func installStepOf(settings map[string]string) string {
+	for _, c := range gitops.ClusterSettings() {
+		if _, named := settings[c.Path]; named && c.InstallStep != "" {
+			return c.InstallStep
+		}
+	}
+	return ""
 }
 
 // written answers a write. A change that landed is 202: git has it, the

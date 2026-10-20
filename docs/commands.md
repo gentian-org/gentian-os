@@ -212,8 +212,10 @@ Two things have to be true first, and neither the director nor the command
 checks them:
 
 - **DNS:** `*.<domain>` resolves to this cluster. The platform publishes
-  records only in the DNS zone that holds the cluster's own domain; in any
-  other zone the wildcard record is yours to make.
+  records in the DNS zone that holds the cluster's own domain and in the
+  zones the cluster's settings list under `certificates.dnsZones`
+  ([§6c](#6c-cluster-settings)); list the domain's zone there, or make the
+  wildcard record yourself.
 - **Certificate:** the cluster's DNS-01 issuer can write `_acme-challenge`
   records in the domain's zone, that is, its DNS token covers that zone. The
   tenant gets one wildcard certificate, `*.<domain>`
@@ -799,6 +801,7 @@ checkout and running `./install.sh`, without the checkout.
 ```bash
 kubectl gentian settings show                                   # the claim's settings, as JSON
 kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
+kubectl gentian settings set certificates.dnsZones=gentian.org  # a list: comma-separated
 ```
 
 The director holds the list of what may be set and refuses anything else, and
@@ -806,6 +809,14 @@ refuses `tenancyMode=single` on a cluster carrying more than the one user
 tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the
 tenants' addresses ([§3](#3-create-a-tenant)); nothing else here restarts
 anything.
+
+One setting is the installer's rather than the operator's:
+`certificates.dnsZones`, the zones external-dns may write besides the kernel
+domain's, for tenants served on a domain of their own
+([§3](#3-provision-a-tenant)). The commit lands like any other,
+and the cluster takes it when the step that installs external-dns runs
+again, which the command says: `./install.sh --only B-01` on the install
+host. The DNS credential has to cover every zone listed.
 
 ## 7. Administrator Accounts
 

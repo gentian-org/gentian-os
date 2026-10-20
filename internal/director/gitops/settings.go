@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +47,10 @@ var ErrUnknownSetting = errors.New("unknown cluster setting")
 // ErrNotScalar is a value that is not a scalar a claim line can hold.
 var ErrNotScalar = errors.New("setting takes a scalar value")
 
+// zoneName is what a DNS zone in certificates.dnsZones may look like: a
+// registrable domain, the pattern the Cluster XRD declares for the item.
+var zoneName = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`)
+
 // ClusterSetting describes one changeable leaf of the claim.
 type ClusterSetting struct {
 	// Path is the dotted path under spec, e.g. "mail.serviceMode".
@@ -59,6 +64,18 @@ type ClusterSetting struct {
 	// XRD (scripts/gen/gen-cluster-setting-defaults.py), because a default a
 	// console shows must be the one the cluster will actually apply.
 	Default string
+	// List marks a setting whose claim value is a list of strings. Over the
+	// API it travels as one comma-separated string both ways, the shape the
+	// installer reads it in (claim_list_setting); the editor writes it as a
+	// block list under its parent.
+	List bool
+	// Each, on a list setting, is what every item has to match.
+	Each *regexp.Regexp
+	// InstallStep names the installer step that reads this setting, for the
+	// settings the installer applies rather than the operator: a commit
+	// changes nothing on the cluster until that step runs again. Empty for
+	// the settings Argo CD and the operator pick up on their own.
+	InstallStep string
 }
 
 // clusterSettings is every setting the director will write.
@@ -71,6 +88,7 @@ type ClusterSetting struct {
 var clusterSettings = []ClusterSetting{
 	{Path: "certificates.acmeEnv", Doc: "Which Let's Encrypt environment issues certificates.", OneOf: []string{"staging", "production"}},
 	{Path: "certificates.issuerMode", Doc: "How control of the domain is proved.", OneOf: []string{"acme-dns01", "acme-http01", "self-signed", "private-ca"}},
+	{Path: "certificates.dnsZones", Doc: "Zones external-dns may write besides the kernel domain's: the zones of tenants served on a domain of their own. Comma-separated; the DNS credential has to cover them. Read when the installer installs external-dns (step B-01).", List: true, Each: zoneName, InstallStep: "B-01"},
 	{Path: "certManager.letsencryptEmail", Doc: "Where Let's Encrypt sends expiry warnings."},
 	{Path: "llm.enabled", Doc: "Whether this cluster serves language models.", OneOf: []string{"true", "false"}},
 	{Path: "llm.gpuAcceleration", Doc: "Whether model serving uses a GPU.", OneOf: []string{"true", "false"}},
@@ -144,9 +162,67 @@ func lookupPath(node any, path []string) (string, bool) {
 		return "", false
 	}
 	if len(path) == 1 {
+		if items, ok := v.([]any); ok {
+			return joinItems(items)
+		}
 		return scalarString(v)
 	}
 	return lookupPath(v, path[1:])
+}
+
+// joinItems is a list setting as the API carries it: its items joined with
+// commas. A list of anything but strings is not a value this catalogue knows.
+func joinItems(items []any) (string, bool) {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		s, ok := it.(string)
+		if !ok {
+			return "", false
+		}
+		out = append(out, s)
+	}
+	return strings.Join(out, ","), true
+}
+
+// splitItems is the API's comma-separated value as the claim's list: trimmed,
+// empties dropped, so "a, b" and "a,b" are the same list and "" is the empty one.
+func splitItems(v string) []string {
+	var out []string
+	for _, it := range strings.Split(v, ",") {
+		if it = strings.TrimSpace(it); it != "" {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// validateSetting is what a value is checked against before anything is
+// written: that it is a scalar line, that it is one of the values the setting
+// accepts, and on a list setting that every item is what the list holds.
+func validateSetting(s ClusterSetting, v string) error {
+	if strings.ContainsAny(v, "\n\r") {
+		return fmt.Errorf("%w: %s", ErrNotScalar, s.Path)
+	}
+	if len(s.OneOf) > 0 {
+		allowed := false
+		for _, o := range s.OneOf {
+			if o == v {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("%w: %s takes one of %s", ErrUnknownSetting, s.Path, strings.Join(s.OneOf, ", "))
+		}
+	}
+	if s.List && s.Each != nil {
+		for _, it := range splitItems(v) {
+			if !s.Each.MatchString(it) {
+				return fmt.Errorf("%w: %s takes zone names such as example.org, not %q", ErrUnknownSetting, s.Path, it)
+			}
+		}
+	}
+	return nil
 }
 
 func scalarString(v any) (string, bool) {
@@ -180,20 +256,8 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 		if !known {
 			return Result{}, fmt.Errorf("%w: %s", ErrUnknownSetting, p)
 		}
-		if strings.ContainsAny(v, "\n\r") {
-			return Result{}, fmt.Errorf("%w: %s", ErrNotScalar, p)
-		}
-		if len(s.OneOf) > 0 {
-			allowed := false
-			for _, o := range s.OneOf {
-				if o == v {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				return Result{}, fmt.Errorf("%w: %s takes one of %s", ErrUnknownSetting, p, strings.Join(s.OneOf, ", "))
-			}
+		if err := validateSetting(s, v); err != nil {
+			return Result{}, err
 		}
 		paths = append(paths, p)
 	}
@@ -229,7 +293,14 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 		out := text
 		changed := false
 		for _, p := range paths {
-			next, did, err := setClaimValue(out, p, values[p])
+			var next string
+			var did bool
+			var err error
+			if s, _ := settingByPath(p); s.List {
+				next, did, err = setClaimList(out, p, splitItems(values[p]))
+			} else {
+				next, did, err = setClaimValue(out, p, values[p])
+			}
 			if err != nil {
 				return text, "", false, err
 			}
@@ -302,7 +373,19 @@ func (g *GitOps) applyClaim(ctx context.Context, message string, meta Meta, fn e
 // there at all, so it is inserted under its parent, creating the parents it
 // needs. Everything else in the file is untouched, byte for byte.
 func setClaimValue(text, path, value string) (string, bool, error) {
-	newText, changed, err := setKeyPath(text, "spec", strings.Split(path, "."), value)
+	return setClaimLeaf(text, path, scalarLeaf(value))
+}
+
+// setClaimList writes one dotted path as a block list: the key line and one
+// "- item" line per item under it, an empty list as `key: []`. Where the key
+// holds a list already, the whole list is replaced; everything else in the
+// file is untouched, as for a scalar.
+func setClaimList(text, path string, items []string) (string, bool, error) {
+	return setClaimLeaf(text, path, listLeaf(items))
+}
+
+func setClaimLeaf(text, path string, l leaf) (string, bool, error) {
+	newText, changed, err := setKeyPath(text, "spec", strings.Split(path, "."), l)
 	if errors.Is(err, errNoRoot) {
 		return text, false, fmt.Errorf("the claim has no spec block")
 	}
@@ -310,6 +393,103 @@ func setClaimValue(text, path, value string) (string, bool, error) {
 		return text, false, fmt.Errorf("%w: %s", ErrUnknownSetting, path)
 	}
 	return newText, changed, err
+}
+
+// leaf is what the walk writes once it has found, revived or made the place
+// for a key: the lines the value takes, how far the value already there
+// reaches, and whether it is the same already.
+type leaf interface {
+	// render is the key with its value, at this indent.
+	render(indent int, key string) []string
+	// extent is how many lines the value at `at` occupies, the key line included.
+	extent(lines []string, at, indent int) int
+	// same reports whether the value at `at` is the one to write.
+	same(lines []string, at, indent int) bool
+}
+
+type scalarLeaf string
+
+func (v scalarLeaf) render(indent int, key string) []string {
+	return []string{fmt.Sprintf("%s%s: %s", strings.Repeat(" ", indent), key, quoteScalar(string(v)))}
+}
+func (scalarLeaf) extent([]string, int, int) int { return 1 }
+func (v scalarLeaf) same(lines []string, at, _ int) bool {
+	return scalarOf(lines[at]) == string(v)
+}
+
+type listLeaf []string
+
+func (items listLeaf) render(indent int, key string) []string {
+	pad := strings.Repeat(" ", indent)
+	if len(items) == 0 {
+		return []string{pad + key + ": []"}
+	}
+	out := []string{pad + key + ":"}
+	for _, it := range items {
+		out = append(out, fmt.Sprintf("%s  - %s", pad, quoteScalar(it)))
+	}
+	return out
+}
+
+// extent: the key line, then every following line indented deeper than the
+// key -- the items, and any comment or blank line among them, which goes
+// with the list it sits in.
+func (listLeaf) extent(lines []string, at, indent int) int {
+	n := 1
+	for i := at + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			// A blank line ends the list unless an item follows it.
+			if j := i + 1; j < len(lines) && indentOf(lines[j]) > indent && strings.TrimSpace(lines[j]) != "" {
+				n++
+				continue
+			}
+			break
+		}
+		if indentOf(lines[i]) <= indent {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+func (items listLeaf) same(lines []string, at, indent int) bool {
+	cur := itemsOf(lines, at, items.extent(lines, at, indent))
+	if len(cur) != len(items) {
+		return false
+	}
+	for i := range cur {
+		if cur[i] != items[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// itemsOf reads the list at `at`: the block form, one "- item" line each, or
+// the flow form on the key line, `[a, b]`.
+func itemsOf(lines []string, at, extent int) []string {
+	var out []string
+	if v := scalarOf(lines[at]); strings.HasPrefix(v, "[") {
+		for _, it := range strings.Split(strings.Trim(v, "[]"), ",") {
+			if it = strings.Trim(strings.TrimSpace(it), `"'`); it != "" {
+				out = append(out, it)
+			}
+		}
+		return out
+	}
+	for i := at + 1; i < at+extent && i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(t, "- ") {
+			continue
+		}
+		it := strings.TrimSpace(strings.TrimPrefix(t, "- "))
+		if k := strings.Index(it, " #"); k >= 0 {
+			it = strings.TrimSpace(it[:k])
+		}
+		out = append(out, strings.Trim(it, `"'`))
+	}
+	return out
 }
 
 var (
@@ -320,7 +500,7 @@ var (
 // setKeyPath is setClaimValue under any top-level block, with the keys given
 // as a list so one of them may itself contain a dot -- an annotation key
 // such as gentianos.io/purge-requested.
-func setKeyPath(text, root string, keys []string, value string) (string, bool, error) {
+func setKeyPath(text, root string, keys []string, l leaf) (string, bool, error) {
 	lines := strings.Split(text, "\n")
 
 	specAt := -1
@@ -343,27 +523,27 @@ func setKeyPath(text, root string, keys []string, value string) (string, bool, e
 			// Not live. A commented placeholder is still a home for it.
 			if c := findCommentedKeyLine(lines, start, end, indent, key); c >= 0 {
 				if last {
-					lines[c] = fmt.Sprintf("%s%s: %s", strings.Repeat(" ", indent), key, quoteScalar(value))
-					return strings.Join(lines, "\n"), true, nil
+					return strings.Join(replaceLines(lines, c, 1, l.render(indent, key)), "\n"), true, nil
 				}
 				// A commented parent cannot hold children; make it real.
 				lines[c] = fmt.Sprintf("%s%s:", strings.Repeat(" ", indent), key)
 				at = c
 			} else {
-				inserted := insertKey(lines, end, indent, key, last, value)
+				var inserted []string
 				if last {
+					inserted = replaceLines(lines, end, 0, l.render(indent, key))
 					return strings.Join(inserted, "\n"), true, nil
 				}
+				inserted = replaceLines(lines, end, 0, []string{strings.Repeat(" ", indent) + key + ":"})
 				lines = inserted
 				at = end
 			}
 		}
 		if last {
-			cur := scalarOf(lines[at])
-			if cur == value {
+			if l.same(lines, at, indent) {
 				return text, false, nil
 			}
-			lines[at] = fmt.Sprintf("%s%s: %s", strings.Repeat(" ", indent), key, quoteScalar(value))
+			lines = replaceLines(lines, at, l.extent(lines, at, indent), l.render(indent, key))
 			return strings.Join(lines, "\n"), true, nil
 		}
 		start, end = at+1, blockEnd(lines, at+1, indent)
@@ -414,16 +594,12 @@ func blockEnd(lines []string, start, indent int) int {
 	return len(lines)
 }
 
-// insertKey puts a new key at the end of its block, as a leaf or a parent.
-func insertKey(lines []string, at, indent int, key string, leaf bool, value string) []string {
-	line := strings.Repeat(" ", indent) + key + ":"
-	if leaf {
-		line += " " + quoteScalar(value)
-	}
-	out := make([]string, 0, len(lines)+1)
+// replaceLines puts `with` in place of the n lines at `at`; n of zero inserts.
+func replaceLines(lines []string, at, n int, with []string) []string {
+	out := make([]string, 0, len(lines)-n+len(with))
 	out = append(out, lines[:at]...)
-	out = append(out, line)
-	return append(out, lines[at:]...)
+	out = append(out, with...)
+	return append(out, lines[at+n:]...)
 }
 
 func scalarOf(line string) string {

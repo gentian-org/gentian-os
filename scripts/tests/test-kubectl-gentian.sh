@@ -927,6 +927,11 @@ fresh; reply PATCH /v1/clusters/c1/settings 200 '{"status":"unchanged"}'
 gentian settings set tenancyMode=multi
 has "a claim that already says so commits nothing" "${OUT}" "nothing was committed"
 
+fresh; reply PATCH /v1/clusters/c1/settings 202 '{"status":"updated","commit":"0123456789abcdef","installStep":"B-01"}'
+gentian settings set certificates.dnsZones=gentian.org,example.ch
+is "a list setting is sent as the one value it was typed as" "$(writes)" 'PATCH /v1/clusters/c1/settings {"settings":{"certificates.dnsZones":"gentian.org,example.ch"}}'
+has "... and a setting the installer reads names the step to run" "${OUT}" "./install.sh --only B-01"
+
 fresh; reply PATCH /v1/clusters/c1/settings 400 '{"error":"unknown setting: spec.colour is not a setting"}'
 gentian settings set colour=blue
 refused "a refusal of the director ends the command"

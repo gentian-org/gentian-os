@@ -1484,8 +1484,15 @@ cmd_settings() {
             _discover
             answer="$(_call PATCH "/v1/clusters/${_CLUSTER}/settings" "{\"settings\":${body}}")" || exit 1
             status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
+            local step
+            step="$(printf '%s' "${answer}" | jq -r '.installStep // ""')"
             if [[ "${status}" == "unchanged" ]]; then
                 echo "The claim already says so; nothing was committed."
+            elif [[ -n "${step}" ]]; then
+                # A setting the installer reads, not the operator: committed,
+                # and applied by that step on the install host.
+                echo "Settings committed ($(_committed "${answer}")). The installer reads this setting at step ${step}; the cluster takes it when that step runs again:"
+                echo "  ./install.sh --only ${step}"
             else
                 echo "Settings committed ($(_committed "${answer}")). The cluster takes them once Argo CD has synced."
                 echo "  kubectl gentian settings show"

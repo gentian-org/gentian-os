@@ -347,8 +347,9 @@ how does traffic REACH a service?  → EdgeIngress.   Provider-specific.
 records for all eight providers in `kernel/platforms.yaml`, into the kernel
 domain's zone and the zones the Cluster claim lists under
 `certificates.dnsZones` -- the zones of tenants served on a domain of their
-own (`TenantDomain`), which the DNS credential has to cover -- from two
-sources it is already configured with: `gateway-httproute` for every hostname the operator
+own (`TenantDomain`), which the DNS credential has to cover; set with
+`kubectl gentian settings set` and applied by `./install.sh --only B-01` --
+from two sources it is already configured with: `gateway-httproute` for every hostname the operator
 routes, and `crd` (`DNSEndpoint`) for records with no HTTP object behind them,
 which is how mail publishes. There is no per-provider DNS code in the operator,
 and there was: a Cloudflare-only record writer, which meant a Route 53 cluster
