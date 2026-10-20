@@ -166,7 +166,10 @@ _v5_render() {
         echo "dnsZones:"
         printf '%s\n' "${DNS_ZONES:-}" | tr ',' '\n' | while IFS= read -r _zone; do
             _zone="${_zone// /}"
-            [[ -n "${_zone}" ]] && printf '  - "%s"\n' "${_zone}"
+            # An if, not [[ ]] &&: the last line read is empty when no zone
+            # is named, and a false test as the loop's last command fails the
+            # pipeline -- and with it the install.
+            if [[ -n "${_zone}" ]]; then printf '  - "%s"\n' "${_zone}"; fi
         done
     } > "${dns_zones_values}"
 

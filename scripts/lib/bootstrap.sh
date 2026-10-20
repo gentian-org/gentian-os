@@ -1681,7 +1681,7 @@ _claim_cluster_fields() {
             printf '    # a domain of their own. The DNS credential has to cover them.\n'
             printf '    dnsZones:\n'
             printf '%s\n' "${DNS_ZONES}" | tr ',' '\n' | while IFS= read -r _z; do
-                [[ -n "${_z}" ]] && printf '      - %s\n' "${_z}"
+                if [[ -n "${_z}" ]]; then printf '      - %s\n' "${_z}"; fi
             done
         else
             printf '    # dnsZones:                 zones external-dns may write besides\n'
