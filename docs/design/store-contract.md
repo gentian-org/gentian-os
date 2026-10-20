@@ -332,8 +332,8 @@ their tenant.
 |---|---|---|
 | `GET /v1/meta` | open | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on |
 | `GET /v1/categories` | open | The categories apps are filed under |
-| `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price |
-| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, license; and the partners that offer support for it, narrowed to a country when asked |
+| `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price, how many add-ons |
+| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons each with its icon, edition and list price, links, license; and the partners that offer support for it, narrowed to a country when asked |
 | `GET /v1/apps/{catalogue}/{app}/reviews` | open | Reviews — rating, text, the author's name as the store shows it, date — and their summary |
 | `GET /v1/apps/{catalogue}/{app}/reports` | open | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask one of an app's support offers for support, with an optional message; the store answers that it received it, and what follows is the store's |

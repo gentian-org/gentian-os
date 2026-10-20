@@ -1,0 +1,45 @@
+# A chart that pins its names (fullnameOverride) makes demo-app-web and
+# demo-app-api itself. Both aliases are composed observe-only: one that
+# created its Service while the release waits would leave a Service Helm does
+# not own and refuses to install over, and one dropped from a cluster that
+# already has it would delete the chart's own Service with it.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    extraValues:
+      fullnameOverride: demo-app
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      backend:
+        service: demo-app-web
+        port: 8080

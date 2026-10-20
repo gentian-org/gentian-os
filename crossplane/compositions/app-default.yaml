@@ -2288,6 +2288,16 @@ spec:
             {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
             {{- /* creates a Service with the correct name, so emitting our own      */}}
             {{- /* Object with the same name would conflict with Helm ownership.     */}}
+            {{- /* The same holds for fullnameOverride-<component>, the names of a    */}}
+            {{- /* chart with a Service per component (the website's chart makes     */}}
+            {{- /* <name>-web and <name>-api): an alias of that name, made while the */}}
+            {{- /* release still waits for a credential, is a Service Helm does not  */}}
+            {{- /* own and refuses to install over. Such an alias is composed        */}}
+            {{- /* observe-only: it never creates, changes or deletes the Service.   */}}
+            {{- /* Observe-only rather than absent, because a cluster made before    */}}
+            {{- /* this has the alias as an Object with deletionPolicy Delete, over  */}}
+            {{- /* the chart's own Service: dropped from the composition, it would   */}}
+            {{- /* take that Service -- a live website's -- with it.                  */}}
             {{- /* This is the one read AD-4 did not simply move. AppProfile had a
                  single spec.ingress with serviceName and servicePort;
                  ComponentProfile has a list of exposures, each naming the Service
@@ -2304,6 +2314,7 @@ spec:
             {{- end }}
             {{- $stableSvcName  := dig "service" "" $backend }}
             {{- $fullnameOverride := dig "fullnameOverride" "" $extraVals }}
+            {{- $chartsOwn := printf "%s-" $fullnameOverride }}
             {{- if and $stableSvcName (ne $stableSvcName $fullnameOverride) }}
             {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
             {{- $svcPort   := default 80 (dig "port" 0 $backend | int) }}
@@ -2315,6 +2326,9 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-stable-svc
               name: {{ $xrName }}-stable-svc
             spec:
+              {{- if and $fullnameOverride (hasPrefix $chartsOwn $stableSvcName) }}
+              managementPolicies: ["Observe"]
+              {{- end }}
               forProvider:
                 manifest:
                   apiVersion: v1
@@ -2344,6 +2358,9 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-api-stable-svc
               name: {{ $xrName }}-api-stable-svc
             spec:
+              {{- if and $fullnameOverride (hasPrefix $chartsOwn $apiSvcName) }}
+              managementPolicies: ["Observe"]
+              {{- end }}
               forProvider:
                 manifest:
                   apiVersion: v1

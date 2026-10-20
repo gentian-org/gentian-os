@@ -133,6 +133,7 @@ func (w *PlatformStatusWriter) WriteOnce(ctx context.Context) error {
 			return fmt.Errorf("read the composite %s of Cluster claim %s: %w", ref["name"], claim.GetName(), err)
 		}
 		platform := map[string]any{
+			"version":     platformversion.ChartVersion,
 			"versionLine": platformversion.Line,
 			"build":       w.Build,
 			"reportedAt":  now().UTC().Format(time.RFC3339),

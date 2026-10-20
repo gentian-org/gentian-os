@@ -1134,6 +1134,9 @@ spec:
                     from its own build: the version line every compatibility
                     check compares against, and the build. Read, never set.
                   properties:
+                    version:
+                      type: string
+                      description: The platform's version as released, 0.5.0, or 0.5.0-dev for a development build.
                     versionLine:
                       type: string
                       description: The major and minor of the release the operator is built towards, "0.5".
