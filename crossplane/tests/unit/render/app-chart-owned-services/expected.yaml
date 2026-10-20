@@ -6,11 +6,48 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: demo-app-client-role, demo-app-entitlement-group,
-      demo-app-externalsecret, and 7 more'
+    message: 'Unready resources: demo-app-api-stable-svc, demo-app-client-role, demo-app-entitlement-group,
+      and 9 more'
     reason: Creating
     status: "False"
     type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-api-stable-svc
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-api-stable-svc
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: demo-app-api
+        namespace: tenant-demo
+      spec:
+        ports:
+        - name: http
+          port: 8000
+          protocol: TCP
+          targetPort: 8000
+        selector:
+          app.kubernetes.io/component: api
+          app.kubernetes.io/instance: demo-app-release
+  managementPolicies:
+  - Observe
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: role.keycloak.crossplane.io/v1alpha1
 kind: Role
@@ -368,3 +405,40 @@ spec:
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-stable-svc
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-stable-svc
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: demo-app-web
+        namespace: tenant-demo
+      spec:
+        ports:
+        - name: http
+          port: 8080
+          protocol: TCP
+          targetPort: 8080
+        selector:
+          app.kubernetes.io/component: web
+          app.kubernetes.io/instance: demo-app-release
+  managementPolicies:
+  - Observe
+  providerConfigRef:
+    name: kubernetes
