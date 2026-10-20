@@ -36,4 +36,6 @@ spec:
     - name: web
       surface: gateway
       authMode: oidc
-      backend: { service: demo-app-web, port: 8080 }
+      backend:
+        service: demo-app-web
+        port: 8080
