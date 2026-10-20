@@ -1,7 +1,8 @@
 # A chart that pins its names (fullnameOverride) makes demo-app-web and
-# demo-app-api itself. No alias of either is composed: one made first, while
-# the release waits, is a Service Helm does not own and refuses to install
-# over; one made after is applied over the chart's own.
+# demo-app-api itself. Both aliases are composed observe-only: one that
+# created its Service while the release waits would leave a Service Helm does
+# not own and refuses to install over, and one dropped from a cluster that
+# already has it would delete the chart's own Service with it.
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
