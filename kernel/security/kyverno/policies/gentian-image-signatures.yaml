@@ -1,0 +1,70 @@
+---
+# Every image the platform publishes under ghcr.io/gentian-org is signed in CI
+# with the building workflow's GitHub identity (keyless, Sigstore) and carries
+# an SBOM and a provenance attestation (certification plan C5). This policy
+# asks admission to check the signature on those images and no other: a
+# third-party image has no gentian-org signature to check.
+#
+# Audit, not Enforce, to begin with: a report per unsigned pod, nothing
+# refused. Images built before the signing landed are unsigned and still
+# run; once every image a cluster runs is signed the action moves to Enforce
+# by a reviewed commit. failurePolicy Ignore for the same reason: an
+# unreachable registry or transparency log must not stop a pod while the
+# rule only reports.
+#
+# The kernel tier is excluded as the baseline excludes it: its images are
+# this repository's own and signed too, but the kernel is the trust root the
+# policy runs in, and a rule that can stop Kyverno's own namespace is not one
+# to switch on in Audit.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-verify-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify gentian-org image signatures
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/severity: medium
+spec:
+  validationFailureAction: Audit
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Ignore
+  rules:
+  - name: gentian-org-images-are-signed
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
+      - resources:
+          namespaces:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - gpu-operator-resources
+    verifyImages:
+    - imageReferences:
+      - "ghcr.io/gentian-org/*"
+      failureAction: Audit
+      # Audit reports; it does not rewrite the pod. A tag stays a tag until
+      # the rule enforces, so that nothing an operator sees changes shape
+      # while the rule only observes.
+      mutateDigest: false
+      verifyDigest: false
+      required: true
+      attestors:
+      - entries:
+        - keyless:
+            # The identity GitHub gives a workflow run: the issuer is GitHub's
+            # OIDC provider, the subject names the repository and workflow.
+            # Any workflow of the organisation may sign; a fork's cannot.
+            issuer: https://token.actions.githubusercontent.com
+            subjectRegExp: ^https://github\.com/gentian-org/[^/]+/\.github/workflows/.+@refs/.+$
+            rekor:
+              url: https://rekor.sigstore.dev
