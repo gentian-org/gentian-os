@@ -27,6 +27,14 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-20** (1.4, additive: a 1.3 client reads every answer as before)
+
+1. **An app summary may say how many add-ons it has** (`addonCount`), so a
+   listing can show that without asking for each detail.
+2. **An add-on in a detail's `addons` may carry its `iconUrl`, `edition`
+   and `price`**, enough to show it beside its base without a request of
+   its own.
+
 **2026-10-19** (1.3, additive: a 1.2 client reads every answer as before)
 
 1. **Support offers** (feature `support`). An app may carry `support`:
@@ -617,7 +625,8 @@ pages of one listing.
                 "per": "user", "period": "month", "note": null},
       "acquired": false,                     // ONLY with a token: for the tenant in it. Absent from an anonymous answer
       "rating": {"count": 2, "average": 4.5,
-                 "distribution": {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}}
+                 "distribution": {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}},
+      "addonCount": 1                        // optional, 1.4: how many add-ons the detail names
     }
   ],
   "nextCursor": null
@@ -642,6 +651,7 @@ pages of one listing.
 | `price` | Price | yes | The list price |
 | `acquired` | boolean | no | Whether the tenant in the token has a `confirmed` acquisition of this coordinate. Present only on an answer to a request that carried a valid token of a tenant the store serves; absent from every anonymous answer. The app never depends on it: `GET /v1/acquisitions` says the same |
 | `rating` | Review summary \| null | no | `null` when the store carries no reviews |
+| `addonCount` | integer ≥ 0 | no | How many add-ons the entry's detail names in `addons`. A client that needs them reads the detail. Added in 1.4 |
 
 **Price** — the **list price**: what the store asks of anybody, the same with a
 token and without. Shown, never computed with. What a tenant is charged — a
@@ -681,7 +691,11 @@ Everything in the summary, and:
     }
   ],
   "addons": [{"coordinate": "gentian/nextcloud-office-ee", "name": "Office",
-              "summary": "Edit documents in the browser."}],
+              "summary": "Edit documents in the browser.",
+              "iconUrl": "https://media.store.example/icons/nextcloud-office.png",   // optional, 1.4
+              "edition": "ee",                                                     // optional, 1.4
+              "price": {"model": "subscription", "amount": "2.00", "currency": "CHF",
+                        "per": "user", "period": "month", "note": null}}],         // optional, 1.4
   "addonOf": null,                           // the coordinate this entry extends, when it is an add-on
   "links": [{"rel": "documentation", "label": "Administration manual", "url": "https://publisher.example/docs"}],
   "license": {"spdx": null, "name": "Example Publisher Enterprise License", "url": "https://publisher.example/license"},
@@ -705,7 +719,7 @@ Everything in the summary, and:
 | `description` | Markdown (`store-markdown-1`) ≤ 20 000 | yes | The long text |
 | `screenshots` | Screenshot[] | yes | In the order to show them |
 | `versions` | Version[] 1–50 | yes | Newest first |
-| `addons` | `{coordinate, name, summary}[]` | yes | The add-ons that exist for this entry; each is a store entry of its own |
+| `addons` | `{coordinate, name, summary, iconUrl?, edition?, price?}[]` | yes | The add-ons that exist for this entry; each is a store entry of its own. `iconUrl`, `edition` and `price` are as in the summary, optional, added in 1.4 |
 | `addonOf` | coordinate \| null | yes | When this entry is itself an add-on, what it extends |
 | `links` | Link[] | yes | |
 | `license` | `{spdx, name, url}` \| null | yes | The license the app is distributed under. `spdx` and `url` may be `null` |

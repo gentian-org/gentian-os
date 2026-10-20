@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.3"
+  version: "1.4"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -612,6 +612,7 @@ paths:
                           count: 2
                           average: 4.5
                           distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
+                        addonCount: 1
                       - coordinate: gentian/xwiki-ce
                         family: xwiki
                         name: XWiki
@@ -2329,6 +2330,10 @@ components:
             - $ref: "#/components/schemas/ReviewSummary"
             - type: "null"
           description: The summary of the entry's reviews; `null` when the store carries none.
+        addonCount:
+          type: integer
+          minimum: 0
+          description: How many add-ons the entry's detail names in `addons`. Optional; a client that needs them reads the detail. Added in 1.4.
     AppDetail:
       allOf:
         - $ref: "#/components/schemas/AppSummary"
@@ -2464,6 +2469,17 @@ components:
         summary:
           type: string
           maxLength: 300
+        iconUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: The add-on's icon, as `iconUrl` of a summary. Optional; added in 1.4.
+        edition:
+          $ref: "#/components/schemas/Edition"
+          description: The add-on's edition. Optional; added in 1.4.
+        price:
+          $ref: "#/components/schemas/Price"
+          description: The add-on's list price. Optional; added in 1.4.
     License:
       type: object
       required: [name]
@@ -3242,6 +3258,7 @@ components:
           count: 2
           average: 4.5
           distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
+        addonCount: 1
         description: |
           Nextcloud keeps a team's files, calendars and contacts in one place.
 
@@ -3279,6 +3296,15 @@ components:
           - coordinate: gentian/nextcloud-office-ee
             name: Office
             summary: Edit documents in the browser.
+            iconUrl: https://media.store.example/icons/nextcloud-office.png
+            edition: ee
+            price:
+              model: subscription
+              amount: "2.00"
+              currency: CHF
+              per: user
+              period: month
+              note: null
         addonOf: null
         links:
           - {rel: homepage, label: null, url: "https://publisher.example"}
