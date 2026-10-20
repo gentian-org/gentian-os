@@ -86,11 +86,11 @@ already names.
                           ▼                       ▼
          s3://gentian-evidence/…            VictoriaLogs (30 d)
          Object Lock, 12 months                   │
-                  │                        logs.<kernel> route,
-         nightly manifest, signed          gated on can_audit
-         (backup signing key)
-                  │
-         Prometheus + Alertmanager  ◄── Vector, operator, services metrics
+                  │                          usher read API
+         nightly manifest, signed      /v1/tenants/{t}/evidence (can_view)
+         (backup signing key)          /v1/clusters/{c}/evidence (can_audit)
+                  │                               │
+         Prometheus + Alertmanager        a console relays it to a person
 ```
 
 ### 3.1 Collector: Vector
@@ -172,10 +172,32 @@ single binary, and indexes every field, so queries by `subject`,
 `request_id` or `tenant` cost nothing special; it stores on local disk,
 which is fine for thirty days of a cluster this size.
 
-Its web UI is served at `logs.<kernel-domain>` through the kernel Gateway
-like Headlamp (`internal/controller/kernel_gateway_routes.go`), behind the
-zone's OIDC session and the bouncer, with the route's permission `can_audit`
-on the cluster. Nothing else reaches its port; the inventory says so.
+Nothing reaches its port but the usher (§3.8); the inventory says so. Its
+own web UI is not exposed: the platform's promise is the record, its
+integrity and the API to read it, and a screen on top of that is a
+console's business (§7).
+
+### 3.8 The read API
+
+The usher answers for live state, as it does for backups, under the same
+two scopes:
+
+| Route | Permission | Answers |
+| --- | --- | --- |
+| `GET /v1/tenants/{t}/evidence` | `can_view` on the tenant | the tenant's records from the search tier: `from`, `to`, `kind`, `subject`, `request_id`, `outcome`, paged |
+| `GET /v1/tenants/{t}/evidence/export` | `can_view` on the tenant | the same as NDJSON for a period, for a data-subject request or the tenant's own audit |
+| `GET /v1/clusters/{c}/evidence` | `can_audit` on the cluster | every tenant's and the kernel's records, same filters |
+| `GET /v1/clusters/{c}/evidence/days` | `can_audit` on the cluster | the archive's days with manifest state: signed, verified, missing |
+| `GET /v1/clusters/{c}/evidence/days/{d}` | `can_audit` on the cluster | one day's manifest and the verification result |
+| `GET /v1/clusters/{c}/evidence/health` | `can_audit` on the cluster | each source's last record, the sink's state, the last manifest |
+
+A tenant's administrator sees the records *about* their tenant: decisions
+on its objects, changes to its state, its people's identity events. That is
+the controller's own duty under DSV Art. 4, and the console that serves the
+tenant is where they read it. The kernel's records and other tenants' are
+the cluster roles' alone. Writes — retention, the alert receiver — are
+declared state and go through the director as a commit, like a backup
+policy.
 
 ### 3.5 Sources made to speak
 
@@ -310,13 +332,16 @@ sets the number; nothing shorter than six months is accepted.
   `gentian:platform:security` and `gentian:platform:auditor` may read, and
   no other. The custodian's token-exchange write path is how a person
   obtains it; the read is recorded like any credential read.
-- The search UI: `can_audit` on the cluster, which `auditor`,
-  `security_officer` and `admin` hold. A dedicated `can_read_evidence`
-  relation follows when the admin console grows an evidence view (§11), so
-  that an administrator's reach can be narrowed without touching
-  `can_audit`.
-- No tenant relation reaches either. A tenant's administrator sees their
-  tenant's changes through the director's `/changes`, as today.
+- The read API (§3.8): `can_view` on a tenant for that tenant's records,
+  `can_audit` on the cluster for all of them. A dedicated `can_read_evidence`
+  relation follows if an administrator's reach has to be narrowed without
+  touching `can_audit`.
+- The screens are a console's. The Admin Console, which is free, shows the
+  store's health and promotes the paid continuation, as it does for
+  backups; browsing, filtering, the access-review export and the retention
+  and alert settings are that continuation's, served from the same API.
+  A cluster without any console still has the record, the verify tool and
+  the API: nothing the platform promises depends on a screen.
 - Separation from the processing system, as DSV asks: a namespace of its
   own, a bucket of its own, credentials no service holds, and the archive's
   replica outside the cluster (§11).
@@ -375,8 +400,10 @@ VictoriaLogs 200 m / 512 Mi plus 20 GiB, Prometheus 500 m / 1 GiB plus
 
 - The off-cluster replica of the archive (the backup destination pattern,
   age-encrypted to a dedicated evidence recipient).
-- An evidence view in the administration console, and the
-  `can_read_evidence` relation that comes with it.
+- The screens: the Admin Console's health-and-promotion card and the paid
+  console's evidence pages are built against §3.8 once it exists, in their
+  own repositories.
+- A `can_read_evidence` relation, if `can_audit` turns out too wide.
 - The evidence exports roadmap 5.5 names: access review, configuration
   changes over a period, break-glass uses.
 - Keycloak's event listener reading `X-Gentian-Request-Id`, so that an
@@ -399,10 +426,11 @@ VictoriaLogs 200 m / 512 Mi plus 20 GiB, Prometheus 500 m / 1 GiB plus
 4. Vector: the chart, the pipeline configuration, the inventory entries,
    the tests that feed it a line of each source and check the record and
    the minimisation.
-5. VictoriaLogs and its route.
-6. The nightly manifest and `verify-evidence-day.sh`.
-7. prometheus-operator, Prometheus, Alertmanager, the rules, the
+5. VictoriaLogs, reachable by the usher only.
+6. The usher's read API (§3.8), with the tenant scope filtered server-side.
+7. The nightly manifest and `verify-evidence-day.sh`.
+8. prometheus-operator, Prometheus, Alertmanager, the rules, the
    ServiceMonitors switched on, the claim's receiver.
-8. Documentation: operations.md §6 rewritten, security.md §3.0 rows,
+9. Documentation: operations.md §6 rewritten, security.md §3.0 rows,
    security-principles §7 *Today* note, controls K7, K11, K18, K19, roadmap
    5.1, certification C8.
