@@ -20,11 +20,13 @@
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #                                  [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]
 #                                  [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]
+#                                  [--country <ISO 3166-1 alpha-2, e.g. CH>]
 #                                  (unstated, approving is off -- and on for the user tenant
 #                                  of a single-tenancy cluster; sign-up is off, and is said
 #                                  out loud when it is on: anybody may make an account)
 #   kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false]
 #                                      [--admins-add-catalogues=true|false]
+#                                      [--country <alpha-2> | --country ""]   "" names none
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain]
@@ -36,16 +38,23 @@
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
 #                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
+#   kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
+#   kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
+#                                                             people of another tenant of this cluster signing in here
 #   kubectl gentian tenants organizations <name>               realms of other clusters whose people sign in here
 #   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>>
 #                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
 #   kubectl gentian tenants organizations <name> remove <org>  they no longer do
 #
+#   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
+#   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
+#                                                             set one; a value from a file, or from stdin (once)
+#
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
-#   kubectl gentian catalogues add <name> --path <directory> [--tenant <tenant>]
-#                                  a catalogue kept in a directory of the cluster's own
-#                                  deployments repository; the cluster's administrator only
+#   kubectl gentian catalogues add <name> --oci <artifact> --repository <repository> [--tenant <tenant>]
+#                                  a catalogue kept as an OCI artifact, read with the credential of a
+#                                  repository declared for the tenant (or, without --tenant, for the cluster)
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
@@ -67,6 +76,10 @@
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
+#   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
+#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
+#                                                             approve one request: egress (the tenant's administrator),
+#                                                             podSecurity or clusterRoles (the cluster's security officer)
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
 #                                                               of their own Authorization header behind sign-in
@@ -338,6 +351,9 @@ _disconnect() {
     if [[ -n "${_USH_PF_PID}" ]]; then
         kill "${_USH_PF_PID}" 2>/dev/null || true
     fi
+    if [[ -n "${_CUS_PF_PID}" ]]; then
+        kill "${_CUS_PF_PID}" 2>/dev/null || true
+    fi
 }
 
 # The usher: the Deployment labelled app.kubernetes.io/component=usher, in
@@ -376,6 +392,45 @@ _connect_usher() {
 
 # The registrar: the Deployment labelled app.kubernetes.io/component=registrar
 # in the director's namespace, on the port its Service names.
+# The custodian: the Deployment labelled app.kubernetes.io/component=custodian,
+# beside the director. Credentials are set there, as the person: it checks
+# them against what the requirement declares and writes them to the vault
+# with the person's own authority.
+_CUS_PF_PID=""
+_CUS_BASE=""
+
+_connect_custodian() {
+    [[ -n "${_CUS_BASE}" ]] && return 0
+    _discover
+    local deploy target port
+    deploy="$(kubectl get deploy -n "${_DIR_NS}" -l app.kubernetes.io/component=custodian \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    [[ -n "${deploy}" ]] || die "no custodian in ${_DIR_NS}: credentials are set there, and this cluster does not run one"
+    target="$(kubectl get deploy "${deploy}" -n "${_DIR_NS}" \
+        -o jsonpath='{.spec.template.spec.containers[0].ports[0].containerPort}' 2>/dev/null || true)"
+    [[ -n "${target}" ]] || die "the custodian in ${_DIR_NS} names no port"
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    kubectl port-forward -n "${_DIR_NS}" "deploy/${deploy}" "${port}:${target}" >/dev/null 2>&1 &
+    _CUS_PF_PID=$!
+    trap '_disconnect' EXIT
+    local _i
+    for _i in $(seq 1 30); do
+        if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${port}/healthz"; then
+            _CUS_BASE="http://127.0.0.1:${port}"
+            return 0
+        fi
+        kill -0 "${_CUS_PF_PID}" 2>/dev/null || break
+        sleep 0.5
+    done
+    die "the custodian in ${_DIR_NS} could not be reached"
+}
+
+# _call_custodian <method> <path> [json-body] — the same, of the custodian.
+_call_custodian() {
+    _connect_custodian
+    _ask custodian "${_CUS_BASE}" "$@"
+}
+
 _REG_PF_PID=""
 _REG_BASE=""
 
@@ -513,6 +568,7 @@ cmd_tenants_show() {
         "Apps:            \((.apps // []) | if length == 0 then "none" else join(", ") end)",
         "Signs in under:  \(.loginDomain // "-")",
         "Own domain:      \(.customDomain // "none")",
+        "Country:         \(.country // "none")",
         "State:           \(if .purging then "purging" elif .protected then "protected" else "-" end)",
         "",
         "Its administrators may approve public addresses:  \(if .adminsApprove then "yes" else "no" end)",
@@ -526,8 +582,8 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" answer brokered="[]" spec kv bname bredirect bjwks
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]"
+    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" country="" answer brokered="[]" spec kv bname bredirect bjwks
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...] [--country <alpha-2>]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
@@ -537,6 +593,8 @@ cmd_tenants_create() {
             --admins-approve-public-addresses=*) die "--admins-approve-public-addresses is given alone, or as =true or =false" ;;
             --admins-add-catalogues) catalogues="true"; shift ;;
             --self-sign-up) signup="true"; shift ;;
+            # The country the tenant is in, ISO 3166-1 alpha-2 (CH, DE).
+            --country) country="${2:?--country <alpha-2>}"; shift 2 ;;
             # A realm outside the tenant -- usually of another cluster -- where
             # its people may sign in with their account here. Repeatable.
             --brokered-to)
@@ -562,6 +620,7 @@ cmd_tenants_create() {
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
+    country="$(_country "${country}")" || exit 1
     _discover
     # Said before anything is committed, because it is the one switch here
     # that opens the cluster to people nobody invited.
@@ -578,12 +637,13 @@ cmd_tenants_create() {
     # but for the user tenant of a single-tenancy cluster, whose administrators
     # approve its public addresses unless =false says they do not.
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" --arg k "${country}" \
             '{name:$n, displayName:$d, requireMFA:$m}
              + (if $a != "" then {perimeter:{adminsApprove:($a == "true")}} else {} end)
              + (if $c then {catalogue:{delegated:true}} else {} end)
              + (if $s then {signUp:true} else {} end)
-             + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)')")" || exit 1
+             + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)
+             + (if $k != "" then {country:$k} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
     # What the director wrote, where it says; what was asked for otherwise.
     case "$(printf '%s' "${answer}" | jq -r '.adminsApprove | if . == null then "" else tostring end' 2>/dev/null)" in
@@ -601,6 +661,9 @@ cmd_tenants_create() {
     fi
     if [[ "${signup}" == "true" ]]; then
         echo "Anybody may sign up to it; an account made that way is a member of nothing."
+    fi
+    if [[ -n "${country}" ]]; then
+        echo "Its country: ${country}."
     fi
     if [[ "$(jq 'length' <<<"${brokered}")" -gt 0 ]]; then
         echo "Its people may sign in at: $(jq -r '[.[].name] | join(", ")' <<<"${brokered}") (a client broker-to-<name> each, trusting that realm's published keys)."
@@ -854,7 +917,7 @@ _apps_offers() {
     for name in ${names}; do
         if listing="$( (_call GET "/v1/tenants/${t}/catalogues/${name}/entries") 2>/dev/null)"; then
             entries="$(jq -n --argjson have "${entries}" --argjson got "${listing}" --arg s "${name}" \
-                '$have + [$got.entries[] | {source: $s, name, version: (.version // ""), edition: (.edition // ""), digest: (.digest // "")}]')"
+                '$have + [$got.entries[] | {source: $s, name, version: (.version // ""), edition: (.edition // ""), digest: (.digest // ""), platform: (.platform // ""), unmet: (.unmet // "")}]')"
         else
             unread="$(jq -n --argjson have "${unread}" --arg s "${name}" '$have + [$s]')"
         fi
@@ -886,13 +949,16 @@ cmd_apps_list() {
         die "${t} has no catalogue to install from: the cluster's administrator adds one (kubectl gentian catalogues add <name> <https-url> [--tenant ${t}])"
     installed="$(_call GET "/v1/tenants/${t}/apps")" || exit 1
     # INSTALLED: yes is this build; "other build" is the app at another digest;
-    # unpinned is the app installed with no digest.
+    # unpinned is the app installed with no digest. PLATFORM is the floor the
+    # build declares (spec.requires.platform); one this cluster does not meet
+    # is marked, and the director refuses to install it.
     jq -rn --argjson o "${offers}" --argjson i "${installed}" '
         ($i.apps | map({key: .profile, value: (.digest // "")}) | from_entries) as $have
-        | (["SOURCE","APP","VERSION","EDITION","DIGEST","INSTALLED"] | @tsv),
+        | (["SOURCE","APP","VERSION","EDITION","PLATFORM","DIGEST","INSTALLED"] | @tsv),
           ($o.entries[] | .name as $n | .digest as $d | [.source, $n,
               (if .version == "" then "-" else .version end),
               (if .edition == "" then "-" else .edition end),
+              (if .platform == "" then "-" elif .unmet != "" then (.platform + " (not met)") else .platform end),
               (if $d == "" then "-" else $d[0:19] end),
               (if ($have | has($n) | not) then "-"
                elif $have[$n] == "" then "unpinned"
@@ -1036,9 +1102,10 @@ _optional_tenant_flag() {
     echo "${t}"
 }
 
-# Where a catalogue is read from, as the lists show it: its https address, or
-# the directory of the cluster's own deployments repository it is kept in.
-_CATALOGUE_WHERE='def where: if (.path // "") != "" then "deployments repository: " + .path else (.url // "") end;'
+# Where a catalogue is read from, as the lists show it: its https address, the
+# artifact it is kept as and the repository it is read with, or the directory
+# of the cluster's own deployments repository it is kept in.
+_CATALOGUE_WHERE='def where: if .oci then "oci: " + .oci.artifact + " (repository " + .oci.repository + ")" else (.url // "") end;'
 
 # catalogues list: with --tenant, what that tenant installs from -- the
 # cluster's catalogues and its own. Without, everything the cluster declares:
@@ -1148,8 +1215,8 @@ cmd_catalogues_residue_list() {
         printf '%s' "${answer}" | jq -r '.residue[] |
             "  " + .kind + "/" + .name + ": " + .reason
             + (if .oidc == null then "" else
-                 (if (.oidc.clients | length) > 0 then "; the only pack for: " + (.oidc.clients | join(", ")) else "" end)
-                 + (if (.oidc.contested | length) > 0 then "; another catalog also holds: " + (.oidc.contested | join(", ")) else "" end)
+                 (if (.oidc.clients | length) > 0 then "; configures: " + (.oidc.clients | join(", ")) else "" end)
+                 + (if (.oidc.contested | length) > 0 then "; another catalog carries the same label, so these clients are refused until one is removed: " + (.oidc.contested | join(", ")) else "" end)
                  + (if (.oidc.composition // "") != "" then "; read by the Composition of " + .oidc.composition else "" end)
                end)
             + (if (.companions // []) | length > 0 then "; its bundle brings " + (.companions | join(", ")) + ", which stay" else "" end)
@@ -1216,18 +1283,28 @@ cmd_catalogues() {
             esac
             ;;
         add|remove)
-            local name="" address="" dir="" t="" a
+            local name="" address="" artifact="" repository="" t=""
             local add_usage="usage: kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
-       kubectl gentian catalogues add <name> --path <directory of the deployments repository> [--tenant <tenant>]"
+       kubectl gentian catalogues add <name> --oci <host>/<path>:<tag> --repository <declared repository> [--tenant <tenant>]"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --tenant|-t) t="${2:?}"; shift 2 ;;
-                    --path)
-                        [[ "${sub}" == "add" ]] || die "unknown option $1"
-                        dir="${2:?${add_usage}}"; shift 2 ;;
-                    --path=*)
+                    --path|--path=*)
                         [[ "${sub}" == "add" ]] || die "unknown option ${1%%=*}"
-                        dir="${1#*=}"; shift ;;
+                        die "a catalogue is never kept in the deployments repository, which holds the cluster's state only; publish it as an OCI artifact (--oci) or at an https address.
+${add_usage}" ;;
+                    --oci)
+                        [[ "${sub}" == "add" ]] || die "unknown option $1"
+                        artifact="${2:?${add_usage}}"; shift 2 ;;
+                    --oci=*)
+                        [[ "${sub}" == "add" ]] || die "unknown option ${1%%=*}"
+                        artifact="${1#*=}"; shift ;;
+                    --repository)
+                        [[ "${sub}" == "add" ]] || die "unknown option $1"
+                        repository="${2:?${add_usage}}"; shift 2 ;;
+                    --repository=*)
+                        [[ "${sub}" == "add" ]] || die "unknown option ${1%%=*}"
+                        repository="${1#*=}"; shift ;;
                     -*) die "unknown option $1" ;;
                     *)
                         if [[ -z "${name}" ]]; then name="$1"
@@ -1238,15 +1315,20 @@ cmd_catalogues() {
                 esac
             done
             if [[ "${sub}" == "add" ]]; then
-                # One of the two: an address, or a directory of the repository.
+                # One of the two: an address or an artifact.
                 [[ -n "${name}" ]] || die "${add_usage}"
-                [[ -n "${address}" || -n "${dir}" ]] || die "${add_usage}"
-                [[ -z "${address}" || -z "${dir}" ]] ||
-                    die "a catalogue is at an https address or in a directory of the deployments repository (--path), not both.
+                [[ -n "${address}" && -z "${artifact}" ]] || [[ -z "${address}" && -n "${artifact}" ]] ||
+                    die "a catalogue is at an https address or an OCI artifact (--oci): one of them.
+${add_usage}"
+                [[ -z "${artifact}" || -n "${repository}" ]] ||
+                    die "an OCI artifact is read with a declared repository's credential: name it with --repository.
+${add_usage}"
+                [[ -n "${artifact}" || -z "${repository}" ]] || die "--repository goes with --oci.
 ${add_usage}"
                 need jq
-                if [[ -n "${dir}" ]]; then
-                    _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg p "${dir}" '{path: $p}')"
+                if [[ -n "${artifact}" ]]; then
+                    _catalogues_change add PUT "${name}" "${t}" \
+                        "$(jq -n --arg r "${repository}" --arg a "${artifact}" '{oci: {repository: $r, artifact: $a}}')"
                 else
                     _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg u "${address}" '{url: $u}')"
                 fi
@@ -1434,23 +1516,29 @@ cmd_tenants_delegate_catalogues() {
 # publishes to the internet, and whether they may add catalogues. Each is a
 # switch on the tenant's manifest in git, off unless turned on; each option
 # given is one request to the director (PUT turns it on, DELETE off), which
-# decides who may. Everything is read before anything is asked, so a mistyped
+# decides who may. --country sets the tenant's country (spec.country), which
+# its own administrators may set too. Everything is read before anything is asked, so a mistyped
 # option changes nothing.
 cmd_tenants_set() {
-    local name="" approve="" catalogues="" usage_text
-    usage_text="usage: kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false] [--admins-add-catalogues=true|false]"
+    local name="" approve="" catalogues="" country="" country_set="" usage_text
+    usage_text="usage: kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false] [--admins-add-catalogues=true|false] [--country <alpha-2> | --country \"\"]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --admins-approve-public-addresses=true|--admins-approve-public-addresses=false) approve="${1#*=}"; shift ;;
             --admins-add-catalogues=true|--admins-add-catalogues=false) catalogues="${1#*=}"; shift ;;
             --admins-approve-public-addresses*|--admins-add-catalogues*) die "${1%%=*} is given as ${1%%=*}=true or ${1%%=*}=false" ;;
+            --country) [[ $# -ge 2 ]] || die "${usage_text}"; country="$2"; country_set=1; shift 2 ;;
+            --country=*) country="${1#*=}"; country_set=1; shift ;;
             -*) die "unknown option $1" ;;
             *) [[ -z "${name}" ]] || die "${usage_text}"; name="$1"; shift ;;
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
-    [[ -n "${approve}${catalogues}" ]] || die "nothing to set. ${usage_text}"
+    [[ -n "${approve}${catalogues}${country_set}" ]] || die "nothing to set. ${usage_text}"
     _label "The tenant" "${name}"
+    if [[ -n "${country_set}" ]]; then
+        country="$(_country "${country}")" || exit 1
+    fi
     _discover
     if [[ "${approve}" == "true" ]]; then
         _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/perimeter-delegation" >/dev/null
@@ -1466,6 +1554,26 @@ cmd_tenants_set() {
         _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
         echo "The administrators of ${name} may no longer add catalogues: committed. What they added stays until it is removed."
     fi
+    # The tenant's own setting, beside its languages: asked on the tenant's
+    # route, which its own administrators may use as well.
+    if [[ -n "${country_set}" ]]; then
+        _call PUT "/v1/tenants/${name}/country" "$(jq -n --arg k "${country}" '{country:$k}')" >/dev/null
+        if [[ -n "${country}" ]]; then
+            echo "The country of ${name} is ${country}: committed."
+        else
+            echo "${name} names no country: committed."
+        fi
+    fi
+}
+
+# _country <code> -- a country as the director takes it: ISO 3166-1 alpha-2,
+# upper case; "" stays "". The director checks it again.
+_country() {
+    local c
+    c="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+    [[ -z "${c}" || "${c}" =~ ^[A-Z]{2}$ ]] ||
+        die "a country is an ISO 3166-1 alpha-2 code, two letters such as CH or DE, not '$1'"
+    printf '%s' "${c}"
 }
 
 # ---------------------------------------------------------------------------
@@ -1486,6 +1594,99 @@ _committed() {
     local commit
     commit="$(printf '%s' "$1" | jq -r '.commit // "" | .[0:8]')"
     echo "${commit:-no commit id}"
+}
+
+# kubectl gentian tenants groups <tenant> [<group>... | --clear]
+# A tenant's own groups of its realm, declared in git (spec.groups): made by
+# the platform, filled in the Admin Console. Without names it shows them;
+# with names it sets them (the list given is the list); --clear removes all.
+cmd_tenants_groups() {
+    local name="${1:-}" clear="" answer body
+    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants groups <tenant> [<group>... | --clear]"
+    shift
+    _label "a tenant" "${name}"
+    local groups=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --clear) clear=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *) _label "a group" "$1"; groups+=("$1"); shift ;;
+        esac
+    done
+    need curl jq
+    _connect
+    if [[ -z "${clear}" && ${#groups[@]} -eq 0 ]]; then
+        answer="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/groups")" || exit 1
+        if [[ "$(jq '.groups | length' <<<"${answer}")" == "0" ]]; then
+            echo "Tenant ${name} declares no groups of its own."
+        else
+            jq -r '.groups[]' <<<"${answer}"
+        fi
+        return 0
+    fi
+    [[ -z "${clear}" || ${#groups[@]} -eq 0 ]] || die "--clear takes no groups"
+    if [[ ${#groups[@]} -gt 0 ]]; then
+        body="$(printf '%s\n' "${groups[@]}" | jq -R . | jq -sc '{groups: .}')"
+    else
+        body='{"groups":[]}'
+    fi
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/groups" "${body}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "Tenant ${name}'s groups are as given already; nothing was committed."
+        return 0
+    fi
+    echo "Tenant ${name}'s groups: committed ($(_committed "${answer}")). The platform makes them in its realm."
+}
+
+# kubectl gentian tenants sign-in <target> [--from <source> --groups <g>,... | --remove <source>]
+# People of another tenant of this cluster signing in to <target> with their
+# account there, given the groups of <target> named (members, or groups of
+# its own: tenants groups). One commit of both tenants' line; the platform
+# makes the client and the identity provider. Without options it shows what
+# <target> declares.
+cmd_tenants_sign_in() {
+    local name="${1:-}" from="" given="" remove="" answer body
+    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants sign-in <tenant> [--from <tenant> --groups <g>,... | --remove <tenant>]"
+    shift
+    _label "a tenant" "${name}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from="${2:-}"; shift 2 || die "--from needs a tenant" ;;
+            --groups) given="${2:-}"; shift 2 || die "--groups needs a list" ;;
+            --remove) remove="${2:-}"; shift 2 || die "--remove needs a tenant" ;;
+            *) die "unexpected argument $1" ;;
+        esac
+    done
+    need curl jq
+    _connect
+    if [[ -z "${from}" && -z "${remove}" ]]; then
+        answer="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in")" || exit 1
+        jq -r --arg t "${name}" '
+            (if (.signInFrom | length) == 0 then "No tenant'"'"'s people sign in to \($t)."
+             else (.signInFrom[] | "people of \(.tenant) sign in to \($t) as: \((.groups // []) | join(", "))") end),
+            (if (.signInTo | length) > 0 then "people of \($t) sign in to: \(.signInTo | join(", "))" else empty end)' <<<"${answer}"
+        return 0
+    fi
+    [[ -z "${from}" || -z "${remove}" ]] || die "--from and --remove do not go together"
+    if [[ -n "${remove}" ]]; then
+        _label "a tenant" "${remove}"
+        answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${remove}")" || exit 1
+        if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+            echo "People of ${remove} did not sign in to ${name}; nothing was committed."
+            return 0
+        fi
+        echo "People of ${remove} no longer sign in to ${name}: committed ($(_committed "${answer}"))."
+        return 0
+    fi
+    _label "a tenant" "${from}"
+    body="$(printf '%s' "${given}" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc '{groups: .}')"
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${from}" "${body}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "People of ${from} sign in to ${name} as declared already; nothing was committed."
+        return 0
+    fi
+    echo "People of ${from} sign in to ${name}${given:+ as ${given}}: committed ($(_committed "${answer}"))."
+    echo "Their button on ${name}'s sign-in page reads ${from}'s display name."
 }
 
 # kubectl gentian tenants organizations <tenant> [add <name> ... | remove <name>]
@@ -2014,11 +2215,113 @@ cmd_exposures() {
     esac
 }
 
+# apps outdated: which installed apps are behind the build their catalogue
+# offers, and what keeps them there (the director's report). For the whole
+# cluster, or one tenant with --tenant.
+cmd_apps_outdated() {
+    local t="" a json=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            --json) json=1; shift ;;
+            *) shift ;;
+        esac
+    done
+    need jq
+    _connect
+    local answer
+    if [[ -n "${t}" ]]; then
+        answer="$(_call GET "/v1/tenants/${t}/updates")" || exit 1
+    else
+        answer="$(_call GET "/v1/clusters/${_CLUSTER}/updates")" || exit 1
+    fi
+    if [[ -n "${json}" ]]; then printf '%s\n' "${answer}"; return 0; fi
+    jq -r '
+        (["TENANT","APP","MODE","PINNED","RUNNING","NEWEST","STATE"] | @tsv),
+        (.entries[] | [.tenant, .profile, (.mode + " (" + .modeFrom + ")"),
+            (if .pinned == "" then "-" else .pinned[0:19] end),
+            (if (.running // "") == "" then "-" else .running[0:19] end),
+            (if (.newest // "") == "" then "-" else (.newest[0:19] + (if .newestVersion then " " + .newestVersion else "" end)) end),
+            (if .unmet then "cannot: " + .unmet
+             elif .outdated and ((.held // []) | length) > 0 then "outdated, held: " + ((.held // []) | join("; "))
+             elif .outdated then "outdated"
+             elif (.rollout.phase // "") == "Exporting" or (.rollout.phase // "") == "Rolling" then "moving"
+             elif (.rollout.phase // "") == "RolledBack" then "rolled back: " + (.rollout.message // .rollout.reason // "")
+             elif (.rollout.phase // "") == "Failed" then "move failed: " + (.rollout.message // .rollout.reason // "")
+             else "current" end)] | @tsv)' <<<"${answer}" | column -t -s $'\t'
+    local partial unread
+    partial="$(jq -r '.partial // empty' <<<"${answer}")"
+    [[ -z "${partial}" ]] || echo "Partial: ${partial}" >&2
+    unread="$(jq -r '(.unread // []) | join(", ")' <<<"${answer}")"
+    [[ -z "${unread}" ]] || echo "Not read, the director could not reach them: ${unread}." >&2
+    if [[ -z "${t}" ]]; then
+        jq -r '"Policy: mode " + .policy.mode + (if .policy.window then " in the window " + .policy.window.start + "-" + .policy.window.end + " " + (.policy.window.timezone // "UTC") else ", any time" end) + (if .windowOpen then " (open now)" else " (closed now)" end)' <<<"${answer}"
+    fi
+}
+
+# apps move-outdated: move every outdated app -- or those of --tenant and
+# --app -- to the newest build its catalogue offers. The cluster
+# administrator's act; each move exports first, verifies after and rolls back
+# by itself (kubectl gentian apps outdated shows how each went).
+cmd_apps_move_outdated() {
+    local t="" app="" a
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            --app) app="${2:?}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    need jq
+    _connect
+    local body answer
+    body="$(jq -n --arg t "${t}" --arg a "${app}" '{tenants: (if $t == "" then [] else [$t] end), apps: (if $a == "" then [] else [$a] end)}')"
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/move-outdated" "${body}")" || exit 1
+    jq -r '(.moved[] | "Moving " + .profile + " in " + .tenant + " to " + .to[0:19] + ": " + .status + (if .detail != "" then " (" + .detail + ")" else "" end)),
+           (.skipped[] | "Not moved: " + .profile + " in " + .tenant + ": " + .status + (if .detail then " -- " + .detail else "" end))' <<<"${answer}"
+    [[ "$(jq -r '.moved | length' <<<"${answer}")" != "0" ]] || echo "Nothing to move."
+}
+
+# apps update-mode <app> --tenant <t> --mode latest|manual|tenant|default:
+# how one tenant's app moves to newer builds, set by the cluster's
+# administrator. "default" removes the override and the cluster's policy
+# applies again.
+cmd_apps_update_mode() {
+    local app="${1:-}"
+    [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps update-mode <app> --tenant <tenant> --mode latest|manual|tenant|default"
+    shift
+    local t mode="" a
+    t="$(_tenant_flag "$@")"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --mode) mode="${2:?}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    case "${mode}" in
+        latest|manual|tenant) ;;
+        default) mode="" ;;
+        *) die "--mode is latest, manual, tenant or default" ;;
+    esac
+    need jq
+    _connect
+    local answer
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${t}/apps/${app}/update-mode" "$(jq -n --arg m "${mode}" '{mode: $m}')")" || exit 1
+    if [[ -n "${mode}" ]]; then
+        echo "${app} in ${t} moves to newer builds in ${mode} mode: $(jq -r '.status' <<<"${answer}")."
+    else
+        echo "${app} in ${t} moves to newer builds as the cluster's policy says: $(jq -r '.status' <<<"${answer}")."
+    fi
+}
+
 cmd_apps() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
         list) cmd_apps_list "$@" ;;
+        outdated) cmd_apps_outdated "$@" ;;
+        move-outdated) cmd_apps_move_outdated "$@" ;;
+        update-mode) cmd_apps_update_mode "$@" ;;
         install|uninstall)
             local app="${1:-}"
             [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps ${sub} <app> --tenant <tenant>"
@@ -2053,7 +2356,147 @@ cmd_apps() {
                 echo "installing ${app} again finds it, and 'kubectl gentian apps uninstall ${app} --tenant ${t} --purge' destroys it."
             fi
             ;;
-        *) die "usage: kubectl gentian apps list|install|uninstall ..." ;;
+        approve) cmd_apps_approve "$@" ;;
+        *) die "usage: kubectl gentian apps list|install|uninstall|approve ..." ;;
+    esac
+}
+
+# kubectl gentian apps approve <app> [<kind>/<name>] --tenant <t> --reason "<why>" [--expires <RFC 3339>]
+#
+# An app whose profile asks for more than the default posture waits until a
+# person answers each request (the Component reads "waiting for approval of
+# <kind>/<name>"). This is the answer: one commit through the director, with
+# the approver taken from the session and the reason in their words. Who may
+# answer is the director's to decide by the kind: an egress request is the
+# tenant administrator's, a podSecurity or clusterRoles one the cluster's
+# security officer's. Without a request named, it lists what the app is
+# waiting for, as the cluster has it.
+cmd_apps_approve() {
+    local usage_text app="" privilege="" reason="" expires="" t answer kind name
+    usage_text='usage: kubectl gentian apps approve <app> --tenant <tenant>
+       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            --reason) reason="${2:-}"; shift 2 || die "--reason needs a value" ;;
+            --expires) expires="${2:-}"; shift 2 || die "--expires needs a value" ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${app}" ]]; then app="$1"
+                elif [[ -z "${privilege}" ]]; then privilege="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${app}" && -n "${t:-}" ]] || die "${usage_text}"
+    _label "an app" "${app}"
+    _label "a tenant" "${t}"
+    need curl jq
+
+    if [[ -z "${privilege}" ]]; then
+        answer="$(_call_usher GET "/v1/tenants/${t}/apps/status")" || exit 1
+        local pending
+        pending="$(jq -r --arg a "${app}" '.apps[]? | select(.name == $a or .profile == $a) | .pendingPrivileges[]?' <<<"${answer}")"
+        if [[ -z "${pending}" ]]; then
+            echo "${app} in ${t} is waiting for no approval."
+            return 0
+        fi
+        echo "${app} in ${t} is waiting for these approvals:"
+        local p
+        while IFS= read -r p; do printf '  %s\n' "${p}"; done <<<"${pending}"
+        echo "Approve one with:"
+        echo "  kubectl gentian apps approve ${app} <kind>/<name> --tenant ${t} --reason \"<why, in your words>\""
+        return 0
+    fi
+
+    kind="${privilege%%/*}"
+    name="${privilege#*/}"
+    case "${kind}" in
+        egress|podSecurity|clusterRoles) ;;
+        *) die "the request is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles: not '${privilege}'" ;;
+    esac
+    [[ "${privilege}" == */* && -n "${name}" && "${name}" != */* ]] ||
+        die "the request is <kind>/<name>, as the app's state names it: not '${privilege}'"
+    _label "a request" "${name}"
+    reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what a reviewer reads in the commit."
+
+    answer="$(_call PUT "/v1/tenants/${t}/privileges/${app}/${kind}/${name}" \
+        "$(jq -n --arg r "${reason}" --arg e "${expires}" '{reason: $r} + (if $e == "" then {} else {expiresAt: $e} end)')")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "${privilege} of ${app} in ${t} is approved already; nothing was committed."
+        return 0
+    fi
+    echo "Approved ${privilege} for ${app} in ${t}: committed ($(_committed "${answer}")). The app goes on once the platform has it."
+}
+
+# kubectl gentian credentials list [--tenant <t>]
+# kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-] ...
+#
+# What a person supplies -- a registry's token, an app's API keys -- is set at
+# the custodian, which checks each value against what the requirement
+# declares (a stray newline is refused, not stored) and writes it to the vault
+# with the person's own authority. A value never appears on the command line:
+# it is read from a file (@path) or from standard input (-), so it stays out
+# of the shell's history and the process list. Every field the requirement
+# declares is given at once, as the Admin Console does.
+cmd_credentials() {
+    local sub="${1:-}" t="" name="" answer
+    shift || true
+    case "${sub}" in
+        list)
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+                    *) die "usage: kubectl gentian credentials list [--tenant <tenant>]" ;;
+                esac
+            done
+            need curl jq
+            answer="$(_call_custodian GET /v1/credentials)" || exit 1
+            jq -r --arg t "${t}" '(["NAME","TENANT","SET","FIELDS"] | @tsv),
+                (.credentials[]? | select($t == "" or .tenant == $t)
+                 | [.name, (.tenant // "-"), (if .satisfied then "yes" else "no" end),
+                    ([.fields[]?.key] | join(","))] | @tsv)' <<<"${answer}" | column -t -s $'\t'
+            ;;
+        set)
+            name="${1:-}"
+            [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]"
+            shift
+            local fields='{}' spec key src value stdin_used=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --field)
+                        spec="${2:-}"
+                        shift 2 || die "--field needs <key>=@<file> or <key>=-"
+                        [[ "${spec}" == *=* ]] || die "--field is <key>=@<file> or <key>=-, not '${spec}'"
+                        key="${spec%%=*}"
+                        src="${spec#*=}"
+                        [[ "${key}" =~ ^[A-Za-z0-9_.-]+$ ]] || die "'${key}' is not a field name"
+                        case "${src}" in
+                            -)
+                                [[ -z "${stdin_used}" ]] || die "only one field can be read from standard input"
+                                stdin_used=1
+                                value="$(cat)" ;;
+                            @*)
+                                [[ -r "${src#@}" ]] || die "cannot read ${src#@}"
+                                value="$(cat -- "${src#@}")" ;;
+                            *) die "a value is given as @<file> or -, never on the command line: --field ${key}=@<file>" ;;
+                        esac
+                        # A file ends in a newline more often than not, and the
+                        # custodian refuses a value that does: the last one goes.
+                        value="${value%$'\n'}"
+                        fields="$(jq -c --arg k "${key}" --arg v "${value}" '. + {($k): $v}' <<<"${fields}")"
+                        ;;
+                    *) die "unexpected argument $1" ;;
+                esac
+            done
+            [[ "${fields}" != "{}" ]] || die "give every field of ${name}: --field <key>=@<file>"
+            need curl jq
+            answer="$(_call_custodian PUT "/v1/credentials/${name}" "$(jq -c '{fields: .}' <<<"${fields}")")" || exit 1
+            echo "Set ${name}: stored$(jq -r 'if .validated == false then " without validation (" + (.validationSkipped // "") + ")" elif .validated == true then " and validated" else "" end' <<<"${answer}" 2>/dev/null)."
+            ;;
+        *) die "usage: kubectl gentian credentials list|set ..." ;;
     esac
 }
 
@@ -2133,7 +2576,9 @@ main() {
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
                 organizations) cmd_tenants_organizations "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations" ;;
+                groups) cmd_tenants_groups "$@" ;;
+                sign-in) cmd_tenants_sign_in "$@" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations|groups|sign-in" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;
@@ -2143,6 +2588,7 @@ main() {
         setting|settings) cmd_settings "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
+        credential|credentials) cmd_credentials "$@" ;;
         version|--version|-v) cmd_version ;;
         help|--help|-h) usage ;;
         *) usage; exit 1 ;;

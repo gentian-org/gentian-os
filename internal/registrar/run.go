@@ -21,6 +21,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
@@ -126,10 +127,18 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	vouchingKeys := &VouchingKeys{}
 	go vouchingKeys.Follow(ctx, envOr("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log)
 
+	// The Tenants, and -- for one that is not there -- its Argo CD
+	// Application, which says whether its creation failed.
+	tenants := &ClusterTenants{
+		Client:               reader,
+		KernelDomain:         os.Getenv("KERNEL_DOMAIN"),
+		Applications:         reader,
+		ApplicationNamespace: layout.Namespace(layout.GitOps),
+	}
 	srv, err := New(Config{
 		Authn:             verifier,
 		Authz:             graph,
-		Tenants:           &ClusterTenants{Client: reader, KernelDomain: os.Getenv("KERNEL_DOMAIN")},
+		Tenants:           tenants,
 		Identity:          idClient,
 		Record:            authorityRecord,
 		Mailboxes:         mailboxes,

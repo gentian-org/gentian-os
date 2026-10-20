@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"regexp"
 	"context"
 	"fmt"
 	"net/http"
@@ -45,6 +46,8 @@ func profileNamed(name, note string) string {
 		"\n      version: \"1.0.0\"\n"
 }
 
+var platformFloorLine = regexp.MustCompile(`(?m)^    platform: (\S+)$`)
+
 func catalogues(t *testing.T, content served) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +61,10 @@ func catalogues(t *testing.T, content served) *httptest.Server {
 			index := "entries:\n"
 			for name, body := range profiles {
 				index += "  - name: " + name + "\n    version: \"1.0.0\"\n    edition: pe\n    digest: " + sha(body) + "\n"
+				// The floor, repeated in the index as the catalogue build does.
+				if m := platformFloorLine.FindStringSubmatch(body); m != nil {
+					index += "    platform: " + m[1] + "\n"
+				}
 			}
 			_, _ = w.Write([]byte(index))
 			return
@@ -550,7 +557,9 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	if code, _ := h.do(t, "PUT", clusterTenant("demo", "/catalogues/own"), alice, urlBody(src.URL+"/ours-v2")); code != http.StatusAccepted {
 		t.Fatal("add again")
 	}
-	if code, out := install(tom, "demo", "own/notes-app", notes2); code != http.StatusAccepted || out["status"] != "updated" {
+	// By the cluster's administrator: a move of an installed app under the
+	// default update mode, latest, is theirs (updates.go).
+	if code, out := install(alice, "demo", "own/notes-app", notes2); code != http.StatusAccepted || out["status"] != "updated" {
 		t.Fatalf("a new build of the same origin: %d %v", code, out)
 	}
 }

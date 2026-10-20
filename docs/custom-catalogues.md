@@ -13,9 +13,10 @@ https://<host>/<path>/profiles/<name>.yaml    one app's bundle per file: its Com
                                               and what travels with it
 ```
 
-A catalogue whose profiles must not be public is instead **a directory of the cluster's own
-deployments repository** holding the same two things (§4.4). The director reads it from the
-repository it already works in. Everything else on this page holds for both.
+A catalogue whose profiles must not be public is instead **an OCI artifact** holding the same files,
+pushed to a registry and read with the credential of a repository its owner declared (§4.4).
+Everything else on this page holds for both. A catalogue is never kept in the cluster's deployments
+repository, which holds the cluster's state only.
 
 Nothing is copied from a catalogue into a cluster ahead of time. A profile reaches a cluster when a
 tenant installs it: the install names the entry and the digest of the build it means, the director
@@ -44,8 +45,8 @@ A catalogue exists on a cluster in one of three ways:
 | one tenant | that tenant's administrator, **only if the cluster's administrator delegated it** | the same list, `addedBy: tenant` |
 
 Each entry of those lists states where the catalogue is read from, once: `url`, an https address,
-or `path`, a directory of the deployments repository. A `path` is declared by the cluster's
-administrator only, in the first two rows; a tenant's administrator adds addresses.
+or `oci`, an artifact and the repository it is read with. An entry that names `path` (a directory of
+the deployments repository) is refused: that repository holds the cluster's state only.
 
 All three are written by the director as commits, through the commands in §5. A tenant never sees
 another tenant's catalogue: it is not listed, and a coordinate that names it is refused in the same
@@ -404,7 +405,9 @@ restored as onto the same one, and the result says it could not tell.
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a
 few minutes, whose audience (`aud`) is the app's profile name and nothing else. The app, or a
 sidecar in front of it, checks the signature against the realm's keys, the issuer, the audience and
-the expiry. The identity headers are not set on such an entry, and any a client sent are removed: the
+the expiry. Besides the person's id (`sub`) it carries their `groups` in the tenant's realm (names,
+not paths), their `email` and their `name`: what an app learns of a person signing in to it
+directly. The identity headers are not set on such an entry, and any a client sent are removed: the
 token is all the app is told. Any profile may ask for this, since the token is worth nothing anywhere else. It is not
 `forwardToken`, which hands on the session's own token and is for a component of platform trust; a
 profile sets one or the other.
@@ -652,89 +655,76 @@ curl -sI https://<host>/<path>/profiles/acme-notes.yaml | head -1
 
 Both must answer `200`.
 
-### 4.4 Or keep it in the cluster's deployments repository
+### 4.4 Or publish it as an OCI artifact
 
-For profiles that must not be public. The deployments repository is the private git repository the
-cluster is deployed from, which the director reads and writes with the credential it was installed
-with. A catalogue is a directory in it, laid out as an address serves one:
-
-```
-catalogue/index.yaml
-catalogue/profiles/acme-notes.yaml
-clusters/<cluster>/...                        the cluster itself, as before
-```
-
-Write each bundle as `profiles/<name>.yaml`, generate the index, commit and push:
+For profiles that must not be public, on a registry that asks for a credential. The catalogue is
+the directory of §4.2 — `index.yaml`, `profiles/<name>.yaml`, optionally `packages/<name>.yaml` —
+packed into one gzip'd tar and pushed as an artifact of its own type, with [oras](https://oras.land):
 
 ```bash
-python3 scripts/tools/build-catalogue-index.py catalogue/     # from a gentian-os checkout
-git add catalogue && git commit -m "Catalogue: acme-notes 1.0.0" && git push
+python3 scripts/build-catalogue-source.py --out dist/catalogue
+tar -C dist/catalogue -czf catalogue.tar.gz index.yaml profiles
+oras login ghcr.io -u <user>            # a token that may push to the package
+oras push ghcr.io/acme/catalogues/acme:1.0.0 \
+  --artifact-type application/vnd.gentianos.catalogue.v1 \
+  catalogue.tar.gz:application/vnd.gentianos.catalogue.v1.tar+gzip
 ```
 
-**On a cluster that is already installed, that commit stops Argo CD.** Argo CD syncs the deployments
-repository only while its newest commit is signed by one of the cluster's two keys (the director's
-and the break-glass key, `clusters/<cluster>/kernel/signing/keys.env`). Your commit is signed by
-neither, and step 0 of the installer commits only the cluster's own directories, never a catalogue
-directory. After the push, on the machine the cluster was installed from, run
+What the cluster reads:
+
+- **One manifest, one layer.** An OCI image manifest whose `artifactType` is
+  `application/vnd.gentianos.catalogue.v1` (on a registry that keeps no artifact type, its config's
+  media type), with exactly one layer of media type `application/vnd.gentianos.catalogue.v1.tar+gzip`.
+  An image index, another type or a second layer is refused. The manifest is at most 256 KiB, the
+  layer at most 10 MiB.
+- **The tar holds plain files below plain directories.** Paths are relative and stay inside the
+  catalogue (`./index.yaml` is `index.yaml`); an absolute path, `..`, a symbolic or hard link, a
+  device, or a name written twice refuses the whole artifact. It unpacks to at most 32 MiB, in at
+  most 4096 entries, each file at most 1 MiB. What is not `index.yaml` or `profiles/<name>.yaml` is
+  ignored, as beside an address.
+- **The tag is resolved to a digest** each time the artifact is pulled. The manifest is held to the
+  digest the reference names (`…@sha256:<digest>`) or the registry states, the layer to the digest
+  the manifest names. A pulled artifact is kept for five minutes, like an index.
+
+**It is read with the credential of a repository declared for its owner.** Declare the registry
+first, as for private charts (§8), and set its credential under Credentials in the Admin Console:
 
 ```bash
-./install.sh --only A-01      # or a plain ./install.sh
+kubectl gentian repositories declare acme --tenant demo --url oci://ghcr.io/acme
+kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --repository acme --tenant demo
 ```
 
-Step 0 runs before the first step of every install run, whichever steps are selected: it finds a
-newest commit it does not trust and puts an empty commit signed with the break-glass key on top
-(`Signed the head of the deployments repository (break-glass)`). `--only A-01` keeps what follows
-to one step that is already satisfied. It needs the break-glass key in `~/.gentian/gnupg`; on
-another machine `./install.sh --recover <kit>` imports it first. `--dry-run` and `--validate` sign
-nothing. Every later change to the directory is the same: commit, push, run it again.
+A repository of the cluster, for a catalogue of the whole cluster, is declared by the cluster's
+administrator at the director (`PUT /v1/clusters/<cluster>/repositories/<name>` with
+`{"role": "apps", "type": "oci", "url": "oci://…"}`) or as a `Repository` in
+`clusters/<cluster>/kernel/claims/`; its credential is `repository-<name>` under the cluster's
+Credentials. The command above declares a tenant's only.
 
-Then the cluster's administrator declares the directory (§5). The declaration is the directory and
-nothing else:
+- **A tenant's catalogue is read with a repository of that tenant's, and a catalogue of the whole
+  cluster with one of the cluster's.** The repository named must be declared for the same owner the
+  catalogue is: a repository of another tenant, of the cluster for a tenant, or of a tenant for the
+  cluster is refused with `422`, in the words a repository nobody declared is refused in. The
+  credential is read from the vault, at the one path that owner's repository credentials are kept at,
+  when the artifact is pulled; it is not asked for when the catalogue is added.
+- **The credential goes to that repository and nowhere else.** The artifact must lie inside the
+  repository's address (`ghcr.io/acme/…` inside `oci://ghcr.io/acme`). A login is sent to the
+  registry, or to the token realm the registry names when that realm is of the registry's own
+  registrable domain (`ghcr.io`'s is `ghcr.io`, `registry-1.docker.io`'s `auth.docker.io`), and is
+  traded there for a token to pull this one repository. A credential that is a single token is sent
+  to the registry as it is and never traded. A repository that declares no credential is read
+  anonymously.
+- **The registry is held to the rules of an address (§7).** The reference has no scheme: it is
+  pulled over https, on port 443, from a host name that resolves to public addresses only, checked
+  again when the connection is made; no proxy. A manifest that redirects is refused. A layer may be
+  redirected to where the registry keeps its blobs — `ghcr.io` always does — to an https host on 443
+  that passes the same checks, without the credential; what arrives there is held to the layer's
+  digest.
+- **Who adds one** is who adds an address: the cluster's administrator, for the cluster or a tenant,
+  and a tenant's administrator for their own tenant where catalogues are delegated (§5).
 
-```yaml
-# clusters/<cluster>/kernel/claims/cluster.yaml: for every tenant
-spec:
-  catalogue:
-    sources:
-      - name: acme
-        path: catalogue
-```
-
-```yaml
-# clusters/<cluster>/tenants/<tenant>/tenant.yaml: for one tenant
-spec:
-  catalogue:
-    sources:
-      - name: acme
-        path: catalogues/demo
-        addedBy: cluster
-```
-
-- **It names a directory of this repository and can name nothing else.** There is no field for a
-  repository, a host, a branch or a commit. `path` is names of letters, digits, `.`, `_` and `-`
-  separated by `/`, from the top of the repository: no leading `/`, no `..`, no name beginning with
-  a dot, at most 255 characters. An entry that states both `url` and `path` is not read.
-- **Never `clusters/<cluster>/catalogue`**, of this cluster or another in the same repository, or
-  anything below it. That is where the director writes the profiles tenants installed (§1); it is
-  not a catalogue, and declaring it one is refused.
-- **Symbolic links are not followed.** The directory, every directory on the way to it and each
-  file read must be a plain directory or file. A link is refused, wherever it points.
-- **It is read from the director's checkout**, at the commit that checkout is at, with the
-  credential the director already has. Nothing is fetched from anywhere, so §4.3 and the address
-  checks of §7 do not apply. The checkout follows the repository within a few seconds; the index is
-  kept for five minutes like any other.
-- **Only the cluster's administrator declares one**, for the whole cluster or for one tenant. A
-  tenant's administrator is refused, with or without delegation, and an entry with `path` and
-  `addedBy: tenant` written into a manifest by hand is not read. Whoever can push to the
-  deployments repository decides what is in the directory; that is the cluster's administrator.
-- **It is trusted exactly as an address the cluster's administrator added.** The install is pinned
-  to the digest the index states, the director refuses bytes that do not hash to it, the bundle is
-  checked (§2), the profile is committed to `clusters/<cluster>/catalogue/` with its origin, and
-  the operator checks again at rollout (§7). A directory declared for the whole cluster may bring
-  companions; one declared for a tenant brings profiles only. Being in the repository earns a
-  profile nothing: `trustTier` is what the profile states and is held to as anywhere.
-
-The chart and the images are private the same way as for any catalogue (§8).
+From there it is a catalogue like any other: the index lists, an install is pinned to the digest of
+its bundle, the bundle is checked (§2), the profile is committed with the catalogue as its origin,
+and a tenant's catalogue brings profiles only and installs in that tenant only.
 
 ## 5. Add it, list it, install from it
 
@@ -763,16 +753,14 @@ kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tena
 Delegation is off for every tenant until it is turned on, and `off` turns it off again. A tenant's
 administrator removes only catalogues the tenant added.
 
-**A catalogue kept in the deployments repository** (§4.4) is added by naming its directory in place
-of an address, by the cluster's administrator only:
+**A catalogue kept as an OCI artifact** (§4.4) is added by naming the artifact and the repository
+it is read with, by whoever may add an address — for the cluster with a repository of the cluster's,
+for a tenant with one of that tenant's:
 
 ```bash
-kubectl gentian catalogues add acme --path catalogue                       # for every tenant
-kubectl gentian catalogues add acme --path catalogues/demo --tenant demo   # for one tenant
+kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --repository acme --tenant demo
+kubectl gentian catalogues add ours --oci registry.example.com/ours/catalogue@sha256:<digest> --repository ours
 ```
-
-The directory must be in the repository when the command is run. A tenant's administrator who runs
-it is answered `403`.
 
 A tenant's catalogue cannot take the name of a catalogue of the whole cluster, and the other way
 round. Two tenants may each have a catalogue called `acme`; each sees its own.
@@ -787,8 +775,8 @@ kubectl gentian catalogues list
 ```
 CATALOGUE  FOR           ADDED BY     ADDRESS
 gentian    every tenant  the cluster  https://gentian-org.github.io/gentian-apps
-own        every tenant  the cluster  deployments repository: catalogue
 acme       tenant demo   the tenant   https://acme.github.io/acme-catalogue
+private    tenant demo   the tenant   oci: ghcr.io/acme/catalogues/acme:1.0.0 (repository acme)
 Tenants whose administrators may add catalogues of their own: demo.
 ```
 
@@ -826,11 +814,32 @@ kubectl gentian apps install acme-notes --tenant demo   # "Moving acme-notes in 
 ```
 
 The index is cached for five minutes, so a build published a moment ago may not be listed yet.
+The index repeats each build's `platform` floor beside its digest and version, so a cluster can say
+which entries it cannot install without fetching them.
 
-A profile is one object for the whole cluster. When two tenants have the same app from a catalogue
-of the cluster and one moves to a new build, the other's install is still pinned to the old digest:
-the operator holds it as it is (`DigestMismatch` on its Component) and rolls nothing out for it until
-that tenant moves too. Publish a build that must coexist with the old one under a new name.
+A profile is one object for the whole cluster, and it is the newest build any tenant installed.
+Every build a tenant installed is kept beside it as a `ProfileBuild` (`builds/<profile>-<12 hex of
+the digest>.yaml` in the catalogue directory): a tenant pinned to another build than the profile's
+current one is rendered from its build, so two tenants on two builds of one app do not touch each
+other, and a tenant moved back to a build it ran finds it on the cluster without a fetch. What holds
+such an install is a companion the build brings that differs from the one on the cluster
+(`CompanionMismatch`): companions are one object per name, like the profile.
+
+A move is one guarded operation, whoever asks for it ([versioning.md](plans/versioning.md) §5):
+the app's data is exported first, to the platform's own storage; the new build rolls out; once its
+release is ready the profile's `restore.verify` command runs; a build that does not come up within
+fifteen minutes or does not verify is rolled back, and the instance runs the build it ran. The
+Component's `status.rollout` records the build it runs, the move's target, its phase and why it
+ended as it did; `kubectl gentian apps outdated` reads it for every tenant.
+
+Who may move an app is its update mode's to say: the cluster's policy on the claim
+(`spec.catalogue.updates`), an override per tenant and app (`kubectl gentian apps update-mode`),
+and a customization at L3 or above that carries upgrade risk, which puts the app on a manual move.
+Under `latest`, the default, the platform moves apps to the newest build their floor admits inside
+the cluster's window, one tenant first; under `manual` the cluster's administrator does
+(`kubectl gentian apps move-outdated`); under `tenant` the tenant's administrator may. A profile's
+floor is `spec.requires.platform`: a build whose floor is above this platform's version line is
+listed with the reason and not installed.
 
 ### What a newer build leaves behind
 
@@ -866,13 +875,13 @@ cannot be read owns nobody knows what, so nothing that names it is listed; and w
 retains could not be read, no profile is listed as unused. The list says which of the two it could
 not establish.
 
-**`IN EFFECT` is the one column that says a leftover still changes behaviour.** A client is configured
-from the first `OIDCPackCatalog` on the cluster that holds a pack under its client id, whoever
-brought the catalog, and an app's Composition reads the catalog that carries its profile's label. A
-leftover pack catalog is `YES` when it is the only one holding one of its client ids, or the only
-one labelled for an installed profile; `contested` when another catalog holds the same, and which
-is read is then not defined; `no` otherwise. Removing one that is in effect changes what the next
-sign-in client is given.
+**`IN EFFECT` is the one column that says a leftover still changes behaviour.** An app's clients are
+configured from the one `OIDCPackCatalog` that carries its profile's label (an extension's, from its
+parent profile's), and from no other. A leftover pack catalog is `YES` when it is the only one
+labelled for an installed profile; `contested` when another catalog carries the same label, and the
+profile's clients are then refused (the tenant's `IdentityReady` is `False`, `OIDCClientRefused`)
+until one of the two is removed; `no` otherwise. Removing one that is in effect changes what the
+next sign-in client is given.
 
 Removing asks for the name typed again, and removes exactly the one object named:
 
@@ -921,7 +930,8 @@ that composes an app, is named `app-<profile>`, is not `app-default` and is on t
 ## 7. What is checked, and what is not
 
 **The catalogue is not trusted.** It is a web server, possibly yours, possibly compromised — or a
-directory of the deployments repository, which is held to the same checks.
+registry, which is held to the same checks. That an
+artifact was read with a credential earns its bytes nothing.
 
 - **The digest pins the profile and its companions.** The director refuses bytes that do not hash to
   the digest the install named, and commits nothing. The operator checks again before every rollout:
@@ -956,10 +966,13 @@ directory of the deployments repository, which is held to the same checks.
   port 443, no user name or password, and a host that resolves to public addresses only. Loopback,
   private and link-local ranges, carrier-grade NAT, metadata addresses, and names inside a cluster
   (`*.svc`, `*.cluster.local`, single-label names) are refused. Redirects are not followed.
-- **A directory is checked**, when the catalogue is added and again on every read (§4.4): a
-  relative path of plain names inside the deployments repository, not the directory installed
-  profiles are written into, and no symbolic link on the way or at the end. A directory that
-  stops passing is not read, and the install or the listing answers `502` with the reason.
+- **An artifact is checked** (§4.4), when it is added and on every pull: its registry is a public host
+  on 443 as an address is; it lies inside a repository declared for the catalogue's owner, whose
+  credential is the only one it is read with; its token realm is of the registry's registrable
+  domain; a layer's redirect is followed to a public https host only and without the credential;
+  the manifest and the layer are held to their digests, and the tar to plain relative files within
+  the limits. One that stops passing is not read, and the listing or the install answers `502` with
+  the reason.
 - **A name is one profile.** A profile from a tenant's catalogue is refused when a profile of that
   name already exists from another origin — a catalogue of the cluster, another tenant's catalogue,
   or a component the platform ships (`desktop`, `concierge`, `admin-console`). The refusal says the
@@ -994,7 +1007,8 @@ above that start from a digest.
 
 ## 8. Private charts and images
 
-A catalogue at an address is public; the chart and the images need not be. Declare the registry for the tenant,
+A catalogue at an address is public; the chart and the images need not be, and neither need the
+catalogue when it is an artifact (§4.4), which may be in the same registry. Declare the registry for the tenant,
 then set its token:
 
 ```bash
@@ -1009,10 +1023,10 @@ they are done once by the tenant's administrator.
 
 ## 9. Current limits
 
-- **Public https addresses, or the cluster's own deployments repository.** A catalogue inside the
-  cluster, on a private network, on another port, or behind a redirect is not fetched from, and no
-  other git repository is read. A cluster that cannot reach the internet can install its own
-  profiles from a directory of its deployments repository (§4.4), where it reaches that repository.
+- **Public https addresses and public registries.** A catalogue or a registry inside the cluster, on
+  a private network, on another port, or behind a redirect (beyond a layer's, §4.4) is not fetched
+  from, and no git repository is read for a catalogue. What is private reaches a cluster through a
+  credential (§4.4), never through a private address.
 - **A tenant's own catalogue serves profiles only.** Companions (§2) come from a catalogue of the
   whole cluster. A tenant's own app that needs an OIDC pack, a Composition of its own or a sign-in
   handler has to be published in one.
@@ -1026,11 +1040,12 @@ they are done once by the tenant's administrator.
 - **The installer's default profile has no pin of its own.** It is placed at a stated digest and
   compared with its recorded bundle at rollout (§1), but no second place states that digest: a
   profile replaced together with its bundle is not noticed.
-- **No password-protected catalogues.** No credential is sent to a catalogue. Keep what is private in
-  the registry (§8); a profile that is itself private goes into the deployments repository (§4.4).
-- **A tenant's administrator has no private catalogue of their own.** A directory of the
-  deployments repository is declared by the cluster's administrator, also for one tenant.
-- **No proxy.** The director connects to the catalogue directly.
+- **A credential is sent to a catalogue only as an OCI artifact.** An https address is public, and no
+  credential is sent to one. A private catalogue is an artifact read with the credential of a
+  repository its owner declared (§4.4), for a tenant's administrator as for the cluster's.
+- **A cluster-wide catalogue artifact is read with a repository of the cluster's**, which only the
+  cluster's administrator declares; a tenant's repository is never used for it.
+- **No proxy.** The director connects to the catalogue and the registry directly.
 - **No console screen.** Catalogues are managed with the commands above.
 - **Profiles are not removed automatically.** A profile stays in `clusters/<cluster>/catalogue/`
   after the last uninstall, because the data of an uninstalled app is purged with its profile. Once

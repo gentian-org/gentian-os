@@ -12,6 +12,11 @@
   else (appLifecycle.audience). The API server does not accept that token,
   and the account's token for the API server is not mounted.
 
+  At the vault it holds one role, gentian-os-director, which reads repository
+  credentials and nothing else: a catalogue kept as an OCI artifact is pulled
+  with the credential of a repository its owner declared. It logs in with a
+  token issued for the vault's audience, which the API server does not accept.
+
   It holds no Keycloak credential. People, groups and the realm's settings are
   the registrar's (registrar.yaml), which holds the per-realm credential they
   need; nothing of it is mounted or named here.
@@ -248,6 +253,9 @@ spec:
               value: {{ $deployments.repo | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $deployments.cluster | quote }}
+            # The build this director is, for the cluster's settings answer.
+            - name: GENTIAN_BUILD
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
             # The operator's app-lifecycle API, beside this pod: the one
             # cluster question the director asks. A tenant's enforced
             # ceiling and the plans it may move to come from here; the plan
@@ -270,6 +278,28 @@ spec:
               value: /etc/gentian/signing/private.asc
             - name: DIRECTOR_GNUPGHOME
               value: /tmp/gentian-director-gnupg
+            {{- end }}
+            {{- if .Values.openbao.address }}
+            # The vault, for one thing: the credential of a repository a
+            # catalogue kept as an OCI artifact is read with
+            # (docs/custom-catalogues.md §4.5). The director logs in as
+            # itself, with a token issued for the vault's audience alone, to
+            # a role that reads repository credentials and nothing else
+            # (cluster-default, director-repository-read).
+            - name: DIRECTOR_BAO_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            - name: DIRECTOR_BAO_ROLE
+              value: {{ .Values.director.vaultRole | default "gentian-os-director" | quote }}
+            - name: DIRECTOR_BAO_TOKEN_FILE
+              value: /var/run/secrets/gentian/openbao/token
+            {{- if .Values.openbao.caSecret }}
+            - name: BAO_CACERT
+              value: /etc/gentian/openbao-ca/ca.crt
+            {{- else if not .Values.trustAnchorSecret }}
+            # Development only: no CA to verify the vault against.
+            - name: VAULT_SKIP_VERIFY
+              value: "true"
+            {{- end }}
             {{- end }}
             {{- /* The components that may commission organizations
                  (requires.services.organizations), each with the hash of
@@ -361,6 +391,16 @@ spec:
             - name: commission-keys
               mountPath: /etc/gentian/commission
               readOnly: true
+            {{- if .Values.openbao.address }}
+            - name: openbao-token
+              mountPath: /var/run/secrets/gentian/openbao
+              readOnly: true
+            {{- if .Values.openbao.caSecret }}
+            - name: openbao-ca
+              mountPath: /etc/gentian/openbao-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
             {{- if .Values.director.signingKeySecret }}
             - name: signing-key
               mountPath: /etc/gentian/signing
@@ -385,6 +425,26 @@ spec:
           configMap:
             name: director-commission-keys
             optional: true
+        {{- if .Values.openbao.address }}
+        # A token of this pod's ServiceAccount for the vault and for nothing
+        # else: the API server does not accept it, and the vault's role for
+        # the director asks for this audience.
+        - name: openbao-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.director.vaultAudience | default "vault://gentian-os-director" | quote }}
+                  expirationSeconds: 600
+                  path: token
+        {{- with .Values.openbao.caSecret }}
+        # The vault's CA certificate, which the installer copies into this
+        # namespace for the operator. Optional, so the pod starts without it.
+        - name: openbao-ca
+          secret:
+            secretName: {{ . | quote }}
+            optional: true
+        {{- end }}
+        {{- end }}
         {{- if .Values.director.signingKeySecret }}
         # Optional for the same reason as the git credential: B-10 writes the
         # key to the vault and External Secrets projects it, which may happen

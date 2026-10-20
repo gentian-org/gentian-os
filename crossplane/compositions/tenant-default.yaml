@@ -1252,6 +1252,47 @@ spec:
                   userinfo.token.claim: "false"
               providerConfigRef:
                 name: keycloak
+            {{- /* Who the person is, for the app: their groups of this realm,
+                 their address and their name, in the access token the app is
+                 handed. The exchange client has no default scope beyond
+                 basic, and the bouncer takes a token that names this one
+                 scope and no other, so what the app reads has to come from
+                 here. They are what the app learns of a person signing in to
+                 it directly, where the realm's default scopes give them: an
+                 editor check by group (a CMS's), and who did what. Into the
+                 access token only; the scope's name in it stays this one. The
+                 config is Keycloak's own for these mapper types, every key it
+                 writes back, so the provider does not update them forever. */}}
+            {{- range $m := (list
+                  (dict "name" "groups" "type" "oidc-group-membership-mapper" "config" (dict "claim.name" "groups" "full.path" "false" "multivalued" "true"))
+                  (dict "name" "email" "type" "oidc-usermodel-attribute-mapper" "config" (dict "claim.name" "email" "user.attribute" "email" "jsonType.label" "String"))
+                  (dict "name" "full name" "type" "oidc-full-name-mapper" "config" (dict))) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}-{{ $m.name | replace " " "-" }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}-{{ $m.name | replace " " "-" }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: {{ $m.name | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.type }}
+                config:
+                  {{- range $k, $v := $m.config }}
+                  {{ $k }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
 
@@ -1927,6 +1968,32 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
+            {{- /* The tenant's own groups, declared in git (spec.groups): plain
+                 groups, without the registrar's custom mark, so the console
+                 puts people in them and neither renames nor deletes them. */}}
+            {{- range $g := (dig "groups" list $spec) }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $g)) (not (hasPrefix "gentian" (toString $g))) }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-declared-group-{{ $g }}
+              name: {{ $tenant }}-group-{{ $g }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $g | quote }}
+                {{- /* The platform's mark, as on every group a Composition
+                     makes: a realm import does not make it again from a
+                     bundle, since this does. */}}
+                attributes:
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- if not $adoptsKernelRealm }}
 
             {{- /* ── the profile prompts a tenant user must not meet ───────────
@@ -2401,6 +2468,127 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── sign-in from another tenant ─────────────────────────────
+                 Another tenant of this cluster whose people sign in here
+                 (spec.signInFrom, with that tenant's spec.signInTo): an
+                 identity provider for its realm, and one mapper per group.
+
+                 The other realm's client, broker-to-<this tenant>, is that
+                 tenant's composite's (brokeredTo, projected by the operator):
+                 it checks a JWT this realm signs against this realm's keys,
+                 so no secret is made. The provider insists on one all the
+                 same, so a fixed word that is never sent fills it.
+
+                 The browser goes to the other realm's public address; the
+                 code is redeemed on the cluster's own network, as the kernel
+                 broker does, and the assertion names the realm's public
+                 issuer as its audience, which is what the other realm checks.
+
+                 The two realms are the cluster's own, administered by the
+                 same people, so their verified addresses are trusted
+                 (trustEmail) and the groups follow every sign-in (FORCE).
+                 An account already here under the same address is still
+                 linked only once its owner proves it: Keycloak's own
+                 first-broker-login flow, not the kernel broker's. Shown on
+                 the login page under the other tenant's name. */}}
+            {{- range $f := (dig "signInFrom" list $spec) }}
+            {{- if and $kd $kcInternal (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $f.tenant)) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $f.realm)) }}
+            {{- $srcIssuer := printf "https://id.%s/auth/realms/%s" $kd $f.realm }}
+            {{- $srcInternal := printf "%s/realms/%s" $kcInternal $f.realm }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-client
+              name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+                    namespace: {{ $identityNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: {{ $f.clientID | quote }}
+                    # Never sent: the client authenticates by a signed JWT.
+                    client_secret: private-key-jwt
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-signin-{{ $f.tenant }}-idp
+              annotations:
+                crossplane.io/external-name: {{ $f.alias }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-idp
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                alias: {{ $f.alias }}
+                displayName: {{ $f.displayName | quote }}
+                providerId: oidc
+                enabled: true
+                trustEmail: true
+                storeToken: false
+                hideOnLoginPage: false
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: FORCE
+                validateSignature: true
+                defaultScopes: openid profile email
+                issuer: {{ $srcIssuer | quote }}
+                authorizationUrl: {{ printf "%s/protocol/openid-connect/auth" $srcIssuer | quote }}
+                logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $srcIssuer | quote }}
+                tokenUrl: {{ printf "%s/protocol/openid-connect/token" $srcInternal | quote }}
+                jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $srcInternal | quote }}
+                userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $srcInternal | quote }}
+                extraConfig:
+                  clientAuthMethod: private_key_jwt
+                  clientAssertionAudience: {{ $srcIssuer | quote }}
+                clientIdSecretRef:
+                  name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-signin-{{ $f.tenant }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- range $i, $g := (default list $f.groups) }}
+            {{- if hasPrefix "/" (toString $g) }}
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-group-{{ $i }}
+              name: {{ $tenant }}-signin-{{ $f.tenant }}-group-{{ $i }}
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realm: {{ $realm }}
+                identityProviderAlias: {{ $f.alias }}
+                name: {{ printf "group %s" (trimPrefix "/" (toString $g)) | quote }}
+                identityProviderMapper: oidc-hardcoded-group-idp-mapper
+                extraConfig:
+                  syncMode: FORCE
+                  group: {{ $g | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* ── sign-up ──────────────────────────────────────────────
                  The registration flow of a tenant people sign up to. Its own
                  flow and not Keycloak's built-in one, which Keycloak refuses
@@ -2854,6 +3042,72 @@ spec:
                           namespace: {{ $identityNs }}
                           key: {{ $rm.passwordSecretRef.key | quote }}
                 {{- end }}
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* ── the realm holds a request to its parameter ──────────────
+                 An app's client may declare requires.services.identity.oidc.
+                 requestParameter: one parameter of its sign-ins and the one
+                 address a code for such a request is delivered to, computed
+                 from it. The client is then registered with https://* (app-
+                 default), and this is what narrows that again: a client
+                 policy of the realm whose one executor, gentian-request-
+                 bound-redirect from the platform's Keycloak extension, refuses
+                 every authorization request of such a client whose redirect_uri
+                 is not the address computed from its parameter. It reads the
+                 parameter, its pattern and the address from the client's own
+                 attributes, so the one profile and the one policy serve every
+                 app of the realm, and the condition picks the clients that
+                 carry gentianos.io/request-bound-redirect "true".
+
+                 app-default registers https://* only while the policy below
+                 reads Ready: a client is not open before the realm narrows it.
+                 It finds the policy by the two labels.
+
+                 Orphan, both: the realm keeps them as long as it exists, and
+                 the provider's read of either never reports one missing, so a
+                 delete would not finish. A realm without such a client runs
+                 the executor for nobody. */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: ClientPolicyProfile
+            metadata:
+              name: {{ $tenant }}-request-bound-redirect-profile
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-request-bound-redirect-profile
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: gentian-request-bound-redirect
+                description: "A client's code goes only to the address computed from its request parameter"
+                executor:
+                  - name: gentian-request-bound-redirect
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: ClientPolicyProfilePolicy
+            metadata:
+              name: {{ $tenant }}-request-bound-redirect-policy
+              labels:
+                gentianos.io/realm-rule: request-bound-redirect
+                gentianos.io/tenant-namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-request-bound-redirect-policy
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: gentian-request-bound-redirect
+                description: "The clients that declare a request parameter"
+                enabled: true
+                condition:
+                  - name: client-attributes
+                    configuration:
+                      attributes: '[{"key":"gentianos.io/request-bound-redirect","value":"true"}]'
+                profilesRefs:
+                  - name: {{ $tenant }}-request-bound-redirect-profile
               providerConfigRef:
                 name: keycloak
 

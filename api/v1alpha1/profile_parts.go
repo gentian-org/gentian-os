@@ -540,10 +540,116 @@ type OIDCClientSpec struct {
 	// +optional
 	DirectAccessGrantsEnabled bool `json:"directAccessGrantsEnabled,omitempty"`
 
+	// Audiences are names the access tokens of this client carry in aud,
+	// beside what Keycloak puts there itself: the name a service the app
+	// hands its tokens to checks for.
+	//
+	// It is a grant: a service that checks for a name accepts every token
+	// that carries it. So a name is the app's own -- the profile's name, a
+	// dash and a label of the app's choosing, e.g. "example-api" for the
+	// profile "example" -- and is never the name of anything else: not one
+	// beginning with "gentian", which is how the platform's own services are
+	// named, not a kernel service's or a Keycloak client's of the realm's own,
+	// and not another profile's (the operator holds an install that would).
+	// Each name is put in the access token alone, not in the ID token, by a
+	// mapper on this client that goes when the name is no longer declared.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	Audiences []TokenAudience `json:"audiences,omitempty"`
+
+	// RequestParameter binds an authorization-request parameter of this
+	// client's sign-ins to where the code is delivered, and puts it in the
+	// access token: for an app whose one client serves many places, each
+	// with a callback address of its own that is computed from the request.
+	// See OIDCRequestParameterSpec.
+	// +optional
+	RequestParameter *OIDCRequestParameterSpec `json:"requestParameter,omitempty"`
+
 	// OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
+}
+
+// TokenAudience is a name an app's access tokens carry in aud: one DNS label,
+// and none of the platform's own (see OIDCClientSpec.Audiences).
+//
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="an audience may not begin with gentian: the platform's own services are named so, and a token naming one would be accepted by it"
+type TokenAudience string
+
+// OIDCRequestParameterSpec declares one parameter the app sends on its
+// authorization requests, what it may be, and the one address the code for
+// such a request may be delivered to, computed from it:
+//
+//	requestParameter:
+//	  name: tenant_url
+//	  pattern: 'https://(?<host>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+)'
+//	  redirectUri: 'https://store.${host}/oauth/callback'
+//	  claim: tenant_url
+//
+// The realm then, for this client:
+//
+//   - refuses an authorization request, with an error page and no redirect,
+//     unless it carries the parameter once, the value matches the pattern as
+//     a whole, and redirect_uri is, character for character, redirectUri
+//     with each ${group} replaced by that named group of the match. A
+//     request object or a pushed request is refused too: what it carries is
+//     not what was checked;
+//   - accepts any https redirect address for it otherwise -- the client is
+//     registered with https://* and narrowed by that refusal, which is
+//     registered first: until the realm has the refusal, the client has no
+//     such address;
+//   - puts the value in the access token as claim, at the exchange of a code
+//     only, and only when the redirect_uri of that exchange -- which the
+//     realm has checked is the code's -- is the one computed from the value.
+//     A token got any other way, by a refresh among them, does not carry it,
+//     so the client is issued no refresh token.
+//
+// Both halves are the platform's Keycloak extension (gentian-request-bound-
+// redirect, gentian-request-parameter-mapper), and both fail closed: an
+// extension that is not there issues no token with the claim, and a service
+// that requires the claim then accepts none.
+//
+// The pattern is a regular expression in the syntax Go and Java share --
+// named groups as (?<name>...), no back-references, no look-around -- and is
+// matched against at most 512 characters, with a bound on the work.
+//
+type OIDCRequestParameterSpec struct {
+	// Name is the parameter, as the app sends it on the authorization request.
+	// Not one of OAuth's or OpenID Connect's own: the operator holds an
+	// install that names one.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]*$`
+	Name string `json:"name"`
+
+	// Pattern is what the value must be, matched as a whole.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Pattern string `json:"pattern"`
+
+	// RedirectURI is the one address a code for the request is delivered to:
+	// https, with at least one ${group} for a named group of the pattern's
+	// match, and no wildcard, query or fragment.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^https://[^*?#\s]*\$\{[^*?#\s]+$`
+	RedirectURI string `json:"redirectUri"`
+
+	// Claim is the access-token claim the value is put in. Omitted, the
+	// value is checked and bound to the redirect address but not put in the
+	// token. Not a claim Keycloak or JWT already gives a meaning: the
+	// operator holds an install that names one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]*$`
+	Claim string `json:"claim,omitempty"`
 }
 
 // BackchannelLogoutSpec declares where an app with its own OIDC client is
@@ -1011,6 +1117,12 @@ type PlatformValueMapping struct {
 	// +optional
 	DefaultLanguageKey string `json:"defaultLanguageKey,omitempty"`
 
+	// CountryKey receives the tenant's country (spec.country), an ISO 3166-1
+	// alpha-2 code in upper case, and the empty string while the tenant names
+	// none.
+	// +optional
+	CountryKey string `json:"countryKey,omitempty"`
+
 	// HostKey receives the host this component answers on in its zone: the
 	// host of its first gateway entry, as the operator routes it. A component
 	// that has to spell its own address -- a redirect address it states to a
@@ -1223,6 +1335,15 @@ type IMAPValueMapping struct {
 	PortKey string `json:"portKey,omitempty"`
 }
 
+// SidecarValueMapping maps what the platform granted a sidecar to keys of the
+// sidecar's chart.
+type SidecarValueMapping struct {
+	// OIDC maps the sidecar's OIDC client to Helm keys, as the app's own
+	// valueMapping.oidc does.
+	// +optional
+	OIDC *OIDCValueMapping `json:"oidc,omitempty"`
+}
+
 // AppSidecarSpec declares a companion service deployed alongside the primary
 // app by a purpose-built composition (for example a sidecar with its own ingress).
 type AppSidecarSpec struct {
@@ -1239,6 +1360,13 @@ type AppSidecarSpec struct {
 	// ServiceRequirements declares kernel services the sidecar needs.
 	// +optional
 	ServiceRequirements *ServiceRequirements `json:"kernelRequirements,omitempty"`
+
+	// ValueMapping places what the platform granted the sidecar into its
+	// chart's values, as package.valueMapping does for the app. Only OIDC: the
+	// client kernelRequirements.identity.oidc asks for, read from
+	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/oidc.
+	// +optional
+	ValueMapping *SidecarValueMapping `json:"valueMapping,omitempty"`
 
 	// AppSecrets are sidecar-internal secrets stored at
 	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.
@@ -1702,6 +1830,37 @@ type ContractRef struct {
 	// Protocol is the technical protocol used (e.g., "http-json", "webdav").
 	// +optional
 	Protocol string `json:"protocol,omitempty"`
+
+	// Endpoint is where this component answers the contract in the tenant's
+	// namespace. The platform knows nothing of what is asked there; it only
+	// tells a granted consumer the address, and opens the way to that one
+	// port. Without it a granted consumer is told no address, and the way is
+	// to the provider's pods as a whole.
+	// +optional
+	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+}
+
+// ContractEndpoint is the Service and port a provider answers a contract on.
+type ContractEndpoint struct {
+	// Service is the provider's Service, in the namespace it is installed in.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z]([-a-z0-9]*[a-z0-9])?$`
+	Service string `json:"service"`
+
+	// Port is the Service's port, and must be the port the provider's pods
+	// listen on: a network policy matches the port a pod listens on, and
+	// the way it opens is to this port and no other.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Path is appended to the address the consumer is told, for an API
+	// served below the root.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	Path string `json:"path,omitempty"`
 }
 
 // IntegrationRef identifies an optional integration contract this app can consume.

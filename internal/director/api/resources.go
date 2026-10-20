@@ -317,6 +317,33 @@ func (s *Server) setTenantLocales(w http.ResponseWriter, r *http.Request, c call
 	s.written(w, r, res, err)
 }
 
+// tenantCountry answers the tenant's country, from git; "" when it names none.
+func (s *Server) tenantCountry(w http.ResponseWriter, r *http.Request, _ call) {
+	country, err := s.cfg.Repo.TenantCountry(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "country": country})
+}
+
+// setTenantCountry commits it. An empty country removes it.
+func (s *Server) setTenantCountry(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Country *string `json:"country"`
+	}
+	if err := decode(r, &body); err != nil || body.Country == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"country": "CH"}, or {"country": ""} for none`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantCountry(r.Context(), r.PathValue("t"), *body.Country, c.meta)
+	if errors.Is(err, gitops.ErrInvalidCountry) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
 // setTenantSecurityPolicy commits it.
 func (s *Server) setTenantSecurityPolicy(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.SecurityPolicy

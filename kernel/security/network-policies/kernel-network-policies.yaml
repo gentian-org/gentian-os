@@ -81,6 +81,13 @@ spec:
           kubernetes.io/metadata.name: kernel-control
       podSelector:
         matchLabels:
+          app.kubernetes.io/component: director
+          app.kubernetes.io/name: gentian-os
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-control
+      podSelector:
+        matchLabels:
           app.kubernetes.io/component: operator
           app.kubernetes.io/name: gentian-os
     - namespaceSelector:

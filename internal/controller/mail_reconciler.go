@@ -1594,8 +1594,8 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 	type need struct{ smtp, imap bool }
 	needs := map[string]need{}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

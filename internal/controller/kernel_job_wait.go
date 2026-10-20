@@ -53,9 +53,10 @@ func crossplaneObjectReady(obj *unstructured.Unstructured) bool {
 }
 
 // waitForProvisioningJob returns true when a Crossplane-owned provisioning Job
-// has completed successfully, in whichever platform namespace its function put it. When the Batch Job was removed
-// by TTL after success, the corresponding kubernetes.crossplane.io/Object MR is
-// consulted so tenants do not stay stuck in Provisioning.
+// has completed successfully, in whichever platform namespace its function put it. When the Batch Job is not
+// there — retired for a changed script and not made again yet — the
+// corresponding kubernetes.crossplane.io/Object MR is consulted so tenants do
+// not stay stuck in Provisioning.
 func (r *TenantReconciler) waitForProvisioningJob(ctx context.Context, tenantName, jobName string) (bool, error) {
 	job, err := r.getProvisioningJob(ctx, jobName)
 	if err == nil {

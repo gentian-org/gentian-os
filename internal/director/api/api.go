@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/platformversion"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
@@ -58,6 +60,7 @@ type Repository interface {
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
+	Tenants(ctx context.Context) ([]string, error)
 	IsPlatformTenant(ctx context.Context, tenant string) (bool, error)
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
@@ -75,6 +78,10 @@ type Repository interface {
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
+	TenantGroups(ctx context.Context, tenant string) ([]string, error)
+	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
+	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
+	SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
@@ -91,6 +98,9 @@ type Repository interface {
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
 	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta gitops.Meta) (gitops.Result, error)
 	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
+	BuildOnCluster(ctx context.Context, name, digest string) (gitops.StoredBuild, bool, error)
+	UpdatePolicy(ctx context.Context) (gitops.UpdatePolicy, error)
+	SetAppUpdateMode(ctx context.Context, tenant, profile, mode string, meta gitops.Meta) (gitops.Result, error)
 	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
@@ -98,10 +108,13 @@ type Repository interface {
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
 	AddClusterCatalogueSource(ctx context.Context, name, address string, meta gitops.Meta) (gitops.Result, error)
-	AddClusterCatalogueDirectory(ctx context.Context, name, dir string, meta gitops.Meta) (gitops.Result, error)
 	RemoveClusterCatalogueSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
-	AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta gitops.Meta) (gitops.Result, error)
+	AddClusterCatalogueOCI(ctx context.Context, name string, oci gitops.CatalogueOCI, meta gitops.Meta) (gitops.Result, error)
+	AddTenantCatalogueOCI(ctx context.Context, tenant, name string, oci gitops.CatalogueOCI, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	// RegistryRepository answers a repository owner declared ("" for the
+	// cluster), as a catalogue kept as an OCI artifact is read with it.
+	RegistryRepository(ctx context.Context, owner, name string) (catalogue.DeclaredRegistry, error)
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
@@ -110,6 +123,8 @@ type Repository interface {
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
 	TenantLocales(ctx context.Context, tenant string) ([]string, error)
 	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
+	TenantCountry(ctx context.Context, tenant string) (string, error)
+	SetTenantCountry(ctx context.Context, tenant, country string, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
@@ -149,8 +164,11 @@ type Lifecycle interface {
 
 // Config assembles a Server.
 type Config struct {
-	Authn Authenticator
-	Authz authz.Checker
+	// UpdaterOff keeps the platform's own mover (updater.go) from running:
+	// a test, or a cluster whose administrator moves everything by hand.
+	UpdaterOff bool
+	Authn      Authenticator
+	Authz      authz.Checker
 	// Viewer reads who holds what, for the console's read-only authorization
 	// view. Optional: without it the routes do not exist, which a console
 	// shows as the screen being unavailable rather than as an error on a
@@ -213,6 +231,7 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, mux: http.NewServeMux()}
 	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
+	s.startUpdater()
 	return s, nil
 }
 
@@ -415,6 +434,8 @@ func (s *Server) routes() {
 	// may see a tenant may see what it has installed, whether or not they may
 	// change it.
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
+	// The same report for one tenant: what of its apps is behind, and why.
+	s.guarded("GET /v1/tenants/{t}/updates", "can_view", tenantObject, s.updatesForTenant)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
 	// The catalogues a tenant sees (AD-14): the cluster's and its own.
@@ -450,6 +471,16 @@ func (s *Server) routes() {
 		// Every change is a commit to the claim in git with the person as its
 		// author, and the operator acts on it from there.
 		s.guarded("GET /v1/clusters/{c}/settings", "can_audit", s.clusterObject, s.clusterSettings)
+
+		// Which installed apps are behind the build their catalogue offers,
+		// and what keeps them there (updates.go); the move of all or some of
+		// them to the newest build; and a tenant's override of how an app
+		// moves. The report is the auditor's; the move and the override are
+		// the cluster administrator's, under /v1/clusters so that a tenant's
+		// administrator cannot give themselves the tenant mode.
+		s.guarded("GET /v1/clusters/{c}/updates", "can_audit", s.clusterObject, s.updatesForCluster)
+		s.action("POST /v1/clusters/{c}/actions/move-outdated", "can_configure", s.clusterObject, s.moveOutdated)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/apps/{p}/update-mode", "can_configure", s.clusterObject, s.setAppUpdateMode)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
 		// The brand every page shows: read like a setting, written like one.
 		// The pages themselves read what the operator publishes from it,
@@ -476,6 +507,13 @@ func (s *Server) routes() {
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// A tenant's own groups, and who signs in to it from another tenant
+		// (tenant_sign_in.go).
+		s.guarded("GET /v1/clusters/{c}/tenants/{t}/groups", "can_audit", s.clusterObject, s.tenantGroups)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/groups", "can_configure", s.clusterObject, s.setTenantGroups)
+		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
 		// A second address for one published surface, directly under the
 		// cluster's own domain. can_configure, and not the tenant's
 		// approver: a name under the cluster's domain is the cluster's to
@@ -735,6 +773,12 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/tenants/{t}/locales", "can_view", tenantObject, s.tenantLocales)
 		s.guarded("PUT /v1/tenants/{t}/locales", "can_set_policy", tenantObject, s.setTenantLocales)
 
+		// The country the tenant is in, beside its languages and changed by
+		// the same people. Declared in the manifest; a component whose
+		// profile names countryKey is told it.
+		s.guarded("GET /v1/tenants/{t}/country", "can_view", tenantObject, s.tenantCountry)
+		s.guarded("PUT /v1/tenants/{t}/country", "can_set_policy", tenantObject, s.setTenantCountry)
+
 		// The privileges this tenant's components asked for and what was
 		// answered. A profile declaring a privilege is a request (AD-5); the
 		// component waits until somebody answers, so these three routes are
@@ -942,6 +986,24 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if !ok {
 		return
 	}
+	// An app already installed at another build is being MOVED, and who
+	// may move it is the app's update mode's to say (updates.go): under
+	// tenant mode whoever may install here, otherwise the cluster's
+	// administrator. Asked before anything is fetched or written.
+	if body.Digest != "" {
+		apps, err := s.cfg.Repo.Apps(ctx, tenant)
+		if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+			s.repoError(w, r, err)
+			return
+		}
+		for _, app := range apps {
+			if app.Profile == profile && app.Digest != "" && app.Digest != body.Digest {
+				if !s.moveAllowed(w, r, c, tenant, app) {
+					return
+				}
+			}
+		}
+	}
 	catalogueName := ""
 	if source != nil {
 		catalogueName = source.Name
@@ -989,8 +1051,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	if source != nil {
-		fetched, ok := s.fetchEntry(w, r, *source, entry, body.Digest)
+		fetched, ok := s.fetchOrStored(w, r, *source, tenant, entry, body.Digest)
 		if !ok {
+			return
+		}
+		if s.refusedByFloor(w, r, fetched, "app "+body.Coordinate) {
 			return
 		}
 		if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
@@ -1194,15 +1259,6 @@ func (s *Server) fetchEntry(
 		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
 			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
 		return nil, false
-	case errors.Is(err, gitops.ErrCatalogueDirectoryRefused):
-		// The directory was one a catalogue is read from when it was added,
-		// and what is there now is not: a symbolic link, or a name that is
-		// not a plain file's.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue's directory is not one a catalogue is read from",
-			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the directory of catalogue "+source.Name+
-			" in the deployments repository is not one a catalogue is read from: "+refusedDirectory(err)+"; nothing was installed")
-		return nil, false
 	case errors.Is(err, profilebundle.ErrRefused):
 		// The build that was asked for, and not something this cluster
 		// applies: a kind a bundle may not hold, an object that is not this
@@ -1219,6 +1275,51 @@ func (s *Server) fetchEntry(
 		return nil, false
 	}
 	return profile, true
+}
+
+// fetchOrStored is fetchEntry, except for a build the cluster already holds
+// under builds/ of its catalogue directory: that one is read from there and
+// not fetched, so a tenant can be moved back to a build the source no longer
+// serves. Held to the same digest and the same checks; the source is asked
+// only for a build the cluster does not have.
+func (s *Server) fetchOrStored(
+	w http.ResponseWriter, r *http.Request, source visibleSource, tenant, name, digest string,
+) (*catalogue.Profile, bool) {
+	stored, found, err := s.cfg.Repo.BuildOnCluster(r.Context(), name, digest)
+	if err != nil {
+		s.cfg.Log.WarnContext(r.Context(), "a stored build could not be read; fetching instead",
+			"request_id", reqID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
+	}
+	// Only a build this very catalogue brought: one another tenant's own
+	// catalogue stored is not this tenant's to install by naming its digest.
+	if err == nil && found && stored.Origin == source.origin(tenant) {
+		profile, err := catalogue.FromStored(stored.Body, name, digest, source.Key)
+		if err == nil {
+			return profile, true
+		}
+		s.cfg.Log.WarnContext(r.Context(), "a stored build is not one this cluster installs; fetching instead",
+			"request_id", reqID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
+	}
+	return s.fetchEntry(w, r, source, name, digest)
+}
+
+// refusedByFloor refuses a fetched build whose spec.requires.platform is
+// above this platform's version line, and reports that it did. Asked of
+// the bundle itself, after the digest and before anything is written: the
+// index repeats the floor so a listing can say it, but what an install is
+// held to is what the build states.
+func (s *Server) refusedByFloor(w http.ResponseWriter, r *http.Request, fetched *catalogue.Profile, what string) bool {
+	floor := ""
+	if fetched.Definition != nil && fetched.Definition.Spec.Requires != nil {
+		floor = fetched.Definition.Spec.Requires.Platform
+	}
+	unmet := platformversion.Unmet(floor)
+	if unmet == "" {
+		return false
+	}
+	s.fail(w, r, http.StatusUnprocessableEntity, what+" "+unmet+
+		"; move the platform forward first, or install a build whose floor this cluster meets. Nothing was installed")
+	return true
 }
 
 // commitEntry commits a fetched and verified bundle beside its profile,
@@ -1484,6 +1585,9 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 			if !ok {
 				return
 			}
+			if s.refusedByFloor(w, r, bundle, "add-on "+entry.Coordinate) {
+				return
+			}
 			if why := fetchedTakesReservedAddress(bundle.Definition, sources[i].origin(tenant), zone); why != "" {
 				s.refuseReservedAddress(w, r, tenant, "add-on "+entry.Name, why)
 				return
@@ -1556,16 +1660,16 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 // buildCommit is the commit this binary was built from, or "" when the build
 // recorded none (sources built without their git history).
 func buildCommit() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ""
-	}
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				return setting.Value
+			}
 		}
 	}
-	return ""
+	// An image built without the repository's history carries no revision;
+	// the chart then names the build by the image tag it renders.
+	return os.Getenv("GENTIAN_BUILD")
 }
 
 func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {
@@ -1587,7 +1691,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, `+
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", `+
 			`"brokeredTo": [{"name": "<name>", "redirectURI": "https://…", "jwksURL": "https://…"}]`)
 		return
 	}
@@ -1602,6 +1706,12 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
 		return
 	}
+	country, err := gitops.NormaliseCountry(body.Country)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.Country = country
 	// Whether its administrators approve its public addresses is the
 	// request's to say. Unsaid it is off, except for the user tenant of a
 	// single-tenancy cluster (gitops.AdminsApproveAtCreation). Settled here
@@ -1626,7 +1736,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo)}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo), "country": body.Country}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return

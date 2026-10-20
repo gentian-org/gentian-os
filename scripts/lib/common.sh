@@ -1770,8 +1770,8 @@ cleanup_orphaned_kyverno_webhooks() {
 # Globbing committed kernel/services/*/manifests/${env}/release.yaml files
 # (as the deleted update.sh --reconcile-releases did) misses most Release
 # CRs in this cluster: they are Crossplane-composition-generated (owned by
-# XApp/XInfraData/XSuze, e.g. Keycloak, OpenFGA, infra-{mariadb,minio,
-# postgresql,redis}), which a file-globbing approach can't see at all.
+# XApp/XCluster, e.g. the system tier's mariadb, redis and seaweedfs), which
+# a file-globbing approach can't see at all.
 # This checks live Release objects directly instead, regardless of how
 # they were created, and force-reconciles (annotate + let Crossplane retry)
 # any genuinely in Helm's "failed" state. Safe to call unconditionally —
@@ -2504,7 +2504,6 @@ gentian_claim_name() {
 }
 
 gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
-gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 
 # =============================================================================
 # resolve_gentian_os_branch — the git ref every in-cluster Application tracks

@@ -84,6 +84,10 @@ case "${verb}:${kind}" in
         case "${jsonpath}" in
             *server*insecure*|*diff*server*side*) printf 'true' ;;
             *subjects*) printf '%s' "${GITOPS_NS}" ;;
+            # The versions check() compares with the pins: an installed Argo
+            # CD at the pinned manifest, the updater at the pinned chart.
+            *containers*image*) printf 'quay.io/argoproj/argocd:%s' "${ARGOCD_PIN}" ;;
+            *helm*chart*) printf 'argocd-image-updater-%s' "${UPDATER_PIN}" ;;
             *) echo "deployment.apps/argocd-image-updater" ;;
         esac ;;
     *)
@@ -95,6 +99,11 @@ chmod +x "${BIN}/kubectl"
 
 TOKEN="s3cr3t-token-value-ZZZ"
 URL="https://git.example.domain/acme/deployments"
+# What the stub answers for the installed versions: the pins themselves, so
+# the fixture is "installed as pinned" and moves with versions.yaml.
+ARGOCD_PIN="$(awk '/^argocd:/{f=1} f && /^  manifest:/{gsub(/"/,"",$2); print $2; exit}' versions.yaml)"
+UPDATER_PIN="$(awk '/^argocd:/{f=1} f && /^  imageUpdaterChart:/{gsub(/"/,"",$2); print $2; exit}' versions.yaml)"
+export ARGOCD_PIN UPDATER_PIN
 
 new_state() {
     STATE="$(mktemp -d "${SANDBOX}/state.XXXXXX")"
@@ -108,7 +117,8 @@ run() {
     local step="$1" script="$2"; shift 2
     # shellcheck disable=SC2016 # the inner script is for the child shell to expand
     env -i HOME="${SANDBOX}/home" PATH="${BIN}:${PATH}" SCRIPT_DIR="${REPO}" STATE="${STATE}" \
-        GITOPS_NS="kernel-gitops" STEP="${step}" SCRIPT="${script}" "$@" \
+        GITOPS_NS="kernel-gitops" ARGOCD_PIN="${ARGOCD_PIN}" UPDATER_PIN="${UPDATER_PIN}" \
+        STEP="${step}" SCRIPT="${script}" "$@" \
         bash -c '
             source "${SCRIPT_DIR}/scripts/lib/load.sh" >/dev/null 2>&1
             source "${SCRIPT_DIR}/scripts/lib/driver.sh"

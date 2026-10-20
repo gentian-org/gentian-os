@@ -596,5 +596,35 @@ request_argo_sync_if_stalled() {
 }
 
 # =============================================================================
+# argo_operator_kind_apps <argocd_namespace>
+#
+# The Applications that sync kinds the operator chart defines (gentianos.io
+# CRDs, which arrive with D-01): those the gentian-catalogue and
+# gentian-tenants ApplicationSets generate -- ComponentProfiles and Tenants --
+# and any other that lists a gentianos.io resource. Their ApplicationSets are
+# C-02's, so on a fresh install their first syncs run before the CRDs exist,
+# fail with `<Kind>.gentianos.io "" not found`, spend their retries and are
+# never tried again by automated sync. D-01 and E-05 ask for them again.
+# =============================================================================
+argo_operator_kind_apps() {
+    kubectl get applications -n "$1" -o json 2>/dev/null |
+        jq -r '.items[]
+            | select(any(.metadata.ownerReferences[]?; .kind == "ApplicationSet"
+                         and (.name == "gentian-catalogue" or .name == "gentian-tenants"))
+                     or any(.status.resources[]?; .group == "gentianos.io"))
+            | .metadata.name' 2>/dev/null || true
+}
+
+# resync_operator_kind_apps <argocd_namespace> — ask again for every one of
+# them whose last sync failed and whose retries are spent. Leaves a running or
+# healthy one alone (request_argo_sync_if_stalled).
+resync_operator_kind_apps() {
+    local ns="$1" app
+    for app in $(argo_operator_kind_apps "${ns}"); do
+        request_argo_sync_if_stalled "${ns}" "${app}" || true
+    done
+}
+
+# =============================================================================
 # Summary — portal admin credentials for install output
 # =============================================================================

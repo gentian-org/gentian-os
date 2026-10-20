@@ -64,6 +64,10 @@ type IndexEntry struct {
 	// the build an install from this listing asks for. The trust in it is
 	// the Cluster claim naming the source.
 	Digest string `json:"digest,omitempty"`
+	// Platform is the build's spec.requires.platform, repeated here so a
+	// listing can say which entries this cluster cannot install without a
+	// fetch. The bundle's own value is what an install is held to.
+	Platform string `json:"platform,omitempty"`
 }
 
 // Index is what a source says it holds.
@@ -96,9 +100,12 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 		return Listing{}, fmt.Errorf("%w: this director fetches from no catalogue", ErrNotFound)
 	}
 	// By the catalogue and by where it is read from: a catalogue removed and
-	// added again at another address, or in another directory, is another
+	// added again at another address, or as another artifact, is another
 	// catalogue under the same name.
-	key := src.Key + "\n" + src.URL + "\n" + src.Dir
+	key := src.Key + "\n" + src.URL
+	if src.OCI != nil {
+		key += "\n" + ociKey(src)
+	}
 	if cached, ok := f.cached(key); ok {
 		return serve(cached), nil
 	}

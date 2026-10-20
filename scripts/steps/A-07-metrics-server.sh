@@ -11,12 +11,29 @@
 # (k3s, managed clusters) is left alone.
 
 check() {
+    _a07_served || return 1
+    # The platform's own release, where there is one, is at the pinned chart;
+    # a cluster behind the pin is upgraded by a re-run. A metrics-server the
+    # platform did not install (k3s, a managed cluster) has no release here
+    # and is left alone.
+    # Asked of Kubernetes, not of helm, which the driver does not configure
+    # for check(): the chart labels the Deployment it renders with its own
+    # name and version (helm.sh/chart), which is the release's version too.
+    local chart
+    chart="$(kubectl get deployment metrics-server -n kube-system -o jsonpath='{.metadata.labels.helm\.sh/chart}' 2>/dev/null)"
+    if [[ -n "${chart}" ]]; then
+        [[ "${chart}" == "metrics-server-$(gentian_pin metrics-server chart)" ]] || return 1
+    fi
+    return 0
+}
+
+_a07_served() {
     kubectl get apiservice v1beta1.metrics.k8s.io -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null | grep -q True
 }
 
 apply() {
     banner "metrics-server"
-    if check; then
+    if _a07_served && [[ -z "$(kubectl get deployment metrics-server -n kube-system -o jsonpath='{.metadata.labels.helm\.sh/chart}' 2>/dev/null)" ]]; then
         success "metrics.k8s.io is already served; leaving the platform's metrics-server alone."
         return 0
     fi

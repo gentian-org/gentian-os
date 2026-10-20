@@ -11,8 +11,10 @@ SPDX-License-Identifier: MPL-2.0
 package netpolicy
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -33,6 +35,9 @@ const RegistrarPort = int32(9445)
 // Both are needed. A tenant's namespace is closed in both directions
 // (BaselineNetworkPolicy), so the consumer's way out alone reaches a provider
 // that does not answer.
+//
+// Where the binding carries the provider's endpoint, both are to its port
+// only; without one, to the provider's pods as a whole.
 //
 // The pods are selected by what each app's delivery puts on them, which the
 // caller knows and this package does not (selectors); an app it names nothing
@@ -68,6 +73,15 @@ func ContractNetworkPolicies(
 	}
 	consumerPods, providerPods := selector(consumer), selector(provider)
 
+	// Where the provider names the port it answers the contract on, the
+	// way is to that port and no other of its pods.
+	var ports []networkingv1.NetworkPolicyPort
+	if e := binding.Spec.Endpoint; e != nil && e.Port > 0 {
+		tcp := corev1.ProtocolTCP
+		port := intstr.FromInt32(e.Port)
+		ports = []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}}
+	}
+
 	return []*networkingv1.NetworkPolicy{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: contractPolicyName(binding.Name), Namespace: binding.Namespace, Labels: labels},
@@ -75,7 +89,8 @@ func ContractNetworkPolicies(
 				PodSelector: consumerPods,
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 				Egress: []networkingv1.NetworkPolicyEgressRule{{
-					To: []networkingv1.NetworkPolicyPeer{{PodSelector: &providerPods}},
+					To:    []networkingv1.NetworkPolicyPeer{{PodSelector: &providerPods}},
+					Ports: ports,
 				}},
 			},
 		},
@@ -85,7 +100,8 @@ func ContractNetworkPolicies(
 				PodSelector: providerPods,
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
 				Ingress: []networkingv1.NetworkPolicyIngressRule{{
-					From: []networkingv1.NetworkPolicyPeer{{PodSelector: &consumerPods}},
+					From:  []networkingv1.NetworkPolicyPeer{{PodSelector: &consumerPods}},
+					Ports: ports,
 				}},
 			},
 		},

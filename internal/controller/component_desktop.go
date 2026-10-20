@@ -104,6 +104,8 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		// slice, so the index is safe: a tenant declaring nothing gets the
 		// platform's first language.
 		m.DefaultLanguageKey: locales.Normalise(tenant.Spec.Locales)[0],
+		// The tenant's country, or "" while it names none.
+		m.CountryKey: tenant.Spec.Country,
 	} {
 		if key != "" {
 			setPath(out, key, value)
@@ -590,7 +592,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if !wanted {
 			continue
 		}
-		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil, moveRecord{}); err != nil {
 			return err
 		}
 	}
@@ -651,7 +653,8 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 			return err
 		}
 		wanted[profileName] = struct{}{}
-		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, activePins(app), app.Config); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, activePins(app), app.Config,
+			moveRecord{at: app.MovedAt, by: app.MovedBy}); err != nil {
 			return err
 		}
 		for _, addon := range app.Addons {
@@ -659,7 +662,7 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 				continue
 			}
 			wanted[addon] = struct{}{}
-			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, app.PinOf(addon), nil, nil, nil); err != nil {
+			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, app.PinOf(addon), nil, nil, nil, moveRecord{}); err != nil {
 				return err
 			}
 		}
@@ -721,9 +724,14 @@ func (r *TenantReconciler) installClass(ctx context.Context, profileName string)
 // ensureComponent keeps one Component of the tenant: named after its profile,
 // of the class its profile is certified for (installClass), carrying what the
 // Tenant says about that install.
+// moveRecord is who or what moved an install's pin, and when, as the
+// tenant's manifest records it.
+type moveRecord struct{ at, by string }
+
 func (r *TenantReconciler) ensureComponent(
 	ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName, origin, digest string,
 	addons []string, addonPins []gentianov1alpha1.AddonPin, config *gentianov1alpha1.TenantAppConfig,
+	moved moveRecord,
 ) error {
 	class, profileKnown, err := r.installClass(ctx, profileName)
 	if err != nil {
@@ -752,6 +760,8 @@ func (r *TenantReconciler) ensureComponent(
 			Config:     config,
 			Privileges: tenantPrivilegeGrants(tenant, profileName),
 			Exposures:  tenantExposures(tenant, profileName),
+			MovedAt:    moved.at,
+			MovedBy:    moved.by,
 		},
 	}
 	if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
@@ -807,6 +817,11 @@ func (r *TenantReconciler) ensureComponent(
 	if existing.Spec.ProfileRef.Digest != digest {
 		// The build the install is pinned to, as the Tenant records it.
 		existing.Spec.ProfileRef.Digest = digest
+		changed = true
+	}
+	if existing.Spec.MovedAt != moved.at || existing.Spec.MovedBy != moved.by {
+		// With the pin: the request the Component's rollout answers.
+		existing.Spec.MovedAt, existing.Spec.MovedBy = moved.at, moved.by
 		changed = true
 	}
 	if !equality.Semantic.DeepEqual(existing.Spec.Privileges, desired.Spec.Privileges) {

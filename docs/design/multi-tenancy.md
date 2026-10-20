@@ -293,7 +293,7 @@ NetworkPolicies enforce three rules at the CNI level:
 
 ## 5. Identity and OIDC Trust Chain
 
-**Suze** (Keycloak + OpenFGA) is the **single trust anchor** on new installs.
+**Keycloak + OpenFGA** are the **single trust anchor** on new installs.
 Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
 against that realm, and its people sign in there too: the edge in front of a
 tenant's desktop sends the browser to the tenant realm, and the concierge
@@ -311,7 +311,7 @@ Every tenant is identified by a pair that must be kept in 1:1 correspondence:
 Keycloak realm <tenant>   ↔   namespace tenant-<tenant>
 ```
 
-On the Suze path, users live in the **tenant realm**.
+Users live in the **tenant realm**.
 
 Breaking realm ↔ namespace correspondence is a configuration error and must never occur.
 
@@ -355,8 +355,8 @@ Three roles, three scopes:
 
 | Role | Primary scope | Can do | Cannot do |
 |---|---|---|---|
-| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogues: at a public address, or kept in the cluster's deployments repository, for every tenant or for one | Perform tenant business actions, bypass GitOps in prod for tenant changes |
-| **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy, declare a catalogue kept in the deployments repository |
+| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogues: at a public address, or as an OCI artifact, for every tenant or for one | Perform tenant business actions, bypass GitOps in prod for tenant changes |
+| **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy |
 | **Tenant user** | Day-to-day app use | Use installed apps via SSO, consume integrations | Install/uninstall apps, modify tenant manifest, see admin surfaces |
 
 ### 8.1 Admin / User Separation of Duties

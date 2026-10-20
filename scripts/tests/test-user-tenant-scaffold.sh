@@ -255,7 +255,7 @@ expect "multi: the tenant admin is named" "${out}" "tenant admin — in charge o
 # ── The step that brings the user tenant up comes after the handover. ────────
 order="$(find scripts/steps -maxdepth 1 -name '[A-Z]-[0-9][0-9]-*.sh' | LC_ALL=C sort | tr '\n' ' ')"
 case "${order}" in
-    *E-03-revoke-bootstrap-token.sh\ scripts/steps/E-04-user-tenant.sh\ ) ok "E-04-user-tenant is the last step, after the handover" ;;
+    *E-03-revoke-bootstrap-token.sh\ scripts/steps/E-04-user-tenant.sh\ *) ok "E-04-user-tenant comes right after the handover" ;;
     *) bad "E-04-user-tenant is not the step after E-03" "${order}" ;;
 esac
 if grep -rq 'GENTIAN_FIRST_TENANT\|handover-override' scripts/lib scripts/steps install.sh install.env.template; then

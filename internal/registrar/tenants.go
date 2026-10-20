@@ -37,6 +37,24 @@ import (
 // ErrTenantNotFound is a tenant this cluster does not have.
 var ErrTenantNotFound = errors.New("tenant not found")
 
+// TenantSyncFailed is a tenant this cluster does not have because Argo CD's
+// last sync of its Application failed: a tenant the deployments repository
+// declares and the cluster did not create, rather than one on its way. It is
+// still ErrTenantNotFound, so whatever waits for a tenant goes on waiting --
+// a sync asked again can still bring it.
+type TenantSyncFailed struct {
+	Name string
+	// Message is Argo CD's, as the Application reports it.
+	Message string
+}
+
+func (e *TenantSyncFailed) Error() string {
+	return fmt.Sprintf("the cluster did not create tenant %q: the last sync of its Argo CD Application %s failed: %s",
+		e.Name, layout.Tenant(e.Name), e.Message)
+}
+
+func (e *TenantSyncFailed) Unwrap() error { return ErrTenantNotFound }
+
 // platformTenant is the tenant whose realm is the kernel realm: its people
 // are the platform's own, and its groups are gentian:platform:*.
 const platformTenant = "platform"
@@ -90,6 +108,39 @@ type ClusterTenants struct {
 	// KernelDomain is the cluster's own domain, which a tenant that adopts
 	// another realm signs in under.
 	KernelDomain string
+	// Applications reads a tenant's Argo CD Application (tenant-<name>, in
+	// ApplicationNamespace) when the Tenant is not there, to tell a failed
+	// creation from one on its way. Read unstructured, which a manager's
+	// client answers from the API server and not from a cache: one get, no
+	// watch. Nil reads none, and every missing tenant is on its way.
+	Applications         client.Reader
+	ApplicationNamespace string
+}
+
+var applicationGVK = schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"}
+
+// syncFailure is Argo CD's message when the last sync of the tenant's
+// Application failed and it is not in sync, or empty: no Application, one
+// that cannot be read, one still syncing or retrying, or one in sync.
+func (c *ClusterTenants) syncFailure(ctx context.Context, name string) string {
+	if c.Applications == nil || c.ApplicationNamespace == "" {
+		return ""
+	}
+	app := &unstructured.Unstructured{}
+	app.SetGroupVersionKind(applicationGVK)
+	if err := c.Applications.Get(ctx, types.NamespacedName{Namespace: c.ApplicationNamespace, Name: layout.Tenant(name)}, app); err != nil {
+		return ""
+	}
+	phase, _, _ := unstructured.NestedString(app.Object, "status", "operationState", "phase")
+	sync, _, _ := unstructured.NestedString(app.Object, "status", "sync", "status")
+	if (phase != "Failed" && phase != "Error") || sync == "Synced" {
+		return ""
+	}
+	msg, _, _ := unstructured.NestedString(app.Object, "status", "operationState", "message")
+	if msg == "" {
+		msg = "Argo CD gave no message"
+	}
+	return msg
 }
 
 // Tenant reads one Tenant object.
@@ -100,6 +151,9 @@ func (c *ClusterTenants) Tenant(ctx context.Context, name string) (Tenant, error
 	var t gentianov1alpha1.Tenant
 	if err := c.Client.Get(ctx, types.NamespacedName{Name: name}, &t); err != nil {
 		if apierrors.IsNotFound(err) {
+			if msg := c.syncFailure(ctx, name); msg != "" {
+				return Tenant{}, &TenantSyncFailed{Name: name, Message: msg}
+			}
 			return Tenant{}, fmt.Errorf("%w: %q", ErrTenantNotFound, name)
 		}
 		return Tenant{}, fmt.Errorf("reading tenant %q: %w", name, err)

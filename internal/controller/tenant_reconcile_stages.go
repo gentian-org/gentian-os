@@ -315,6 +315,11 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 		r.updateBlockedStatus(ctx, tenant)
 		return res, err
 	}
+	// The grants first: the contract network policies are made from the
+	// AppGrants this writes (tenant_app_grants.go).
+	if err := r.ensureAppGrants(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

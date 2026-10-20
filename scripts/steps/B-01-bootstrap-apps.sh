@@ -225,6 +225,36 @@ _v5_os_build_pinned() {
     [[ "${told}" == "${want}" ]]
 }
 
+# _v5_bootstrap_apps_current -- every Application the bootstrap chart renders
+# is on the cluster as rendered. Returns 1 on drift; where the comparison
+# cannot be made (no python3 with PyYAML on this host) it says so once and
+# answers current, because "cannot tell" must not re-apply forever.
+_v5_bootstrap_apps_current() {
+    local ns tmp names name live rc drift=0
+    ns="$(ns_kernel gitops)"
+    command -v python3 >/dev/null 2>&1 || { warn "python3 is not on this host: bootstrap Applications are not compared with their templates."; return 0; }
+    tmp="$(mktemp -d)"
+    if ! _v5_render > "${tmp}/rendered.yaml" 2>/dev/null; then rm -rf "${tmp}"; return 0; fi
+    names="$(kubectl apply --dry-run=client -o json -f "${tmp}/rendered.yaml" 2>/dev/null \
+        | jq -r '(if .kind == "List" then .items[] else . end) | select(.kind == "Application") | .metadata.name')"
+    for name in ${names}; do
+        live="${tmp}/${name}.json"
+        kubectl get application "${name}" -n "${ns}" -o json > "${live}" 2>/dev/null || { drift=1; break; }
+        # One rendered Application per comparison: the tool compares exactly one.
+        kubectl apply --dry-run=client -o json -f "${tmp}/rendered.yaml" 2>/dev/null \
+            | jq --arg n "${name}" '(if .kind == "List" then .items[] else . end) | select(.kind == "Application" and .metadata.name == $n)' > "${tmp}/${name}.rendered.json"
+        python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${tmp}/${name}.rendered.json" "${live}" >/dev/null 2>&1
+        rc=$?
+        if [[ ${rc} -eq 1 ]]; then drift=1; break; fi
+        if [[ ${rc} -eq 2 && -z "${_V5_DRIFT_WARNED:-}" ]]; then
+            _V5_DRIFT_WARNED=1
+            warn "bootstrap Applications could not be compared with their templates (python3 without PyYAML?); run with --force to re-apply them."
+        fi
+    done
+    rm -rf "${tmp}"
+    [[ ${drift} -eq 0 ]]
+}
+
 check() {
     local ns app
     ns="$(ns_kernel gitops)"
@@ -254,6 +284,12 @@ check() {
     fi
     # And the build: a run from a newer checkout is how a cluster takes it.
     _v5_os_build_pinned || return 1
+    # And the Applications themselves, against what the checkout renders for
+    # them today: a template changed without the build changing -- a new
+    # parameter, a corrected sync wave, a bumped chart pin -- otherwise
+    # reached a fresh install and never an already-bootstrapped one
+    # (roadmap 2.21). A subset test, by scripts/lib/bootstrap-app-drift.py.
+    _v5_bootstrap_apps_current || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0

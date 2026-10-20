@@ -258,10 +258,12 @@ _kustomization_list() {
 # Writes one verified bundle into the cluster's catalogue directory as the
 # director's MaterialiseProfile does: <name>.yaml, the bytes unchanged;
 # <name>.bundle.yaml, the patch that carries them and the origin on the
-# profile; and both listed in kustomization.yaml. The caller has checked the
-# digest and the bundle; nothing here fetches or decides.
+# profile; builds/<name>-<12 hex of the digest>.yaml, the ProfileBuild that
+# keeps this build for a tenant that runs it after the profile moved on; and
+# all three listed in kustomization.yaml. The caller has checked the digest
+# and the bundle; nothing here fetches or decides.
 gentian_materialise_profile() {
-    local dir="$1" name="$2" body="$3" origin="$4" head api ns tmp
+    local dir="$1" name="$2" body="$3" origin="$4" head api ns tmp digest build
     head="$(_yaml_docs_json "${body}" | jq -cs 'map(select(. != null)) | .[0]')" || return 1
     api="$(printf '%s' "${head}" | jq -r '.apiVersion // empty')"
     ns="$(printf '%s' "${head}" | jq -r '.metadata.namespace // empty')"
@@ -290,8 +292,34 @@ gentian_materialise_profile() {
     cmp -s "${tmp}" "${dir}/${name}.bundle.yaml" 2>/dev/null || cat "${tmp}" > "${dir}/${name}.bundle.yaml"
     rm -f "${tmp}"
 
+    # The build, byte for byte what internal/director/gitops renderBuild writes.
+    digest="sha256:$(sha256_of "${body}")"
+    build="${name}-${digest:7:12}"
+    mkdir -p "${dir}/builds"
+    tmp="$(mktemp)"
+    {
+        printf '# One build of %s: the bundle at %s, kept for every tenant\n' "${name}" "${digest:0:19}"
+        printf '# that runs it after the profile moved on. Written by the director; a build is\n'
+        printf '# its digest, so nothing edits it.\n'
+        printf 'apiVersion: gentianos.io/v1alpha1\n'
+        printf 'kind: ProfileBuild\n'
+        printf 'metadata:\n'
+        printf '  name: %s\n' "${build}"
+        printf '  labels:\n'
+        printf '    gentianos.io/profile-name: %s\n' "${name}"
+        printf '    gentianos.io/profile-build: %s\n' "${build}"
+        printf 'spec:\n'
+        printf '  profile: %s\n' "${name}"
+        printf '  digest: %s\n' "${digest}"
+        printf '  origin: %s\n' "${origin}"
+        printf '  bundle: "%s"\n' "$(openssl base64 -A < "${body}")"
+    } > "${tmp}"
+    cmp -s "${tmp}" "${dir}/builds/${build}.yaml" 2>/dev/null || cat "${tmp}" > "${dir}/builds/${build}.yaml"
+    rm -f "${tmp}"
+
     _kustomization_list "${dir}/kustomization.yaml" resource "${name}.yaml" || return 1
     _kustomization_list "${dir}/kustomization.yaml" patch "${name}.bundle.yaml" || return 1
+    _kustomization_list "${dir}/kustomization.yaml" resource "builds/${build}.yaml" || return 1
 }
 
 # _default_profile_origin <catalogue address> <cluster> -- the origin recorded

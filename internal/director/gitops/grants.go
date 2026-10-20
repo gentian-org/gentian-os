@@ -13,9 +13,16 @@ package gitops
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
-	"github.com/gentian-org/gentian-os/internal/layout"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // What one app may consume from another, as a commit.
@@ -24,16 +31,25 @@ import (
 // this tenant, may use that much of that contract. It is the thing a binding
 // is checked against, so it has to be reviewable — "who let the notes app
 // read the whole drive, and when" is a question with an answer, and the
-// answer is a commit.
+// answer is in the grant itself as well as in its commit: who granted it
+// (from the caller's token, never from the request) and when.
 //
-// One file per app rather than one file of all grants: a grant is edited per
-// app, and a file per app means two people changing two apps do not collide
-// in the same file.
+// The grants are a patch of the Tenant (spec.grants, grants.yaml beside it),
+// as its privilege approvals are, and the operator makes each the AppGrant
+// of its app in the tenant's namespace. They were once AppGrant files of
+// their own, which Argo CD could not apply: the project that syncs a
+// tenant's directory writes to no tenant namespace. A write carries any such
+// file over into the patch and removes it, in the same commit.
+
+// GrantsFile is the patch a tenant's grants are written to.
+const GrantsFile = "grants.yaml"
 
 // AppGrant is what a caller states.
 type AppGrant struct {
 	Consume        []ConsumeGrant  `json:"consume,omitempty"`
 	AllowConsumers []AllowConsumer `json:"allowConsumers,omitempty"`
+	// Reason is optional: why, in the granter's words.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ConsumeGrant is one contract this app may consume, and how much of it.
@@ -49,10 +65,18 @@ type AllowConsumer struct {
 	Scope    []string `json:"scope,omitempty"`
 }
 
-// AppGrantFile is where one app's grant is written.
+// AppGrantFile is where one app's grant was written before grants were a
+// patch of the Tenant; read only to carry it over.
 func AppGrantFile(app string) string { return "grant-" + app + ".yaml" }
 
-// SetAppGrant writes what one app may consume and commits it.
+type grantsPatch struct {
+	Spec struct {
+		Grants []gentianov1alpha1.TenantAppGrant `json:"grants"`
+	} `json:"spec"`
+}
+
+// SetAppGrant writes what one app may consume, with who granted it and when,
+// and commits it.
 func (g *GitOps) SetAppGrant(ctx context.Context, tenant, app string, grant AppGrant, meta Meta) (Result, error) {
 	if !ValidName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
@@ -60,7 +84,17 @@ func (g *GitOps) SetAppGrant(ctx context.Context, tenant, app string, grant AppG
 	if !ValidName(app) {
 		return Result{}, fmt.Errorf("%w: app %q", ErrInvalidName, app)
 	}
-	return g.writeTenantFile(ctx, tenant, AppGrantFile(app), renderAppGrant(tenant, app, grant), listResource,
+	if len(grant.Reason) > 2000 {
+		return Result{}, fmt.Errorf("a grant's reason is at most 2000 characters")
+	}
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	entry := gentianov1alpha1.TenantAppGrant{
+		AppGrantSpec: appGrantSpec(app, grant),
+		GrantedBy:    meta.Subject,
+		GrantedAt:    &now,
+		Reason:       strings.TrimSpace(grant.Reason),
+	}
+	return g.writeGrants(ctx, tenant, app, &entry,
 		fmt.Sprintf("Set what %s may consume in tenant %s", app, tenant), meta)
 }
 
@@ -69,54 +103,109 @@ func (g *GitOps) ClearAppGrant(ctx context.Context, tenant, app string, meta Met
 	if !ValidName(tenant) || !ValidName(app) {
 		return Result{}, fmt.Errorf("%w: tenant %q app %q", ErrInvalidName, tenant, app)
 	}
-	return g.writeTenantFile(ctx, tenant, AppGrantFile(app), "", listResource,
+	return g.writeGrants(ctx, tenant, app, nil,
 		fmt.Sprintf("Withdraw what %s may consume in tenant %s", app, tenant), meta)
 }
 
-// renderAppGrant writes the object a reviewer reads in the commit.
-//
-// The namespace is written into the file rather than left to a kustomize
-// transformer: adding one to the kustomization would move every namespaced
-// object a tenant directory ever gains, and this is the only one so far.
-func renderAppGrant(tenant, app string, grant AppGrant) string {
-	var b strings.Builder
-	b.WriteString("# Managed by the director: what " + app + " may consume in this tenant,\n")
-	b.WriteString("# and which apps may consume from it. Set in the administration console\n")
-	b.WriteString("# by whoever the commit names. A binding asking for more than this\n")
-	b.WriteString("# permits is reported on the Integrations screen and does not work.\n")
-	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
-	b.WriteString("kind: AppGrant\n")
-	b.WriteString("metadata:\n")
-	b.WriteString("  name: " + app + "\n")
-	b.WriteString("  namespace: " + layout.Tenant(tenant) + "\n")
-	b.WriteString("spec:\n")
-	b.WriteString("  app: " + app + "\n")
-	if len(grant.Consume) > 0 {
-		b.WriteString("  consume:\n")
-		for _, c := range grant.Consume {
-			b.WriteString("  - contract: " + quoteScalar(c.Contract) + "\n")
-			writeStringList(&b, "    granted", c.Granted)
-		}
+// writeGrants puts entry in place of app's grant (or takes it away when nil),
+// carries every old grant file over, and commits the patch and the removals
+// together.
+func (g *GitOps) writeGrants(ctx context.Context, tenant, app string, entry *gentianov1alpha1.TenantAppGrant, message string, meta Meta) (Result, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	manifest, err := g.tenantFile(ctx, tenant)
+	if err != nil {
+		return Result{}, err
 	}
-	if len(grant.AllowConsumers) > 0 {
-		b.WriteString("  allowConsumers:\n")
-		for _, a := range grant.AllowConsumers {
-			b.WriteString("  - app: " + quoteScalar(a.App) + "\n")
-			b.WriteString("    contract: " + quoteScalar(a.Contract) + "\n")
-			writeStringList(&b, "    scope", a.Scope)
-		}
+	dir := filepath.Dir(manifest)
+	var doc grantsPatch
+	if err := g.readTenantPatch(ctx, tenant, GrantsFile, &doc); err != nil {
+		return Result{}, err
 	}
-	return b.String()
+	byApp := map[string]gentianov1alpha1.TenantAppGrant{}
+	for _, e := range doc.Spec.Grants {
+		byApp[e.App] = e
+	}
+	// The old files: each carried over where the patch has no entry yet.
+	legacy, err := filepath.Glob(filepath.Join(dir, "grant-*.yaml"))
+	if err != nil {
+		return Result{}, err
+	}
+	var writes []tenantFileWrite
+	for _, path := range legacy {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return Result{}, err
+		}
+		var old struct {
+			Spec gentianov1alpha1.AppGrantSpec `json:"spec"`
+		}
+		if err := yaml.Unmarshal(raw, &old); err != nil || !ValidName(old.Spec.App) {
+			return Result{}, fmt.Errorf("read %s: not an app's grant", filepath.Base(path))
+		}
+		if _, ok := byApp[old.Spec.App]; !ok {
+			byApp[old.Spec.App] = gentianov1alpha1.TenantAppGrant{AppGrantSpec: old.Spec}
+		}
+		writes = append(writes, tenantFileWrite{tenant: tenant, name: filepath.Base(path), list: listResource})
+	}
+	if entry != nil {
+		byApp[app] = *entry
+	} else {
+		if _, ok := byApp[app]; !ok && len(writes) == 0 {
+			return Result{Status: "unchanged"}, nil
+		}
+		delete(byApp, app)
+	}
+	apps := make([]string, 0, len(byApp))
+	for a := range byApp {
+		apps = append(apps, a)
+	}
+	sort.Strings(apps)
+	doc.Spec.Grants = doc.Spec.Grants[:0]
+	for _, a := range apps {
+		doc.Spec.Grants = append(doc.Spec.Grants, byApp[a])
+	}
+	body, err := renderGrants(tenant, doc)
+	if err != nil {
+		return Result{}, err
+	}
+	writes = append([]tenantFileWrite{{tenant: tenant, name: GrantsFile, body: body, list: listPatch}}, writes...)
+	if len(legacy) > 0 {
+		message += " (grant files carried over into grants.yaml)"
+	}
+	return g.writeTenantFilesLocked(ctx, message, meta, writes...)
 }
 
-func writeStringList(b *strings.Builder, key string, values []string) {
-	if len(values) == 0 {
-		return
+func appGrantSpec(app string, grant AppGrant) gentianov1alpha1.AppGrantSpec {
+	spec := gentianov1alpha1.AppGrantSpec{App: app}
+	for _, c := range grant.Consume {
+		spec.Consume = append(spec.Consume, gentianov1alpha1.ConsumeGrantSpec{Contract: c.Contract, Granted: c.Granted})
 	}
-	b.WriteString(key + ":\n")
-	for _, v := range values {
-		b.WriteString(strings.Repeat(" ", len(key)-len(strings.TrimLeft(key, " "))) + "  - " + quoteScalar(v) + "\n")
+	for _, a := range grant.AllowConsumers {
+		spec.AllowConsumers = append(spec.AllowConsumers, gentianov1alpha1.AllowConsumerSpec{App: a.App, Contract: a.Contract, Scope: a.Scope})
 	}
+	return spec
+}
+
+// renderGrants is the patch a reviewer reads; empty when there is no grant.
+func renderGrants(tenant string, doc grantsPatch) (string, error) {
+	if len(doc.Spec.Grants) == 0 {
+		return "", nil
+	}
+	out, err := yaml.Marshal(map[string]any{
+		"apiVersion": "gentianos.io/v1alpha1",
+		"kind":       "Tenant",
+		"metadata":   map[string]any{"name": tenant},
+		"spec":       map[string]any{"grants": doc.Spec.Grants},
+	})
+	if err != nil {
+		return "", err
+	}
+	return "# Managed by the director: what each app of this tenant may consume from\n" +
+		"# the others, and which may consume from it, with who granted it and when.\n" +
+		"# Set in the administration console by whoever may grant (can_grant); the\n" +
+		"# operator makes each the AppGrant of its app in the tenant's namespace.\n" +
+		string(out), nil
 }
 
 // ── What the platform permits to escape its default posture ─────────────────

@@ -33,6 +33,14 @@ type App struct {
 	// DefaultGrant is whether every member of the tenant has access to the
 	// app by default: the install was made for everyone.
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
+	// Catalogue is the source the pinned build was fetched from.
+	Catalogue string `json:"catalogue,omitempty"`
+	// UpdateMode is the tenant's override of how the app moves to newer
+	// builds, when the cluster's administrator wrote one.
+	UpdateMode string `json:"updateMode,omitempty"`
+	// MovedAt and MovedBy record the last move of the pin.
+	MovedAt string `json:"movedAt,omitempty"`
+	MovedBy string `json:"movedBy,omitempty"`
 }
 
 // Apps returns what git says a tenant has installed. Git is the desired state;

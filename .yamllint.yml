@@ -51,6 +51,10 @@ ignore: |
   # job on every commit and, because the docker job depends on it, meant no
   # operator image was ever published.
   kernel/services/*/manifests/templates/
+  # Upstream charts vendored as subcharts (keycloakx, openfga): upstream's
+  # text, templates and values alike, kept byte for byte so UPSTREAM.md's
+  # account of them stays true. Ours is the service chart around them.
+  kernel/services/*/manifests/charts/
   kernel/appsets/templates/
 
 

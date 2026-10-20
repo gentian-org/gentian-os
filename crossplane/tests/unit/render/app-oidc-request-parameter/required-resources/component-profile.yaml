@@ -1,0 +1,39 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  annotations:
+    gentianos.io/catalogue-origin: tenant/demo/own
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: PUBLIC
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+          audiences:
+            - demo-app-api
+          # One client for many places: the code goes to the address
+          # computed from the parameter, and the token carries it.
+          requestParameter:
+            name: tenant_url
+            pattern: 'https://(?<host>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+)'
+            redirectUri: 'https://store.${host}/oauth/callback'
+            claim: tenant_url

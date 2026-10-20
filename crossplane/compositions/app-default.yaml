@@ -36,6 +36,22 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
+            # The build this tenant runs, when it is not the profile's
+            # current one (spec.profileRef.build, set by the operator). Its
+            # profileSpec replaces the ComponentProfile's spec below, so the
+            # Composition renders the same build the operator rolls out.
+            # A claim that names no build matches nothing here.
+            - kind: ProfileBuild
+              into: profileBuild
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/profile-build
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.build
             # Reads the gentian-kernel-services ConfigMap (the control namespace) to make
             # cluster-specific infrastructure endpoints available for extraValues
             # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
@@ -75,6 +91,23 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
+            # The tenant realm's client policy that narrows a request-bound
+            # client's https://* (tenant-default); a client is registered
+            # with it only while this reads Ready.
+            - apiVersion: realm.keycloak.crossplane.io/v1alpha1
+              kind: ClientPolicyProfilePolicy
+              into: requestBoundRedirectPolicy
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/realm-rule
+                    type: Value
+                    value: request-bound-redirect
+                  - key: gentianos.io/tenant-namespace
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.tenantNamespace
             # Optional portal-bridge SSO helper page shipped with the profile catalogue.
             - kind: ConfigMap
               into: portalBridgeSso
@@ -165,6 +198,26 @@ spec:
             {{- end }}
             {{- $profile   := index $profiles 0 }}
             {{- $pSpec     := dig "spec" dict $profile }}
+            {{- /* The tenant's own build, when the claim names one: the spec is
+                 the build's, and the profile's metadata stays the profile's,
+                 which is the app's identity across every build. A claim that
+                 names a build the cluster does not hold renders nothing, as a
+                 missing profile does: the operator writes the name only after
+                 it has read and verified the build. */}}
+            {{- $builds := dig "profileBuild" list $extraRes }}
+            {{- if and (ne (dig "profileRef" "build" "" $spec) "") (eq (len $builds) 0) }}
+              {{- fail (printf "ProfileBuild %q not found in cluster" (dig "profileRef" "build" "" $spec)) }}
+            {{- end }}
+            {{- if gt (len $builds) 0 }}
+              {{- /* The operator writes the spec it read out of the verified
+                   bundle onto the build's status; a build it has not read yet,
+                   or refused, has none, and nothing is rendered from it. */}}
+              {{- $buildSpec := dig "status" "profileSpec" nil (index $builds 0) }}
+              {{- if not $buildSpec }}
+                {{- fail (printf "ProfileBuild %q is not verified yet" (dig "profileRef" "build" "" $spec)) }}
+              {{- end }}
+              {{- $pSpec = $buildSpec }}
+            {{- end }}
             {{- $package   := dig "package" dict $pSpec }}
             {{- $vm        := dig "valueMapping" dict $package }}
             {{- $appSecrets := dig "secrets" "generated" list $pSpec }}
@@ -1085,6 +1138,12 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* What an audience is held to (below): the profile's own name,
+                 a dash and a label, and none of the names the platform keeps.
+                 Out here because the app's own client and each extension's
+                 are held to the same. */}}
+            {{- $reservedAudiences := list "account" "account-console" "admin-cli" "broker" "realm-management" "security-admin-console" "director" "keycloak" "openbao" "vault" "dovecot" "infra-mariadb" "infra-redis" "infra-seaweedfs" "keycloak-config" "keycloak-idp" "llm" "mail-edge" "openbao-config" "openfga" "postfix" }}
+            {{- $profileName := dig "metadata" "name" "" $profile }}
             {{- $oidcCl   := default dict $identity.oidc }}
             {{- if $oidcCl.clientId }}
             {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
@@ -1146,6 +1205,44 @@ spec:
             {{- $dnsLabel := "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }}
             {{- if and (regexMatch $dnsLabel $bclService) (regexMatch $dnsLabel $ns) (gt $bclPort 0) (le $bclPort 65535) (le (len $bclPath) 256) (regexMatch "^(/[A-Za-z0-9_~-]+(\\.[A-Za-z0-9_~-]+)*)+/?$" $bclPath) (not (contains ".." $bclPath)) (not (contains "//" $bclPath)) }}
             {{- $signOutNotice = printf "http://%s.%s.svc.cluster.local:%d%s" $bclService $ns $bclPort $bclPath }}
+            {{- end }}
+            {{- /* ── what the client puts in its tokens, held ─────────────────
+                 audiences and requestParameter, each held here to what the
+                 definition holds it to, so that nothing rests on that alone;
+                 the operator holds what needs the cluster's other profiles
+                 (token_audiences.go). TestTheCompositionHoldsTheSameNames
+                 keeps the three lists equal to the operator's. A declaration
+                 that fails is not composed at all. */}}
+            {{- $protocolParameters := list "acr_values" "authorization_details" "claims" "client_id" "code_challenge" "code_challenge_method" "display" "dpop_jkt" "id_token_hint" "kc_action" "kc_idp_hint" "login_hint" "max_age" "nonce" "prompt" "redirect_uri" "registration" "request" "request_uri" "resource" "response_mode" "response_type" "scope" "state" "ui_locales" }}
+            {{- $reservedClaims := list "acr" "address" "allowed-origins" "amr" "at_hash" "aud" "auth_time" "azp" "c_hash" "client_id" "cnf" "email" "email_verified" "exp" "family_name" "given_name" "groups" "iat" "iss" "jti" "name" "nbf" "nonce" "phone_number" "preferred_username" "realm_access" "resource_access" "scope" "sid" "session_state" "sub" "typ" }}
+            {{- $audiences := list }}
+            {{- range $aud := (default list $oidcCl.audiences) }}
+            {{- if and $profileName (hasPrefix (printf "%s-" $profileName) $aud) (gt (len $aud) (add1 (len $profileName))) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) (not (has $aud $reservedAudiences)) }}
+            {{- $audiences = append $audiences $aud }}
+            {{- end }}
+            {{- end }}
+            {{- /* requestParameter: the parameter and its address, held as the
+                 definition holds them; the pattern is the extension's to
+                 match, which refuses one it cannot. And whether the realm has
+                 the rule that narrows https://* again: tenant-default's client
+                 policy, found by its labels, Ready. Until it is, the client is
+                 registered without https://* and every request computed from
+                 the parameter is refused as an unknown address. */}}
+            {{- $rp := default dict $oidcCl.requestParameter }}
+            {{- $rpName := default "" $rp.name }}
+            {{- $rpClaim := default "" $rp.claim }}
+            {{- $rpRedirect := default "" $rp.redirectUri }}
+            {{- $bound := and (regexMatch "^[a-z][a-z0-9_]{0,63}$" $rpName) (not (has $rpName $protocolParameters)) $rp.pattern (le (len (default "" $rp.pattern)) 512) (le (len $rpRedirect) 512) (regexMatch "^https://[^*?#\\s]*\\$\\{[^*?#\\s]+$" $rpRedirect) (or (not $rpClaim) (and (regexMatch "^[a-z][a-z0-9_]{0,63}$" $rpClaim) (not (has $rpClaim $reservedClaims)))) }}
+            {{- $narrowed := false }}
+            {{- range $p := (dig "requestBoundRedirectPolicy" list $extraRes) }}
+            {{- range $c := (dig "status" "conditions" list $p) }}
+            {{- if and (eq (dig "type" "" $c) "Ready") (eq (dig "status" "" $c) "True") }}
+            {{- $narrowed = true }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if and $bound $narrowed }}
+            {{- $redirects = append $redirects "https://*" }}
             {{- end }}
             {{- /* provider-keycloak Client reads clientSecretSecretRef from this Secret;
                  it must match the OpenBao path XWiki consumes via ExternalSecret. */}}
@@ -1216,10 +1313,33 @@ spec:
                      PlatformMarkerAttribute). */}}
                 extraConfig:
                   gentianos.io/managed-by: platform
+                  {{- /* The request parameter, for the platform's executor
+                       and mapper, which read it here and nowhere else; the
+                       flag is what the realm's client policy matches. */}}
+                  {{- if $bound }}
+                  gentianos.io/request-bound-redirect: "true"
+                  gentianos.io/request-parameter: {{ $rpName | quote }}
+                  gentianos.io/request-parameter-pattern: {{ $rp.pattern | quote }}
+                  gentianos.io/request-parameter-redirect-uri: {{ $rpRedirect | quote }}
+                  {{- end }}
                 accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
+                {{- /* A public client has no secret, so the code is all that
+                     stands between whoever receives it and a token: PKCE
+                     with S256, on every one, and a request without a
+                     challenge is refused. */}}
+                {{- if eq (default "PUBLIC" $oidcCl.accessType) "PUBLIC" }}
+                pkceCodeChallengeMethod: S256
+                {{- end }}
+                {{- /* No refresh token for a client whose tokens carry the
+                     request parameter: a refresh is not an exchange of a
+                     code, so its token would not, and the client signs in
+                     again instead. */}}
+                {{- if $bound }}
+                useRefreshTokens: false
+                {{- end }}
                 {{- if hasKey $oidcPackFullScopeAllowed $oidcPackKey }}
                 fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcPackKey }}
                 {{- end }}
@@ -1245,6 +1365,103 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+
+            {{- /* ── names the client's access tokens carry in aud ────────────
+                 requires.services.identity.oidc.audiences: a service the app
+                 hands its tokens to accepts one only when its audience names
+                 that service, and nothing in the realm puts the name there
+                 unless a mapper on this client does. One custom-audience
+                 mapper per name -- a custom audience, as for the director in
+                 tenant-default, because what is named is a service and need
+                 not be a client of this realm, and Keycloak drops a client
+                 audience whose client does not exist.
+
+                 A grant, so held to what the definition holds it to, and not
+                 left to that alone: the profile's own name, a dash and a label;
+                 none beginning with "gentian"; none of the names the platform
+                 keeps ($reservedAudiences). That no other profile is called so
+                 is the operator's to say (token_audiences.go), which holds the
+                 install of one that would be.
+
+                 deletionPolicy: Delete, unlike the mappers of a client that
+                 goes as a whole: the client stays when a profile stops naming
+                 an audience, and the mapper is what has to go then. On an
+                 uninstall the realm removes it with the client, and the
+                 provider then finds it gone.
+
+                 All five config keys and no external-name, for the reasons
+                 given at director-audience in tenant-default. */}}
+            {{- range $aud := $audiences }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-audience-{{ $aud }}
+              name: {{ $tenant }}-{{ $app }}-oidc-audience-{{ $aud }}
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "audience-%s" $aud | quote }}
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $aud | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the request parameter, in the access token ───────────────
+                 requestParameter.claim: the platform's mapper
+                 gentian-request-parameter-mapper (its Keycloak extension)
+                 copies the parameter into this claim. It reads the parameter,
+                 its pattern and its address from the client's attributes
+                 above, and puts the value in the token at the exchange of a
+                 code only, and only when that exchange's redirect_uri -- which
+                 the realm has held to the code's -- is the address computed
+                 from the value. A token got another way does not carry it.
+
+                 Into the access token alone: not the ID token, and not the
+                 answer of an introspection, which runs the mappers again with
+                 no exchange to compare with. Delete, as the audiences above. */}}
+            {{- if and $bound $rp.claim }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-request-parameter
+              name: {{ $tenant }}-{{ $app }}-oidc-request-parameter
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "request-parameter-%s" $rp.name | quote }}
+                protocol: openid-connect
+                protocolMapper: gentian-request-parameter-mapper
+                config:
+                  claim.name: {{ $rp.claim | quote }}
+                  jsonType.label: String
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "false"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- if hasKey $oidcPackDefaultScopes $oidcPackKey }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
@@ -1512,6 +1729,161 @@ spec:
                   - name: {{ $tenant }}-{{ $app }}-client-role
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── each extension's own client ────────────────────────────────
+                 extensions[].kernelRequirements.identity.oidc: an extension
+                 that signs people in itself, as the app does, under a client
+                 of its own. The operator leaves it to this Composition
+                 (crossplaneOwnsOIDCClient) and seeds its secret at the
+                 extension's key, {app}-{extension} (SidecarAppName), so it is
+                 composed here in the shape of the app's own client above:
+                 redirect addresses with the tenant's domain put in, PKCE
+                 with S256 for a public one, the secret from that key for a
+                 confidential one, and the audiences, held as the app's are.
+
+                 Where the extension declares no redirect address the
+                 profile's default (gentianos.io/oidc-default-redirect-uris)
+                 is used, as the operator does; with neither, the operator
+                 refuses the client and nothing is composed.
+
+                 Not composed, because the operator does not leave it here:
+                 a client the profile's OIDC pack catalogue holds a pack for,
+                 which the pack Job makes; and one that declares
+                 requestParameter, which only the app's own client may and
+                 the operator refuses for an extension. backchannelLogout
+                 the definition refuses for an extension. */}}
+            {{- range $sc := (dig "extensions" list $pSpec) }}
+            {{- $scOIDC := dig "kernelRequirements" "identity" "oidc" dict $sc }}
+            {{- $scClientId := default "" $scOIDC.clientId }}
+            {{- $scPackKey := default $scClientId $scOIDC.oidcPackRef }}
+            {{- if and $sc.name $scClientId (not $scOIDC.requestParameter) (not (hasKey $oidcPacks $scPackKey)) }}
+            {{- $scKey := printf "%s-%s" $app $sc.name }}
+            {{- $scDeclared := default list $scOIDC.redirectUris }}
+            {{- if not $scDeclared }}
+            {{- $scDefault := fromJson (dig "metadata" "annotations" "gentianos.io/oidc-default-redirect-uris" "" $profile) }}
+            {{- if kindIs "slice" $scDefault }}
+            {{- $scDeclared = $scDefault }}
+            {{- end }}
+            {{- end }}
+            {{- $scRedirects := list }}
+            {{- range $uri := $scDeclared }}
+            {{- $scRedirects = append $scRedirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $scPostLogout := list }}
+            {{- range $uri := (default list $scOIDC.postLogoutRedirectUris) }}
+            {{- $scPostLogout = append $scPostLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $scAudiences := list }}
+            {{- range $aud := (default list $scOIDC.audiences) }}
+            {{- if and $profileName (hasPrefix (printf "%s-" $profileName) $aud) (gt (len $aud) (add1 (len $profileName))) (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $aud) (not (hasPrefix "gentian" $aud)) (not (has $aud $reservedAudiences)) }}
+            {{- $scAudiences = append $scAudiences $aud }}
+            {{- end }}
+            {{- end }}
+            {{- $scConfidential := eq (default "PUBLIC" $scOIDC.accessType) "CONFIDENTIAL" }}
+            {{- if $scRedirects }}
+            {{- if $scConfidential }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scKey }}-oidc-client-creds-es
+              name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds
+                    namespace: {{ $provNs }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: {{ printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $scKey }}
+                          property: client-secret
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scKey }}-keycloak-client
+              name: {{ $tenant }}-{{ $scKey }}-keycloak-client
+            spec:
+              deletionPolicy: Delete
+              # As the app's own client: everything except LateInitialize.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $scClientId | quote }}
+                name: {{ default $scClientId $scOIDC.name | quote }}
+                realmId: {{ $realm }}
+                extraConfig:
+                  gentianos.io/managed-by: platform
+                accessType: {{ default "PUBLIC" $scOIDC.accessType | quote }}
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: {{ default false $scOIDC.directAccessGrantsEnabled }}
+                serviceAccountsEnabled: false
+                {{- if not $scConfidential }}
+                pkceCodeChallengeMethod: S256
+                {{- end }}
+                validRedirectUris:
+                  {{ toYaml $scRedirects | nindent 18 }}
+                webOrigins:
+                  - "+"
+                {{- if $scPostLogout }}
+                validPostLogoutRedirectUris:
+                  {{ toYaml $scPostLogout | nindent 18 }}
+                {{- end }}
+                {{- if $scConfidential }}
+                clientSecretSecretRef:
+                  name: {{ $xrName }}-{{ $sc.name }}-oidc-client-creds
+                  namespace: {{ $provNs }}
+                  key: client-secret
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- range $aud := $scAudiences }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scKey }}-oidc-audience-{{ $aud }}
+              name: {{ $tenant }}-{{ $scKey }}-oidc-audience-{{ $aud }}
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $scKey }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "audience-%s" $aud | quote }}
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $aud | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
@@ -1873,7 +2245,7 @@ spec:
                 # cluster does not have, three pods were Pending the whole time,
                 # and every signal above them was green.
                 #
-                # The kernel's own releases (infra-data, suze) have always waited.
+                # The kernel's own releases have always waited.
                 # Apps are what a tenant actually sees, so a false green matters
                 # more here, not less.
                 #
@@ -1994,8 +2366,8 @@ spec:
 
             {{- /* ── Emit post-install bootstrap Job ─────────────────────────────── */}}
             {{- /* spec.hooks.postInstall: app-specific bootstrap that must           */}}
-            {{- /* happen via the app's own admin API rather than Helm values. Job is */}}
-            {{- /* retried via ttlSecondsAfterFinished + reconcile, so Script must be */}}
+            {{- /* happen via the app's own admin API rather than Helm values. A      */}}
+            {{- /* failing pod is retried (backoffLimit), so Script must be           */}}
             {{- /* idempotent and exit non-zero if a dependency isn't ready yet. See */}}
             {{- /* app-profile-guide.md, "Post-install bootstrap jobs".               */}}
             {{- $pij := dig "hooks" "postInstall" dict $pSpec }}
@@ -2074,6 +2446,19 @@ spec:
             {{- $pijEnv = append $pijEnv (dict "name" (upper $s.name) "key" (printf "internal-%s" $s.name)) }}
             {{- end }}
             {{- end }}
+            {{- /* The Job runs once, and again only when what it runs changes.
+
+                 It carries no ttlSecondsAfterFinished: its Object recreates
+                 whatever goes missing, so a TTL deleted the finished Job, the
+                 Object made it again, and the bootstrap ran again every ten
+                 minutes, forever. A Job's pod template is immutable, and the
+                 script is in a ConfigMap the template only names, so a change
+                 reaches the cluster as a new Job: the digest of everything
+                 the Job runs is in its name and in its Object's, the new
+                 Object makes the new Job, and the old Object is removed with
+                 the Job it held. */}}
+            {{- $pijRun := dict "image" $pijImage "script" $pijScript "env" $pijEnv "envFrom" $pijEnvFrom "serviceAccountName" $pijSA "readOnlyPVC" $pijPVC }}
+            {{- $pijDigest := substr 0 8 (sha256sum (toJson $pijRun)) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -2099,22 +2484,21 @@ spec:
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-job
-              name: {{ $xrName }}-post-install-job
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-job-{{ $pijDigest }}
+              name: {{ $xrName }}-post-install-job-{{ $pijDigest }}
             spec:
               forProvider:
                 manifest:
                   apiVersion: batch/v1
                   kind: Job
                   metadata:
-                    name: {{ $app }}-post-install
+                    name: {{ $app }}-post-install-{{ $pijDigest }}
                     namespace: {{ $ns }}
                     labels:
                       app.kubernetes.io/managed-by: gentian-os
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       metadata:
@@ -2140,7 +2524,7 @@ spec:
                              backoffLimit bounds and no reconcile clears, so the
                              bootstrap never runs and nothing reports an error.
 
-                             That is not theoretical. On ifk-w4h both tenants lost
+                             That is not theoretical. On one cluster both tenants lost
                              the coin flip and their open-webui post-install sat
                              wedged for six days, so the tenant administrator was
                              never seeded in either.
@@ -2231,10 +2615,10 @@ spec:
             {{- /* synced from OpenBao at the SidecarAppName-scoped path              */}}
             {{- /* ({parent}-{sidecar}, matching api/v1alpha1.SidecarAppName -- OIDC  */}}
             {{- /* client registration and OpenBao secret purge on uninstall already   */}}
-            {{- /* key off this same synthetic name). KernelRequirements beyond OIDC   */}}
-            {{- /* (already handled independently by oidc_pack_jobs.go) are not wired  */}}
-            {{- /* into the sidecar's own Release values yet -- a sidecar that needs   */}}
-            {{- /* its own database/cache/S3 isn't supported by this mechanism yet.    */}}
+            {{- /* key off this same synthetic name). Its OIDC client (composed above,  */}}
+            {{- /* beside the app's own) reaches its Release through valueMapping.oidc; */}}
+            {{- /* other kernelRequirements are not wired into the sidecar's values  */}}
+            {{- /* -- a sidecar that needs its own database/cache/S3 isn't supported. */}}
             {{- /* extensions on ComponentProfile: the same sidecar list under the
                  name that also covers what is not strictly a sidecar. */}}
             {{- $sidecars := dig "extensions" list $pSpec }}
@@ -2253,6 +2637,29 @@ spec:
             {{- $scRelSet = append $scRelSet (dict "name" $s.valuePath
                 "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
             {{- end }}
+            {{- end }}
+
+            {{- /* The sidecar's OIDC client, mapped as the app's own: issuer and
+                 client id the operator writes at the sidecar's key beside the
+                 secret, the secret at the explicit path where one is named. */}}
+            {{- $scOidcVM := dig "valueMapping" "oidc" dict $sc }}
+            {{- $scOidcPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $scKey }}
+            {{- if $scOidcVM.issuerKey }}
+            {{- $scEsData = append $scEsData (dict "secretKey" "oidc-issuer" "remoteRef" (dict "key" $scOidcPath "property" "issuer")) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $scOidcVM.issuerKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- end }}
+            {{- if $scOidcVM.clientIdKey }}
+            {{- $scEsData = append $scEsData (dict "secretKey" "oidc-client-id" "remoteRef" (dict "key" $scOidcPath "property" "client-id")) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $scOidcVM.clientIdKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- end }}
+            {{- if $scOidcVM.clientSecretKey }}
+            {{- $scCsPath := default $scOidcPath $scOidcVM.clientSecretOpenbaoPath }}
+            {{- $scCsProp := default "client-secret" $scOidcVM.clientSecretOpenbaoProperty }}
+            {{- $scEsData = append $scEsData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $scCsPath "property" $scCsProp)) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $scOidcVM.clientSecretKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" "oidc-client-secret"))) }}
             {{- end }}
 
             {{- /* OpenBao KV seeders for each sidecar appSecret (mirrors the primary   */}}
@@ -2408,7 +2815,7 @@ spec:
                 # cluster does not have, three pods were Pending the whole time,
                 # and every signal above them was green.
                 #
-                # The kernel's own releases (infra-data, suze) have always waited.
+                # The kernel's own releases have always waited.
                 # Apps are what a tenant actually sees, so a false green matters
                 # more here, not less.
                 #

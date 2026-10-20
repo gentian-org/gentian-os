@@ -144,8 +144,8 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: profileName}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, profileName, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

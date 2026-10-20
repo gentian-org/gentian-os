@@ -122,6 +122,48 @@ key, which the client checks against the keys the target publishes
 set to **JWT signed with private key** instead of a client secret, and
 *Client ID* `broker-to-aluvian`. Nothing secret crosses between the clusters.
 
+## Both on this cluster: declared in git
+
+When source and target are tenants of the same cluster, steps 1 to 3 are not
+done by hand at all. The target names the source and the groups its people
+are given; the source consents:
+
+```yaml
+# the target, e.g. customers
+spec:
+  groups:
+    - name: website-editors          # declared groups: made by the platform
+  signInFrom:
+    - tenant: team
+      groups: [website-editors, members]
+---
+# the source, e.g. team
+spec:
+  signInTo: [customers]
+```
+
+Written with the CLI, as the cluster's administrator (one commit of both
+tenants' line):
+
+```bash
+kubectl gentian tenants groups customers website-editors
+kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers --remove team     # ends it
+```
+
+The platform then makes, in the source realm, the client `broker-to-<target>`
+(authenticated by a JWT the target realm signs: no secret), and in the target
+realm the identity provider `tenant-<source>`, shown on the login page under
+the source tenant's name. It trusts the source's verified addresses and puts
+each person in the groups named at every sign-in. A group may be one of
+`spec.groups` or `members` (who may enter the tenant), never the tenant's
+administrators or perimeter approvers. Either side taking its line away ends
+the sign-in.
+
+Declared groups are made as plain groups: the Admin Console puts people in
+them and neither renames nor deletes them. A group of the same name made by
+hand earlier is in the way, and is removed first.
+
 ## The target on this cluster: organizations, declared
 
 The other half, when the *target* is a tenant of this cluster, need not be

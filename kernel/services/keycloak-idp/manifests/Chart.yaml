@@ -1,7 +1,9 @@
 apiVersion: v2
 name: keycloak-idp
 description: |
-  Per-stage manifests for keycloak-idp, rendered from a single source.
-  The ApplicationSet passes env; adding a stage needs no new files.
+  The kernel's Keycloak: the keycloakx chart as a vendored subchart
+  (charts/), its values under `keycloakx` in values.yaml, and beside it the
+  ExternalSecrets and the login theme it reads. The ApplicationSet passes
+  env; adding a stage needs no new files.
 type: application
-version: 0.1.0
+version: 0.2.0

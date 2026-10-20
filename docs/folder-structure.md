@@ -115,8 +115,8 @@ License-header templates used by `controller-gen` and `golangci-lint`
 ### `crossplane/` — the provisioning plane
 | Path | Purpose |
 |---|---|
-| `xrds/` | Composite definitions: `Cluster`, `Tenant`, `App`, `Repository`, `Suze`. These generate the `apps.gentianos.io` / `xtenants.gentianos.io` CRDs on-cluster — which is exactly why the chart must *not* ship them. |
-| `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `app-default`, `repository-default`, `suze`. A catalogue entry may bring a Composition of its own in its bundle and name it in `spec.package.composition`. |
+| `xrds/` | Composite definitions: `Cluster`, `Tenant`, `App`, `Repository`. These generate the `apps.gentianos.io` / `xtenants.gentianos.io` CRDs on-cluster — which is exactly why the chart must *not* ship them. |
+| `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `app-default`, `repository-default`. A catalogue entry may bring a Composition of its own in its bundle and name it in `spec.package.composition`. |
 | `providers/` | `Provider` and `Function` packages, their `ProviderConfig`s, the RBAC they need, and `activation.yaml` — the provider resource types a cluster creates. |
 | `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **copy** of the deployed Composition + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. A copy, not a symlink, so `check-render-fixtures.sh` has something to compare — a stale copy keeps a golden test green against a Composition nobody runs. |
 | `tests/unit/schema/` | `valid/` fixtures that must pass and `invalid/` fixtures that must be rejected by `crossplane beta validate` against `xrds/`. |

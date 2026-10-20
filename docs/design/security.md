@@ -163,7 +163,7 @@ Three more servers carry a NetworkPolicy of the same kind, each in its own chart
 
 Closed: the metrics port (9187). Not admitted: Argo CD, Crossplane and its providers, the vault, the edge, the director, the usher, the custodian, the system namespaces, a tenant's DMZ.
 
-- **The two identity namespaces are admitted whole.** Keycloak's and OpenFGA's pods are built by upstream charts the Suze claim installs at a version it may move, and a pod of either namespace can mount the database Secret there.
+- **The two identity namespaces are admitted whole.** Keycloak's and OpenFGA's pods are built by upstream charts the identity ApplicationSet installs at a version its values may move, and a pod of either namespace can mount the database Secret there.
 - **Tenant namespaces are admitted by tier, not by name.** Which tenant keeps its desktop's database here is decided by its realm (`componentDatabaseNamespace`), so no namespace can be named. The tenant's side is what narrows it, as for a store: egress is denied by default, and only that one tenant's desktop is opened `kernel-data`.
 - **CloudNativePG's operator is not selected by this policy.** It runs in `kernel-data` beside the cluster; the namespace's own rule (§2.13) leaves its webhook port open to any source, because the API server calls it from no pod, and closes its metrics port.
 - **Switched off, this one policy is kept and admits everything** rather than being removed: the Application that syncs the chart does not prune, so a policy that merely stopped being rendered would stay in force.
@@ -502,7 +502,7 @@ They are plain `networking.k8s.io/v1` NetworkPolicy and name no address block, s
 | --- | --- | --- |
 | `kernel-gitops` | Nothing by these rules. Argo CD's own manifest ships a policy per component, and those stand: the console (8080) stays open to any source, as upstream has it | No: a rule for the whole namespace would widen upstream's |
 | `kernel-provisioning` | 9443 from any source (Crossplane's and its providers' webhooks, called by the API server) | Yes |
-| `kernel-secrets` | The vault, 8200: the operator and the custodian by label, and the provisioning namespace (provider-vault). 10250 from any source (External Secrets' webhook) | Yes (External Secrets reads the vault) |
+| `kernel-secrets` | The vault, 8200: the operator, the custodian and the director by label, and the provisioning namespace (provider-vault). 10250 from any source (External Secrets' webhook) | Yes (External Secrets reads the vault) |
 | `kernel-seal` | The seal, 8200: the secrets namespace | Yes |
 | `kernel-data` | 9443 from any source (CloudNativePG's webhook). The kernel's PostgreSQL keeps its own policy (§2.8) | Yes |
 | `kernel-authentication` | Keycloak, 8080: the edge namespace, the control namespace's programs, the provisioning namespace, tenant namespaces, the mail namespaces. Its management port (9000) and 8443: nobody | Yes (the realm Jobs) |
@@ -725,21 +725,22 @@ So an app that declares it can open the mailbox of a person who signed in to it,
 - **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
 - **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit every tenant's pods, and the proxy for everybody else (§2.8); the token is the check.
 
-### 2.17 A catalogue kept in the deployments repository
+### 2.17 A catalogue kept as an OCI artifact
 
-A catalogue is a public https address, and no credential is sent to one. For profiles that must not be public, a catalogue may instead be a directory of the cluster's own deployments repository ([custom-catalogues.md §4.4](../custom-catalogues.md)). The director reads that repository already; this lets what it reads there be installed from, and nothing more.
+A catalogue at an https address is public, and no credential is sent to one. A catalogue whose profiles must not be public is an OCI artifact on a registry that asks for a credential, read with the credential of a repository its owner declared ([custom-catalogues.md §4.4](../custom-catalogues.md)). A catalogue is never kept in the deployments repository, which holds the cluster's state only: the schema has no field for one. The director reads that credential from the vault, which it does for nothing else. Addresses stay public: what is private arrives through the credential, never through a private network address.
 
 | Control | State |
 | --- | --- |
-| The declaration is a directory and nothing else: no repository, host, branch or commit can be stated. Read from the director's own checkout, at the commit it is at, with the credential it already holds; no request is made | Built (`internal/director/gitops/catalogue_directory.go`) |
-| The directory is a relative path of plain names: no leading `/`, no `..`, no name beginning with a dot (so not `.git`), checked when it is declared and on every read | Built; refused with `422` when added, not read when a manifest states it anyway |
-| No symbolic link is followed: the directory, each directory on the way and each file must be a plain directory or file, looked at on disk before the file is opened | Built; a link is refused wherever it points |
-| Never `clusters/<cluster>/catalogue`, of any cluster in the repository: installed profiles are written there, a tenant's own among them, and read as a catalogue they would be offered to every tenant under another origin | Built |
-| Only the cluster's administrator declares one (`can_configure` on the cluster), for the cluster or for one tenant. A tenant's administrator is refused with or without delegation, and an entry stating a directory and `addedBy: tenant` is not read | Built |
-| No more trust than an address the cluster's administrator added: the digest pins the install, the bytes are held to it, the bundle checks run, the origin is recorded, a tenant's catalogue brings no companion and its profiles install in that tenant only | Built: one code path after the bytes are read |
-| The schema states the same rules for a Tenant's sources (`url` or `path`, a `path` only with `addedBy: cluster`) | Built (`TenantCatalogueSource`) |
+| A tenant's catalogue is read with a repository declared for that tenant, a catalogue of the whole cluster with one declared for the cluster; the owner is where the catalogue is declared, never what it says. Any other name is refused as a repository nobody declared, when it is added and on every pull | Built (`gitops.RegistryRepository`, `catalogue.VaultRegistries`) |
+| The credential is read at the one path the owner's repository credentials are kept at (`gentian-os/tenants/<t>/repositories/<name>`, `gentian-os/kernel/repositories/<name>`); a declaration naming another path is refused before the vault is asked | Built |
+| The director's role at the vault, `gentian-os-director`, bound to its ServiceAccount and to a token of the vault's audience, holds `director-repository-read`: read on those two paths, and no metadata, no write, no other path | Built (`cluster-default.yaml`); held by `make test-policy-openbao`. The policy cannot tell one tenant from another: that the director uses a tenant's credential for that tenant's catalogue only is the code above |
+| The credential is sent only for an artifact inside the repository's address, to that registry, and to a token realm of the registry's registrable domain; a single-token credential is never traded at a realm | Built (`catalogue/oci.go`) |
+| The registry is held to the address rules ([custom-catalogues.md §7](../custom-catalogues.md)): https on 443, public host, checked in the dialer, no proxy. A manifest is not redirected; a layer's redirect is followed to a public https host only, without the credential, at most three hops | Built. The layer's redirect is the one exception to "no redirects": a registry such as `ghcr.io` serves no blob without it, and the bytes are held to the layer's digest |
+| Manifest and layer are held to their digests; the manifest is a catalogue's (type, one layer); the tar is plain relative files (no `..`, absolute path, link or device), at most 10 MiB packed, 32 MiB unpacked, 4096 entries, 1 MiB a file | Built |
+| Who may add one is who may add an address, delegation included; whether the credential is set is not asked when it is added | Built |
+| A taken-over director reads every repository credential of the cluster | Accepted (AD-14, changed 2026-10-19): the policy bounds it to repository credentials |
 
-What it does not change: whoever can push to the deployments repository can put any profile into such a directory, and into the cluster directly (§2.11). The catalogue is no stronger than the repository, and its index is not signed. Whoever may view a tenant (`can_view`) can read the name, version, edition and digest of every entry of a catalogue that tenant sees, as for a catalogue at an address; a profile itself reaches the cluster when somebody who may install apps installs it, and is then one object for the whole cluster like every profile. A directory declared for the whole cluster is therefore listed to every tenant; one that only a tenant should see is declared for that tenant.
+What it does not change: whoever can push to the artifact's registry repository can put any profile into the catalogue. The catalogue is no stronger than that repository, and its index is not signed. Whoever may view a tenant (`can_view`) can read the name, version, edition and digest of every entry of a catalogue that tenant sees, as for a catalogue at an address; a profile itself reaches the cluster when somebody who may install apps installs it, and is then one object for the whole cluster like every profile. A catalogue declared for the whole cluster is therefore listed to every tenant; one that only a tenant should see is declared for that tenant.
 
 ---
 
@@ -753,7 +754,7 @@ the code does.
 
 | Control | Status | Where |
 | --- | --- | --- |
-| Keycloak per-tenant realms, kernel realm, OIDC for the desktops, the consoles and apps | Implemented | `suze.yaml` installs Keycloak; realms and clients come from `tenant-default.yaml` and `identity_reconciler.go` |
+| Keycloak per-tenant realms, kernel realm, OIDC for the desktops, the consoles and apps | Implemented | `kernel/services/keycloak-idp` installs Keycloak (Argo CD, the keycloakx chart vendored); realms and clients come from `tenant-default.yaml` and `identity_reconciler.go` |
 | Keycloak group → OpenFGA tuple sync | Implemented, from events | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The poll on a timer is gone from the code. The operator is the writer AD-12 names; the director writes nothing to the store. Not built: nothing reconciles the stored memberships toward Keycloak, and a change of a person's groups ends none of their sessions |
 | Keycloak's master administrator credential | **Held by the operator** | The operator reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups (`identity_reconciler.go`, `internal/keycloak/shell_helpers.go`). The process that writes the rights store is therefore also the one that can change any identity. Narrowing it is **Target** |
 | `AppGrant` → tuples | **Not built** | A grant opens the network path of a contract and gives the consumer a key (§3.4). It does not reach the rights store: `app_grant_reconciler.go` records the object and writes no tuple, the model's `contract` type has no writer, and nothing asks about it |
@@ -778,12 +779,12 @@ the code does.
 | Default profiles the installer places | Implemented at a stated digest, and compared with the recorded bundle at rollout | Written only when the file hashes to the digest its catalogue's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed. The operator holds the Component it creates for a default profile to the bundle recorded with the profile; nothing apart from the profile states that digest |
 | Mail: one proxy faces the internet, the mail servers do not | Implemented; proven in local containers, not on a cluster | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
 | A mailbox opened with a sign-in token | Implemented | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.16) |
-| A catalogue in the deployments repository | Implemented | A directory of the cluster's own repository, declared by the cluster's administrator only, read from the director's checkout; no escape, no link followed, never the directory installed profiles are written into (§2.17) |
+| A catalogue kept as an OCI artifact | Implemented | Read with the credential of a repository its owner declared, the registry held to the address rules, manifest and layer to their digests (§2.17) |
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
 | A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artefacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
-| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today For an app the app Composition installs, the granted rules are a policy of their own, `granted-egress-<app>`, selecting the app's release; the Composition's own policies carry none. |
+| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today For an app the app Composition installs, the granted rules are a policy of their own, `granted-egress-<app>`, selecting the app's release; the Composition's own policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
 | The internal CA's key | Implemented; shown against a local OpenBao, not on a cluster | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
@@ -890,13 +891,13 @@ Field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
 | Concept | `ComponentProfile` field | Type |
 |---|---|---|
-| Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol? }` |
+| Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol?, endpoint? }` |
 | Contracts the app **may consume** from other apps | `spec.integrations[]` | `{ contract, provider?, capabilities? }` |
 | Platform services (identity, database, object storage, cache, mail, model gateway, …) | `spec.requires.services` | Separate from contracts |
 | What goes beyond the default posture (pod-security waiver, egress, cluster roles) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
 | Where the chart takes what was provided | `spec.package.valueMapping` | Chart value keys per service |
 
-A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one.
+A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one. A provider may say where it answers one (`endpoint`: a Service of its own, the port its pods listen on, a path); the binding carries that, the consumer is told the address and a grant opens that port only. What is asked there is the two apps' business.
 
 #### Three layers — declaration, wiring, authorization
 
@@ -904,7 +905,7 @@ A contract is a name (`file-store`, `project-management`) two profiles agree on.
 |---|---|---|---|---|
 | **Declaration** | `ComponentProfile` | Cluster (one per catalogue entry) | The catalogue's maintainer; it reaches the cluster in a bundle fetched from a catalogue | **Implemented** |
 | **Wiring** | `IntegrationBinding` | Tenant namespace, one per consumer and contract | The operator, when the consumer and a provider are both in `Tenant.spec.apps` | **Implemented** |
-| **Grant** | `AppGrant` | Tenant namespace, one per consuming app | The director, as a commit, for a person who holds `can_grant` on the tenant. Nothing else writes one | **Partial** |
+| **Grant** | `AppGrant` | Tenant namespace, one per consuming app | The director commits it into the Tenant (`spec.grants`, the patch `grants.yaml`), for a person who holds `can_grant` on the tenant, with who granted it (from the token) and when, and a reason where one is given; the operator makes the `AppGrant` from it and removes one whose entry is gone. Nothing else writes one | **Partial** |
 
 Do not conflate them:
 
@@ -956,6 +957,9 @@ spec:
   provides:                          # contracts this app serves to other apps
     - name: project-management
       protocol: http-json
+      endpoint:                      # optional: where it is answered
+        service: demo-app-api
+        port: 8000
 
   integrations:                      # contracts this app may consume, if a provider is installed
     - contract: file-store
@@ -1002,7 +1006,7 @@ spec:
     vaultPath: gentian-os/tenants/demo/contracts/file-store
 ```
 
-With the binding the operator writes a generated password to `vaultPath`, once per tenant and contract. A consumer whose profile maps the contract under `package.valueMapping.integrations` gets it, with an endpoint and a user name where the binding's reconciler knows them (`calendar` and `contacts` only), as chart values. No profile of the catalogue maps one today, and this delivery does not wait for a grant. The binding is topology and secret wiring, not a per-person permission.
+The operator writes a generated password to `vaultPath`, once per tenant and contract, for every contract an installed app maps under `package.valueMapping.integrations`, and an empty endpoint and user beside it. A component that maps the contract gets them as chart values: the consumer the password and the endpoint, the provider the same password to check its callers' with. The endpoint is filled in from the binding: the address of the provider's `endpoint` (`http://<service>.<namespace>.svc.cluster.local:<port><path>`), or for `calendar` and `contacts` the provider's DAV address. This delivery does not wait for a grant, and every consumer of one contract in a tenant holds the same password. The binding is topology and secret wiring, not a per-person permission.
 
 #### 3. Grant — `AppGrant` (tenant-authored, per install)
 
@@ -1027,12 +1031,12 @@ spec:
 
 What a grant does today (`tenant_network_policy.go`, `internal/kernel/netpolicy`, `contract_keys.go`):
 
-- **The network path.** A tenant's namespace is closed in both directions. For a binding whose consumer was granted at least one capability, two NetworkPolicies let the consumer's pods reach the provider's and the provider's admit them. Without a grant neither exists.
+- **The network path.** A tenant's namespace is closed in both directions. For a binding whose consumer was granted at least one capability, two NetworkPolicies let the consumer's pods reach the provider's and the provider's admit them, on the endpoint's port where the binding carries one. Without a grant neither exists.
 - **A key per consumer.** The consumer gets a Secret `contract-key-<consumer>-<contract>` with a random key, and the provider a Secret `contract-callers-<provider>` with the SHA-256 of each granted consumer's key and its name, so a provider can tell which of its consumers is calling. Both go when the grant goes. Mounting the Secret, sending the key and checking it are the two apps' own work; the platform checks no call.
 
 What it does not do:
 
-- **Capabilities are not enforced.** Any granted capability opens the whole path to the provider's pods. The list is written on the policy as a label and nowhere else.
+- **Capabilities are not enforced.** Any granted capability opens the whole path: to the endpoint's port, or without an endpoint to the provider's pods. The list is written on the policy as a label and nowhere else.
 - **Nothing reaches the rights store.** The model has a `contract` type; nothing writes it and no enforcement point asks about a call between two apps (§3.0).
 - **Nothing is granted at install.** The operator writes no grant and changes none; its role in the cluster can neither create nor patch one. A declared integration stays closed until the tenant's administrator grants it, and a grant narrower than the declaration is what takes effect. The binding says how much of what it asks for was granted: its `Granted` condition is `True` when all of it was, and `False` with the reason `NotGranted` or `PartlyGranted` otherwise, naming the capabilities that are missing. The *Integrations* screen of the administration console shows the same.
 - **A grant the operator wrote before it stopped doing so stays.** An earlier operator wrote a full grant for every declared integration. Those objects are left as they are and keep the path open; an administrator narrows or empties one by setting the grant, and it goes with the tenant.
@@ -1268,6 +1272,10 @@ Who may read what:
   - *The cluster's own registry credential* (`Repository` without a tenant,
     with a `namespaceSelector`) is a kernel path. Where its selector matches
     a tenant's namespace, no pull Secret arrives there any more.
+- **The director reads repository credentials**, a tenant's and the
+  cluster's, under `director-repository-read` (`cluster-default.yaml`), to
+  pull a catalogue kept as an OCI artifact (§2.17). Read only, on
+  `tenants/+/repositories/+` and `kernel/repositories/+`, and nothing else.
 - Per-`(tenant, app)` policies, so that no app can read a sibling app's paths,
   are a target — the layout above is shaped for them.
 

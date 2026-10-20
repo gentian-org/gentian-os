@@ -279,7 +279,7 @@ _keycloak_internal_service_url() {
     ns="${1:-$(_pl_identity_ns)}"
     local release="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}"
     local svc port
-    # keycloakx Helm chart publishes {release}-keycloakx-http (Suze default release name).
+    # keycloakx Helm chart publishes {release}-keycloakx-http (the identity ApplicationSet's release name).
     for svc in "${release}-keycloakx-http" \
         $(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
             | grep -E 'keycloak.*http' | head -1) \
@@ -320,25 +320,15 @@ ensure_keycloak_admin_secret_url() {
     # The first wait is the long one, because on a fresh install this is a race
     # with Argo CD rather than a fault.
     #
-    # Keycloak arrives through gentian-appsets -> gentian-suze -> keycloak-idp,
-    # and that chain took eleven minutes on a real cluster. The old budget was
-    # 120s here plus 180s after a heal — under half of it — so the step reported
-    # "No Keycloak HTTP service found" and stopped an install whose Keycloak
-    # appeared a couple of minutes later. Nothing was wrong; it was early.
-    #
-    # The heal is still worth attempting, but only once the wait has genuinely
-    # expired: ensure_suze_idp_workloads cannot help while the Suze claim itself
-    # has not been applied yet, which is exactly the state a too-short wait
-    # catches.
+    # Keycloak arrives through gentian-appsets -> gentian-identity ->
+    # keycloak-idp, and that chain took eleven minutes on a real cluster
+    # when a Crossplane claim still sat between the two. The old budget was
+    # 120s here — under half of it — so the step reported "No Keycloak HTTP
+    # service found" and stopped an install whose Keycloak appeared a couple
+    # of minutes later. Nothing was wrong; it was early.
     local kc_wait="${GENTIAN_KEYCLOAK_WAIT_SECS:-900}"
     info "Waiting up to $(( kc_wait / 60 ))m for Keycloak to appear (Argo CD is still rolling out on a fresh install)..."
-    if ! url=$(wait_for_keycloak_http_service "${ns}" "${kc_wait}"); then
-        if declare -F ensure_suze_idp_workloads >/dev/null 2>&1; then
-            warn "Keycloak Service still absent after $(( kc_wait / 60 ))m — attempting Suze IdP heal..."
-            ensure_suze_idp_workloads "" 600 || true
-            url=$(wait_for_keycloak_http_service "${ns}" 300) || true
-        fi
-    fi
+    url=$(wait_for_keycloak_http_service "${ns}" "${kc_wait}") || true
 
     if [[ -z "${url:-}" ]]; then
         error "No Keycloak HTTP service found in ${ns} (expected ${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http)."

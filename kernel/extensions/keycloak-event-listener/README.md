@@ -76,3 +76,32 @@ lives on the authentication session and is spent on the first answer, so it
 serves the registration it was made for and no other. The browser's half is
 the login theme's `js/pow-captcha.js`; `PowChallengeTest` holds the two
 halves to the same arithmetic.
+
+## A client bound to a request parameter
+
+`io.gentianos.keycloak.binding` holds two providers for a client whose one
+registration serves many places, each with its own callback address computed
+from a parameter of the authorization request
+(`requires.services.identity.oidc.requestParameter`; docs/app-customization.md).
+Both read the binding from the client's attributes, which the app Composition
+writes, and from nowhere else (`RequestBinding`):
+
+| Attribute | |
+|---|---|
+| `gentianos.io/request-bound-redirect` | `true`: what the realm's client policy matches |
+| `gentianos.io/request-parameter` | the parameter, e.g. `tenant_url` |
+| `gentianos.io/request-parameter-pattern` | what the value must be, matched as a whole |
+| `gentianos.io/request-parameter-redirect-uri` | the one address, `${group}` filled from the match |
+
+- `gentian-request-bound-redirect`, a client-policy executor: refuses an
+  authorization request (`invalid_request`, an error page) unless the parameter
+  is there once and matches, and `redirect_uri` is the address computed from
+  it. The client is registered with `https://*`; this is what narrows it. The
+  tenant Composition puts it in one profile and one policy per realm.
+- `gentian-request-parameter-mapper`, a protocol mapper: puts the value in a
+  claim at the exchange of a code, when that exchange's `redirect_uri` is the
+  address computed from the value, and in no other token.
+
+A value is matched against at most 512 characters, with a bound on the work
+(`BoundedChars`): the pattern is a profile's, the value whoever sends the
+request's. Anything missing or unreadable refuses the request and maps no claim.

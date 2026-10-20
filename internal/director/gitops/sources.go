@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 )
 
 // Where a cluster's profiles may come from (AD-14).
@@ -50,28 +51,62 @@ type CatalogueSource struct {
 	Name string `json:"name"`
 	// URL is the https address bundles are fetched from.
 	URL string `json:"url,omitempty"`
-	// Path is a directory of the cluster's own deployments repository that
-	// holds the catalogue, instead of an address (catalogue_directory.go). A
-	// source states one of the two.
-	Path string `json:"path,omitempty"`
+	// OCI is an OCI artifact the catalogue is kept as, read with the
+	// credential of a repository declared for the cluster (catalogue/oci.go).
+	// A source states one of URL and OCI. A catalogue is never kept in the
+	// deployments repository: that holds the cluster's state only.
+	OCI CatalogueOCI `json:"oci,omitempty"`
+}
+
+// CatalogueOCI is a catalogue kept as an OCI artifact: the repository whose
+// credential it is read with, and the artifact. Zero is none.
+type CatalogueOCI struct {
+	Repository string `json:"repository,omitempty"`
+	Artifact   string `json:"artifact,omitempty"`
+}
+
+// Set says the source states an artifact at all.
+func (o CatalogueOCI) Set() bool { return o != CatalogueOCI{} }
+
+// CheckCatalogueOCI says what is wrong with an artifact a catalogue is
+// declared as, as it is written: the repository's name and the reference. It
+// resolves nothing and reads no repository.
+func CheckCatalogueOCI(o CatalogueOCI) error {
+	if !ValidName(o.Repository) {
+		return fmt.Errorf("%w: an artifact names the repository it is read with: lower-case letters, digits and hyphens", catalogue.ErrRegistryRefused)
+	}
+	_, err := catalogue.ParseOCIReference(o.Artifact)
+	return err
 }
 
 // where says where a source is read from, for a message.
 func (c CatalogueSource) where() string {
-	if c.Path != "" {
-		return "the directory " + c.Path + " of the deployments repository"
+	return where(c.URL, c.OCI)
+}
+
+func where(address string, oci CatalogueOCI) string {
+	if oci.Set() {
+		return "the artifact " + oci.Artifact + " (repository " + oci.Repository + ")"
 	}
-	return c.URL
+	return address
 }
 
 // usableSource says whether a declared source is one that is read from: an
-// https address, or a directory of the deployments repository a catalogue
-// may be in -- one of the two, not both.
-func usableSource(address, dir string) bool {
-	if dir != "" {
-		return address == "" && CheckCatalogueDirectory(dir) == nil
+// https address, or an artifact and the repository it is read with -- one of
+// them, not both.
+func usableSource(address string, oci CatalogueOCI) bool {
+	switch {
+	case address != "" && oci.Set():
+		return false
+	case oci.Set():
+		return CheckCatalogueOCI(oci) == nil
 	}
 	return strings.HasPrefix(address, "https://")
+}
+
+// trimOCI is an artifact as it is compared: without surrounding whitespace.
+func trimOCI(o CatalogueOCI) CatalogueOCI {
+	return CatalogueOCI{Repository: strings.TrimSpace(o.Repository), Artifact: strings.TrimSpace(o.Artifact)}
 }
 
 // CatalogueSettings is the claim's whole spec.catalogue.
@@ -105,11 +140,12 @@ func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
 	for _, src := range claim.Spec.Catalogue.Sources {
 		src.Name = strings.TrimSpace(src.Name)
 		src.URL = strings.TrimSpace(src.URL)
-		if src.Name == "" || !usableSource(src.URL, src.Path) {
+		src.OCI = trimOCI(src.OCI)
+		if src.Name == "" || !usableSource(src.URL, src.OCI) {
 			// http:// is skipped here as it is everywhere else: the digest
 			// makes the bytes safe, but a cluster fetching its catalogue in
-			// clear announces what it runs. So is a directory no catalogue
-			// is read from, and an entry that states both.
+			// clear announces what it runs. So is an entry that states both
+			// an address and an artifact, or neither.
 			continue
 		}
 		out.Sources = append(out.Sources, src)
@@ -119,8 +155,8 @@ func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
 
 // CatalogueSources reads the sources this cluster declares.
 //
-// A source with no name, or with neither an https URL nor a directory a
-// catalogue may be in, is skipped rather than refused: the
+// A source with no name, or with neither an https URL nor an artifact, is
+// skipped rather than refused: the
 // claim is read on every start, and one malformed entry must not stop a
 // director from serving. What it costs is that installs from that catalogue
 // are refused for want of a source, which says the same thing where somebody
@@ -148,10 +184,9 @@ func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error
 type TenantCatalogueSource struct {
 	Name string `json:"name"`
 	URL  string `json:"url,omitempty"`
-	// Path is a directory of the cluster's own deployments repository, in
-	// place of an address. Only the cluster's administrator declares one:
-	// an entry that states a path and addedBy: tenant is not read.
-	Path string `json:"path,omitempty"`
+	// OCI is an OCI artifact, in place of an address, read with the
+	// credential of a repository declared for this tenant.
+	OCI CatalogueOCI `json:"oci,omitempty"`
 	// AddedBy is "cluster" or "tenant". Anything else in the manifest is
 	// read as "cluster": what nobody is known to have added, the tenant's
 	// administrators may not remove.
@@ -204,17 +239,12 @@ func parseTenantCatalogue(text string) (TenantCatalogue, error) {
 	seen := map[string]bool{}
 	for _, src := range doc.Spec.Catalogue.Sources {
 		src.Name, src.URL = strings.TrimSpace(src.Name), strings.TrimSpace(src.URL)
-		if !ValidName(src.Name) || !usableSource(src.URL, src.Path) || seen[src.Name] {
+		src.OCI = trimOCI(src.OCI)
+		if !ValidName(src.Name) || !usableSource(src.URL, src.OCI) || seen[src.Name] {
 			continue
 		}
 		if src.AddedBy != gentianov1alpha1.CatalogueAddedByTenant {
 			src.AddedBy = gentianov1alpha1.CatalogueAddedByCluster
-		}
-		if src.Path != "" && src.AddedBy != gentianov1alpha1.CatalogueAddedByCluster {
-			// The deployments repository is the cluster administrator's. A
-			// tenant's administrators do not decide what is read from it,
-			// whatever a manifest says.
-			continue
 		}
 		seen[src.Name] = true
 		out.Sources = append(out.Sources, src)
@@ -283,18 +313,19 @@ func (g *GitOps) AddClusterCatalogueSource(ctx context.Context, name, address st
 	return g.addClusterSource(ctx, CatalogueSource{Name: name, URL: address}, meta)
 }
 
-// AddClusterCatalogueDirectory names a catalogue every tenant sees that is
-// kept in a directory of the cluster's own deployments repository
-// (catalogue_directory.go). The directory must be there, as the remote has
-// the repository now.
-func (g *GitOps) AddClusterCatalogueDirectory(ctx context.Context, name, dir string, meta Meta) (Result, error) {
+// AddClusterCatalogueOCI names a catalogue every tenant sees that is kept as
+// an OCI artifact, read with the credential of a repository declared for the
+// cluster. That the repository is declared, and that the artifact lies inside
+// it, is the caller's to have asked (RegistryRepository); it is asked again
+// on every pull.
+func (g *GitOps) AddClusterCatalogueOCI(ctx context.Context, name string, oci CatalogueOCI, meta Meta) (Result, error) {
 	if !ValidName(name) {
 		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
-	if err := g.catalogueDirectoryPresent(ctx, dir); err != nil {
+	if err := CheckCatalogueOCI(oci); err != nil {
 		return Result{}, err
 	}
-	return g.addClusterSource(ctx, CatalogueSource{Name: name, Path: dir}, meta)
+	return g.addClusterSource(ctx, CatalogueSource{Name: name, OCI: oci}, meta)
 }
 
 func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, meta Meta) (Result, error) {
@@ -396,37 +427,39 @@ func renderClusterSources(sources []CatalogueSource) []string {
 	out := []string{"    sources:"}
 	for _, src := range sources {
 		out = append(out, "      - name: "+quoteScalar(src.Name))
-		out = append(out, sourceLines(src.URL, src.Path)...)
+		out = append(out, sourceLines(src.URL, src.OCI)...)
 	}
 	return out
 }
 
 // sourceLines are the lines of a source that say where it is read from: its
-// address, or its directory of the deployments repository. A source somebody
-// wrote by hand with both, or with neither, is not read from; it is written
-// back as it was, so that an edit of the list loses nothing.
-func sourceLines(address, dir string) []string {
+// address or its artifact. A source somebody wrote by hand with both, or with
+// neither, is not read from; it is written back as it was, so that an edit of
+// the list loses nothing.
+func sourceLines(address string, oci CatalogueOCI) []string {
 	var out []string
-	if address != "" || dir == "" {
+	if address != "" || !oci.Set() {
 		out = append(out, "        url: "+plainURL(address))
 	}
-	if dir != "" {
-		out = append(out, "        path: "+pathScalar(dir))
+	if oci.Set() {
+		out = append(out, "        oci:",
+			"          repository: "+pathScalar(oci.Repository),
+			"          artifact: "+pathScalar(oci.Artifact))
 	}
 	return out
 }
 
-// pathScalar writes a directory bare where YAML reads that back as the same
-// text, and quoted where it would read it as something else: a directory
-// called on, 2024 or null is a name, not a value.
-func pathScalar(dir string) string {
+// pathScalar writes a repository's name or an artifact bare where YAML reads
+// that back as the same text, and quoted where it would read it as something
+// else: a name such as on, 2024 or null is a name, not a value.
+func pathScalar(v string) string {
 	var back struct {
 		V any `json:"v"`
 	}
-	if err := yaml.Unmarshal([]byte("v: "+dir+"\n"), &back); err == nil && back.V == dir {
-		return dir
+	if err := yaml.Unmarshal([]byte("v: "+v+"\n"), &back); err == nil && back.V == v {
+		return v
 	}
-	return strconv.Quote(dir)
+	return strconv.Quote(v)
 }
 
 // plainURL writes an address the way a person would: bare, where that is
@@ -465,20 +498,20 @@ func (g *GitOps) AddTenantCatalogueSource(
 	return g.addTenantSource(ctx, tenant, TenantCatalogueSource{Name: name, URL: address, AddedBy: string(by)}, meta)
 }
 
-// AddTenantCatalogueDirectory names a catalogue only one tenant sees that is
-// kept in a directory of the cluster's own deployments repository.
-//
-// It takes no role: the deployments repository is the cluster
-// administrator's, so the entry is always the cluster's, and there is no way
-// to call this for a tenant's administrator.
-func (g *GitOps) AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta Meta) (Result, error) {
+// AddTenantCatalogueOCI names a catalogue only one tenant sees that is kept
+// as an OCI artifact, read with the credential of a repository declared for
+// that tenant. by is the role the caller was authorised in, as for an
+// address: a tenant's administrator adds one where that is delegated.
+func (g *GitOps) AddTenantCatalogueOCI(
+	ctx context.Context, tenant, name string, oci CatalogueOCI, by TenantCatalogueActor, meta Meta,
+) (Result, error) {
 	if !ValidName(name) {
 		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
-	if err := g.catalogueDirectoryPresent(ctx, dir); err != nil {
+	if err := CheckCatalogueOCI(oci); err != nil {
 		return Result{}, err
 	}
-	return g.addTenantSource(ctx, tenant, TenantCatalogueSource{Name: name, Path: dir, AddedBy: string(ByCluster)}, meta)
+	return g.addTenantSource(ctx, tenant, TenantCatalogueSource{Name: name, OCI: oci, AddedBy: string(by)}, meta)
 }
 
 func (g *GitOps) addTenantSource(ctx context.Context, tenant string, want TenantCatalogueSource, meta Meta) (Result, error) {
@@ -605,7 +638,7 @@ func setTenantCatalogue(text string, c TenantCatalogue) (string, error) {
 			block = append(block, "    sources:")
 			for _, src := range c.Sources {
 				block = append(block, "      - name: "+quoteScalar(src.Name))
-				block = append(block, sourceLines(src.URL, src.Path)...)
+				block = append(block, sourceLines(src.URL, src.OCI)...)
 				block = append(block, "        addedBy: "+src.AddedBy)
 			}
 		}

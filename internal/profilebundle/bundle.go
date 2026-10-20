@@ -326,8 +326,9 @@ func checkComposition(b *Bundle, c *Companion, r rule) error {
 
 // checkOIDCPacks: the packs for the clients this profile declares.
 //
-// A pack is found by its client's id, across the cluster, and says what the
-// identity provider puts in that client's tokens in every tenant's realm. A
+// A pack is found by its client's id in the catalogue labelled with the
+// profile, and says what the identity provider puts in that client's tokens
+// in every tenant's realm. A
 // profile brings packs for its own clients only, and none for a service
 // client, which is how the platform's own backends authenticate.
 func checkOIDCPacks(b *Bundle, c *Companion, r rule) error {

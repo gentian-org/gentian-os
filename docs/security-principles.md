@@ -85,11 +85,23 @@ every route declares its `authMode`; `none` is a word someone wrote and a
 reviewer can find, never an absence. East-west: mTLS once workloads have
 identity. The same identity object is what all three layers reason about.
 
+*Today:* default-deny holds in tenant namespaces and at L7. The kernel,
+system and shared namespaces have ingress policies that ship off and no
+egress policy, and there is no mTLS. Both are tracked as C12 and C7 in
+[plans/certification.md](plans/certification.md) and as G8 and G28 in
+[plans/security-gap-closing.md](plans/security-gap-closing.md).
+
 ## 7. Audit is three logs joined by one request id
 
 Issuer events (Keycloak), decision log (every OpenFGA check with its request
 id), change log (git, written only by the director). A fact in none of these
 did not happen. Everything else is telemetry.
+
+*Today:* the change log exists and is signed, and the registrar keeps a
+record of identity changes; Keycloak's events stay in Keycloak's database
+with no expiry; the decision log is written to the bouncer's stdout and kept
+nowhere. The retained, joined store is C8 in
+[plans/certification.md](plans/certification.md).
 
 ## 8. Safe defaults by construction: every permissive setting is a diff
 

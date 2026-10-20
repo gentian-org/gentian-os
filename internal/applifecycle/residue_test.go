@@ -351,31 +351,38 @@ func TestTheResidueListHoldsEachClassAndNothingThatIsOwned(t *testing.T) {
 	}
 }
 
-// A pack catalog on the list says whether it is still read: the resolver
-// takes the first catalog holding a client id, whoever brought it.
+// A pack catalog on the list says whether it is still read: a client is
+// configured from the catalog labelled with its profile, and from no other.
 func TestAResidualPackCatalogSaysWhetherItIsStillInEffect(t *testing.T) {
 	w := residueWorld(t,
 		// Labelled for shop, which is installed and has its own catalog:
-		// the Composition asks for the one carrying shop's label.
+		// two carry shop's label, and shop's clients are refused.
 		packs("shop-old-oidc", of("shop"), "shop-admin"),
+		// Labelled for drive, installed, and the only one: in effect.
+		packs("drive-oidc", of("drive"), "drive"),
 		// Holds nothing.
 		packs("empty-oidc", of("gone")),
 	)
 	_, by := residueOf(t, w)
 
-	// The only catalog holding "gone".
-	if o := by["OIDCPackCatalog/gone-oidc"].OIDC; o == nil || o.Effective != EffectiveYes ||
-		!reflect.DeepEqual(o.Clients, []string{"gone"}) || len(o.Contested) != 0 {
-		t.Errorf("a sole holder: %+v", o)
+	// The only catalog holding "gone", labelled for a profile that is not
+	// installed: nothing reads it.
+	if o := by["OIDCPackCatalog/gone-oidc"].OIDC; o == nil || o.Effective != EffectiveNo ||
+		len(o.Clients) != 0 || len(o.Contested) != 0 {
+		t.Errorf("labelled for no installed profile: %+v", o)
 	}
-	// Holds "shop", which shop's own catalog holds too.
-	if o := by["OIDCPackCatalog/gentian-element-oidc"].OIDC; o == nil || o.Effective != EffectiveContested ||
-		!reflect.DeepEqual(o.Contested, []string{"shop"}) || len(o.Clients) != 0 {
-		t.Errorf("a second holder: %+v", o)
+	// Holds "shop" and carries no profile's label: nothing reads it.
+	if o := by["OIDCPackCatalog/gentian-element-oidc"].OIDC; o == nil || o.Effective != EffectiveNo ||
+		len(o.Clients) != 0 || len(o.Contested) != 0 {
+		t.Errorf("an unlabelled catalog: %+v", o)
 	}
-	// The only holder of shop-admin: in effect, and also read by label.
-	if o := by["OIDCPackCatalog/shop-old-oidc"].OIDC; o == nil || o.Effective != EffectiveYes || o.Composition != "shop" {
-		t.Errorf("labelled for an installed profile: %+v", o)
+	if o := by["OIDCPackCatalog/drive-oidc"].OIDC; o == nil || o.Effective != EffectiveYes ||
+		!reflect.DeepEqual(o.Clients, []string{"drive"}) || len(o.Contested) != 0 || o.Composition != "drive" {
+		t.Errorf("the one catalog labelled for an installed profile: %+v", o)
+	}
+	if o := by["OIDCPackCatalog/shop-old-oidc"].OIDC; o == nil || o.Effective != EffectiveContested ||
+		!reflect.DeepEqual(o.Contested, []string{"shop-admin"}) || len(o.Clients) != 0 || o.Composition != "shop" {
+		t.Errorf("a second catalog labelled for an installed profile: %+v", o)
 	}
 	if o := by["OIDCPackCatalog/empty-oidc"].OIDC; o == nil || o.Effective != EffectiveNo {
 		t.Errorf("a catalog holding nothing: %+v", o)

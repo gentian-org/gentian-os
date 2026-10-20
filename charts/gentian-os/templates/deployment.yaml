@@ -355,6 +355,10 @@ spec:
             {{- end }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
+            # The build this operator is, for the Cluster claim's status: the
+            # image tag, where the binary carries no VCS revision of its own.
+            - name: GENTIAN_BUILD
+              value: {{ $imageTag | quote }}
             # The repository's URL and nothing else of it: no checkout and no
             # credential. When the director says it has pushed, the operator
             # asks Argo CD to read this repository now, and the URL is how it

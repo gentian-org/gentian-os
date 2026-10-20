@@ -131,7 +131,8 @@ func TestTheInstallerMaterialisesAProfileAsTheDirectorDoes(t *testing.T) {
 				}
 				run()
 				compare := func(when string) {
-					for _, file := range []string{name + ".yaml", gitops.BundleFile(name), "kustomization.yaml"} {
+					for _, file := range []string{name + ".yaml", gitops.BundleFile(name), "kustomization.yaml",
+						gitops.BuildsDir + "/" + gitops.BuildFile(name, profilebundle.Digest(body))} {
 						want := rawRemoteFile(t, remote, dt.CataloguePath(file))
 						got, err := os.ReadFile(filepath.Join(dir, file))
 						if err != nil {
@@ -148,7 +149,8 @@ func TestTheInstallerMaterialisesAProfileAsTheDirectorDoes(t *testing.T) {
 				// that is already there at that digest: nothing to commit.
 				installed := dt.Remote(t, "demo")
 				files := map[string]string{}
-				for _, file := range []string{name + ".yaml", gitops.BundleFile(name), "kustomization.yaml"} {
+				for _, file := range []string{name + ".yaml", gitops.BundleFile(name), "kustomization.yaml",
+					gitops.BuildsDir + "/" + gitops.BuildFile(name, profilebundle.Digest(body))} {
 					raw, err := os.ReadFile(filepath.Join(dir, file))
 					if err != nil {
 						t.Fatal(err)

@@ -109,9 +109,9 @@ rules:
     - mailboxremovals.gentianos.io
     - oidcpackcatalogs.gentianos.io
     - platformsecuritypolicies.gentianos.io
+    - profilebuilds.gentianos.io
     - repositories.gentianos.io
     - resourceplans.gentianos.io
-    - suze.gentianos.io
     - tenantbackuppolicies.gentianos.io
     - tenantdomains.gentianos.io
     - tenantexports.gentianos.io
@@ -121,7 +121,6 @@ rules:
     - xapps.gentianos.io
     - xclusters.gentianos.io
     - xrepositories.gentianos.io
-    - xsuze.gentianos.io
     - xtenants.gentianos.io
     verbs:
     - get
@@ -297,11 +296,24 @@ rules:
     - gentianos.io
     resources:
     - appgrants
+    - apps
+    - backuppolicies
+    - components
+    - credentialrequirements
+    - integrationbindings
+    - platformsecuritypolicies
+    - tenantexports
+    - tenantexportschedules
+    - tenantrestores
+    - tenants
+    - xtenants
     verbs:
     - get
     - list
     - watch
+    - create
     - update
+    - patch
     - delete
   - apiGroups:
     - gentianos.io
@@ -327,46 +339,28 @@ rules:
     - integrationbindings/status
     - mailboxremovals/status
     - platformsecuritypolicies/status
+    - profilebuilds/status
     - resourceplans/status
     - tenantexports/status
     - tenantexportschedules/status
     - tenantrestores/status
     - tenants/status
+    - xclusters/status
     verbs:
     - get
     - update
     - patch
-  - apiGroups:
-    - gentianos.io
-    resources:
-    - apps
-    - backuppolicies
-    - components
-    - credentialrequirements
-    - integrationbindings
-    - platformsecuritypolicies
-    - tenantexports
-    - tenantexportschedules
-    - tenantrestores
-    - tenants
-    - xtenants
-    verbs:
-    - get
-    - list
-    - watch
-    - create
-    - update
-    - patch
-    - delete
   - apiGroups:
     - gentianos.io
     resources:
     - brandings
     - clusters
+    - profilebuilds
     - repositories
     - resourceplans
     - tenantdomains
     - xapps
+    - xclusters
     verbs:
     - get
     - list

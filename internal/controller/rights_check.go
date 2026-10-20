@@ -223,8 +223,8 @@ func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1a
 		if comp.UID != owner.UID || comp.DeletionTimestamp != nil {
 			continue
 		}
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := c.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
+		profile, err := getProfileFor(ctx, c, comp.Spec.ProfileRef.Name, comp.Spec.ProfileRef.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}

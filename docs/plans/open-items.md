@@ -215,10 +215,6 @@ been seen working on a cluster. Until it has, it is not done.
 
 - Catalogues added per cluster and per tenant, read when needed; nothing copied
   into a cluster ahead of an install.
-- A catalogue kept in a directory of the cluster's own deployments
-  repository, declared by the cluster's administrator and read from the
-  director's checkout. Held by tests of the director against a local
-  repository.
 - A profile bundle with its companions under one digest, and the operator's
   check of all of it before rollout.
 - The same check for a Component the operator places by default, against the
@@ -463,6 +459,9 @@ Carried over from before, and still not shown:
   `openbao-ca-bundle` copy in its own.
 - `busybox:1.36` is pinned by digest for `tls-reload` only; the image is not
   in `lint-image-pins`' `DIGEST_REQUIRED`, since its other uses are by tag.
+- The registrar may now `get` Argo CD Applications in the gitops namespace
+  (to answer 424 for a tenant whose sync failed); the owner kept the grant on 2026-10-16.
+  The invitation state it reports still says `pending` for such a tenant.
 
 ## 3. Known defects, open
 
@@ -512,6 +511,8 @@ was added on 2026-10-15.
 | 32 | **Every restore failed on its first step. Closed in the code on 2026-10-15, shown in local containers, not yet on a cluster.** Each restore Job's fetch step downloaded MinIO's client from `dl.min.io` when it ran; the address stopped answering when MinIO withdrew the client, and every restore of every kind -- database, bucket, volume, realm, mailboxes, desktop -- failed before it read a byte. Now the fetch, like every Job that moves a tenant's objects, runs rclone and age from the platform's storage tools image, at the operator's own tag, and downloads nothing. A bundle written before keeps restoring: the checksum beside an artefact has the format it had | `internal/backup/restore_jobs.go`, `kernel/images/storage-tools`, `make test-object-storage-lab` |
 | 33 | **An app's entitlement group whose profile carries `gentianos.io/keycloak-group-attributes` was composed with list values, which provider-keycloak v2.19.0 refuses (a Group's `attributes` is a map of strings). Closed in the code on 2026-10-16, not yet shown on a cluster.** Nine Odoo add-on profiles of the catalogue carry the annotation. `app-default.yaml` now joins a list with `##`, which the provider splits into Keycloak's list values; the render fixtures show strings | `crossplane/compositions/app-default.yaml` |
 | 34 | **`A-02`'s `destroy()` says it keeps cert-manager without `--cluster-infra`, but `A-01` then removes the edge namespace, and cert-manager with it.** The message "Keeping cert-manager (shared cluster infrastructure)" is not what happens on an uninstall or a purge; external-dns, which the same reasoning keeps, goes the same way. Found 2026-10-16 while fixing the purge that left kernel-edge's objects behind; not changed | `scripts/steps/A-02-cert-manager.sh`, `scripts/steps/A-01-namespaces.sh` |
+| 35 | **The catalogue's `odoo-base-ce` Composition holds its addons Job in a provider-kubernetes Object with `ttlSecondsAfterFinished: 600`, so the Object recreates it after every TTL and the addon install runs every ten minutes, as the platform's own Jobs did until 2026-10-19.** Not changed: it is the catalogue repository's. Found while removing the TTL from the Jobs this repository composes | the catalogue repository's `profiles/odoo/base/base-ce/composition.yaml` |
+| 36 | **A changed post-install script leaves the previous run's completed pod in the tenant's namespace.** Since 2026-10-19 a changed `spec.hooks.postInstall` is a new Job under a new Object, and Crossplane removes the old Object; deleting a Job that way orphans its pods (the purge sweeps such pods for the same reason, `internal/applifecycle/purge.go`). One finished pod per change, until the app is purged. *Reasoned, not confirmed* | `crossplane/compositions/app-default.yaml` |
 
 
 ## 4. Decisions waiting for the owner
@@ -1429,11 +1430,14 @@ the code or its commit, the entry says so.
       and is reached another way.
     - **c. A catalogue's address must be public `https` on port 443**,
       for the cluster's administrator too
-      (`internal/director/catalogue/address.go`). The owner had said that
-      a tenant's administrator, once delegated, can do what they want.
-      A private catalogue goes through the deployments repository
-      (AD-14). A no means the director fetches from addresses inside the
-      cluster or a private network when asked.
+      (`internal/director/catalogue/address.go`). **Answered by the owner
+      2026-10-19: yes.** Addresses stay public-only — https, port 443,
+      public hosts, no redirects, no proxy — for everybody. What is
+      private reaches a cluster through a catalogue kept as an OCI
+      artifact, read with the credential of a repository its owner
+      declared, which a delegated tenant's administrator may add as well
+      (AD-14, [custom-catalogues.md §4.5](../custom-catalogues.md)); never
+      through a private network address.
     - **d. Reserved address names beyond those asked for.** The owner
       asked for the critical names including desktop and console. Also
       reserved: `auth`, `login`, `signin`, `sign-in`, `sso`, `account`,
@@ -1524,10 +1528,6 @@ the code or its commit, the entry says so.
 - **The director reads the cluster's catalogue sources from the claim in
   git.** An edit made outside the director reaches it with the next commit it
   reads.
-- **A private catalogue for a tenant's own administrator.** A catalogue in
-  the deployments repository is the cluster administrator's to declare, also
-  for one tenant; a tenant's administrator adds public addresses only, and
-  no credential is sent to a catalogue.
 - **A Cluster-claim setting for the mail proxy's load balancer** -- the PROXY
   header from a load balancer that is itself a proxy, the addresses it may
   come from, and the pinned mail address. They are values of the mail
@@ -2256,6 +2256,7 @@ Closed in the code or in the documents. None has been seen on a cluster.
 
 | Date | What | Commit |
 | --- | --- | --- |
+| 2026-10-19 | A private catalogue for a tenant's own administrator: a catalogue may be an OCI artifact read with the credential of a repository its owner declared, added under delegation like an address; the deployments-repository directory is deprecated (AD-14, decision 52 c) | `be746b35` |
 | 2026-10-11 | The director commits a tenant's password policy again; the registrar's action for it is gone and its Keycloak client is no longer granted `manage-realm`; the tenant Composition always declares the realm's password policy. The documents say so (defect 25) | `24123aef`, `5fd8b15f`, `eec19bad`, `a84fadd7` |
 | 2026-10-11 | The check that a per-tenant L3 customization runs in the tenant's own namespace is written again. It is still applied nowhere (decision 49) | `d7b25cd9` |
 | 2026-10-11 | The store API documents, a test and a comment name no company and carry no commercial terms | `cbd3d530` |

@@ -312,6 +312,43 @@ expect "${ESO_TOKEN}" "allowed the destination credential in the same subtree" \
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 
+# ── director-repository-read ─────────────────────────────────────────────────
+# The director reads the credential of a repository a catalogue artifact is
+# pulled with, and nothing else: one path per repository, a tenant's or the
+# cluster's, read only. Which of them it may use for which catalogue is the
+# director's code; what it could read if that were wrong is this policy.
+director_body="$(policy_from_golden director-repository-read)"
+if [[ -z "${director_body}" || "${director_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} director-repository-read — not present in ${GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${director_body}" > "${WORKDIR}/director-repository-read.hcl"
+bao policy write director-repository-read "${WORKDIR}/director-repository-read.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} director-repository-read — OpenBao rejected the policy"
+    exit 1
+}
+DIRECTOR_TOKEN="$(bao token create -policy=director-repository-read -ttl=10m -format=json 2>/dev/null | jq -r '.auth.client_token')"
+echo ""
+echo "  director-repository-read ${DIM}(the director, for catalogue artifacts)${NC}"
+expect "${DIRECTOR_TOKEN}" "allowed reading a tenant's repository credential" \
+    "secret/data/gentian-os/tenants/acme/repositories/x" "read"
+expect "${DIRECTOR_TOKEN}" "allowed reading a cluster repository credential" \
+    "secret/data/gentian-os/kernel/repositories/x" "read"
+expect "${DIRECTOR_TOKEN}" "DENIED a tenant's app credentials" \
+    "secret/data/gentian-os/tenants/acme/apps/some-app" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED a tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED a path below a repository's" \
+    "secret/data/gentian-os/tenants/acme/repositories/x/y" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED its own commit-signing key" \
+    "secret/data/gentian-os/kernel/signing/director" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED the master password" \
+    "secret/data/gentian-os/kernel/internal/master-password" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED repository metadata — no listing" \
+    "secret/metadata/gentian-os/tenants/acme/repositories/x" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED paths outside gentian-os" \
+    "secret/data/somewhere/else" "deny"
+
 # ── eso-tenant-<tenant> ──────────────────────────────────────────────────────
 # What ESO reads for a tenant's namespace. The kernel's store, with eso-read
 # above, is not usable from a tenant's namespace; an ExternalSecret there

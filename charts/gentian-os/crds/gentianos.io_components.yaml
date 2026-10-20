@@ -289,6 +289,17 @@ spec:
                 - auto
                 - dedicated
                 type: string
+              movedAt:
+                description: |-
+                  MovedAt and MovedBy are the request behind the current pin, as the
+                  tenant's manifest records them (TenantApp.MovedAt, MovedBy): when the
+                  pin was last moved and by whom or what. A move the platform rolled
+                  back is tried again only when a later MovedAt asks.
+                maxLength: 40
+                type: string
+              movedBy:
+                maxLength: 128
+                type: string
               privileges:
                 description: |-
                   Privileges are the profile's privilege requests that a person granted.
@@ -455,6 +466,63 @@ spec:
                 maxItems: 64
                 type: array
                 x-kubernetes-list-type: set
+              rollout:
+                description: |-
+                  Rollout is which build this instance actually runs, and how the last
+                  move to the pinned build went. The pin (spec.profileRef.digest) is what
+                  was asked; this is what is. The two differ while a move is under way,
+                  and after a move the platform rolled back.
+                properties:
+                  digest:
+                    description: |-
+                      Digest is the build the instance runs: the last one that rolled out
+                      and verified. Empty before the first build has.
+                    type: string
+                  export:
+                    description: |-
+                      Export names the TenantExport taken before the move, in the tenant's
+                      namespace.
+                    type: string
+                  finishedAt:
+                    format: date-time
+                    type: string
+                  message:
+                    type: string
+                  movedAt:
+                    description: |-
+                      MovedAt and MovedBy are the request this move answers, as the tenant's
+                      manifest records them.
+                    type: string
+                  movedBy:
+                    type: string
+                  phase:
+                    description: Phase is where the move to Target stands.
+                    enum:
+                    - Exporting
+                    - Rolling
+                    - Done
+                    - RolledBack
+                    - Failed
+                    type: string
+                  previous:
+                    description: Previous is the build the instance ran before the
+                      last move to Digest.
+                    type: string
+                  reason:
+                    description: Reason and Message say why a move was rolled back
+                      or failed.
+                    type: string
+                  startedAt:
+                    description: |-
+                      StartedAt is when the pinned build began rolling out; FinishedAt when
+                      the move ended, either way.
+                    format: date-time
+                    type: string
+                  target:
+                    description: Target is the build the move under way, or the last
+                      move, was to.
+                    type: string
+                type: object
               sharedInstance:
                 description: SharedInstance names the backend when Fulfilment is "shared".
                 type: string

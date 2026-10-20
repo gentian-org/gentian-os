@@ -355,10 +355,10 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: demo-app-post-install-job
+    crossplane.io/composition-resource-name: demo-app-post-install-job-1c3f71fa
   labels:
     crossplane.io/composite: render-demo-app-fixture
-  name: render-demo-app-fixture-post-install-job
+  name: render-demo-app-fixture-post-install-job-1c3f71fa
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -376,7 +376,7 @@ spec:
           app.kubernetes.io/managed-by: gentian-os
           gentianos.io/app: demo-app
           gentianos.io/tenant: demo
-        name: demo-app-post-install
+        name: demo-app-post-install-1c3f71fa
         namespace: tenant-demo
       spec:
         backoffLimit: 10
@@ -444,7 +444,6 @@ spec:
               persistentVolumeClaim:
                 claimName: demo-app-data
                 readOnly: true
-        ttlSecondsAfterFinished: 600
   providerConfigRef:
     name: kubernetes
 ---

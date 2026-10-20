@@ -98,6 +98,29 @@ func TestPlatformValuesLandWhereTheProfileSays(t *testing.T) {
 	}
 }
 
+// A profile naming countryKey is told the tenant's country, and the empty
+// string while the tenant names none: the key is always set, so a value a
+// country left behind is replaced rather than kept.
+func TestTheTenantsCountryLandsWhereTheProfileSays(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{CountryKey: "api.env.TENANT_COUNTRY"},
+	}
+	tenant := platformTenantFixture()
+	country := func() interface{} {
+		v := r.platformValues(profile, tenant, r.zoneOf(tenant))
+		return v["api"].(map[string]interface{})["env"].(map[string]interface{})["TENANT_COUNTRY"]
+	}
+	if got := country(); got != "" {
+		t.Fatalf("TENANT_COUNTRY = %v for a tenant naming none, want \"\"", got)
+	}
+	tenant.Spec.Country = "CH"
+	if got := country(); got != "CH" {
+		t.Fatalf("TENANT_COUNTRY = %v, want CH", got)
+	}
+}
+
 // A console that manages people asks where the registrar is. It is told the
 // Service the chart creates in the control namespace, on the port the chart
 // gives it, and asking is what opens its egress there -- the registrar alone

@@ -112,6 +112,89 @@ elsewhere it is accepted and does nothing, so an app keeps a fallback (an app
 password) for those clusters. Who checks what:
 [security.md §2.16](design/security.md).
 
+**Naming the service a token is for.** A Keycloak access token names the
+client it was issued to in `azp`, and nothing in `aud` unless a mapper puts it
+there. An app that hands its tokens to a service which checks for its own name
+declares that name:
+
+```yaml
+metadata:
+  name: example
+spec:
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: example
+          audiences: [example-api]
+```
+
+Each name goes into the client's access tokens and the introspection answer,
+not its ID tokens, and comes off when the profile stops naming it. It is a
+grant -- the service accepts every token that names it -- so a name is the
+profile's own: its name, a dash and a label. None may begin with `gentian`,
+name a kernel service or a client Keycloak makes in every realm, or be another
+profile's name; the operator holds an install that would
+(`SignInClientRefused`).
+
+Every public client (`accessType: PUBLIC`, the default) must use PKCE with
+`S256`; the realm refuses a request without a code challenge.
+
+**An extension's client.** An extension that signs people in itself declares
+its client the same way, under `extensions[].kernelRequirements.identity.oidc`,
+and the app Composition composes it beside the app's own: redirect addresses
+(or the profile's `gentianos.io/oidc-default-redirect-uris`) with
+`${TENANT_DOMAIN}` filled in, PKCE for a public one, and for a confidential one
+the secret the operator seeds at the extension's own key,
+`apps/<app>-<extension>/oidc`. Its audiences are held as the app's own. A
+client the profile's OIDC pack catalogue holds a pack for is the pack Job's
+instead. The extension's release is handed its client through
+`extensions[].valueMapping.oidc`, with the keys `package.valueMapping.oidc`
+offers the app (`issuerKey`, `clientIdKey`, `clientSecretKey`, and the
+`clientSecretOpenbao*` overrides), read from its own key as the app's are
+from the app's.
+
+**Which catalogue.** A client's pack is looked up in one place only: the
+`OIDCPackCatalog` labelled `gentianos.io/profile-name: <profile>`, the one
+the profile's bundle brings; an extension's in its parent's. The app
+Composition and the operator read that one, so a pack any other catalogue
+holds does not make a client the pack Job's. A profile two catalogues are
+labelled for has its clients refused.
+
+**One client for many places.** A client whose sign-ins come from many places
+-- an issuer that every cluster's App Store app signs in at, each with its own
+callback -- declares the parameter that says which place, and the one callback
+address computed from it:
+
+```yaml
+          requestParameter:
+            name: tenant_url
+            pattern: 'https://(?<host>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+)'
+            redirectUri: 'https://store.${host}/oauth/callback'
+            claim: tenant_url      # optional: put the value in the access token
+```
+
+The realm then refuses an authorization request, with an error page, unless it
+carries the parameter once, the value matches the pattern as a whole, and
+`redirect_uri` is exactly `redirectUri` with each `${group}` filled from the
+match; a request object or a pushed request is refused. The client is
+registered with `https://*`, narrowed by that refusal, and only once the realm
+has it. `claim` is put in the access token at the exchange of a code issued for
+that address, and in no other token; the client gets no refresh token, and
+the introspection answer does not carry the claim. Both halves are the
+platform's Keycloak extension (`kernel/extensions/keycloak-event-listener`), and
+both fail closed: without them no token carries the claim. The pattern uses
+the syntax Go and Java share (`(?<name>...)`, no back-references); the
+parameter and the claim may not be ones OAuth, OpenID Connect or JWT already
+define. Such a client declares no `redirectUris`. Only an app's own client
+can be one: the app Composition binds the parameter on it alone, and an API
+entry has no Composition.
+
+A client that cannot be made as declared -- one with neither `redirectUris`
+nor a request parameter, or a request-bound one of an extension or an API
+entry -- is not made. The tenant's `IdentityReady` names it
+(`OIDCClientRefused`); the tenant's other apps are provisioned as before.
+
 **Language models are a need like the others.** An app that calls models
 declares the platform's model gateway, and only an app that declares it is
 given a key there, the gateway's address and a network path to it:
@@ -340,9 +423,13 @@ consumer (`PUT /v1/tenants/{t}/grants/{app}` at the director, `{"consume": [{"co
 companion's pods may reach the target's, and the target's admit them. Withdrawing the grant takes
 both away. The operator grants nothing by itself and never changes a grant, so a grant narrower
 than the declaration is what holds; the binding's `Granted` condition names what was asked for and
-not granted. That is all the platform does for a contract today: the path is to the target's pods as
-a whole, the granted capabilities are recorded and not enforced, and the target is not told which
-app is calling. What a consumer may do there is the target's to check.
+not granted. A target that names where it answers the contract (`spec.provides[].endpoint`: its
+Service, the port its pods listen on, a path) is reached on that port only, and the companion is
+told the address under `valueMapping.integrations.<contract>.endpointKey`; both can take the
+contract's shared password under `passwordKey`. Otherwise the path is to the target's pods as a
+whole. Once no granted target answers the contract (the target removed, the grant withdrawn), the
+address is emptied again and the password kept. The granted capabilities are recorded and not
+enforced, and the target is not told which app is calling. What a consumer may do there is the target's to check.
 
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
 role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines

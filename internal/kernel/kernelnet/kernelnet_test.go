@@ -235,6 +235,9 @@ func TestTheFlowsAClusterNeeds(t *testing.T) {
 		{"Dovecot asks whether a token is good", at("system-mail", map[string]string{"app.kubernetes.io/name": "dovecot"}), at("kernel-authentication", keycloakPod), 8080},
 		{"the operator reads the vault", at("kernel-control", chart("operator")), at("kernel-secrets", openbaoPod), 8200},
 		{"the custodian writes the vault", at("kernel-control", chart("custodian")), at("kernel-secrets", openbaoPod), 8200},
+		// For the credential of a repository a catalogue artifact is pulled
+		// with, which its role at the vault is limited to.
+		{"the director reads a repository credential", at("kernel-control", chart("director")), at("kernel-secrets", openbaoPod), 8200},
 		{"provider-vault configures the vault", at("kernel-provisioning", map[string]string{"pkg.crossplane.io/provider": "provider-vault"}), at("kernel-secrets", openbaoPod), 8200},
 		{"External Secrets reads the vault", at("kernel-secrets", map[string]string{"app.kubernetes.io/name": "external-secrets"}), at("kernel-secrets", openbaoPod), 8200},
 		{"the vault unseals through the seal", at("kernel-secrets", openbaoPod), at("kernel-seal", transitPod), 8200},
@@ -289,7 +292,6 @@ func TestWhatIsRefused(t *testing.T) {
 		{"Argo CD asks OpenFGA", argocd, at("kernel-authorization", openfgaPod), 8080},
 		{"Keycloak reaches the vault", at("kernel-authentication", keycloakPod), at("kernel-secrets", openbaoPod), 8200},
 		{"OpenFGA reaches the vault", at("kernel-authorization", openfgaPod), at("kernel-secrets", openbaoPod), 8200},
-		{"the director reaches the vault", at("kernel-control", chart("director")), at("kernel-secrets", openbaoPod), 8200},
 		{"another pod of the control namespace reaches the vault", otherPod, at("kernel-secrets", openbaoPod), 8200},
 		{"another pod of the control namespace asks OpenFGA", otherPod, at("kernel-authorization", openfgaPod), 8080},
 		{"another pod of the control namespace reaches the custodian", otherPod, at("kernel-control", chart("custodian")), 9444},
@@ -395,6 +397,7 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/gateway_tunnel.go": {{"kernel-edge", 10443}},
 	// A tenant's app to another app of the same tenant.
 	"internal/controller/integration_binding_controller.go": {},
+	"internal/controller/integration_reconciler.go":         {},
 	// The mail servers', in the mail namespaces.
 	"internal/controller/keycloak_tenant_smtp.go": {},
 	"internal/controller/mail_reconciler.go":      {{"kernel-authentication", 8080}},

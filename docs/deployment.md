@@ -70,7 +70,6 @@ Directory layout:
         values.yaml                # Layer 3
         claims/
           cluster.yaml             # Layer 4
-          suze.yaml                # identity: Keycloak and OpenFGA
           deployments-repository.yaml   # this repository, and the director's push credential
           gentian-os-repository.yaml    # the repositories Argo CD reads
           gentian-ui-repository.yaml
@@ -402,13 +401,21 @@ runs both back to back, which is why they are listed together.
 
 **Cut the release**
 
-1. On `develop`, bump `version` and `appVersion` in
-   `charts/gentian-os/Chart.yaml` to `X.Y.Z` as its own `chore(release):`
-   commit. This is load-bearing, not bookkeeping: the chart's Deployments
-   render `image.tag | default .Chart.AppVersion`, so `appVersion` is the
-   image a cluster pulls where no tag is set. It
-   must match what CI publishes — `docker/metadata-action` strips the `v`,
-   so tag `vX.Y.Z` becomes image `:X.Y.Z`.
+1. On `develop`, set `version` and `appVersion` in
+   `charts/gentian-os/Chart.yaml` to `X.Y.0` as its own `chore(release):`
+   commit, and run `make gen-platform-version`: the platform's version
+   line, which the operator and the director compare profiles' floors and
+   backup bundles against, is written from the chart. This is load-bearing,
+   not bookkeeping: the chart's Deployments render
+   `image.tag | default .Chart.AppVersion`, so `appVersion` is the image a
+   cluster pulls where no tag is set. It must match what CI publishes —
+   `docker/metadata-action` strips the `v`, so tag `vX.Y.Z` becomes image
+   `:X.Y.Z`. Between releases the tree carries the next-dev number
+   ([versioning.md §1.1](plans/versioning.md)): the commit after the tag
+   sets `X.(Y+1).0-dev`, so a build from `develop` is never mistaken for a
+   release. A patch to a released line is made on `release-X.Y`, branched
+   from the release's tag, and tagged `vX.Y.Z` there; `develop` never
+   carries a patch number.
 2. Merge `develop` → `main`.
 3. Write the release notes as `docs/releases/vX.Y.md` — what the release
    contains, and what an operator must do differently after it. Create an

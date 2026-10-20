@@ -80,6 +80,11 @@ type ComponentReconciler struct {
 	// Seeder holds the credentials of the databases this reconciler makes
 	// for tenant components. Nil leaves those requirements waiting.
 	Seeder *secrets.Seeder
+	// Exec runs a profile's verification command in the app's pod after a
+	// move (component_move.go). Nil skips the verification.
+	Exec AppExecer
+	// ExecTimeout replaces AppCommandTimeout where a test needs a short one.
+	ExecTimeout time.Duration
 	// Recorder writes the events a person should see on a Component without
 	// reading its conditions. Nil writes none.
 	Recorder record.EventRecorder
@@ -103,6 +108,7 @@ type ComponentReconciler struct {
 // +kubebuilder:rbac:groups=gentianos.io,resources=components/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=components/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=profilebuilds,verbs=get;list;watch
 // What a profile's bundle may bring beside it, read one at a time by name to
 // compare with the bundle before a pinned install is rolled out
 // (internal/profilebundle). The other three kinds are read elsewhere already.
@@ -258,15 +264,50 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// an earlier pass rolled out from the right profile stays as it is, held
 	// at that state, until the profile is the pinned build again or the pin
 	// is moved.
+	// Which build this pass renders: the pinned one, or the one the instance
+	// runs while a move waits for its export or has been rolled back
+	// (component_move.go). In memory only: the pin stays what git says, and
+	// the status subresource ignores the spec.
+	requested := comp.Spec.ProfileRef.Digest
+	effective, stop, err := r.beginMove(ctx, comp)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if stop != nil {
+		return *stop, nil
+	}
+	comp.Spec.ProfileRef.Digest = effective
+	// build names the ProfileBuild this instance is rendered from when the
+	// pinned build is not the profile's current one; "" when the profile
+	// itself is the build.
+	build := ""
 	if digest := comp.Spec.ProfileRef.Digest; digest != "" {
 		//
 		// The pin is to the whole bundle: the profile, and every object the
 		// bundle brings beside it. Each of those is read from the cluster
 		// and compared with the bundle too, and one that is missing or is
 		// not what the bundle says holds the rollout the same way.
+		//
+		// The profile is one object per name for the whole cluster, and it
+		// is the newest build any tenant installed. When this tenant's pin
+		// is another build, the ProfileBuild of that digest is read instead
+		// -- the director writes one beside every build it materialises --
+		// and this instance renders from it, held to the same checks. So
+		// one tenant's move does not hold another's install; what holds an
+		// install is a build the cluster does not have.
 		refusal, err := profilebundle.VerifyOnCluster(ctx, r.Client, catalogueNamespace(), profile, digest)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if refusal != nil && refusal.Reason == profilebundle.ReasonMismatch {
+			fromBuild, bundle, found, err := r.profileFromBuild(ctx, comp.Spec.ProfileRef.Name, digest)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if found {
+				profile, refusal = fromBuild, bundle
+				build = profilebundle.BuildName(comp.Spec.ProfileRef.Name, digest)
+			}
 		}
 		if refusal != nil {
 			message := refusal.Message + "; nothing is rolled out from it, and what is running is left as it is"
@@ -410,6 +451,19 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInSidecarRefused, noSignIn, 0)
 	}
+	// What the app's sign-in client puts in its tokens: audiences are a
+	// grant and a request parameter a narrowing of where codes go, held at
+	// the same point as the sidecar (token_audiences.go).
+	noSignInClient, err := r.signInClientRefusalFor(ctx, profile, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if noSignInClient != "" {
+		if r.Recorder != nil && !componentReports(comp, reasonSignInClientRefused, noSignInClient) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonSignInClientRefused, noSignInClient)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInClientRefused, noSignInClient, 0)
+	}
 	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {
 		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &values); err != nil {
@@ -511,7 +565,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch {
 	case composed:
 		var err error
-		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile),
+		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile), build,
 			r.mailboxTokenSignIn(ctx, tenant, profile), signIn)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -652,6 +706,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureSignInACSRoute(ctx, comp, zone, signIn, held); err != nil {
 			return ctrl.Result{}, fmt.Errorf("sign-in route: %w", err)
 		}
+	}
+	// A move ends here: the first build recorded, a rolling build verified
+	// or rolled back, an instance left on its old build said so.
+	if handled, res, err := r.finishMove(ctx, comp, profile, requested, effective, releaseReady); handled || err != nil {
+		return res, err
 	}
 	if !releaseReady {
 		return r.status(ctx, comp, metav1.ConditionFalse, "Installing", releaseMessage, componentRequeue)
@@ -1818,7 +1877,15 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// address -- the website's, and the platform's page, which steps back
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
-			builder.WithPredicates(mainAddressChanged()))
+			builder.WithPredicates(mainAddressChanged())).
+		// A tenant's country, which a profile naming countryKey is told
+		// (tenant_country.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
+			builder.WithPredicates(countryChanged())).
+		// The edge's public address, which a component granted the internet
+		// reaches from inside through the edge's pods (own_public_address.go).
+		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
+			builder.WithPredicates(edgeAddressChanged()))
 	if len(r.clusterRoleSet()) > 0 {
 		// What the cluster permits is another object's: a role it stops
 		// permitting is unbound when the policy changes, not when something
@@ -1840,3 +1907,40 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // session's token for that app's (exposure exchangeToken), and the realm
 // holds one per app that asked.
 func AppTokenScope(profile string) string { return "app-" + profile }
+
+// profileFromBuild reads the profile of one build from the ProfileBuild the
+// director wrote for it, for an instance pinned to a build that is not the
+// profile's current one. found is false when the cluster holds no such
+// build, and the caller's refusal stands. With one, the profile returned is
+// the build's, and refusal is what holds it: the build not being what it
+// says it is, or a companion of its bundle not being on the cluster as the
+// bundle says -- companions are one object per name, like the profile, so a
+// build whose companions differ from the current build's is held until the
+// tenant moves.
+func (r *ComponentReconciler) profileFromBuild(
+	ctx context.Context, name, digest string,
+) (profile *gentianov1alpha1.ComponentProfile, refusal *profilebundle.Refusal, found bool, err error) {
+	build := &gentianov1alpha1.ProfileBuild{}
+	if err := r.Get(ctx, types.NamespacedName{Name: profilebundle.BuildName(name, digest)}, build); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil, false, nil
+		}
+		return nil, nil, false, err
+	}
+	if build.Spec.Profile != name || build.Spec.Digest != digest {
+		return nil, &profilebundle.Refusal{Reason: profilebundle.ReasonMismatch, Message: fmt.Sprintf(
+			"ProfileBuild %s is a build of %s at %s, not of %s at %s",
+			build.Name, build.Spec.Profile, profilebundle.Short(build.Spec.Digest), name, profilebundle.Short(digest))}, true, nil
+	}
+	fromBuild, _, refused := profilebundle.FromBuild(build)
+	if refused != nil {
+		return nil, refused, true, nil
+	}
+	// The build's profile carries its bundle as the profile on the cluster
+	// would, so its companions are checked the same way.
+	refused, err = profilebundle.VerifyCompanions(ctx, r.Client, catalogueNamespace(), fromBuild)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	return fromBuild, refused, true, nil
+}

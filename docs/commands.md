@@ -115,6 +115,19 @@ with no secret ([identity-brokering.md](identity-brokering.md)):
 kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
 ```
 
+The country the tenant is in (`--country`, ISO 3166-1 alpha-2, `spec.country`)
+is optional. It is changed afterwards by whoever may set the tenant's policy,
+its own administrators too (`PUT /v1/tenants/<t>/country`, `can_set_policy`);
+`""` removes it. A component whose profile names
+`valueMapping.platform.countryKey` is told it: the App Store app asks a store
+for the support offered there.
+
+```bash
+kubectl gentian tenants create acme --country CH
+kubectl gentian tenants set acme --country DE
+kubectl gentian tenants set acme --country ""
+```
+
 The other half, on the cluster whose tenant those people sign in to: each
 realm of another cluster becomes an organization of the tenant's realm, with
 an identity provider `org-<name>` (`spec.brokeredFrom`, `can_configure` on
@@ -276,19 +289,21 @@ kubectl gentian apps uninstall xwiki-ce --tenant demo
 
 ### Catalogues
 
-A catalogue is an https address apps are installed from, or a directory of the
-cluster's own deployments repository for profiles that must not be public. The
-cluster's administrator adds one for every tenant or for one tenant; a
-tenant's own administrator adds an address for their tenant where the
-cluster's administrator delegated that, and never a directory.
+A catalogue is an https address apps are installed from, or, for profiles that
+must not be public, an OCI artifact read with the credential of a declared
+repository. A directory of the cluster's own deployments repository is still
+read, and deprecated. The cluster's administrator adds one for every tenant or
+for one tenant; a tenant's own administrator adds an address or an artifact for
+their tenant where the cluster's administrator delegated that, and never a
+directory.
 
 ```bash
 kubectl gentian catalogues list                        # everything the cluster declares
 kubectl gentian catalogues list --tenant demo          # what demo installs from
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue                 # for every tenant
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant demo   # for demo only
-kubectl gentian catalogues add own --path catalogue                    # a directory of the deployments repository, for every tenant
-kubectl gentian catalogues add own --path catalogues/demo --tenant demo   # the same, for demo only
+kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --repository acme --tenant demo   # an artifact, read with demo's repository acme
+kubectl gentian catalogues add ours --oci ghcr.io/ours/catalogue:1 --repository ours   # for every tenant, read with the cluster's repository ours
 kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
@@ -301,8 +316,8 @@ kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc   # one 
 $ kubectl gentian catalogues list
 CATALOGUE  FOR           ADDED BY     ADDRESS
 gentian    every tenant  the cluster  https://gentian-org.github.io/gentian-apps
-own        every tenant  the cluster  deployments repository: catalogue
 acme       tenant demo   the tenant   https://acme.github.io/acme-catalogue
+private    tenant demo   the tenant   oci: ghcr.io/acme/catalogues/acme:1.0.0 (repository acme)
 Tenants whose administrators may add catalogues of their own: demo.
 ```
 
@@ -312,12 +327,14 @@ refused unless the tenant is delegated, and removes only what the tenant
 added. Without `--tenant`, `add` and `remove` change the Cluster claim
 (`spec.catalogue.sources`), which is also where a catalogue for the whole
 cluster can be written before the install, as a `name` and a `url`, or a
-`name` and a `path`. An address must be a public https one; anything else is
-refused. A `--path` is a directory that exists in the deployments repository,
-named from its top without `..` or a leading `/`, and not
-`clusters/<cluster>/catalogue`; it is the cluster's administrator's to add,
-with or without `--tenant`
-([custom-catalogues.md §4.4](custom-catalogues.md)).
+`name` and an `oci` (`repository`, `artifact`). An address
+must be a public https one; anything else is refused. An `--oci` artifact is
+`<registry host>/<repository>:<tag>` or `@sha256:<digest>`, on a public
+registry, inside the address of the `--repository` named, which is declared for
+the tenant with `--tenant` and for the cluster without
+([custom-catalogues.md §4.4](custom-catalogues.md)). A catalogue is never a
+directory of the deployments repository, which holds the cluster's state only;
+`--path` is refused.
 [custom-catalogues.md](custom-catalogues.md) says how to build and publish a
 catalogue.
 
@@ -332,14 +349,14 @@ KIND/NAME                               NAMESPACE            PROFILE     WHY    
 ComponentProfile/acme-notes             -                    acme-notes  unused profile  2026-09-30  -
 Composition/app-odoo                    -                    -           unowned         2026-07-02  -
 ConfigMap/element-ce.portal-bridge-sso  kernel-provisioning  element-ce  dropped         2026-10-07  -
-OIDCPackCatalog/gentian-element-oidc    -                    -           unowned         2026-07-02  contested
-OIDCPackCatalog/xwiki-ce-oidc           -                    xwiki-ce    orphaned        2026-08-14  YES
+OIDCPackCatalog/gentian-element-oidc    -                    element-ce  dropped         2026-07-02  contested
+OIDCPackCatalog/xwiki-ce-oidc           -                    xwiki-ce    orphaned        2026-08-14  no
 
   ComponentProfile/acme-notes: unused profile: no tenant has it installed or switched on as an add-on, and no tenant retains data for it; its bundle brings Composition app-acme-notes, which stay
   Composition/app-odoo: not owned by any bundle: it names no profile, and no bundle on this cluster brings it
   ConfigMap/element-ce.portal-bridge-sso: it carries the label gentianos.io/profile-name: element-ce, and the bundle now materialised for element-ce does not bring it
-  OIDCPackCatalog/gentian-element-oidc: not owned by any bundle: it names no profile, and no bundle on this cluster brings it; another catalog also holds: element
-  OIDCPackCatalog/xwiki-ce-oidc: it carries the label gentianos.io/profile-name: xwiki-ce, and no profile xwiki-ce is on this cluster; the only pack for: xwiki
+  OIDCPackCatalog/gentian-element-oidc: it carries the label gentianos.io/profile-name: element-ce, and the bundle now materialised for element-ce does not bring it; another catalog carries the same label, so these clients are refused until one is removed: element; read by the Composition of element-ce
+  OIDCPackCatalog/xwiki-ce-oidc: it carries the label gentianos.io/profile-name: xwiki-ce, and no profile xwiki-ce is on this cluster
 
 Nothing here is removed automatically. To remove one:
   kubectl gentian catalogues residue remove <kind>/<name>
@@ -400,6 +417,9 @@ kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   #
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
+kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalogue, and why they stay
+kubectl gentian apps move-outdated [--tenant demo] [--app xwiki-ce]   # move them to the newest build (cluster administrator)
+kubectl gentian apps update-mode xwiki-ce --tenant demo --mode tenant # who moves this app: latest | manual | tenant | default
 ```
 
 **The command line installs a pinned build.** An app is installed from one
@@ -438,7 +458,12 @@ with none. The listing is the director's reading of each source's index, the
 
 The director verifies the bundle against the digest before it commits, and
 the operator verifies it again at rollout
-([design/store-contract.md](design/store-contract.md) §3, §4).
+([design/store-contract.md](design/store-contract.md) §3, §4). Installing an
+app the tenant already has at another build moves it: who may is the app's
+update mode's to say, and the move exports first, verifies after and rolls
+back by itself ([custom-catalogues.md §6](custom-catalogues.md)). The
+`PLATFORM` column of `--available` is the build's floor, `spec.requires.platform`;
+one marked `(not met)` needs a newer platform than this cluster runs.
 
 Uninstalling and purging are two different acts, and the CLI says which one it
 did.
@@ -494,6 +519,53 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 [deployment.md](deployment.md) §1) — `apps`/`tenants` commands don't take a
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
+
+### Groups, and people of another tenant signing in
+
+A tenant's own groups are declared in git, made by the platform and filled
+in the Admin Console. People of another tenant of the cluster may sign in to
+a tenant with their account there, given some of its groups (`members`, or
+its own); see [identity-brokering.md](identity-brokering.md).
+
+```bash
+kubectl gentian tenants groups customers website-editors store-editors
+kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers                 # what it declares
+```
+
+### Credentials a person supplies
+
+A registry's token, an app's API keys: what a profile asks a person for is
+set at the custodian, which checks each value before it stores it. A value is
+read from a file or from standard input, never from the command line, and a
+file's trailing newline is dropped.
+
+```bash
+kubectl gentian credentials list --tenant customers    # each requirement, its fields, and whether it is set
+kubectl gentian credentials set app-customers-aluvian-website-stripe \
+  --field secret_key=@stripe-restricted.txt --field publishable_key=@stripe-publishable.txt
+openssl rand -hex 32 | kubectl gentian credentials set app-customers-aluvian-website-intake --field token=-
+```
+
+### What an app asks for beyond the default
+
+An app whose profile asks for more than a tenant's apps get by default -- a
+way out to an address (`egress`), a relaxed pod security (`podSecurity`),
+cluster roles (`clusterRoles`) -- waits until a person answers each request;
+its component reads `waiting for approval of <kind>/<name>`. The answer is a
+commit through the director, with you as the approver and your reason in it.
+An `egress` request is the tenant administrator's to answer; the other two
+are the cluster's security officer's. The Admin Console's Apps page offers
+the same as a button.
+
+```bash
+kubectl gentian apps approve aluvian-commerce --tenant team     # what it waits for
+kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
+  --reason "reads the website's and the store's order requests over https"
+```
+
+`--expires <RFC 3339>` bounds the approval. Removing the entry from the
+tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 
 ### What a tenant has on the internet
 
@@ -757,7 +829,7 @@ group that holds a platform role and answers 403 for the platform admin's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
-Keycloak master-realm admin (Suze stack):
+Keycloak master-realm admin:
 
 ```bash
 kubectl get secret keycloak-admin -n kernel-authentication \

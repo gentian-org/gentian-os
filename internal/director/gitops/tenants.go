@@ -167,6 +167,8 @@ type Tenant struct {
 	// SignUp is spec.signUp.enabled: anybody may make an account in the
 	// tenant's realm. Chosen when the tenant is made.
 	SignUp bool `json:"signUp"`
+	// Country is spec.country: an ISO 3166-1 alpha-2 code, or "".
+	Country string `json:"country,omitempty"`
 }
 
 // PurgeAnnotation marks a tenant whose purge was asked for and not finished.
@@ -306,12 +308,14 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						SignUp struct {
 							Enabled bool `json:"enabled"`
 						} `json:"signUp"`
+						Country string `json:"country"`
 					} `json:"spec"`
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
 					t.AdminsApprove = doc.Spec.Perimeter.AdminsApprove
 					t.CataloguesDelegated = doc.Spec.Catalogue.Delegated
 					t.SignUp = doc.Spec.SignUp.Enabled
+					t.Country = doc.Spec.Country
 					t.DisplayName = doc.Spec.DisplayName
 					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
@@ -353,6 +357,9 @@ type NewTenant struct {
 	// composed by the platform: a client in the tenant's realm that trusts
 	// the outside realm's published keys; no secret.
 	BrokeredTo []BrokeredTo `json:"brokeredTo,omitempty"`
+	// Country is the tenant's country (Tenant spec.country), an ISO 3166-1
+	// alpha-2 code; empty names none.
+	Country string `json:"country,omitempty"`
 	// Perimeter and Catalogue are the two switches a tenant is created
 	// with, named as the manifest names them: whether its own
 	// administrators may approve public addresses
@@ -415,6 +422,10 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 		display = req.Name
 	}
 	requireMFA := req.RequireMFA == nil || *req.RequireMFA
+	country, err := NormaliseCountry(req.Country)
+	if err != nil {
+		return Result{}, err
+	}
 	adminsApprove, err := g.AdminsApproveAtCreation(ctx, req)
 	if err != nil {
 		return Result{}, err
@@ -423,6 +434,11 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 		text := tenantManifest(req.Name, display, requireMFA, req.SignUp)
 		text = withBrokeredTo(text, req.BrokeredTo)
 		var err error
+		if country != "" {
+			if text, err = setTenantCountry(text, country); err != nil {
+				return nil, err
+			}
+		}
 		if req.Catalogue != nil && req.Catalogue.Delegated {
 			if text, err = setTenantCatalogue(text, TenantCatalogue{Delegated: true}); err != nil {
 				return nil, err

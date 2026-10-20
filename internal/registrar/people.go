@@ -59,7 +59,12 @@ func (s *Server) tenantFor(w http.ResponseWriter, r *http.Request) (Tenant, bool
 // tenantError maps a failed read of the cluster's tenants onto what the
 // caller should hear.
 func (s *Server) tenantError(w http.ResponseWriter, r *http.Request, err error) {
+	var failed *TenantSyncFailed
 	switch {
+	case errors.As(err, &failed):
+		// Not "not found", which a console waits out as a tenant on its way:
+		// the cluster tried and failed, and says why.
+		s.fail(w, r, http.StatusFailedDependency, failed.Error())
 	case errors.Is(err, ErrTenantNotFound):
 		s.fail(w, r, http.StatusNotFound, "tenant not found")
 	case errors.Is(err, errInvalidName):

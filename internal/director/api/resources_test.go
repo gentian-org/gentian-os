@@ -420,6 +420,64 @@ func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
 	}
 }
 
+// A tenant's country is set and cleared by whoever may set its policy, as a
+// commit of spec.country; a member may read it and not change it.
+func TestATenantsCountryIsCommittedAndReadBack(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	mia := h.token(t, "tenant-demo", "mia")
+
+	code, body := h.do(t, "GET", "/v1/tenants/demo/country", mia, "")
+	if code != http.StatusOK || body["country"] != "" {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/country", mia, `{"country":"CH"}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a member set the country: %d", code)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":"Schweiz"}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("a country that is no code: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{}`); code != http.StatusBadRequest {
+		t.Fatalf("a body without a country: %d %v", code, body)
+	}
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":"ch"}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("write: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); !strings.Contains(manifest, `country: "CH"`) {
+		t.Fatalf("the country is not in the manifest:\n%s", manifest)
+	}
+	if _, body = h.do(t, "GET", "/v1/tenants/demo/country", tom, ""); body["country"] != "CH" {
+		t.Fatalf("read back: %v", body)
+	}
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":""}`); code != http.StatusAccepted {
+		t.Fatalf("clear: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "country:") {
+		t.Fatalf("a cleared country is still in the manifest:\n%s", manifest)
+	}
+}
+
+// A tenant is created with its country, and a country that is no code is
+// refused before anything is committed.
+func TestATenantIsCreatedWithItsCountry(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	tenants := "/v1/clusters/" + dt.Cluster + "/tenants"
+	before := h.tip(t)
+	if code, out := h.do(t, "POST", tenants, alice, `{"name":"acme","country":"CHE"}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("an alpha-3 code = %d %v", code, out)
+	}
+	code, out := h.do(t, "POST", tenants, alice, `{"name":"acme","country":"de"}`)
+	if code != http.StatusAccepted || out["country"] != "DE" {
+		t.Fatalf("create = %d %v", code, out)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("acme")); !strings.Contains(manifest, `country: "DE"`) {
+		t.Fatalf("the country is not in the manifest:\n%s", manifest)
+	}
+}
+
 func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
 	h, _ := startWithOperator(t)
 	before := h.tip(t)
@@ -527,28 +585,62 @@ func TestAGrantIsCommittedAndWithdrawn(t *testing.T) {
 
 	before := h.tip(t)
 	code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom,
-		`{"consume":[{"contract":"files","granted":["read"]}],"allowConsumers":[{"app":"tasks","contract":"notes","scope":["read"]}]}`)
+		`{"consume":[{"contract":"files","granted":["read"]}],"allowConsumers":[{"app":"tasks","contract":"notes","scope":["read"]}],"reason":"notes attach files"}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
 		t.Fatalf("grant: %d %v", code, body)
 	}
-	grant := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grant-notes.yaml")
-	for _, want := range []string{"kind: AppGrant", "name: notes", "namespace: tenant-demo", "app: notes", "contract: files", "- read", "app: tasks"} {
-		if !strings.Contains(grant, want) {
-			t.Errorf("grant is missing %q:\n%s", want, grant)
+	// A patch of the Tenant, with who granted it and when, from the token.
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	for _, want := range []string{"kind: Tenant", "name: demo", "app: notes", "contract: files", "- read", "app: tasks",
+		"grantedBy: tom", "grantedAt:", "reason: notes attach files"} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("grants.yaml is missing %q:\n%s", want, grants)
 		}
 	}
+	if strings.Contains(grants, "namespace:") {
+		t.Errorf("the grant is a namespaced object again:\n%s", grants)
+	}
 	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
-	if !strings.Contains(kustomization, "- grant-notes.yaml") {
-		t.Fatalf("the grant is not applied:\n%s", kustomization)
+	if !strings.Contains(kustomization, "grants.yaml") {
+		t.Fatalf("the grants are not applied:\n%s", kustomization)
 	}
 
-	// Withdrawing takes the file and the listing away, which withdraws
-	// everything it permitted.
+	// Withdrawing takes the entry away -- the last one, the patch -- which
+	// withdraws everything it permitted.
 	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/grants/notes", tom, ""); code != http.StatusAccepted {
 		t.Fatalf("withdraw: %d", code)
 	}
-	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "grant-notes.yaml") {
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "grants.yaml") {
 		t.Fatalf("the grant survived being withdrawn:\n%s", out)
+	}
+}
+
+// A grant file from before grants were a patch of the Tenant -- which Argo
+// CD could not apply -- is carried over into grants.yaml and removed, in the
+// same commit as the next grant.
+func TestAnOldGrantFileIsCarriedOverByTheNextGrant(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	dir := "clusters/" + dt.Cluster + "/tenants/demo"
+	kustomization := "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- tenant.yaml\n"
+	dt.Commit(t, h.remote, map[string]string{
+		dir + "/grant-old.yaml": "apiVersion: gentianos.io/v1alpha1\nkind: AppGrant\nmetadata:\n  name: old\n  namespace: tenant-demo\n" +
+			"spec:\n  app: old\n  consume:\n  - contract: files\n    granted:\n      - \"read\"\n",
+		dir + "/kustomization.yaml": strings.Replace(kustomization, "resources:\n", "resources:\n- grant-old.yaml\n", 1),
+	})
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom, `{"consume":[{"contract":"files","granted":["read"]}]}`); code != http.StatusAccepted {
+		t.Fatalf("grant: %d %v", code, body)
+	}
+	grants := dt.RemoteFile(t, h.remote, dir+"/grants.yaml")
+	if !strings.Contains(grants, "app: old") || !strings.Contains(grants, "app: notes") {
+		t.Fatalf("grants.yaml:\n%s", grants)
+	}
+	out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:"+dir)
+	if strings.Contains(out, "grant-old.yaml") {
+		t.Fatalf("the old grant file is still there:\n%s", out)
+	}
+	if k := dt.RemoteFile(t, h.remote, dir+"/kustomization.yaml"); strings.Contains(k, "grant-old.yaml") {
+		t.Fatalf("the kustomization still lists the old file:\n%s", k)
 	}
 }
 

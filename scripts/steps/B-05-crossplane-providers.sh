@@ -48,6 +48,19 @@ _b05_activation_current() {
     return 0
 }
 
+# The provider roles, compared the same way. A kind added to the roles in the
+# checkout (provider-kubernetes-kinds.yaml) was otherwise never applied: the
+# step found the providers healthy and skipped, and the API server went on
+# refusing every object of that kind. The checksum is recorded on the role
+# provider-kubernetes is bound to.
+_B05_RBAC_FILE="${SCRIPT_DIR}/crossplane/providers/provider-rbac.yaml"
+_B05_RBAC_ROLE="gentian-provider-kubernetes"
+_b05_rbac_sha() { sha256_of "${_B05_RBAC_FILE}" | cut -c1-16; }
+
+_b05_rbac_current() {
+    [[ "$(kubectl get clusterrole "${_B05_RBAC_ROLE}" -o jsonpath='{.metadata.annotations.gentianos\.io/source-sha}' 2>/dev/null)" == "$(_b05_rbac_sha)" ]]
+}
+
 _b05_crd_established() {
     [[ "$(kubectl get crd "$1" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)" == "True" ]]
 }
@@ -164,9 +177,35 @@ _b05_tenant_apps_apply() {
         _kubectl_retry apply -f - >/dev/null
 }
 
+# _b05_packages_current -- every provider and function the checkout declares
+# runs the package it declares. The health checks below say the packages
+# are up, not which they are: a pin bumped in providers.yaml was otherwise
+# never applied to a cluster that already had healthy providers, and the
+# cluster stayed on the old package for good (docs/plans/versioning.md).
+# Read off the file itself (_b05_declared_packages), so no YAML tool is
+# needed: the file is this repository's and has one shape.
+_b05_declared_packages() {
+    awk '
+        /^kind:/ { kind = $2 }
+        /^  name:/ && kind != "" && name == "" { name = $2 }
+        /^  package:/ { if (kind == "Provider" || kind == "Function") print kind "\t" name "\t" $2; name = "" }
+        /^---/ { kind = ""; name = "" }
+    ' "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
+}
+_b05_packages_current() {
+    local kind name want have
+    while IFS=$'\t' read -r kind name want; do
+        [[ -n "${name}" ]] || continue
+        have="$(kubectl get "$(to_lower "${kind}").pkg.crossplane.io" "${name}" -o jsonpath='{.spec.package}' 2>/dev/null)" || return 1
+        [[ "${have}" == "${want}" ]] || return 1
+    done < <(_b05_declared_packages)
+    return 0
+}
+
 check() {
     local p pc fn crd
     _b05_activation_current || return 1
+    _b05_packages_current || return 1
     for p in provider-kubernetes provider-helm provider-vault; do
         [[ "$(kubectl get provider.pkg.crossplane.io "${p}" -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null)" == "True" ]] || return 1
     done
@@ -190,6 +229,7 @@ check() {
     # that makes provider-helm act as it.
     kubectl get serviceaccount "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" >/dev/null 2>&1 || return 1
     _b05_tenant_apps_current || return 1
+    _b05_rbac_current || return 1
     return 0
 }
 
@@ -226,6 +266,7 @@ apply() {
     done
     _b05_wait_activated_types || return 1
     _v5_providers_apply provider-rbac.yaml
+    kubectl annotate clusterrole "${_B05_RBAC_ROLE}" --overwrite "gentianos.io/source-sha=$(_b05_rbac_sha)" >/dev/null
     _b05_tenant_apps_apply || return 1
     _v5_providers_apply provider-configs.yaml
     # The functions the Compositions call, before B-06 applies any of them.

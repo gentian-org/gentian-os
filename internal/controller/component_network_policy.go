@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -152,6 +153,15 @@ func grantedEgressPolicyName(comp *gentianov1alpha1.Component) string {
 // names (helmReleaseOf).
 func (r *ComponentReconciler) ensureGrantedEgress(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
 	granted := security.GrantedEgressRules(profile, comp, time.Now())
+	// And the cluster's own public address where a granted rule admits it,
+	// as for an app the operator installs itself (own_public_address.go).
+	// It follows from a grant, so it is in this policy and goes with it.
+	if own, err := r.ownPublicAddressRule(ctx, granted); err != nil {
+		logf.FromContext(ctx).Info("the edge's public address could not be read; the policy leaves it out",
+			"component", comp.Name, "error", err.Error())
+	} else {
+		granted = append(granted, own...)
+	}
 	key := types.NamespacedName{Name: grantedEgressPolicyName(comp), Namespace: comp.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
 	err := r.Get(ctx, key, existing)
@@ -220,8 +230,23 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsRightsCheck(profile) {
 		outside = append(outside, rightsCheckEgress())
 	}
+	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
+	// The cluster's own public address, where a rule to public addresses
+	// admits it -- the store's way out, or a granted one: from inside it is
+	// the edge's pods, which those rules do not name (own_public_address.go).
+	//
+	// An edge that cannot be read leaves the rule out and the rest of the
+	// policy as it should be: the rule only adds a way, so leaving it out
+	// fails closed, while refusing the whole policy would also hold back a
+	// privilege somebody withdrew.
+	own, err := r.ownPublicAddressRule(ctx, rules)
+	if err != nil {
+		logf.FromContext(ctx).Info("the edge's public address could not be read; the policy leaves it out",
+			"component", comp.Name, "error", err.Error())
+		own = nil
+	}
 	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
-		append(outside, security.GrantedEgressRules(profile, comp, time.Now())...))
+		append(rules, own...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
 	err = r.Get(ctx, key, existing)

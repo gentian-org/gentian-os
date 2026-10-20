@@ -1,0 +1,95 @@
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: render-fixture
+  annotations:
+    crossplane.io/external-name: render-fixture
+spec:
+  displayName: Render Fixture
+  adminEmail: admin-render@example.test
+  # A realm of another cluster where this tenant's people may sign in with
+  # their account here: one client, broker-to-aluvian, authenticating the
+  # outside realm by the JWT it signs, against the keys it publishes. A
+  # second entry whose name is not a DNS label renders nothing.
+  # A tenant of the same cluster whose people sign in here, and the groups
+  # they are given: a declared group and the members. A group the tenant does
+  # not declare, or a platform group by name, was dropped by the operator and
+  # arrives here only as a path the composition takes as it is; an entry
+  # whose name is not a label composes nothing.
+  groups: [website-editors, store-editors, gentianfake]
+  signInFrom:
+    - tenant: team
+      alias: tenant-team
+      displayName: Aluvian
+      realm: team
+      clientID: broker-to-render-fixture
+      groups: [/website-editors, /gentian:tenant:render-fixture:members, not-a-path]
+    - tenant: Not_A_Label
+      alias: tenant-x
+      displayName: X
+      realm: x
+      clientID: broker-to-render-fixture
+  # The source half, as the operator projects it for a tenant that names
+  # another in spec.signInTo.
+  brokeredTo:
+    - name: customers
+      redirectURI: https://id.platform.example.test/auth/realms/customers/broker/tenant-render-fixture/endpoint
+      jwksURL: https://id.platform.example.test/auth/realms/customers/protocol/openid-connect/certs
+  kernelDomain: platform.example.test
+  apps:
+    - name: catalogue-test-app
+      profile: catalogue-test-app
+  # Every field of TenantQuotas, set so the ResourceQuota is rendered and every
+  # key of it compared. Without quotas the Composition skips that Object
+  # entirely and the mapping from plan quantities to quota keys goes untested.
+  #
+  # Completeness is the point, and it is enforced:
+  # TestRenderFixtureExercisesTheRealQuotas fails when a field of TenantQuotas is
+  # missing here. This fixture writes an XR directly and so skips both hops the
+  # real path takes — Tenant -> XTenant projection, then the XRD's structural
+  # schema — which is how it went on rendering requests.cpu correctly while the
+  # real path pruned it and tenants on a plan got none of the reserved capacity
+  # they were sold.
+  # Every field of TenantSecurity, so the password-policy string the
+  # composition assembles is rendered and compared. That string is the part
+  # that breaks silently: a realm accepts a policy it does not understand by
+  # ignoring it, so a typo costs the policy rather than the install.
+  security:
+    password:
+      minLength: 12
+      requireDigits: true
+      requireLowercase: true
+      requireUppercase: true
+      requireSpecialChars: true
+      historyCount: 3
+      maxAgeDays: 90
+    session:
+      idleMinutes: 30
+      maxHours: 12
+      rememberMe: true
+    bruteForce:
+      enabled: true
+      maxLoginFailures: 5
+      lockoutDurationSeconds: 900
+  # The realm's mail server as the operator states it on a cluster that runs
+  # its own mail: the login minted for this realm, its password by reference.
+  realmMail:
+    host: mail.platform.example.test
+    port: "587"
+    from: noreply@platform.example.test
+    username: noreply@render-fixture.platform.example.test
+    ssl: false
+    starttls: true
+    passwordSecretRef:
+      name: mail-submission-render-fixture
+      key: smtp_password
+  quotas:
+    requestsCpu: "2"
+    requestsMemory: 4Gi
+    cpu: "8"
+    memory: 8Gi
+    storage: 50Gi
+    maxApps: 10
+    maxPods: 100
+  compositeDeletePolicy: Background
+  resourceRefs: []
