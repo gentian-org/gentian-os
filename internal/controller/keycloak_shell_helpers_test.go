@@ -23,8 +23,14 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, "keycloak_json_id_by_attr") {
 		t.Fatal("expected keycloak_json_id_by_attr helper in realm script")
 	}
-	if !strings.Contains(script, "SSO Identity Brokering") {
-		t.Fatal("expected kernel SSO brokering block in realm script")
+	// No broker section at all: the bridges between a tenant realm and the
+	// kernel realm, in either direction, are the Compositions' now
+	// (hub_projection.go), so the script neither reads KERNEL_REALM nor
+	// writes a client in that realm.
+	for _, gone := range []string{"SSO Identity Brokering", "KERNEL_REALM", "KERNEL_EXTERNAL_URL", "broker-${REALM_NAME}"} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("realm script still carries the kernel broker: %s", gone)
+		}
 	}
 	// The IdP is not written here at all any more, so there is no alias to
 	// preserve and no bootstrap value to fall back to. The whole
@@ -40,12 +46,6 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 		if strings.Contains(script, gone) {
 			t.Fatalf("realm script still writes the kernel IdP: %s", gone)
 		}
-	}
-	// The broker client stays: it is Observe-only in the Composition by design,
-	// so something has to create it, and on a realm that does not exist yet that
-	// something cannot be the Composition.
-	if !strings.Contains(script, `${KERNEL_REALM}/clients`) {
-		t.Fatal("realm script must still bootstrap the kernel-realm broker client")
 	}
 	// The user profile is tenant-default's now: it declares all six attributes
 	// whole, where this script appended one patch to add uid and

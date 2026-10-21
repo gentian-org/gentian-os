@@ -1,0 +1,227 @@
+# The spoke's and the kernel provider's resources, marked Ready so
+# function-sequencer emits the ones ordered after them: the group's role after
+# the role, the subflows after the flow, the executions after the subflows,
+# their settings after them, the client after everything it binds; the kernel
+# provider after its Secret, its mapper after the provider. Without this the
+# render shows the first of each sequence alone.
+---
+apiVersion: role.keycloak.crossplane.io/v1alpha1
+kind: Role
+metadata:
+  name: render-fixture-hub-spoke-role
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-role
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Flow
+metadata:
+  name: render-fixture-hub-spoke-flow
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-flow
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Subflow
+metadata:
+  name: render-fixture-hub-spoke-subflow-sign-in
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-sign-in
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Subflow
+metadata:
+  name: render-fixture-hub-spoke-subflow-forms
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-forms
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Subflow
+metadata:
+  name: render-fixture-hub-spoke-subflow-2fa
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-2fa
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Subflow
+metadata:
+  name: render-fixture-hub-spoke-subflow-gate
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-gate
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-cookie
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-cookie
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-password
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-password
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-2fa-configured
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-2fa-configured
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-2fa-otp
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-2fa-otp
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-2fa-webauthn
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-2fa-webauthn
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-gate-role
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-gate-role
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-hub-spoke-exec-gate-deny
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-gate-deny
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: ExecutionConfig
+metadata:
+  name: render-fixture-hub-spoke-config-gate-role
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-config-gate-role
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: ExecutionConfig
+metadata:
+  name: render-fixture-hub-spoke-config-gate-deny
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-spoke-config-gate-deny
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-kernel-idp-client
+  annotations:
+    crossplane.io/composition-resource-name: kernel-idp-client
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: render-fixture-kernel-idp
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kernel-idp
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

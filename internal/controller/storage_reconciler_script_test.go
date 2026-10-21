@@ -43,8 +43,8 @@ func TestBackupBucketUnitNamesTheBackupBucket(t *testing.T) {
 func TestTheRealmScriptsFailWhenTheRealmIsStillThere(t *testing.T) {
 	scripts := map[string]string{
 		"delete":             buildRealmDeleteScript("acme", "kernel"),
-		"disable":            buildRealmDisableScript("acme", "admin@acme.example", "gentian"),
-		"disable, no broker": buildRealmDisableScript("acme", "admin@acme.example", ""),
+		"disable":            buildRealmDisableScript("acme"),
+		"disable, no broker": buildRealmDisableScript("acme"),
 	}
 	for name, script := range scripts {
 		if !strings.HasPrefix(script, "set -eu") {
@@ -69,17 +69,11 @@ func TestTheRealmScriptsFailWhenTheRealmIsStillThere(t *testing.T) {
 	if strings.Contains(scripts["disable, no broker"], "/admin/realms//") || strings.Contains(scripts["disable, no broker"], "USER_RESP") {
 		t.Errorf("the disable script asks a realm with no name:\n%s", scripts["disable, no broker"])
 	}
-	// Switched off with the kernel identity provider (kernelBroker): nothing
-	// creates that user, so the script does not look for one. The code is
-	// kept, and with the switch on it looks in the kernel realm.
+	// No second account: a tenant administrator who holds a platform role has
+	// a linked account in the kernel realm, which the platform tenant's
+	// composition owns, so the script looks for nobody there.
 	if strings.Contains(scripts["disable"], "USER_RESP") {
-		t.Errorf("the disable script looks for an administrator in the kernel realm, which is switched off:\n%s", scripts["disable"])
-	}
-	kernelBroker = true
-	brokered := buildRealmDisableScript("acme", "admin@acme.example", "gentian")
-	kernelBroker = false
-	if !strings.Contains(brokered, "/admin/realms/gentian/users?username=admin@acme.example") {
-		t.Errorf("with the kernel broker on, the disable script does not look for the administrator in the kernel realm:\n%s", brokered)
+		t.Errorf("the disable script looks for an administrator in the kernel realm:\n%s", scripts["disable"])
 	}
 }
 

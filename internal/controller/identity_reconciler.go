@@ -40,22 +40,6 @@ const (
 	identityRequeueAfter   = 2 * time.Second
 )
 
-// kernelBrokerEnabled is off: nobody signs in to a tenant realm through the
-// kernel realm, so the realm Job no longer makes the client a tenant realm
-// would sign in to the kernel realm as (broker-<realm>). tenant-default has the
-// same switch for the identity provider that used it. The code stays; true
-// brings the client back.
-const kernelBrokerEnabled = false
-
-// realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.
-// When nil, no identity brokering is configured for the realm.
-// The broker registers the shared kernel realm as an OIDC Identity Provider in the
-// tenant realm so users logged into the portal don't need a second login for tenant apps.
-type realmBrokerParams struct {
-	kernelRealm       string // Keycloak realm name for the shared SSO realm, e.g. "kernel"
-	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.platform.example.com"
-}
-
 // ensureIdentity provisions a Keycloak realm and OIDC/SAML clients for the tenant.
 // It waits for Crossplane-owned Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
@@ -166,17 +150,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		// No broker IdP Job to wait for. Its last two writes — the mappers that
 		// carry gentian_username across the realm boundary — are tenant-default's
 		// now, so the Job is gone and what it left behind is swept.
-		r.deleteRetiredJobs(ctx, tenantBrokerIdPJobName(tenant.Name))
-
-		kernelBrokerDone, err := r.ensureKernelTenantBrokerJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure kernel tenant broker Job: %w", err)
-		}
-		if !kernelBrokerDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningKernelTenantBroker", "Waiting for kernel tenant broker Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantKernelBrokerJobName(tenant.Name)), nil
-		}
+		// Nor the kernel realm's first-broker-login flow Job: the kernel
+		// realm's hub flows are the platform tenant's composition's
+		// (hub_projection.go), and the Job's flow nothing names any more.
+		r.deleteRetiredJobs(ctx, tenantBrokerIdPJobName(tenant.Name), kernelTenantBrokerJobName(tenant.Name))
 
 		// The portal BFF client is a Composition resource now; its readiness is
 		// reported through CrossplaneReady rather than watched here.
@@ -338,19 +315,11 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, broker *realmBrokerParams) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
-	// Inject realm name as a shell variable so the IdP brokering section can
-	// reference it without additional fmt.Sprintf substitutions.
 	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
-	if broker != nil {
-		c.Env = append(c.Env,
-			corev1.EnvVar{Name: "KERNEL_REALM", Value: broker.kernelRealm},
-			corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: broker.kernelExternalURL},
-		)
-	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmJobName(tenant.Name),
@@ -504,7 +473,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("disable-realm", buildRealmDisableScript(realmName, "admin-"+tenant.Name, kernelRealm)),
+						keycloakContainer("disable-realm", buildRealmDisableScript(realmName)),
 					},
 				},
 			},
@@ -582,18 +551,11 @@ func keycloakContainer(name, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
-// buildRealmScript creates or updates a Keycloak realm and optionally registers
-// kernel→tenant SSO brokering when KERNEL_REALM / KERNEL_EXTERNAL_URL are set.
-const realmScriptBrokerIDPlaceholder = "__GENTIAN_BROKER_ID_BLOCK__"
-
+// buildRealmScript creates a Keycloak realm where there is none. Everything
+// else about the realm is the Composition's: the realm's own fields, and the
+// bridges to the kernel realm in either direction (hub_projection.go), which
+// this script once wrote as the client broker-<realm> in the kernel realm.
 func buildRealmScript(realmName, displayName string) string {
-	brokerResolveID := `keycloak_json_id_by_attr "${BROKER_RESP}" "clientId" "${BROKER_CLIENT_ID}"
-BROKER_KC_ID="${_kj_id}"
-if [ -z "${BROKER_KC_ID}" ]; then
-  echo "ERROR: could not resolve broker client id (clientId=${BROKER_CLIENT_ID})" >&2
-  exit 1
-fi`
-
 	script := fmt.Sprintf(`set -eu
 
 `+keycloak.ShellAdminToken()+`
@@ -619,56 +581,7 @@ else
   # realm.
   echo "realm %s already exists (HTTP ${HTTP}); its settings are the Composition's"
 fi
-
-# ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
-if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
-  BROKER_CLIENT_ID="broker-${REALM_NAME}"
-  BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${REALM_NAME}/broker/kernel/endpoint"
-
-`+keycloak.ShellAdminToken()+`
-
-  BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-  if echo "${BROKER_RESP}" | grep -q "\"clientId\":\"${BROKER_CLIENT_ID}\""; then
-`+realmScriptBrokerIDPlaceholder+`
-    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false,`+keycloak.PlatformMarkerShellJSON+`}" >/dev/null
-    echo "broker client ${BROKER_CLIENT_ID} updated in ${KERNEL_REALM} realm"
-  else
-    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false,`+keycloak.PlatformMarkerShellJSON+`}"
-    BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-      "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-`+realmScriptBrokerIDPlaceholder+`
-    echo "broker client ${BROKER_CLIENT_ID} created in ${KERNEL_REALM} realm"
-  fi
-  # The IdP is NOT written here. tenant-default composes it, fully managed, and
-  # declares more than this script ever could: the sixteen provider defaults the
-  # live object was missing, useJwksUrl and updateProfileFirstLoginMode through
-  # extraConfig, and the client id and secret taken from the broker Client's
-  # connection Secret rather than read back from the admin API.
-  #
-  # This was the last object with two writers. They agreed only because the
-  # script had been taught to carry forward whichever first-broker-login alias it
-  # observed instead of restating one — which is a truce, not a resolution, and
-  # the same truce held right up until the two disagreed about that field.
-  #
-  # The broker client above stays, and has to. It is Observe-only in the
-  # Composition by design: writeConnectionSecretToRef republishes its secret
-  # without rotating it, which is what lets the IdP take credentials from a
-  # Secret. Something has to create it first, and on a realm that does not exist
-  # yet that something cannot be the Composition.
-
-# No gentian_username mappers here. This script wrote both — the one that makes
-# the kernel broker client emit the claim, and the one that imports it back into
-# the tenant user's uid — and so did the broker-idp Job, of three writers for two
-# objects. tenant-default composes them.
-fi`, realmName, realmName, displayName, realmName, realmName)
-	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
+`, realmName, realmName, displayName, realmName, realmName)
 	// No user-profile writes. tenant-default composes a UserProfile that declares
 	// all six attributes whole, where this appended one patch to add uid and
 	// gentian.inviteEmail and a second to strip `required` off the name fields.
@@ -903,13 +816,14 @@ fi
 }
 
 // buildRealmDisableScript disables a Keycloak realm on Retain undeploy,
-// invalidating all active sessions, and disables the tenant's administrator
-// in the kernel realm when there is one to broker through.
+// invalidating all active sessions. A tenant administrator's linked account
+// in the kernel realm, where the claim names one, is the platform tenant's
+// composition's and goes when the entry does, not here.
 //
 // Nothing in it is allowed to fail quietly: a realm that could not be
 // disabled is a tenant that was retired and can still sign in.
-func buildRealmDisableScript(realmName, adminUsername, kernelRealm string) string {
-	script := fmt.Sprintf(`set -eu
+func buildRealmDisableScript(realmName string) string {
+	return fmt.Sprintf(`set -eu
 `+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -926,24 +840,6 @@ case "${HTTP}" in
   *) echo "ERROR: reading realm %[1]s answered HTTP ${HTTP}" >&2; exit 1 ;;
 esac
 `, realmName)
-	// Not while kernelBroker is off: nothing creates that user in the kernel realm.
-	if kernelRealm == "" || !kernelBroker {
-		return script
-	}
-	return script + fmt.Sprintf(`# Also disable the tenant admin in the kernel realm, which brokers its sign-in.
-USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%[1]s/users?username=%[2]s&exact=true")
-if echo "${USER_RESP}" | grep -q '"id"'; then
-  UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%[1]s/users/${UID}" \
-    -d '{"enabled":false}'
-  echo "user %[2]s disabled in %[1]s realm"
-else
-  echo "user %[2]s not found in %[1]s realm"
-fi
-`, kernelRealm, adminUsername)
 }
 
 // --- Name helpers ------------------------------------------------------------

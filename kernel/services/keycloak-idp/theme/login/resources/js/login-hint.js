@@ -11,6 +11,14 @@
  * read. One this does not recognise fills nothing, which is the safe way to
  * be wrong. The hint only ever becomes the value of the username field, and
  * only when the person has not typed one.
+ *
+ * The same way carries kc_idp_hint: a desktop's address with
+ * ?kc_idp_hint=<alias> names one of the realm's identity providers, and this
+ * page goes to it at once instead of showing the form -- how a security
+ * officer reaches the platform through their own tenant's realm, and a
+ * platform administrator a tenant that let them in (iam.md 1.1c). Only to a
+ * provider the page itself lists: the link is the one Keycloak rendered for
+ * that alias, so a hint naming anything else does nothing.
  */
 (function () {
   function original(state) {
@@ -37,7 +45,27 @@
       return "";
     }
   }
+  function providerHint() {
+    try {
+      var url = original(new URLSearchParams(window.location.search).get("state"));
+      if (!url) return "";
+      var alias = new URL(url).searchParams.get("kc_idp_hint") || "";
+      // An alias as the platform names them, nothing longer or stranger.
+      return /^[a-z0-9]([-a-z0-9]{0,62})?$/.test(alias) ? alias : "";
+    } catch (e) {
+      return "";
+    }
+  }
+  function follow() {
+    var alias = providerHint();
+    if (!alias) return false;
+    var link = document.getElementById("social-" + alias);
+    if (!link || !link.href) return false;
+    window.location.replace(link.href);
+    return true;
+  }
   function fill() {
+    if (follow()) return;
     var value = hint();
     var field = document.getElementById("username");
     if (!value || !field || field.value) return;

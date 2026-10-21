@@ -1,0 +1,135 @@
+# The hub's resources, marked Ready so function-sequencer emits the ones
+# ordered after them: the executions after the flows, the providers after the
+# flows and their Secrets, the users after the providers, the memberships
+# after the users and the group. Without this the render shows the first of
+# each sequence alone.
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Flow
+metadata:
+  name: platform-hub-flow-first-login
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-flow-first-login
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Flow
+metadata:
+  name: platform-hub-flow-second-factor
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-flow-second-factor
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: platform-hub-exec-first-login-deny
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-exec-first-login-deny
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: platform-hub-exec-second-factor-otp
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-exec-second-factor-otp
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: ExecutionConfig
+metadata:
+  name: platform-hub-config-first-login-deny
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-config-first-login-deny
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-hub-security-group
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-security-group
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: platform-hub-spoke-acme-client
+  annotations:
+    crossplane.io/composition-resource-name: hub-spoke-acme-client
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: platform-hub-idp-acme
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-idp-acme
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: user.keycloak.crossplane.io/v1alpha1
+kind: User
+metadata:
+  name: platform-hub-user-acme-7d0f3c2e-5b1a-4e9c-9f1e-2a3b4c5d6e7f
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-user-acme-7d0f3c2e-5b1a-4e9c-9f1e-2a3b4c5d6e7f
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: user.keycloak.crossplane.io/v1alpha1
+kind: User
+metadata:
+  name: platform-hub-user-acme-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-user-acme-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
