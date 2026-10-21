@@ -39,6 +39,45 @@ func knownClusterRole(rel string) bool {
 	return false
 }
 
+// ClaimRoles maps each field of the Cluster claim's spec.platformRoles, as an
+// operator writes it, to the cluster relation it grants. The claim's spelling
+// and the model's are kept apart on purpose, and this is the one place they
+// meet: the operator's projection and the director's reading of the claim
+// both translate through it, so the two cannot drift into projecting one set
+// of roles and checking another.
+var ClaimRoles = map[string]string{
+	"admin":           "admin",
+	"securityOfficer": "security_officer",
+	"auditor":         "auditor",
+	"serviceAdmin":    "service_admin",
+	"sharedAppsAdmin": "shared_apps_admin",
+	"breakGlass":      "break_glass",
+}
+
+// RolesFromClaim translates spec.platformRoles of the Cluster claim into the
+// relation-keyed map ReconcileClusterRoles takes. A field with an empty group
+// grants nothing and is left out.
+//
+// A field the mapping does not know is returned in unknown, sorted, rather
+// than passed through: ReconcileClusterRoles would refuse the whole map for
+// it, and the caller decides whether that is an error or something to log
+// and project around.
+func RolesFromClaim(claim map[string]string) (roles map[string]string, unknown []string) {
+	roles = map[string]string{}
+	for field, group := range claim {
+		rel, ok := ClaimRoles[field]
+		if !ok {
+			unknown = append(unknown, field)
+			continue
+		}
+		if group != "" {
+			roles[rel] = group
+		}
+	}
+	sort.Strings(unknown)
+	return roles, unknown
+}
+
 // ReconcileClusterRoles makes the cluster's role tuples equal to what the
 // Cluster claim assigns: for each relation, the members of one Keycloak group
 // hold it.

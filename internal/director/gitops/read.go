@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
 // App is one entry of a tenant's apps list as git records it.
@@ -134,37 +136,19 @@ var ErrNoClusterClaim = errors.New("no Cluster claim in the repository")
 func (g *GitOps) PlatformRoles(ctx context.Context) (map[string]string, error) {
 	var claim struct {
 		Spec struct {
-			PlatformRoles struct {
-				Admin           string `json:"admin"`
-				SecurityOfficer string `json:"securityOfficer"`
-				Auditor         string `json:"auditor"`
-				ServiceAdmin    string `json:"serviceAdmin"`
-				SharedAppsAdmin string `json:"sharedAppsAdmin"`
-				BreakGlass      string `json:"breakGlass"`
-			} `json:"platformRoles"`
+			PlatformRoles map[string]string `json:"platformRoles"`
 		} `json:"spec"`
 	}
 	if err := g.readClusterClaim(ctx, &claim); err != nil {
 		return nil, err
 	}
-	r := claim.Spec.PlatformRoles
 	// The claim's field names are what an operator writes; the map's keys are
-	// the model's relations. Translating here keeps the model's vocabulary out
-	// of the claim and the claim's spelling out of the model.
-	out := map[string]string{}
-	for rel, group := range map[string]string{
-		"admin":             r.Admin,
-		"security_officer":  r.SecurityOfficer,
-		"auditor":           r.Auditor,
-		"service_admin":     r.ServiceAdmin,
-		"shared_apps_admin": r.SharedAppsAdmin,
-		"break_glass":       r.BreakGlass,
-	} {
-		if group != "" {
-			out[rel] = group
-		}
-	}
-	return out, nil
+	// the model's relations. authz.RolesFromClaim is the one translation
+	// between the two, shared with the operator's projection, so what the
+	// director checks is what the operator wrote. A field it does not know
+	// is not a role and grants nothing, the same as the operator treats it.
+	roles, _ := authz.RolesFromClaim(claim.Spec.PlatformRoles)
+	return roles, nil
 }
 
 // KernelDomain returns the kernel domain the cluster's Cluster claim declares
