@@ -518,6 +518,59 @@ func (s *Server) removeTenantCatalogue(w http.ResponseWriter, r *http.Request, c
 	s.catalogueWritten(w, r, res, err, scopeTenant, r.PathValue("t"))
 }
 
+// Renaming a catalogue.
+//
+// A catalogue's name is in three places: its source entry, the catalogue:
+// of every app entry and add-on pin installed from it, and the origin of
+// every profile materialised from it. Removing it and adding it under
+// another name leaves the last two at the old name, and the next install
+// from the new one is refused as another origin's. So a rename is one
+// commit to all three (gitops.RenameCatalogueSource), by the cluster's
+// administrator, for a catalogue of the cluster or of a tenant alike: what
+// it rewrites is the cluster's catalogue directory, whoever's the source is.
+// No pin moves, since the bytes a digest was taken over carry no origin.
+
+// renameRequest is the new name.
+type renameRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *Server) renameClusterCatalogue(w http.ResponseWriter, r *http.Request, c call) {
+	s.renameCatalogue(w, r, c, "")
+}
+
+func (s *Server) renameTenantCatalogue(w http.ResponseWriter, r *http.Request, c call) {
+	s.renameCatalogue(w, r, c, r.PathValue("t"))
+}
+
+func (s *Server) renameCatalogue(w http.ResponseWriter, r *http.Request, c call, tenant string) {
+	var body renameRequest
+	if err := decode(r, &body); err != nil || !gitops.ValidName(body.Name) {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<new name>"}: lower-case letters, digits and hyphens`)
+		return
+	}
+	old := r.PathValue("s")
+	res, err := s.cfg.Repo.RenameCatalogueSource(r.Context(), tenant, old, body.Name, c.meta)
+	if err != nil {
+		s.catalogueError(w, r, old, err)
+		return
+	}
+	scope := scopeCluster
+	if tenant != "" {
+		scope = scopeTenant
+	}
+	answer := map[string]any{"status": res.Status, "name": old, "newName": body.Name, "scope": scope}
+	if tenant != "" {
+		answer["tenant"] = tenant
+	}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	s.json(w, http.StatusAccepted, answer)
+}
+
 // delegateCatalogues and undelegateCatalogues are the switch: whether a
 // tenant's own administrators may add catalogues. The cluster
 // administrator's alone, which is why there is no such route under

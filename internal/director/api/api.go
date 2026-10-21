@@ -117,6 +117,7 @@ type Repository interface {
 	// cluster), as a catalogue kept as an OCI artifact is read with it.
 	RegistryRepository(ctx context.Context, owner, name string) (catalogue.DeclaredRegistry, error)
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
 	SecurityOfficers(ctx context.Context) ([]gitops.SecurityOfficer, error)
@@ -546,6 +547,13 @@ func (s *Server) routes() {
 		s.guarded("DELETE /v1/clusters/{c}/catalogues/{s}", "can_configure", s.clusterObject, s.removeClusterCatalogue)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.addTenantCatalogueAsCluster)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.removeTenantCatalogueAsCluster)
+		// Renaming one in place, with what was installed from it: a commit
+		// too, but to everything that names the catalogue at once, and
+		// said as an action so that the shape says it is not an edit of
+		// the one entry. The cluster administrator's, for a tenant's
+		// catalogue as for the cluster's.
+		s.action("POST /v1/clusters/{c}/catalogues/{s}/actions/rename", "can_configure", s.clusterObject, s.renameClusterCatalogue)
+		s.action("POST /v1/clusters/{c}/tenants/{t}/catalogues/{s}/actions/rename", "can_configure", s.clusterObject, s.renameTenantCatalogue)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
 		// Whether a tenant's own administrators may approve what it
