@@ -427,12 +427,12 @@ rm -f "${TREE}/crossplane/compositions/app.yaml"; mkdir -p "${TREE}/internal" "$
 cat > "${TREE}/internal/x.go" <<'EOF'
 package x
 
-// +kubebuilder:rbac:groups=user.keycloak.crossplane.io,resources=users,verbs=get;list;watch
+// +kubebuilder:rbac:groups=user.keycloak.crossplane.io,resources=roles,verbs=get;list;watch
 var gvk = schema.GroupVersionKind{Group: "defaults.keycloak.crossplane.io", Version: "v1alpha1", Kind: "Roles"}
 EOF
 printf '%s\n' 'kubectl get mount.vault.vault.upbound.io x' > "${TREE}/scripts/x.sh"
 out="$(python3 "${LINT}" --tree "${TREE}" 2>&1)"; rc=$?
-if [[ ${rc} -ne 0 && "${out}" == *"users.user.keycloak.crossplane.io"* && "${out}" == *"roles.defaults.keycloak.crossplane.io"* \
+if [[ ${rc} -ne 0 && "${out}" == *"roles.user.keycloak.crossplane.io"* && "${out}" == *"roles.defaults.keycloak.crossplane.io"* \
       && "${out}" == *"mounts.vault.vault.upbound.io"* ]]; then
     ok "lint: a type named in Go (marker, GroupVersionKind) or in a kubectl call is checked too"
 else
