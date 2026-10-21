@@ -155,6 +155,8 @@ func platformRoleFields(t *testing.T) []string {
 // The groups the registrar protects are the ones the Cluster claim names for
 // its platform roles: the map the operator projects into the store, whole.
 func TestThePlatformRoleGroupsAreReadFromTheClusterClaim(t *testing.T) {
+	const securityOfficers = "gentian:platform:security"
+	schemaDefaults := []string{"gentian:platform:admin", securityOfficers}
 	ns := layout.Namespace(layout.Provisioning)
 	named := map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "auditor": "acme:audit"}}
 
@@ -162,18 +164,22 @@ func TestThePlatformRoleGroupsAreReadFromTheClusterClaim(t *testing.T) {
 		objects []client.Object
 		want    []string
 	}{
-		"the claim names them": {[]client.Object{claim("main", ns, named)}, []string{"acme:audit", "acme:operators"}},
-		"the claim names none": {[]client.Object{claim("main", ns, map[string]any{})}, []string{"gentian:platform:admin"}},
-		"no claim yet":         {nil, []string{"gentian:platform:admin"}},
-		"a claim somewhere else": {[]client.Object{claim("stray", "default", named)},
-			[]string{"gentian:platform:admin"}},
+		"the claim names them": {[]client.Object{claim("main", ns, named)},
+			[]string{"acme:audit", "acme:operators", securityOfficers}},
+		"the claim names none": {[]client.Object{claim("main", ns, map[string]any{})}, schemaDefaults},
+		"no claim yet":         {nil, schemaDefaults},
+		"a claim somewhere else": {[]client.Object{claim("stray", "default", named)}, schemaDefaults},
 		"written as a path": {[]client.Object{claim("main", ns,
-			map[string]any{"platformRoles": map[string]any{"admin": "/acme:operators"}})}, []string{"acme:operators"}},
-		// The administrators' default is the schema's, and it holds beside
-		// whatever other role the claim names.
+			map[string]any{"platformRoles": map[string]any{"admin": "/acme:operators"}})},
+			[]string{"acme:operators", securityOfficers}},
+		// The administrators' and the security officers' defaults are the
+		// schema's, and they hold beside whatever other role the claim names.
 		"a role and no administrators": {[]client.Object{claim("main", ns,
 			map[string]any{"platformRoles": map[string]any{"breakGlass": "acme:recovery"}})},
-			[]string{"acme:recovery", "gentian:platform:admin"}},
+			[]string{"acme:recovery", "gentian:platform:admin", securityOfficers}},
+		"security officers of its own": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"securityOfficer": "acme:approvers"}})},
+			[]string{"acme:approvers", "gentian:platform:admin"}},
 		"two roles held by one group": {[]client.Object{claim("main", ns,
 			map[string]any{"platformRoles": map[string]any{"admin": "acme:all", "securityOfficer": "acme:all"}})},
 			[]string{"acme:all"}},
@@ -201,6 +207,42 @@ func TestEveryPlatformRoleOfTheSchemaIsRead(t *testing.T) {
 	got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, %v; want %v", got, err, want)
+	}
+}
+
+// The defaults protected are the schema's: every role the XRD gives a
+// default, with that default, and no other. A claim that names no group for a
+// role the schema defaults is held by the schema's group, and that group has
+// to be protected like one the claim named.
+func TestTheProtectedDefaultsAreTheSchemas(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "xrds", "cluster.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xrd map[string]any
+	if err := yaml.Unmarshal(raw, &xrd); err != nil {
+		t.Fatal(err)
+	}
+	versions, _, _ := unstructured.NestedSlice(xrd, "spec", "versions")
+	var want []string
+	for _, v := range versions {
+		version, _ := v.(map[string]any)
+		fields, _, _ := unstructured.NestedMap(version,
+			"schema", "openAPIV3Schema", "properties", "spec", "properties", "platformRoles", "properties")
+		for _, f := range fields {
+			if d, ok := f.(map[string]any)["default"].(string); ok && d != "" {
+				want = append(want, d)
+			}
+		}
+	}
+	sort.Strings(want)
+	if len(want) < 2 {
+		t.Fatalf("the Cluster XRD defaults %v; the administrators' and the security officers' were expected", want)
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).Build()
+	got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, %v; want the schema's defaults %v", got, err, want)
 	}
 }
 

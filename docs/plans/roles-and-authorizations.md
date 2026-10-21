@@ -35,7 +35,12 @@ Separations that are load-bearing, whatever one person happens to hold:
 - **Platform administrator ≠ security officer.** The one who installs is not
   the one who approves exceptions. A waiver, an egress rule or a public
   surface that the same identity requested and approved is a policy hole
-  with a signature on it.
+  with a signature on it. Every cluster has both from the start: the claim
+  defaults `securityOfficer` to `gentian:platform:security`, a group of its
+  own that the install makes empty, and the administrator puts people in it
+  in the kernel realm's console. The administrator holds `realm-admin` there
+  and so could join it too; the realm's admin events are the record of
+  whether that happened, not a refusal.
 - **Break-glass is not "platform administrator with more".** It is a
   separate group with no standing membership: added for an incident,
   removed after, each use visible in the issuer log because the group

@@ -280,9 +280,12 @@ spec:
                     role. The director projects these into OpenFGA as the
                     cluster's role relations, so a person's authority over the
                     cluster follows from their group membership and from
-                    nothing else. A role left unset has no group and therefore
-                    nobody holds it, which is the right default for the ones
-                    that should be granted deliberately.
+                    nothing else. admin and securityOfficer default to two
+                    separate groups, which the install creates in the kernel
+                    realm; the security officers' starts empty. Any other role
+                    left unset has no group and therefore nobody holds it,
+                    which is the right default for the ones that should be
+                    granted deliberately.
                   properties:
                     admin:
                       type: string
@@ -293,9 +296,12 @@ spec:
                         install's bootstrap administrator is placed in.
                     securityOfficer:
                       type: string
+                      default: "gentian:platform:security"
                       description: >
                         Approvals: waivers, egress beyond the baseline,
-                        exposure policy.
+                        exposure policy. Its own group, never the
+                        administrators': the one who installs is not the one
+                        who approves exceptions.
                     auditor:
                       type: string
                       description: Read access to what happened, and nothing else.

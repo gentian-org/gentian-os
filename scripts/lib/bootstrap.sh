@@ -2543,8 +2543,11 @@ spec:
   # the assignment is written here rather than left to the schema's default,
   # which a file reader never sees. Without it the director grants nobody a
   # cluster role and every console the person is entitled to disappears.
+  # The security officers approve what escapes the default posture: a group
+  # of their own, never the administrators', made empty by the install.
   platformRoles:
     admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
+    securityOfficer: gentian:platform:security
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
