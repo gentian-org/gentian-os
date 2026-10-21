@@ -624,6 +624,12 @@ func quoteScalar(v string) string {
 	if v == "true" || v == "false" || v == "null" || v == "~" {
 		return v
 	}
+	// The words a YAML 1.1 reader, Argo CD's among them, takes for a boolean:
+	// bare, "off" reaches the cluster as false and a string setting is lost.
+	switch strings.ToLower(v) {
+	case "y", "n", "yes", "no", "on", "off":
+		return strconv.Quote(v)
+	}
 	if _, err := strconv.ParseFloat(v, 64); err == nil {
 		return v
 	}

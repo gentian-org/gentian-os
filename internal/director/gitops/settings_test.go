@@ -261,6 +261,11 @@ func TestScalarsAreQuotedOnlyWhenTheyMustBe(t *testing.T) {
 		"587":                    "587",
 		"gentian:platform:admin": `"gentian:platform:admin"`,
 		"":                       `""`,
+		"off":                    `"off"`,
+		"On":                     `"On"`,
+		"no":                     `"no"`,
+		"y":                      `"y"`,
+		"offline":                "offline",
 	} {
 		if got := quoteScalar(in); got != want {
 			t.Errorf("quoteScalar(%q) = %s, want %s", in, got, want)
