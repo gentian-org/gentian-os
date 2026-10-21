@@ -18,6 +18,8 @@ metadata:
   name: concierge
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
+    # The app Composition selects the profile by this label.
+    gentianos.io/profile-name: concierge
 spec:
   classes: [app]
   # Nothing opens it from a desktop: it is where people arrive before they

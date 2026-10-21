@@ -31,6 +31,7 @@ kind: ComponentProfile
 metadata:
   name: wiki
   labels:
+    gentianos.io/profile-name: wiki
     gentianos.io/family: wiki
   annotations:
     gentianos.io/keycloak-group-attributes: '{"tier":["gold"]}'

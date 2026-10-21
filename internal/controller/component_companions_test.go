@@ -123,6 +123,8 @@ const shopWithComposition = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: shop
+  labels:
+    gentianos.io/profile-name: shop
 spec:
   classes: [app]
   launch: none

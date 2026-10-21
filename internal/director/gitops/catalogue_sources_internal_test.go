@@ -362,12 +362,12 @@ func TestThePlatformProfilesAreTheOnesTheChartShips(t *testing.T) {
 // says so itself is refused, and so is one that brings its own bundle.
 func TestAProfileThatStatesItsOwnOriginIsRefused(t *testing.T) {
 	for _, key := range []string{"gentianos.io/catalogue-origin", "gentianos.io/profile-bundle"} {
-		body := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  annotations:\n    " + key + ": cluster/gentian\n"
+		body := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  labels:\n    gentianos.io/profile-name: element\n  annotations:\n    " + key + ": cluster/gentian\n"
 		if _, err := renderBundle("element", []byte(body), "tenant/demo/ours"); !errors.Is(err, ErrProfileStatesOrigin) {
 			t.Errorf("a profile stating %s: %v", key, err)
 		}
 	}
-	patch, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n"), "tenant/demo/ours")
+	patch, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  labels:\n    gentianos.io/profile-name: element\n"), "tenant/demo/ours")
 	if err != nil || !strings.Contains(string(patch), "    gentianos.io/catalogue-origin: tenant/demo/ours\n") {
 		t.Fatalf("the patch (%v):\n%s", err, patch)
 	}

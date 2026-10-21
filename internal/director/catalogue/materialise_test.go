@@ -28,6 +28,8 @@ const nextcloudProfile = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: nextcloud-base-ce
+  labels:
+    gentianos.io/profile-name: nextcloud-base-ce
 spec:
   classes: [app]
   launch: tile

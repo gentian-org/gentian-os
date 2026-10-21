@@ -51,6 +51,8 @@ const notesProfile = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: notes
+  labels:
+    gentianos.io/profile-name: notes
 spec:
   classes: [app]
   launch: none

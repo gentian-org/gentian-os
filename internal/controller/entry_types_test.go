@@ -44,6 +44,8 @@ const flowsBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: flows
+  labels:
+    gentianos.io/profile-name: flows
 spec:
   classes: [app]
   launch: from

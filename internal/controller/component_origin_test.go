@@ -138,6 +138,8 @@ const toolsBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: wiki-tools
+  labels:
+    gentianos.io/profile-name: wiki-tools
 spec:
   classes: [adapter]
   launch: none

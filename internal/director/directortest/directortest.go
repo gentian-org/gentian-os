@@ -60,7 +60,7 @@ var OnCluster = []string{
 // ProfileYAML is a minimal ComponentProfile.
 func ProfileYAML(name string) string {
 	return "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: " + name +
-		"\nspec:\n  classes: [app]\n  trustTier: certified\n  version: \"1.0.0\"\n"
+		"\n  labels:\n    gentianos.io/profile-name: " + name + "\nspec:\n  classes: [app]\n  trustTier: certified\n  version: \"1.0.0\"\n"
 }
 
 // PublishingProfileYAML is a ComponentProfile that declares one entry for the

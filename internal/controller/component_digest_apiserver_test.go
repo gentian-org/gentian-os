@@ -32,6 +32,7 @@ kind: ComponentProfile
 metadata:
   name: digest-probe
   labels:
+    gentianos.io/profile-name: digest-probe
     gentianos.io/family: probe
 spec:
   classes: [app]

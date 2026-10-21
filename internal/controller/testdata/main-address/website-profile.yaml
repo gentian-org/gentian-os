@@ -9,6 +9,8 @@ apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: website
+  labels:
+    gentianos.io/profile-name: website
 spec:
   classes: [app]
   launch: none

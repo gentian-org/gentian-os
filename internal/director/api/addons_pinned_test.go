@@ -34,6 +34,8 @@ func addonProfile(name string) string {
 kind: ComponentProfile
 metadata:
   name: ` + name + `
+  labels:
+    gentianos.io/profile-name: ` + name + `
 spec:
   classes: [app]
   launch: none

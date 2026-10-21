@@ -31,6 +31,8 @@ func appAt(name, subDomain, tier string) string {
 kind: ComponentProfile
 metadata:
   name: ` + name + `
+  labels:
+    gentianos.io/profile-name: ` + name + `
 spec:
   classes: [app]
   launch: none
@@ -163,7 +165,7 @@ func TestAnAppAlreadyOnTheClusterAtAReservedAddressIsRefusedByName(t *testing.T)
 			// A profile called desktop in the directory, as a catalogue's
 			// would be: with the origin the director records.
 			dt.CataloguePath("deck.yaml"): appAt("deck", "desktop", "platform"),
-			dt.CataloguePath(gitops.BundleFile("deck")): "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: deck\n" +
+			dt.CataloguePath(gitops.BundleFile("deck")): "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: deck\n  labels:\n    gentianos.io/profile-name: deck\n" +
 				"  annotations:\n    gentianos.io/catalogue-origin: cluster/main\n",
 		})
 	})
