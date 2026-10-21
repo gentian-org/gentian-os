@@ -150,9 +150,8 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		// No broker IdP Job to wait for. Its last two writes — the mappers that
 		// carry gentian_username across the realm boundary — are tenant-default's
 		// now, so the Job is gone and what it left behind is swept.
-		// Nor the kernel realm's first-broker-login flow Job: the kernel
-		// realm's hub flows are the platform tenant's composition's
-		// (hub_projection.go), and the Job's flow nothing names any more.
+		// Nor the kernel realm's first-broker-login flow Job: the Job's flow
+		// nothing names any more.
 		r.deleteRetiredJobs(ctx, tenantBrokerIdPJobName(tenant.Name), kernelTenantBrokerJobName(tenant.Name))
 
 		// The portal BFF client is a Composition resource now; its readiness is

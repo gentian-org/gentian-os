@@ -7,13 +7,7 @@ metadata:
 spec:
   displayName: Render Fixture
   adminEmail: admin-render@example.test
-  # One of this tenant's administrators holds a platform role through the
-  # kernel realm's hub (the operator projects it from the Cluster claim): the
-  # realm composes the client broker-to-platform, the role platform-brokered
-  # on its admins group, and the flow gentian-hub-broker the client signs
-  # people in with.
-  hubSpoke: true
-  # And the tenant lets the platform's administrators enter it
+  # The tenant lets the platform's administrators enter it
   # (Tenant spec.platformAccess.adminsEnter): the identity provider "kernel",
   # for members of gentian:platform:admin only, mapped into the admins group.
   kernelBroker: true

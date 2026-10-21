@@ -40,8 +40,8 @@ func tenantBrokerIdPJobName(tenantName string) string {
 }
 
 // kernelTenantBrokerJobName made the kernel realm's first-broker-login flow for
-// people a tenant realm sent there. The kernel realm's flows are the platform
-// tenant's composition's now (hub_projection.go), and that one nothing names.
+// people a tenant realm sent there. Nothing names that flow, and the kernel
+// realm composes no flow for another realm's people.
 func kernelTenantBrokerJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-kernel-tenant-broker-%s", tenantName)
 }

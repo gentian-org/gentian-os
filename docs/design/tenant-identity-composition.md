@@ -24,8 +24,9 @@ of its script and removes a finished Job whose script changed; the Composition
 then creates it again.
 
 The platform tenant adopts the kernel realm: it gets no realm Job, no
-administrator Job and no mail-server Job, only its groups -- and the hub's
-objects ([iam.md §1.1c](iam.md)), which are declared, not Jobs.
+administrator Job and no mail-server Job, only its groups -- and the
+clients the platform's administrators enter other tenants with
+([iam.md §1.1c](iam.md)), which are declared, not Jobs.
 
 ## What is declared and what is a Job
 
@@ -38,9 +39,8 @@ objects ([iam.md §1.1c](iam.md)), which are declared, not Jobs.
 | `gentian-dovecot` and the `mailbox` scope, where the cluster has its own mail server | |
 | The realm itself, adopted by name | The realm's mail-server settings, where the cluster has SMTP credentials |
 | For a tenant people sign up to (`spec.signUp.enabled`): the realm's registration settings, its registration flow with the platform's proof-of-work check, and the binding of the realm to that flow | |
-| For a tenant one of whose administrators holds a platform role (`spec.hubSpoke`, projected from the Cluster claim): the client `broker-to-platform`, the realm role `platform-brokered` on the admins group, and the flow `gentian-hub-broker` the client signs people in with | |
 | For a tenant that lets the platform's administrators enter (`spec.kernelBroker`, from `Tenant.spec.platformAccess.adminsEnter`): the identity provider `kernel` and its mapper into the admins group | |
-| For the platform tenant (`spec.hub`): per source tenant the identity provider `tenant-<t>`, per holder the linked user and its membership, the two hub flows, the kernel realm's empty default-groups list, and per entering tenant the client `broker-to-<t>` | |
+| For the platform tenant (`spec.kernelEnter`): per entering tenant the client `broker-to-<t>` in the kernel realm | |
 
 An app without a pack gets its OIDC client from its own app Composition, not
 from a Job; the operator only seeds the client's secret.

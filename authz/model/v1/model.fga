@@ -12,8 +12,13 @@ model
 #                   group:gentian/tenant/demo/admins — ':' becomes '/', nothing
 #                   else changes, and the mapping is reversible because tenant
 #                   and profile names are DNS labels and contain no '/'.
-#   role            a noun, assigned only through group#member — one Keycloak
-#                   group per role, never a user directly
+#   role            a noun, assigned through group#member — one Keycloak
+#                   group per role. The one exception is a cluster role the
+#                   Cluster claim gives a user of a tenant's realm by name
+#                   (spec.platformAccess.roleHolders): security_officer and
+#                   auditor take user:<realm>/<sub>, the account qualified by
+#                   the realm that holds it, which a token from any other
+#                   realm can never name
 #   permission      can_<verb>, one per verb an enforcement point exposes;
 #                   PEPs check permissions, never roles
 #   hierarchy       one parent relation per type (cluster, tenant), derived
@@ -40,8 +45,8 @@ type cluster
   relations
     # roles — from the Cluster claim's role-to-group assignments
     define admin: [group#member]              # gentian:platform:admin
-    define security_officer: [group#member]   # gentian:platform:security
-    define auditor: [group#member]            # gentian:platform:auditor
+    define security_officer: [group#member, user]   # gentian:platform:security; or a role holder, user:<realm>/<sub>
+    define auditor: [group#member, user]            # gentian:platform:auditor; or a role holder, user:<realm>/<sub>
     define service_admin: [group#member]      # gentian:platform:service-admin
     define shared_apps_admin: [group#member]  # gentian:platform:shared-apps-admin
     define break_glass: [group#member]        # gentian:platform:break-glass — no standing membership

@@ -120,9 +120,9 @@ type Repository interface {
 	RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
-	SecurityOfficers(ctx context.Context) ([]gitops.SecurityOfficer, error)
-	SetSecurityOfficer(ctx context.Context, o gitops.SecurityOfficer, meta gitops.Meta) (gitops.Result, error)
-	RemoveSecurityOfficer(ctx context.Context, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
+	RoleHolders(ctx context.Context) ([]gitops.RoleHolder, error)
+	SetRoleHolder(ctx context.Context, h gitops.RoleHolder, meta gitops.Meta) (gitops.Result, error)
+	RemoveRoleHolder(ctx context.Context, role, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlatformAccess(ctx context.Context, tenant string) (bool, error)
 	SetTenantPlatformAccess(ctx context.Context, tenant string, on bool, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
@@ -299,7 +299,15 @@ func reqID(ctx context.Context) string {
 type call struct {
 	id   *authn.Identity
 	user string // OpenFGA user
-	meta gitops.Meta
+	// holder is the caller as a role holder of their token's realm
+	// (authz.HolderUser), asked when user is refused.
+	holder string
+	meta   gitops.Meta
+}
+
+// can asks for the caller what authorize asked: as user, then as holder.
+func (s *Server) can(ctx context.Context, c call, relation, object string) (bool, error) {
+	return authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), c.user, c.holder, relation, object)
 }
 
 // object names what a route's relation is checked against.
@@ -324,7 +332,8 @@ func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Re
 			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
-		h(w, r, call{id: ident, user: user, meta: gitops.Meta{
+		holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
+		h(w, r, call{id: ident, user: user, holder: holder, meta: gitops.Meta{
 			Author: gitops.Person{Name: ident.Name, Email: ident.Email}, Subject: user[len("user:"):], RequestID: reqID(ctx),
 		}})
 	})
@@ -369,7 +378,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return call{}, false
 	}
-	allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), user, relation, target)
+	// A cluster role the claim gives an account of a tenant's realm is held
+	// by that realm's account and asked as it (authz.CheckAs); a token's
+	// realm is the one its signature was checked against.
+	holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
+	allowed, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), user, holder, relation, target)
 	if err != nil {
 		// The decision point is unreachable: refuse, and say it is us.
 		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
@@ -380,8 +393,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		return call{}, false
 	}
 	return call{
-		id:   ident,
-		user: user,
+		id:     ident,
+		user:   user,
+		holder: holder,
 		meta: gitops.Meta{
 			Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
 			Subject:   user[len("user:"):],
@@ -521,14 +535,14 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
-		// Who holds cluster#security_officer: the tenants' administrators the
-		// claim names (platform_access.go). Reading is can_audit, like the
-		// settings the holders stand beside; naming one is can_configure,
-		// the relation the claim is written under -- and the one the role
-		// itself does not carry, so a security officer cannot name another.
-		s.guarded("GET /v1/clusters/{c}/platform-roles/security-officers", "can_audit", s.clusterObject, s.securityOfficers)
-		s.guarded("PUT /v1/clusters/{c}/platform-roles/security-officers/{tenant}/{subject}", "can_configure", s.clusterObject, s.setSecurityOfficer)
-		s.guarded("DELETE /v1/clusters/{c}/platform-roles/security-officers/{tenant}/{subject}", "can_configure", s.clusterObject, s.removeSecurityOfficer)
+		// Who on the cluster holds which cluster role: accounts of the
+		// tenants' realms the claim names (platform_access.go). Reading is
+		// can_audit, like the settings the holders stand beside; naming one
+		// is can_configure, the relation the claim is written under -- and
+		// one no holder's role carries, so a holder cannot name another.
+		s.guarded("GET /v1/clusters/{c}/platform-roles/holders", "can_audit", s.clusterObject, s.roleHolders)
+		s.guarded("PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}", "can_configure", s.clusterObject, s.setRoleHolder)
+		s.guarded("DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}", "can_configure", s.clusterObject, s.removeRoleHolder)
 		// A second address for one published surface, directly under the
 		// cluster's own domain. can_configure, and not the tenant's
 		// approver: a name under the cluster's domain is the cluster's to
@@ -880,7 +894,7 @@ func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
 	target := authz.Cluster(s.cfg.Cluster)
 	relations := make(map[string]bool, len(clusterRelations))
 	for _, rel := range clusterRelations {
-		ok, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, rel, target)
+		ok, err := s.can(r.Context(), c, rel, target)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 			return
@@ -908,7 +922,7 @@ func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	relations := make(map[string]bool, len(tenantRelations))
 	for _, rel := range tenantRelations {
-		ok, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, rel, target)
+		ok, err := s.can(r.Context(), c, rel, target)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 			return
@@ -1066,7 +1080,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	if body.DefaultGrant != nil && *body.DefaultGrant {
 		target := authz.Tenant(tenant)
-		ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, "can_grant", target)
+		ok, err := s.can(ctx, c, "can_grant", target)
 		if err != nil {
 			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 			return

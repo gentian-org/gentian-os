@@ -141,8 +141,18 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
 		"admin":   "gentian:platform:admin",
 		"auditor": "gentian:platform:auditor",
-	}); err != nil {
+	}, []RoleHolder{{Relation: "security_officer", Realm: "demo", Subject: "0b7e"}}); err != nil {
 		t.Fatal(err)
+	}
+	officers, err := c.Read(ctx, Tuple{Relation: "security_officer", Object: Cluster(cluster)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(officers) != 1 || officers[0].User != "user:demo/0b7e" {
+		t.Fatalf("security_officer tuples = %v, want the holder keyed by realm", officers)
+	}
+	if err := c.ReconcileClusterRoles(ctx, cluster, nil, []RoleHolder{{Relation: "admin", Realm: "demo", Subject: "0b7e"}}); err == nil {
+		t.Fatal("admin is not a role a holder may hold")
 	}
 	admins, err := c.Read(ctx, Tuple{Relation: "admin", Object: Cluster(cluster)})
 	if err != nil {
@@ -156,7 +166,7 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	// left behind for whoever was in that group.
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
 		"admin": "gentian:platform:admin",
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	auditors, err := c.Read(ctx, Tuple{Relation: "auditor", Object: Cluster(cluster)})
@@ -170,16 +180,16 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	// Running it again writes nothing: the second call has nothing to change.
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
 		"admin": "gentian:platform:admin",
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"nonsense": "x"}); err == nil {
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"nonsense": "x"}, nil); err == nil {
 		t.Fatal("a relation the model does not have should be refused, not written")
 	}
 
 	// Leave nothing behind for the next run.
-	if err := c.ReconcileClusterRoles(ctx, cluster, nil); err != nil {
+	if err := c.ReconcileClusterRoles(ctx, cluster, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -197,7 +207,7 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster := "tenants-test"
-	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform", "acme")); err != nil {
@@ -260,7 +270,7 @@ func TestWhoApprovesPublicAddressesFollowsTheManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster := "perimeter-test"
-	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Write(ctx, []Tuple{

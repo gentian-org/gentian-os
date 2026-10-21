@@ -18,65 +18,66 @@ import (
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
 
-// A security officer is a tenant's administrator the claim names, written by
-// the cluster's administrator alone, read by whoever may audit, and taken
+// A role holder is an account of a tenant's realm the claim names, written
+// by the cluster's administrator alone, read by whoever may audit, and taken
 // away by the same commit path.
-func TestASecurityOfficerIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T) {
+func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T) {
 	h := startWith(t, nil)
 	alice := h.token(t, "gentian", "alice") // the cluster's administrator
 	tom := h.token(t, "tenant-demo", "tom") // demo's administrator
-	base := "/v1/clusters/" + dt.Cluster + "/platform-roles/security-officers"
+	base := "/v1/clusters/" + dt.Cluster + "/platform-roles/holders"
 
 	code, body := h.do(t, "GET", base, alice, "")
 	if code != http.StatusOK {
 		t.Fatalf("read: %d %v", code, body)
 	}
-	if list, _ := body["securityOfficers"].([]any); len(list) != 0 {
+	if list, _ := body["roleHolders"].([]any); len(list) != 0 {
 		t.Fatalf("holders before anybody was named: %v", list)
+	}
+	if roles, _ := body["roles"].([]any); len(roles) != 2 || roles[0] != "auditor" || roles[1] != "securityOfficer" {
+		t.Fatalf("the roles a holder may hold: %v", body["roles"])
 	}
 
 	before := h.tip(t)
-	if code, _ := h.do(t, "PUT", base+"/demo/7d0f3c2e", tom, `{"username":"tom@demo.example"}`); code != http.StatusForbidden || h.tip(t) != before {
-		t.Fatalf("a tenant's administrator named a security officer: %d", code)
+	if code, _ := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", tom, `{"username":"tom@demo.example"}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a tenant's administrator named a holder: %d", code)
 	}
-	if code, body := h.do(t, "PUT", base+"/demo/7d0f3c2e", alice, `{}`); code != http.StatusBadRequest || h.tip(t) != before {
+	if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{}`); code != http.StatusBadRequest || h.tip(t) != before {
 		t.Fatalf("a body without a login: %d %v", code, body)
 	}
-	if code, body := h.do(t, "PUT", base+"/nowhere/7d0f3c2e", alice, `{"username":"x@nowhere.example"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
-		t.Fatalf("a tenant the cluster does not have: %d %v", code, body)
-	}
-	if code, body := h.do(t, "PUT", base+"/demo/not%20a%20subject", alice, `{"username":"x@demo.example"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
-		t.Fatalf("a subject that is none: %d %v", code, body)
+	for _, path := range []string{"/securityOfficer/nowhere/7d0f3c2e", "/securityOfficer/demo/not%20a%20subject", "/admin/demo/7d0f3c2e", "/breakGlass/demo/7d0f3c2e"} {
+		if code, body := h.do(t, "PUT", base+path, alice, `{"username":"x@demo.example"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
+			t.Fatalf("%s: %d %v", path, code, body)
+		}
 	}
 
-	code, body = h.do(t, "PUT", base+"/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`)
+	code, body = h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
 		t.Fatalf("name: %d %v", code, body)
 	}
 	claim := dt.RemoteFile(t, h.remote, dt.ClaimPath)
-	for _, line := range []string{"  platformAccess:", "    securityOfficers:", "      - tenant: demo", "        subject: 7d0f3c2e", "        username: \"it@demo.example\"", "        email: \"it@demo.example\""} {
+	for _, line := range []string{"  platformAccess:", "    roleHolders:", "      - role: securityOfficer", "        tenant: demo", "        subject: 7d0f3c2e", "        username: \"it@demo.example\"", "        email: \"it@demo.example\""} {
 		if !strings.Contains(claim+"\n", line+"\n") {
 			t.Fatalf("the claim lacks %q:\n%s", line, claim)
 		}
 	}
-	if code, body := h.do(t, "PUT", base+"/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`); code != http.StatusOK || body["status"] != "unchanged" {
+	if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`); code != http.StatusOK || body["status"] != "unchanged" {
 		t.Fatalf("naming the same holder again: %d %v", code, body)
 	}
-	if code, _ := h.do(t, "PUT", base+"/solo/0a1b", alice, `{"username":"tina@solo.example"}`); code != http.StatusAccepted {
-		t.Fatalf("a second tenant's administrator: %d", code)
+	if code, _ := h.do(t, "PUT", base+"/auditor/demo/7d0f3c2e", alice, `{"username":"it@demo.example"}`); code != http.StatusAccepted {
+		t.Fatalf("the same account, a second role: %d", code)
 	}
 
 	code, body = h.do(t, "GET", base, alice, "")
-	list, _ := body["securityOfficers"].([]any)
+	list, _ := body["roleHolders"].([]any)
 	if code != http.StatusOK || len(list) != 2 {
 		t.Fatalf("read back: %d %v", code, body)
 	}
 	first := list[0].(map[string]any)
-	if first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["identityProvider"] != "tenant-demo" ||
-		first["signIn"] != "https://platform."+dt.KernelDomain+"/?kc_idp_hint=tenant-demo" {
+	if first["role"] != "auditor" || first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["username"] != "it@demo.example" {
 		t.Fatalf("first holder = %v", first)
 	}
-	// Whoever may audit the cluster may read who holds the role; a tenant's
+	// Whoever may audit the cluster may read who holds a role; a tenant's
 	// administrator may not.
 	if code, _ := h.do(t, "GET", base, h.token(t, "gentian", "audrey"), ""); code != http.StatusOK {
 		t.Fatalf("the auditor reading the holders: %d", code)
@@ -85,17 +86,17 @@ func TestASecurityOfficerIsDeclaredOnTheClaimByTheClustersAdministrator(t *testi
 		t.Fatalf("a tenant's administrator reading the holders: %d", code)
 	}
 
-	if code, _ := h.do(t, "DELETE", base+"/demo/7d0f3c2e", tom, ""); code != http.StatusForbidden {
+	if code, _ := h.do(t, "DELETE", base+"/securityOfficer/demo/7d0f3c2e", tom, ""); code != http.StatusForbidden {
 		t.Fatalf("a tenant's administrator took the role away: %d", code)
 	}
-	if code, body := h.do(t, "DELETE", base+"/demo/7d0f3c2e", alice, ""); code != http.StatusAccepted {
+	if code, body := h.do(t, "DELETE", base+"/securityOfficer/demo/7d0f3c2e", alice, ""); code != http.StatusAccepted {
 		t.Fatalf("remove: %d %v", code, body)
 	}
-	if code, body := h.do(t, "DELETE", base+"/demo/7d0f3c2e", alice, ""); code != http.StatusOK || body["status"] != "unchanged" {
+	if code, body := h.do(t, "DELETE", base+"/securityOfficer/demo/7d0f3c2e", alice, ""); code != http.StatusOK || body["status"] != "unchanged" {
 		t.Fatalf("removing what is gone: %d %v", code, body)
 	}
 	claim = dt.RemoteFile(t, h.remote, dt.ClaimPath)
-	if strings.Contains(claim, "7d0f3c2e") || !strings.Contains(claim, "- tenant: solo") {
+	if strings.Contains(claim, "securityOfficer\n        tenant: demo") || !strings.Contains(claim, "- role: auditor") {
 		t.Fatalf("after the removal:\n%s", claim)
 	}
 }

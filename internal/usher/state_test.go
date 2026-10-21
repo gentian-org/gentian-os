@@ -328,3 +328,20 @@ func TestTheApprovalsAreTheSecurityOfficersAndTheAdministratorsToRead(t *testing
 		t.Fatalf("the declined entry = %v", list[0])
 	}
 }
+
+// A security officer the claim names by account reads the approvals with a
+// token of their own tenant's realm, and with no other.
+func TestARoleHolderReadsTheApprovalsOnlyFromItsOwnRealm(t *testing.T) {
+	op := &fakeOperator{}
+	s := New(Config{
+		Authn:   fakeAuthn{"ines": "acme/ines", "ines-elsewhere": "other/ines"},
+		Authz:   &fakeStore{held: map[string]bool{"user:acme/ines can_approve cluster:demo": true}},
+		Cluster: "demo", Lifecycle: op,
+	})
+	if code, _ := ask(t, s, "/v1/clusters/demo/approvals", "ines-elsewhere"); code != http.StatusForbidden {
+		t.Errorf("the same subject from another realm read the approvals: %d", code)
+	}
+	if code, body := ask(t, s, "/v1/clusters/demo/approvals", "ines"); code != http.StatusOK || body["asked"] != "/v1/approvals" {
+		t.Errorf("the holder: %d %v", code, body)
+	}
+}

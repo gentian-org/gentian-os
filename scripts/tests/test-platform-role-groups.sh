@@ -59,6 +59,26 @@ else
     bad "step 0 wrote no Cluster claim" "$(tail -n 20 "${SANDBOX}/scaffold.log")"
 fi
 
+# --- a claim that names its security officers the earlier way ---------------
+# securityOfficers and brokeredSecondFactor are not in the schema; step 0
+# rewrites the list as role holders with role securityOfficer.
+if [[ -f "${CLAIM}" ]]; then
+    cat >> "${CLAIM}" <<'EOF'
+  platformAccess:
+    brokeredSecondFactor: required
+    securityOfficers:
+      - tenant: test
+        subject: 7d0f3c2e
+        username: "admin@test.example"
+EOF
+    env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=k.example \
+        GENTIAN_DEPLOYMENTS_PATH="${CO}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 GENTIAN_OS_BRANCH=develop \
+        bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; scaffold_cluster_deployment' \
+        >"${SANDBOX}/scaffold2.log" 2>&1
+    holders="$(/usr/bin/python3 -c 'import sys, yaml; a = yaml.safe_load(open(sys.argv[1]))["spec"]["platformAccess"]; print(sorted(a), a["roleHolders"])' "${CLAIM}" 2>&1)"
+    is "the security officers become role holders" "${holders}" "['roleHolders'] [{'role': 'securityOfficer', 'tenant': 'test', 'subject': '7d0f3c2e', 'username': 'admin@test.example'}]"
+fi
+
 # --- the bootstrap Job --------------------------------------------------------
 # kubectl keeps what is applied from stdin and the arguments a Secret is
 # created with, and answers yes to everything else.

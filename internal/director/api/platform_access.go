@@ -17,44 +17,27 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// The kernel realm as hub for the tenants' administrators (iam.md 1.1c):
-// who holds cluster#security_officer, declared on the Cluster claim by the
-// cluster's administrator, and whether a tenant lets the platform's
-// administrators sign in to it, declared on its manifest by its own.
+// Who on the cluster holds which cluster role (spec.platformAccess.roleHolders
+// on the Cluster claim), declared by the cluster's administrator, and whether
+// a tenant lets the platform's administrators sign in to it, declared on its
+// manifest by its own.
 //
 // Both are commits. The director writes nothing to the authorization graph
-// here: the platform tenant's composition renders the linked account and its
-// membership from the claim, Keycloak's events state the membership, and the
-// operator writes the tuple.
+// here: the operator projects the claim's holders into it.
 
-// securityOfficers answers who the claim names, and where each signs in.
-func (s *Server) securityOfficers(w http.ResponseWriter, r *http.Request, _ call) {
-	officers, err := s.cfg.Repo.SecurityOfficers(r.Context())
+// roleHolders answers who the claim names.
+func (s *Server) roleHolders(w http.ResponseWriter, r *http.Request, _ call) {
+	holders, err := s.cfg.Repo.RoleHolders(r.Context())
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
-	kd, _ := s.cfg.Repo.KernelDomain(r.Context())
-	out := make([]map[string]any, 0, len(officers))
-	for _, o := range officers {
-		entry := map[string]any{
-			"tenant": o.Tenant, "subject": o.Subject, "username": o.Username, "email": o.Email,
-			// The identity provider the kernel realm has for the tenant, and
-			// the address that goes straight to it.
-			"identityProvider": "tenant-" + o.Tenant,
-		}
-		if kd != "" {
-			entry["signIn"] = "https://platform." + kd + "/?kc_idp_hint=tenant-" + o.Tenant
-		}
-		out = append(out, entry)
-	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "securityOfficers": out})
+	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": holders})
 }
 
-// setSecurityOfficer names a tenant's administrator, by the subject of their
-// account in the tenant's realm, a security officer. The body carries what
-// the kernel realm shows: the login, and the address if there is one.
-func (s *Server) setSecurityOfficer(w http.ResponseWriter, r *http.Request, c call) {
+// setRoleHolder gives an account of a tenant's realm, by its subject there,
+// a cluster role. The body says who it is to a person reading the claim.
+func (s *Server) setRoleHolder(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
@@ -63,21 +46,21 @@ func (s *Server) setSecurityOfficer(w http.ResponseWriter, r *http.Request, c ca
 		s.fail(w, r, http.StatusBadRequest, `body must be {"username": "<the login in the tenant's realm>", "email": "<address, if any>"}`)
 		return
 	}
-	o := gitops.SecurityOfficer{
-		Tenant: r.PathValue("tenant"), Subject: r.PathValue("subject"),
+	h := gitops.RoleHolder{
+		Role: r.PathValue("role"), Tenant: r.PathValue("tenant"), Subject: r.PathValue("subject"),
 		Username: body.Username, Email: body.Email,
 	}
-	res, err := s.cfg.Repo.SetSecurityOfficer(r.Context(), o, c.meta)
-	if errors.Is(err, gitops.ErrInvalidSecurityOfficer) {
+	res, err := s.cfg.Repo.SetRoleHolder(r.Context(), h, c.meta)
+	if errors.Is(err, gitops.ErrInvalidRoleHolder) {
 		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	s.written(w, r, res, err)
 }
 
-func (s *Server) removeSecurityOfficer(w http.ResponseWriter, r *http.Request, c call) {
-	res, err := s.cfg.Repo.RemoveSecurityOfficer(r.Context(), r.PathValue("tenant"), r.PathValue("subject"), c.meta)
-	if errors.Is(err, gitops.ErrInvalidSecurityOfficer) {
+func (s *Server) removeRoleHolder(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.RemoveRoleHolder(r.Context(), r.PathValue("role"), r.PathValue("tenant"), r.PathValue("subject"), c.meta)
+	if errors.Is(err, gitops.ErrInvalidRoleHolder) {
 		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}

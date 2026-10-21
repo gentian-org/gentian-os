@@ -114,6 +114,9 @@ var tenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?$`)
 // call is a request that has passed the guard.
 type call struct {
 	user string
+	// holder is the caller as a role holder of their token's realm
+	// (authz.HolderUser), asked when user is refused.
+	holder string
 	// tenant is the tenant a tenant route is about; empty on a cluster route.
 	tenant string
 }
@@ -174,9 +177,10 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 			fail(w, http.StatusBadRequest, "invalid name")
 			return
 		}
+		holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
 		allowed := false
 		for _, relation := range relations {
-			ok, err := s.cfg.Authz.Check(ctx, "", user, relation, target)
+			ok, err := authz.CheckAs(ctx, s.cfg.Authz, "", user, holder, relation, target)
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
 				return
@@ -190,7 +194,7 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 			fail(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		h(w, r, call{user: user, tenant: r.PathValue("t")})
+		h(w, r, call{user: user, holder: holder, tenant: r.PathValue("t")})
 	})
 }
 
@@ -252,7 +256,7 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 			continue
 		}
 		for _, rel := range t.AnyOf {
-			ok, err := s.cfg.Authz.Check(ctx, "", c.user, rel, t.Object)
+			ok, err := authz.CheckAs(ctx, s.cfg.Authz, "", c.user, c.holder, rel, t.Object)
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
 				return

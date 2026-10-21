@@ -21,39 +21,38 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
-// The kernel realm as hub for the tenants' administrators (iam.md 1.1c), as
-// git declares it.
+// Who on the cluster holds which cluster role, and whether a tenant lets the
+// platform's administrators sign in to it, as git declares them.
 //
-// Two things are written here. On the Cluster claim, who holds
-// cluster#security_officer: administrators of the cluster's tenants, each by
-// the subject of their account in their tenant's realm
-// (spec.platformAccess.securityOfficers). The platform tenant's composition
-// renders a linked kernel-realm account and its one membership from each
-// entry, and removes them with it. On a Tenant's manifest, whether the
-// platform's administrators may sign in to it
-// (spec.platformAccess.adminsEnter), which the tenant's own administrators
-// set; its realm then composes the identity provider "kernel" for them.
-//
-// Neither touches the authorization graph: the membership reaches it from
-// Keycloak's events, as every membership does.
+// On the Cluster claim, the role holders (spec.platformAccess.roleHolders):
+// accounts of the cluster's tenants' realms, each by its subject there,
+// holding a cluster role the cluster's administrator gave them. The operator
+// writes each entry into the authorization graph as the account of that
+// tenant's realm. On a Tenant's manifest, whether the platform's
+// administrators may sign in to it (spec.platformAccess.adminsEnter), which
+// the tenant's own administrators set; its realm then composes the identity
+// provider "kernel" for them.
 
-// SecurityOfficer is one entry of spec.platformAccess.securityOfficers.
-type SecurityOfficer struct {
-	// Tenant is the tenant whose administrator this is.
+// RoleHolder is one entry of spec.platformAccess.roleHolders.
+type RoleHolder struct {
+	// Role is the claim's name for the cluster role: one of authz.HolderRoles.
+	Role string `json:"role"`
+	// Tenant is the tenant whose realm holds the account.
 	Tenant string `json:"tenant"`
-	// Subject is the account's id in that tenant's realm, which outlives a
-	// changed address: the federated identity is linked by it.
+	// Subject is the account's id in that realm, which outlives a changed
+	// address.
 	Subject string `json:"subject"`
-	// Username and Email are what the kernel realm shows and what the person
-	// signs in as until their first sign-in refreshes them.
+	// Username and Email say who it is to a person reading the claim.
 	Username string `json:"username"`
 	Email    string `json:"email,omitempty"`
 }
 
-// ErrInvalidSecurityOfficer is an entry that cannot be composed.
-var ErrInvalidSecurityOfficer = errors.New("invalid security officer")
+// ErrInvalidRoleHolder is an entry that cannot be written.
+var ErrInvalidRoleHolder = errors.New("invalid role holder")
 
 // ErrPlatformAccessPlatformTenant is the tenant's switch asked for the
 // platform tenant, whose administrators are the platform's already.
@@ -61,122 +60,150 @@ var ErrPlatformAccessPlatformTenant = errors.New(
 	"this is the platform tenant: its administrators are the platform's own, " +
 		"who are in it already. There is nothing to switch on")
 
-// officerSubject is what a subject may look like: Keycloak's user ids are
-// UUIDs, and the composition puts the subject in a resource name.
-var officerSubject = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+// holderSubject is what a subject may look like: Keycloak's user ids are
+// UUIDs.
+var holderSubject = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-type platformAccessClaim struct {
+type roleHoldersClaim struct {
 	Spec struct {
 		PlatformAccess struct {
-			SecurityOfficers []SecurityOfficer `json:"securityOfficers"`
+			RoleHolders []RoleHolder `json:"roleHolders"`
 		} `json:"platformAccess"`
 	} `json:"spec"`
 }
 
-func parseSecurityOfficers(text string) ([]SecurityOfficer, error) {
-	var doc platformAccessClaim
+func parseRoleHolders(text string) ([]RoleHolder, error) {
+	var doc roleHoldersClaim
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
 		return nil, fmt.Errorf("parse cluster claim: %w", err)
 	}
-	return sortedOfficers(doc.Spec.PlatformAccess.SecurityOfficers), nil
+	return sortedHolders(doc.Spec.PlatformAccess.RoleHolders), nil
 }
 
-func sortedOfficers(list []SecurityOfficer) []SecurityOfficer {
-	out := append([]SecurityOfficer(nil), list...)
+func sortedHolders(list []RoleHolder) []RoleHolder {
+	out := append([]RoleHolder(nil), list...)
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Tenant != out[j].Tenant {
-			return out[i].Tenant < out[j].Tenant
+		a, b := out[i], out[j]
+		if a.Role != b.Role {
+			return a.Role < b.Role
 		}
-		return out[i].Subject < out[j].Subject
+		if a.Tenant != b.Tenant {
+			return a.Tenant < b.Tenant
+		}
+		return a.Subject < b.Subject
 	})
 	return out
 }
 
-// SecurityOfficers reads who the claim names.
-func (g *GitOps) SecurityOfficers(ctx context.Context) ([]SecurityOfficer, error) {
-	var doc platformAccessClaim
+// RoleHolders reads who the claim names.
+func (g *GitOps) RoleHolders(ctx context.Context) ([]RoleHolder, error) {
+	var doc roleHoldersClaim
 	if err := g.readClusterClaim(ctx, &doc); err != nil {
 		return nil, err
 	}
-	out := sortedOfficers(doc.Spec.PlatformAccess.SecurityOfficers)
+	out := sortedHolders(doc.Spec.PlatformAccess.RoleHolders)
 	if out == nil {
-		out = []SecurityOfficer{}
+		out = []RoleHolder{}
 	}
 	return out, nil
 }
 
-// validOfficer says what is wrong with an entry, or nothing.
-func validOfficer(o SecurityOfficer) error {
-	if !ValidName(o.Tenant) {
-		return fmt.Errorf("%w: tenant %q is not a name", ErrInvalidSecurityOfficer, o.Tenant)
+// HolderRoleNames are the roles an entry may name, sorted.
+func HolderRoleNames() []string {
+	out := make([]string, 0, len(authz.HolderRoles))
+	for r := range authz.HolderRoles {
+		out = append(out, r)
 	}
-	if !officerSubject.MatchString(o.Subject) {
-		return fmt.Errorf("%w: subject %q is not an account id", ErrInvalidSecurityOfficer, o.Subject)
+	sort.Strings(out)
+	return out
+}
+
+func validHolderKey(role, tenant, subject string) error {
+	if _, ok := authz.HolderRoles[role]; !ok {
+		return fmt.Errorf("%w: role %q is not one of %s", ErrInvalidRoleHolder, role, strings.Join(HolderRoleNames(), ", "))
 	}
-	for field, v := range map[string]string{"username": o.Username, "email": o.Email} {
-		if len(v) > 255 || strings.ContainsAny(v, "\n\r\"'\\") || strings.TrimSpace(v) != v {
-			return fmt.Errorf("%w: %s %q", ErrInvalidSecurityOfficer, field, v)
-		}
+	if !ValidName(tenant) {
+		return fmt.Errorf("%w: tenant %q is not a name", ErrInvalidRoleHolder, tenant)
 	}
-	if o.Username == "" {
-		return fmt.Errorf("%w: the login is missing", ErrInvalidSecurityOfficer)
+	if !holderSubject.MatchString(subject) {
+		return fmt.Errorf("%w: subject %q is not an account id", ErrInvalidRoleHolder, subject)
 	}
 	return nil
 }
 
-// SetSecurityOfficer makes a tenant's administrator a security officer, or
-// restates one: one commit to the claim. The tenant has to be one git
-// declares, with a realm of its own -- the platform tenant's administrators
-// are the kernel realm's already and are never brokered.
-func (g *GitOps) SetSecurityOfficer(ctx context.Context, o SecurityOfficer, meta Meta) (Result, error) {
-	if err := validOfficer(o); err != nil {
+// validHolder says what is wrong with an entry, or nothing.
+func validHolder(h RoleHolder) error {
+	if err := validHolderKey(h.Role, h.Tenant, h.Subject); err != nil {
+		return err
+	}
+	for field, v := range map[string]string{"username": h.Username, "email": h.Email} {
+		if len(v) > 255 || strings.ContainsAny(v, "\n\r\"'\\") || strings.TrimSpace(v) != v {
+			return fmt.Errorf("%w: %s %q", ErrInvalidRoleHolder, field, v)
+		}
+	}
+	if h.Username == "" {
+		return fmt.Errorf("%w: the login is missing", ErrInvalidRoleHolder)
+	}
+	return nil
+}
+
+// SetRoleHolder gives an account of a tenant's realm a cluster role, or
+// restates it: one commit to the claim. The tenant has to be one git
+// declares, with a realm of its own -- the platform tenant's people hold
+// cluster roles through the kernel realm's groups.
+func (g *GitOps) SetRoleHolder(ctx context.Context, h RoleHolder, meta Meta) (Result, error) {
+	if err := validHolder(h); err != nil {
 		return Result{}, err
 	}
 	names, err := g.Tenants(ctx)
 	if err != nil {
 		return Result{}, err
 	}
-	if !slices.Contains(names, o.Tenant) {
-		return Result{}, fmt.Errorf("%w: this cluster has no tenant %q", ErrInvalidSecurityOfficer, o.Tenant)
+	if !slices.Contains(names, h.Tenant) {
+		return Result{}, fmt.Errorf("%w: this cluster has no tenant %q", ErrInvalidRoleHolder, h.Tenant)
 	}
-	platform, err := g.IsPlatformTenant(ctx, o.Tenant)
+	platform, err := g.IsPlatformTenant(ctx, h.Tenant)
 	if err != nil {
 		return Result{}, err
 	}
 	if platform {
-		return Result{}, fmt.Errorf("%w: %s is the platform tenant, whose people are the kernel realm's; "+
-			"a security officer is an administrator of another tenant", ErrInvalidSecurityOfficer, o.Tenant)
+		return Result{}, fmt.Errorf("%w: %s is the platform tenant, whose people hold cluster roles "+
+			"through the kernel realm's groups (spec.platformRoles)", ErrInvalidRoleHolder, h.Tenant)
 	}
-	message := fmt.Sprintf("feat(cluster): %s of tenant %s is a security officer (via %s)", o.Username, o.Tenant, meta.actor())
-	return g.editSecurityOfficers(ctx, message, meta, func(list []SecurityOfficer) []SecurityOfficer {
-		list = slices.DeleteFunc(list, func(e SecurityOfficer) bool { return e.Tenant == o.Tenant && e.Subject == o.Subject })
-		return append(list, o)
+	message := fmt.Sprintf("feat(cluster): %s of tenant %s holds %s (via %s)", h.Username, h.Tenant, h.Role, meta.actor())
+	return g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
+		list = slices.DeleteFunc(list, func(e RoleHolder) bool {
+			return e.Role == h.Role && e.Tenant == h.Tenant && e.Subject == h.Subject
+		})
+		return append(list, h)
 	})
 }
 
-// RemoveSecurityOfficer takes the role away: the entry goes, and with it the
-// linked account and its membership once the composition has caught up.
-func (g *GitOps) RemoveSecurityOfficer(ctx context.Context, tenant, subject string, meta Meta) (Result, error) {
-	if !ValidName(tenant) || !officerSubject.MatchString(subject) {
-		return Result{}, fmt.Errorf("%w: tenant %q, subject %q", ErrInvalidSecurityOfficer, tenant, subject)
+// RemoveRoleHolder takes the role away: the entry goes, and with it the
+// tuple once the operator has projected the claim.
+func (g *GitOps) RemoveRoleHolder(ctx context.Context, role, tenant, subject string, meta Meta) (Result, error) {
+	if err := validHolderKey(role, tenant, subject); err != nil {
+		return Result{}, err
 	}
-	message := fmt.Sprintf("feat(cluster): an administrator of tenant %s is no longer a security officer (via %s)", tenant, meta.actor())
-	return g.editSecurityOfficers(ctx, message, meta, func(list []SecurityOfficer) []SecurityOfficer {
-		return slices.DeleteFunc(list, func(e SecurityOfficer) bool { return e.Tenant == tenant && e.Subject == subject })
+	message := fmt.Sprintf("feat(cluster): an account of tenant %s no longer holds %s (via %s)", tenant, role, meta.actor())
+	return g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
+		return slices.DeleteFunc(list, func(e RoleHolder) bool {
+			return e.Role == role && e.Tenant == tenant && e.Subject == subject
+		})
 	})
 }
 
-func (g *GitOps) editSecurityOfficers(ctx context.Context, message string, meta Meta, change func([]SecurityOfficer) []SecurityOfficer) (Result, error) {
+func (g *GitOps) editRoleHolders(ctx context.Context, message string, meta Meta, change func([]RoleHolder) []RoleHolder) (Result, error) {
 	return g.applyClaim(ctx, message, meta, func(text string) (string, string, bool, error) {
-		have, err := parseSecurityOfficers(text)
+		have, err := parseRoleHolders(text)
 		if err != nil {
 			return text, "", false, err
 		}
-		want := sortedOfficers(change(append([]SecurityOfficer(nil), have...)))
+		want := sortedHolders(change(append([]RoleHolder(nil), have...)))
 		if slices.Equal(have, want) {
 			return text, "unchanged", false, nil
 		}
-		out, changed, err := setKeyPath(text, "spec", []string{"platformAccess", "securityOfficers"}, officersLeaf(want))
+		out, changed, err := setKeyPath(text, "spec", []string{"platformAccess", "roleHolders"}, holdersLeaf(want))
 		if errors.Is(err, errNoRoot) {
 			return text, "", false, errors.New("the claim has no spec block")
 		}
@@ -186,7 +213,7 @@ func (g *GitOps) editSecurityOfficers(ctx context.Context, message string, meta 
 		if !changed {
 			return text, "unchanged", false, nil
 		}
-		back, err := parseSecurityOfficers(out)
+		back, err := parseRoleHolders(out)
 		if err != nil {
 			return text, "", false, fmt.Errorf("the edited claim is not valid YAML: %w", err)
 		}
@@ -197,23 +224,24 @@ func (g *GitOps) editSecurityOfficers(ctx context.Context, message string, meta 
 	})
 }
 
-// officersLeaf writes the list as a block of maps under its key, one entry
+// holdersLeaf writes the list as a block of maps under its key, one entry
 // per holder, in the claim's own editor (settings.go).
-type officersLeaf []SecurityOfficer
+type holdersLeaf []RoleHolder
 
-func (l officersLeaf) render(indent int, key string) []string {
+func (l holdersLeaf) render(indent int, key string) []string {
 	pad := strings.Repeat(" ", indent)
 	if len(l) == 0 {
 		return []string{pad + key + ": []"}
 	}
 	out := []string{pad + key + ":"}
-	for _, o := range l {
+	for _, h := range l {
 		out = append(out,
-			fmt.Sprintf("%s  - tenant: %s", pad, quoteScalar(o.Tenant)),
-			fmt.Sprintf("%s    subject: %s", pad, quoteScalar(o.Subject)),
-			fmt.Sprintf("%s    username: %s", pad, quoteScalar(o.Username)))
-		if o.Email != "" {
-			out = append(out, fmt.Sprintf("%s    email: %s", pad, quoteScalar(o.Email)))
+			fmt.Sprintf("%s  - role: %s", pad, quoteScalar(h.Role)),
+			fmt.Sprintf("%s    tenant: %s", pad, quoteScalar(h.Tenant)),
+			fmt.Sprintf("%s    subject: %s", pad, quoteScalar(h.Subject)),
+			fmt.Sprintf("%s    username: %s", pad, quoteScalar(h.Username)))
+		if h.Email != "" {
+			out = append(out, fmt.Sprintf("%s    email: %s", pad, quoteScalar(h.Email)))
 		}
 	}
 	return out
@@ -221,9 +249,11 @@ func (l officersLeaf) render(indent int, key string) []string {
 
 // extent is the key line and every line indented deeper than it: the
 // entries, and any comment or blank line among them.
-func (officersLeaf) extent(lines []string, at, indent int) int { return listLeaf(nil).extent(lines, at, indent) }
+func (holdersLeaf) extent(lines []string, at, indent int) int {
+	return listLeaf(nil).extent(lines, at, indent)
+}
 
-func (l officersLeaf) same(lines []string, at, indent int) bool {
+func (l holdersLeaf) same(lines []string, at, indent int) bool {
 	want := l.render(indent, "")
 	n := l.extent(lines, at, indent)
 	if n != len(want) {
