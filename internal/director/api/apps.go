@@ -15,9 +15,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // What became of a tenant's apps, and the two things done to one of them that
@@ -82,4 +84,43 @@ func (s *Server) purgeApp(w http.ResponseWriter, r *http.Request, c call) {
 // provisionApp grants an installed app to everybody who is a member now.
 func (s *Server) provisionApp(w http.ResponseWriter, r *http.Request, c call) {
 	s.appAction(w, r, c, "provision-app")
+}
+
+// requestPrivilege asks the security officer for a privilege the app waits
+// for and the tenant cannot approve itself: a pod-security waiver or a
+// cluster role. The request is recorded by the operator on the Component
+// that waits -- who asked, when, and a note -- and listed to the officer at
+// /v1/clusters/{c}/approvals (the usher's). The approval stays what it was:
+// PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}, decided by the kind.
+//
+// An action, not a commit: asking changes nothing the tenant is meant to
+// have, and the answer, when it comes, is the commit. Whoever may install
+// may ask, as whoever may install may purge.
+func (s *Server) requestPrivilege(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Privilege string `json:"privilege"`
+		Note      string `json:"note"`
+	}
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"privilege": "<kind>/<name>", "note": "..."}`)
+		return
+	}
+	kind, name := security.SplitPrivilegeRef(body.Privilege)
+	switch kind {
+	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles:
+	default:
+		s.fail(w, r, http.StatusBadRequest, "the privilege is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles")
+		return
+	}
+	if !gitops.ValidName(name) || !gitops.ValidName(r.PathValue("p")) {
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(), appsPath(r, "/actions/request-privilege"), c.meta.ActorName(),
+		map[string]string{"profile": r.PathValue("p"), "privilege": body.Privilege, "note": strings.TrimSpace(body.Note)})
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
 }
