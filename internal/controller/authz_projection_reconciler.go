@@ -74,6 +74,10 @@ type AuthzProjectionReconciler struct {
 	// Graph is the OpenFGA client. Nil disables the reconciler entirely,
 	// which is what a cluster with no authorization service runs.
 	Graph *authz.OpenFGA
+
+	// unknownRoleWarned holds the claim fields already reported as naming no
+	// relation, so a misspelt role is one log line and not one every requeue.
+	unknownRoleWarned map[string]bool
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=clusters,verbs=get;list;watch
@@ -125,12 +129,19 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 }
 
 // platformRoles is spec.platformRoles from the Cluster claim: the group that
-// holds each platform role.
+// holds each platform role, keyed by the cluster relation it grants.
 //
 // From the claim and not from a ConfigMap derived from it: the claim in git is
 // where authority over a cluster is written down, and a cluster must not be
 // able to widen its own administrators' rights by editing something inside
 // itself.
+//
+// The claim spells the roles its own way (securityOfficer), the graph its way
+// (security_officer); authz.RolesFromClaim is the one translation between
+// them. A field the translation does not know is logged once and skipped, not
+// returned as an error: this reconciler also projects every tenant and every
+// installed app, and a typo in one role of the claim must not take the whole
+// cluster's rights down with it.
 func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[string]string, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
@@ -141,14 +152,24 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 	}
 	out := map[string]string{}
 	for i := range list.Items {
-		roles, found, err := unstructured.NestedStringMap(list.Items[i].Object, "spec", "platformRoles")
+		fields, found, err := unstructured.NestedStringMap(list.Items[i].Object, "spec", "platformRoles")
 		if err != nil || !found {
 			continue
 		}
-		for role, group := range roles {
-			if role != "" && group != "" {
-				out[role] = group
+		roles, unknown := authz.RolesFromClaim(fields)
+		for _, field := range unknown {
+			if r.unknownRoleWarned == nil {
+				r.unknownRoleWarned = map[string]bool{}
 			}
+			if r.unknownRoleWarned[field] {
+				continue
+			}
+			r.unknownRoleWarned[field] = true
+			log.FromContext(ctx).Info("the Cluster claim names a platform role the graph has no relation for; it is not projected",
+				"claim", list.Items[i].GetName(), "setting", "spec.platformRoles."+field)
+		}
+		for rel, group := range roles {
+			out[rel] = group
 		}
 	}
 	return out, nil
