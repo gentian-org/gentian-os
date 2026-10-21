@@ -661,8 +661,7 @@ spec:
     config:
       denyErrorMessage: No platform role is declared for this account. The cluster's
         administrator assigns one.
-    executionIdRef:
-      name: platform-hub-exec-first-login-deny
+    executionId: 8c3f6a5b-4d7e-4f9a-b12c-3d4e5f6a7b8c
     realmId: kernel
   managementPolicies:
   - Observe
@@ -988,11 +987,10 @@ spec:
   deletionPolicy: Delete
   forProvider:
     exhaustive: true
-    groupIdsRefs:
-    - name: platform-hub-security-group
+    groupIds:
+    - 9d4a7b6c-5e8f-4a0b-c23d-4e5f6a7b8c9d
     realmId: kernel
-    userIdRef:
-      name: platform-hub-user-acme-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+    userId: bf6c9d8e-7a0b-4c2d-e45f-6a7b8c9d0ebf
   managementPolicies:
   - Observe
   - Create
@@ -1020,11 +1018,10 @@ spec:
   deletionPolicy: Delete
   forProvider:
     exhaustive: true
-    groupIdsRefs:
-    - name: platform-hub-security-group
+    groupIds:
+    - 9d4a7b6c-5e8f-4a0b-c23d-4e5f6a7b8c9d
     realmId: kernel
-    userIdRef:
-      name: platform-hub-user-acme-7d0f3c2e-5b1a-4e9c-9f1e-2a3b4c5d6e7f
+    userId: ae5b8c7d-6f9a-4b1c-d34e-5f6a7b8c9dae
   managementPolicies:
   - Observe
   - Create

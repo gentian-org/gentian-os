@@ -103,6 +103,7 @@ spec:
           template: |
             {{- $xr     := .observed.composite.resource }}
             {{- $observed := .observed }}
+            {{- $obsRes := default dict $observed.resources }}
             {{- $spec   := $xr.spec }}
             {{- $tenant := $xr.metadata.name }}
             {{- $ns     := default (printf "tenant-%s" $tenant) (dig "isolation" "namespace" "" $spec) }}
@@ -3296,7 +3297,26 @@ spec:
                 name: keycloak
             {{- end }}
             {{- /* The gate's two settings: the condition holds for whoever
-                 does NOT carry the role (negate), and the refusal says why. */}}
+                 does NOT carry the role (negate), and the refusal says why.
+
+                 Each names its execution by the id the provider observed,
+                 not by reference, and is composed once that id is there.
+                 provider-keycloak creates asynchronously, so the
+                 crossplane.io/external-name of a flow, an execution, a user
+                 or a group reaches the object only through the late-init
+                 update these resources' policies exclude (the zone's client
+                 says why); a reference the provider gives no extractor of its
+                 own reads that annotation and stays empty for good --
+                 "referenced field was empty" -- with everything the
+                 sequencer orders behind it held back. status.atProvider.id
+                 is what the provider observed, and a resource left out until
+                 it is there is the delay the sequencer reports anyway. The
+                 client's flow and the hub's memberships follow the same
+                 rule. */}}
+            {{- $gateRoleID := dig "keycloak-hub-spoke-exec-gate-role" "resource" "status" "atProvider" "id" "" $obsRes }}
+            {{- $gateDenyID := dig "keycloak-hub-spoke-exec-gate-deny" "resource" "status" "atProvider" "id" "" $obsRes }}
+            {{- $spokeFlowID := dig "keycloak-hub-spoke-flow" "resource" "status" "atProvider" "id" "" $obsRes }}
+            {{- if $gateRoleID }}
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
             kind: ExecutionConfig
@@ -3310,13 +3330,14 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 alias: gentian-hub-broker-without-role
-                executionIdRef:
-                  name: {{ $tenant }}-hub-spoke-exec-gate-role
+                executionId: {{ $gateRoleID | quote }}
                 config:
                   condUserRole: platform-brokered
                   negate: "true"
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+            {{- if $gateDenyID }}
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
             kind: ExecutionConfig
@@ -3330,12 +3351,13 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 alias: gentian-hub-broker-denied
-                executionIdRef:
-                  name: {{ $tenant }}-hub-spoke-exec-gate-deny
+                executionId: {{ $gateDenyID | quote }}
                 config:
                   denyErrorMessage: "Only this workspace's administrators may sign in to the platform with their account here."
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+            {{- if $spokeFlowID }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client
@@ -3362,8 +3384,7 @@ spec:
                 validRedirectUris:
                   - {{ printf "https://id.%s/auth/realms/%s/broker/tenant-%s/endpoint" $kd $kernelRealm $tenant | quote }}
                 authenticationFlowBindingOverrides:
-                  - browserIdRef:
-                      name: {{ $tenant }}-hub-spoke-flow
+                  - browserId: {{ $spokeFlowID | quote }}
                 extraConfig:
                   use.jwks.url: "true"
                   jwks.url: {{ printf "https://id.%s/auth/realms/%s/protocol/openid-connect/certs" $kd $kernelRealm | quote }}
@@ -3371,6 +3392,7 @@ spec:
                   gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
+            {{- end }}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
             kind: ProtocolMapper
@@ -3526,6 +3548,10 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
+            {{- /* The refusal's wording, on the execution by the id the
+                 provider observed (the spoke's gate says why). */}}
+            {{- $firstLoginDenyID := dig "keycloak-hub-exec-first-login-deny" "resource" "status" "atProvider" "id" "" $obsRes }}
+            {{- if $firstLoginDenyID }}
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
             kind: ExecutionConfig
@@ -3539,13 +3565,14 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 alias: gentian-hub-first-login-denied
-                executionIdRef:
-                  name: {{ $tenant }}-hub-exec-first-login-deny
+                executionId: {{ $firstLoginDenyID | quote }}
                 config:
                   denyErrorMessage: "No platform role is declared for this account. The cluster's administrator assigns one."
               providerConfigRef:
                 name: keycloak
+            {{- end }}
             {{- end }}{{- /* $hubSpokes: the flows and the group */}}
+            {{- $hubGroupID := dig "keycloak-hub-security-group" "resource" "status" "atProvider" "id" "" $obsRes }}
             {{- range $s := $hubSpokes }}
             {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $s.tenant)) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $s.realm)) }}
             {{- $srcIssuer := printf "https://id.%s/auth/realms/%s" $kd $s.realm }}
@@ -3655,6 +3682,10 @@ spec:
                     userName: {{ $h.username | quote }}
               providerConfigRef:
                 name: keycloak
+            {{- /* The membership, by the ids the provider observed of the
+                 account and the group (the spoke's gate says why). */}}
+            {{- $holderID := dig (printf "keycloak-hub-user-%s" $slug) "resource" "status" "atProvider" "id" "" $obsRes }}
+            {{- if and $holderID $hubGroupID }}
             ---
             apiVersion: user.keycloak.crossplane.io/v1alpha1
             kind: Groups
@@ -3667,13 +3698,13 @@ spec:
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 realmId: {{ $realm }}
-                userIdRef:
-                  name: {{ $tenant }}-hub-user-{{ $slug }}
-                groupIdsRefs:
-                  - name: {{ $tenant }}-hub-security-group
+                userId: {{ $holderID | quote }}
+                groupIds:
+                  - {{ $hubGroupID | quote }}
                 exhaustive: true
               providerConfigRef:
                 name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
@@ -3833,8 +3864,9 @@ spec:
           # The spoke of the kernel realm's hub: the role before the group
           # that carries it; the flow before its subflows, each parent before
           # its children, before the executions, before their settings,
-          # before the client that binds the flow. Patterns, so a tenant
-          # with no holder, which renders none of them, is not held back.
+          # before the client that binds the flow, before the mapper on the
+          # client. Patterns, so a tenant with no holder, which renders none
+          # of them, is not held back.
           - sequence:
             - ^keycloak-hub-spoke-role$
             - ^keycloak-hub-spoke-group-roles$
@@ -3846,6 +3878,7 @@ spec:
             - ^keycloak-hub-spoke-exec-.*
             - ^keycloak-hub-spoke-config-.*
             - ^keycloak-hub-spoke-client$
+            - ^keycloak-hub-spoke-roles-mapper$
           # The hub itself: the flows the providers name before the
           # providers, the providers before the users linked to them, the
           # group before the memberships in it; and each provider's Secret

@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
-      and 43 more'
+      and 42 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -1094,8 +1094,7 @@ spec:
   forProvider:
     accessType: CONFIDENTIAL
     authenticationFlowBindingOverrides:
-    - browserIdRef:
-        name: render-fixture-hub-spoke-flow
+    - browserId: 5f0c3d2e-1a4b-4c6d-8e9f-0a1b2c3d4e5f
     clientAuthenticatorType: client-jwt
     clientId: broker-to-platform
     directAccessGrantsEnabled: false
@@ -1143,8 +1142,7 @@ spec:
     config:
       denyErrorMessage: Only this workspace's administrators may sign in to the platform
         with their account here.
-    executionIdRef:
-      name: render-fixture-hub-spoke-exec-gate-deny
+    executionId: 7b2e5f4a-3c6d-4e8f-a01b-2c3d4e5f6a7b
     realmId: render-fixture
   managementPolicies:
   - Observe
@@ -1176,8 +1174,7 @@ spec:
     config:
       condUserRole: platform-brokered
       negate: "true"
-    executionIdRef:
-      name: render-fixture-hub-spoke-exec-gate-role
+    executionId: 6a1d4e3f-2b5c-4d7e-9f0a-1b2c3d4e5f6a
     realmId: render-fixture
   managementPolicies:
   - Observe
