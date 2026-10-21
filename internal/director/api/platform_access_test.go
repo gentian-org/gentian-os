@@ -1,0 +1,154 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package api_test
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+)
+
+// A security officer is a tenant's administrator the claim names, written by
+// the cluster's administrator alone, read by whoever may audit, and taken
+// away by the same commit path.
+func TestASecurityOfficerIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T) {
+	h := startWith(t, nil)
+	alice := h.token(t, "gentian", "alice") // the cluster's administrator
+	tom := h.token(t, "tenant-demo", "tom") // demo's administrator
+	base := "/v1/clusters/" + dt.Cluster + "/platform-roles/security-officers"
+
+	code, body := h.do(t, "GET", base, alice, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	if list, _ := body["securityOfficers"].([]any); len(list) != 0 {
+		t.Fatalf("holders before anybody was named: %v", list)
+	}
+
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", base+"/demo/7d0f3c2e", tom, `{"username":"tom@demo.example"}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a tenant's administrator named a security officer: %d", code)
+	}
+	if code, body := h.do(t, "PUT", base+"/demo/7d0f3c2e", alice, `{}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("a body without a login: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", base+"/nowhere/7d0f3c2e", alice, `{"username":"x@nowhere.example"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
+		t.Fatalf("a tenant the cluster does not have: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", base+"/demo/not%20a%20subject", alice, `{"username":"x@demo.example"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
+		t.Fatalf("a subject that is none: %d %v", code, body)
+	}
+
+	code, body = h.do(t, "PUT", base+"/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("name: %d %v", code, body)
+	}
+	claim := dt.RemoteFile(t, h.remote, dt.ClaimPath)
+	for _, line := range []string{"  platformAccess:", "    securityOfficers:", "      - tenant: demo", "        subject: 7d0f3c2e", "        username: \"it@demo.example\"", "        email: \"it@demo.example\""} {
+		if !strings.Contains(claim+"\n", line+"\n") {
+			t.Fatalf("the claim lacks %q:\n%s", line, claim)
+		}
+	}
+	if code, body := h.do(t, "PUT", base+"/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`); code != http.StatusOK || body["status"] != "unchanged" {
+		t.Fatalf("naming the same holder again: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "PUT", base+"/solo/0a1b", alice, `{"username":"tina@solo.example"}`); code != http.StatusAccepted {
+		t.Fatalf("a second tenant's administrator: %d", code)
+	}
+
+	code, body = h.do(t, "GET", base, alice, "")
+	list, _ := body["securityOfficers"].([]any)
+	if code != http.StatusOK || len(list) != 2 {
+		t.Fatalf("read back: %d %v", code, body)
+	}
+	first := list[0].(map[string]any)
+	if first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["identityProvider"] != "tenant-demo" ||
+		first["signIn"] != "https://platform."+dt.KernelDomain+"/?kc_idp_hint=tenant-demo" {
+		t.Fatalf("first holder = %v", first)
+	}
+	// Whoever may audit the cluster may read who holds the role; a tenant's
+	// administrator may not.
+	if code, _ := h.do(t, "GET", base, h.token(t, "gentian", "audrey"), ""); code != http.StatusOK {
+		t.Fatalf("the auditor reading the holders: %d", code)
+	}
+	if code, _ := h.do(t, "GET", base, tom, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant's administrator reading the holders: %d", code)
+	}
+
+	if code, _ := h.do(t, "DELETE", base+"/demo/7d0f3c2e", tom, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant's administrator took the role away: %d", code)
+	}
+	if code, body := h.do(t, "DELETE", base+"/demo/7d0f3c2e", alice, ""); code != http.StatusAccepted {
+		t.Fatalf("remove: %d %v", code, body)
+	}
+	if code, body := h.do(t, "DELETE", base+"/demo/7d0f3c2e", alice, ""); code != http.StatusOK || body["status"] != "unchanged" {
+		t.Fatalf("removing what is gone: %d %v", code, body)
+	}
+	claim = dt.RemoteFile(t, h.remote, dt.ClaimPath)
+	if strings.Contains(claim, "7d0f3c2e") || !strings.Contains(claim, "- tenant: solo") {
+		t.Fatalf("after the removal:\n%s", claim)
+	}
+}
+
+// Whether the platform's administrators may sign in to a tenant is the
+// tenant's administrators' switch: read by whoever may view the tenant,
+// written under can_administer, and a separate thing from the tenant being
+// operated by the cluster.
+func TestATenantOpensItselfToThePlatformsAdministrators(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	mia := h.token(t, "tenant-demo", "mia")   // a member: may look
+	tina := h.token(t, "tenant-solo", "tina") // another tenant's
+
+	code, body := h.do(t, "GET", "/v1/tenants/demo/platform-access", mia, "")
+	if code != http.StatusOK || body["adminsEnter"] != false {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/platform-access", mia, `{"adminsEnter":true}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a member opened the tenant: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/platform-access", tina, `{"adminsEnter":true}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a stranger opened the tenant: %d", code)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/platform-access", tom, `{}`); code != http.StatusBadRequest {
+		t.Fatalf("a body without the switch: %d %v", code, body)
+	}
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/platform-access", tom, `{"adminsEnter":true}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("open: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); !strings.Contains(manifest, "  platformAccess:\n    adminsEnter: true") {
+		t.Fatalf("the switch is not in the manifest:\n%s", manifest)
+	}
+	if _, body = h.do(t, "GET", "/v1/tenants/demo/platform-access", tom, ""); body["adminsEnter"] != true {
+		t.Fatalf("read back: %v", body)
+	}
+	// The cluster's tenant list carries it, for the console's Enter action.
+	_, body = h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/tenants", h.token(t, "gentian", "alice"), "")
+	var demo map[string]any
+	for _, raw := range body["tenants"].([]any) {
+		if entry := raw.(map[string]any); entry["name"] == "demo" {
+			demo = entry
+		}
+	}
+	if demo == nil || demo["adminsEnter"] != true {
+		t.Fatalf("the tenant list: %v", demo)
+	}
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/platform-access", tom, `{"adminsEnter":false}`); code != http.StatusAccepted {
+		t.Fatalf("close: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "platformAccess") {
+		t.Fatalf("a closed switch is still in the manifest:\n%s", manifest)
+	}
+}

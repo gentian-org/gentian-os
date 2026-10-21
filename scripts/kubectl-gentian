@@ -45,6 +45,13 @@
 #   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>>
 #                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
 #   kubectl gentian tenants organizations <name> remove <org>  they no longer do
+#   kubectl gentian tenants platform-access <name> [on|off]    whether the platform's administrators may sign in
+#                                                             to the tenant as its administrators (the tenant's switch)
+#
+#   kubectl gentian platform-roles security-officers           who holds the security officer role, as the claim declares
+#   kubectl gentian platform-roles security-officers add <tenant> <login>      a tenant's administrator holds it: one commit
+#   kubectl gentian platform-roles security-officers remove <tenant> <login>   no longer
+#   kubectl gentian platform-roles tenant-administrators       who could hold it: every tenant's administrators
 #
 #   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
 #   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
@@ -71,7 +78,8 @@
 #
 #   kubectl gentian settings show                the Cluster claim's settings, as JSON
 #   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
-#                                                mainAddress.tenant=<tenant>, mail.serviceMode=system ...
+#                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
+#                                                platformAccess.brokeredSecondFactor=off ...
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
@@ -157,6 +165,7 @@ _DIR_NS=""
 _DIR_DEPLOY=""
 _ISSUER=""
 _CLUSTER=""
+_KERNEL_DOMAIN=""
 
 _discover() {
     [[ -n "${_DIR_NS}" ]] && return 0
@@ -174,6 +183,11 @@ _discover() {
     [[ -n "${base}" && -n "${_CLUSTER}" ]] || die "the director in ${_DIR_NS} does not say which issuer or cluster it serves"
     # The platform's administrators sign in through the kernel realm.
     _ISSUER="${base%/}/realms/${GENTIAN_REALM:-kernel}"
+    # The cluster's domain, off the issuer's host (id.<kernel domain>), for
+    # the sign-in addresses some commands print; empty when it is not that.
+    _KERNEL_DOMAIN="${base#*://}"
+    _KERNEL_DOMAIN="${_KERNEL_DOMAIN%%/*}"
+    [[ "${_KERNEL_DOMAIN}" == id.* ]] && _KERNEL_DOMAIN="${_KERNEL_DOMAIN#id.}" || _KERNEL_DOMAIN=""
     _check_freshness "$(printf '%s' "${env}" | jq -r '.spec.template.spec.containers[0].image // ""')"
 }
 
@@ -1527,6 +1541,160 @@ cmd_tenants_delegate_catalogues() {
     fi
 }
 
+# tenants platform-access: whether the platform's administrators may sign in
+# to a tenant, as its administrators (Tenant spec.platformAccess.adminsEnter).
+# The tenant's own administrators' switch, off unless turned on, and not the
+# tenant's operated_by consent: that one covers the director, this one the
+# sign-in. One request to the director, which decides who may.
+cmd_tenants_platform_access() {
+    local name="${1:-}" state="${2:-}" answer
+    [[ -n "${name}" && ( -z "${state}" || "${state}" == "on" || "${state}" == "off" ) && $# -le 2 ]] ||
+        die "usage: kubectl gentian tenants platform-access <name> [on|off]"
+    _label "The tenant" "${name}"
+    need jq
+    _discover
+    if [[ -z "${state}" ]]; then
+        answer="$(_call GET "/v1/tenants/${name}/platform-access")" || exit 1
+        if [[ "$(jq -r '.adminsEnter' <<<"${answer}")" == "true" ]]; then
+            echo "The platform's administrators may sign in to ${name} as its administrators."
+            [[ -n "${_KERNEL_DOMAIN}" ]] && echo "  https://desktop.${name}.${_KERNEL_DOMAIN}/?kc_idp_hint=kernel"
+        else
+            echo "The platform's administrators may not sign in to ${name}."
+        fi
+        return 0
+    fi
+    local on=false
+    [[ "${state}" == "on" ]] && on=true
+    answer="$(_call PUT "/v1/tenants/${name}/platform-access" "{\"adminsEnter\":${on}}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "The tenant says so already; nothing was committed."
+        return 0
+    fi
+    if [[ "${on}" == true ]]; then
+        echo "The platform's administrators may sign in to ${name} as its administrators: committed ($(_committed "${answer}"))."
+        echo "They enter through the platform console, or at https://desktop.${name}.${_KERNEL_DOMAIN:-<kernel-domain>}/?kc_idp_hint=kernel;"
+        echo "the tenant's sign-in page shows no button for it. Each entry is in the realm's login events."
+    else
+        echo "The platform's administrators may no longer sign in to ${name}: committed ($(_committed "${answer}"))."
+        echo "An account one of them already has in the realm stays until the tenant's administrator removes it."
+    fi
+}
+
+# platform-roles: who holds the platform's roles. Today the security
+# officers, who are administrators of the cluster's tenants, named on the
+# Cluster claim by the cluster's administrator; the kernel realm brokers
+# their own realm for them, link only, and asks them for a second factor of
+# its own (kubectl gentian settings set platformAccess.brokeredSecondFactor=off
+# switches that off).
+#
+#   platform-roles tenant-administrators          who could hold it, from the registrar
+#   platform-roles security-officers              who holds it, as the claim declares
+#   platform-roles security-officers add <tenant> <login>
+#   platform-roles security-officers remove <tenant> <login>
+#
+# add looks the login up in the tenant's administrators through the registrar
+# and commits the account's subject; remove takes the claim's entry by the
+# login, or by the subject.
+cmd_platform_roles() {
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        tenant-administrators) cmd_platform_roles_tenant_administrators "$@" ;;
+        security-officer|security-officers) cmd_platform_roles_security_officers "$@" ;;
+        *) die "usage: kubectl gentian platform-roles tenant-administrators | security-officers [add|remove <tenant> <login>]" ;;
+    esac
+}
+
+cmd_platform_roles_tenant_administrators() {
+    [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles tenant-administrators"
+    need jq
+    _discover
+    local answer
+    answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/tenant-administrators")" || exit 1
+    if [[ "$(jq '.tenants | length' <<<"${answer}")" == "0" ]]; then
+        echo "This cluster has no tenant with a realm of its own, and so nobody to make a security officer."
+        return 0
+    fi
+    jq -r '(["TENANT","LOGIN","EMAIL","NAME","SUBJECT"] | @tsv),
+        (.tenants[] | . as $t | if .unavailable then [$t.tenant, "(its realm could not be read)", "", "", ""] | @tsv
+            elif ((.administrators // []) | length) == 0 then [$t.tenant, "(no administrator)", "", "", ""] | @tsv
+            else .administrators[] | [$t.tenant, .username, (.email // ""), (.name // ""), .id] | @tsv end)' <<<"${answer}" |
+        column -t -s $'\t'
+    if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
+        echo "A realm could not be read; the list is incomplete."
+    fi
+}
+
+cmd_platform_roles_security_officers() {
+    local action="${1:-list}" tenant="${2:-}" login="${3:-}" answer
+    need jq
+    case "${action}" in
+        list)
+            [[ $# -le 1 ]] || die "usage: kubectl gentian platform-roles security-officers [list]"
+            _discover
+            answer="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/security-officers")" || exit 1
+            if [[ "$(jq '.securityOfficers | length' <<<"${answer}")" == "0" ]]; then
+                echo "Nobody holds the security officer role. The claim names no tenant administrator:"
+                echo "  kubectl gentian platform-roles security-officers add <tenant> <login>"
+                return 0
+            fi
+            jq -r '(["TENANT","LOGIN","EMAIL","SUBJECT","SIGNS IN AT"] | @tsv),
+                (.securityOfficers[] | [.tenant, .username, (.email // ""), .subject, (.signIn // "")] | @tsv)' <<<"${answer}" |
+                column -t -s $'\t'
+            ;;
+        add)
+            [[ -n "${tenant}" && -n "${login}" && $# -eq 3 ]] || die "usage: kubectl gentian platform-roles security-officers add <tenant> <login>"
+            _label "The tenant" "${tenant}"
+            _discover
+            local people person
+            people="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/tenant-administrators")" || exit 1
+            if [[ "$(jq -c --arg t "${tenant}" '.tenants[] | select(.tenant == $t)' <<<"${people}")" == "" ]]; then
+                die "this cluster has no tenant ${tenant} with a realm of its own; see kubectl gentian platform-roles tenant-administrators"
+            fi
+            person="$(jq -c --arg t "${tenant}" --arg l "${login}" '[.tenants[] | select(.tenant == $t) | (.administrators // [])[] |
+                select((.username | ascii_downcase) == ($l | ascii_downcase) or ((.email // "") | ascii_downcase) == ($l | ascii_downcase) or .id == $l)] | first // empty' <<<"${people}")"
+            if [[ -z "${person}" ]]; then
+                echo "No administrator of ${tenant} is ${login}. Its administrators are:" >&2
+                jq -r --arg t "${tenant}" '.tenants[] | select(.tenant == $t) | (.administrators // [])[] | "  \(.username)"' <<<"${people}" >&2
+                exit 1
+            fi
+            local subject username email
+            subject="$(jq -r '.id' <<<"${person}")"
+            username="$(jq -r '.username' <<<"${person}")"
+            email="$(jq -r '.email // ""' <<<"${person}")"
+            answer="$(_call PUT "/v1/clusters/${_CLUSTER}/platform-roles/security-officers/${tenant}/${subject}" \
+                "$(jq -n --arg u "${username}" --arg e "${email}" '{username: $u, email: $e}')")" || exit 1
+            if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+                echo "${username} of ${tenant} is a security officer already; nothing was committed."
+                return 0
+            fi
+            echo "${username} of ${tenant} is a security officer: committed ($(_committed "${answer}"))."
+            echo "Once Argo CD has synced, the kernel realm has their linked account and its membership of the"
+            echo "security officers' group, and their realm the gate only its administrators pass. They sign in with"
+            echo "their ${tenant} account, and enrol an authenticator the kernel realm keeps for them, at"
+            echo "  https://platform.${_KERNEL_DOMAIN:-<kernel-domain>}/?kc_idp_hint=tenant-${tenant}"
+            ;;
+        remove)
+            [[ -n "${tenant}" && -n "${login}" && $# -eq 3 ]] || die "usage: kubectl gentian platform-roles security-officers remove <tenant> <login>"
+            _label "The tenant" "${tenant}"
+            _discover
+            local holders subject
+            holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/security-officers")" || exit 1
+            subject="$(jq -r --arg t "${tenant}" --arg l "${login}" '[.securityOfficers[] | select(.tenant == $t) |
+                select((.username | ascii_downcase) == ($l | ascii_downcase) or ((.email // "") | ascii_downcase) == ($l | ascii_downcase) or .subject == $l)] | first | .subject // empty' <<<"${holders}")"
+            [[ -n "${subject}" ]] || die "no security officer of tenant ${tenant} is ${login}; see kubectl gentian platform-roles security-officers"
+            answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/platform-roles/security-officers/${tenant}/${subject}")" || exit 1
+            if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+                echo "The claim names no such security officer; nothing was committed."
+                return 0
+            fi
+            echo "${login} of ${tenant} is no longer a security officer: committed ($(_committed "${answer}"))."
+            echo "Once Argo CD has synced, their linked account in the kernel realm and its membership are gone."
+            ;;
+        *) die "usage: kubectl gentian platform-roles security-officers [list | add <tenant> <login> | remove <tenant> <login>]" ;;
+    esac
+}
+
 # tenants set: the two things about a tenant that only the cluster's
 # administrator decides -- whether its own administrators may approve what it
 # publishes to the internet, and whether they may add catalogues. Each is a
@@ -2604,7 +2772,8 @@ main() {
                 organizations) cmd_tenants_organizations "$@" ;;
                 groups) cmd_tenants_groups "$@" ;;
                 sign-in) cmd_tenants_sign_in "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations|groups|sign-in" ;;
+                platform-access) cmd_tenants_platform_access "$@" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations|groups|sign-in|platform-access" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;
@@ -2612,6 +2781,7 @@ main() {
         repository|repositories) cmd_repositories "$@" ;;
         model|models) cmd_models "$@" ;;
         setting|settings) cmd_settings "$@" ;;
+        platform-role|platform-roles) cmd_platform_roles "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         credential|credentials) cmd_credentials "$@" ;;

@@ -64,6 +64,9 @@ case "$*" in
     # And one usher beside it, which answers what the cluster holds.
     "get deploy -A -l app.kubernetes.io/component=usher"*) echo "kernel-control usher" ;;
     "get deploy usher -n kernel-control -o jsonpath="*) echo 8080 ;;
+    # And the registrar, which answers for people.
+    "get deploy -n kernel-control -l app.kubernetes.io/component=registrar"*) echo "registrar" ;;
+    "get deploy registrar -n kernel-control -o jsonpath="*) echo 8081 ;;
     "get deploy director -n kernel-control -o json")
         echo '{"spec":{"template":{"spec":{"containers":[{"env":[
             {"name":"DIRECTOR_ISSUER_BASE_URL","value":"https://id.k.example"},
@@ -1022,6 +1025,72 @@ lacks "a copy run from a checkout is never told" "${OUT}" "Update it"
 
 installed version
 has "version names where the copy came from" "${OUT}" "installed   : from ${CHECKOUT} at 0123456789abcdef"
+
+echo ""
+echo "kubectl gentian platform-roles, tenants platform-access"
+echo ""
+
+# The security officers: who could hold the role is the registrar's answer,
+# who holds it the director's; add looks the login up and commits the
+# subject, remove takes the entry by the login.
+ADMINS='{"cluster":"c1","complete":true,"tenants":[{"tenant":"acme","realm":"acme","administrators":[{"id":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","enabled":true}]},{"tenant":"globex","realm":"globex","administrators":[]}]}'
+HOLDERS='{"cluster":"c1","securityOfficers":[{"tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","identityProvider":"tenant-acme","signIn":"https://platform.k.example/?kc_idp_hint=tenant-acme"}]}'
+fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
+gentian platform-roles tenant-administrators
+has "tenant-administrators lists each tenant's administrators" "${OUT}" "it@acme.example"
+has "... and a tenant with none" "${OUT}" "(no administrator)"
+is "... from the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenant-administrators "
+
+fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
+reply PUT /v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles security-officers add acme it@acme.example
+is "security-officers add commits the subject the registrar answered" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e{"username":"it@acme.example","email":"it@acme.example"}'
+has "... and says it is committed" "${OUT}" "it@acme.example of acme is a security officer: committed"
+has "... with the address the person signs in at" "${OUT}" "https://platform.k.example/?kc_idp_hint=tenant-acme"
+
+fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
+gentian platform-roles security-officers add acme nobody@acme.example
+refused "a login that is no administrator of the tenant is refused"
+is "... and nothing is committed" "$(writes)" ""
+has "... and the tenant's administrators are named" "${OUT}" "it@acme.example"
+fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
+gentian platform-roles security-officers add nowhere it@acme.example
+refused "a tenant the registrar does not list is refused"
+is "... and nothing is committed" "$(writes)" ""
+fresh
+gentian platform-roles security-officers add Acme it@acme.example
+refused "a tenant that is not a name is refused before anything is asked"
+is "... and nothing is asked" "$(cat "${CALLS}")" ""
+
+fresh; reply GET /v1/clusters/c1/platform-roles/security-officers 200 "${HOLDERS}"
+gentian platform-roles security-officers
+has "security-officers lists the holders" "${OUT}" "it@acme.example"
+has "... with the subject" "${OUT}" "7d0f3c2e"
+fresh; reply GET /v1/clusters/c1/platform-roles/security-officers 200 "${HOLDERS}"
+reply DELETE /v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles security-officers remove acme it@acme.example
+is "security-officers remove sends one DELETE for the entry the login names" "$(writes)" "DELETE /v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e "
+fresh; reply GET /v1/clusters/c1/platform-roles/security-officers 200 "${HOLDERS}"
+gentian platform-roles security-officers remove acme nobody@acme.example
+refused "removing a login the claim does not name is refused"
+is "... and nothing is committed" "$(writes)" ""
+
+# The tenant's own switch: one PUT, on or off; a name alone reads.
+fresh; reply PUT /v1/tenants/acme/platform-access 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants platform-access acme on
+is "tenants platform-access on sends the switch" "$(writes | tr -d ' \n')" 'PUT/v1/tenants/acme/platform-access{"adminsEnter":true}'
+has "... and says where the platform's administrators enter" "${OUT}" "https://desktop.acme.k.example/?kc_idp_hint=kernel"
+fresh; reply PUT /v1/tenants/acme/platform-access 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants platform-access acme off
+is "tenants platform-access off sends the switch" "$(writes | tr -d ' \n')" 'PUT/v1/tenants/acme/platform-access{"adminsEnter":false}'
+fresh; reply GET /v1/tenants/acme/platform-access 200 '{"tenant":"acme","adminsEnter":false}'
+gentian tenants platform-access acme
+has "a name alone reads the switch" "${OUT}" "may not sign in to acme"
+is "... and only reads" "$(cat "${CALLS}")" "GET /v1/tenants/acme/platform-access "
+fresh
+gentian tenants platform-access acme maybe
+refused "a state that is neither on nor off is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 if [[ "${fail}" -gt 0 ]]; then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"

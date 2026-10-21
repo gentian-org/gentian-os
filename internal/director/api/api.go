@@ -119,6 +119,11 @@ type Repository interface {
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
+	SecurityOfficers(ctx context.Context) ([]gitops.SecurityOfficer, error)
+	SetSecurityOfficer(ctx context.Context, o gitops.SecurityOfficer, meta gitops.Meta) (gitops.Result, error)
+	RemoveSecurityOfficer(ctx context.Context, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
+	TenantPlatformAccess(ctx context.Context, tenant string) (bool, error)
+	SetTenantPlatformAccess(ctx context.Context, tenant string, on bool, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -515,6 +520,14 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
+		// Who holds cluster#security_officer: the tenants' administrators the
+		// claim names (platform_access.go). Reading is can_audit, like the
+		// settings the holders stand beside; naming one is can_configure,
+		// the relation the claim is written under -- and the one the role
+		// itself does not carry, so a security officer cannot name another.
+		s.guarded("GET /v1/clusters/{c}/platform-roles/security-officers", "can_audit", s.clusterObject, s.securityOfficers)
+		s.guarded("PUT /v1/clusters/{c}/platform-roles/security-officers/{tenant}/{subject}", "can_configure", s.clusterObject, s.setSecurityOfficer)
+		s.guarded("DELETE /v1/clusters/{c}/platform-roles/security-officers/{tenant}/{subject}", "can_configure", s.clusterObject, s.removeSecurityOfficer)
 		// A second address for one published surface, directly under the
 		// cluster's own domain. can_configure, and not the tenant's
 		// approver: a name under the cluster's domain is the cluster's to
@@ -779,6 +792,14 @@ func (s *Server) routes() {
 		// profile names countryKey is told it.
 		s.guarded("GET /v1/tenants/{t}/country", "can_view", tenantObject, s.tenantCountry)
 		s.guarded("PUT /v1/tenants/{t}/country", "can_set_policy", tenantObject, s.setTenantCountry)
+		// Whether the platform's administrators may sign in to the tenant
+		// (platform_access.go): the tenant's own switch, under
+		// can_administer -- it opens the tenant's realm to people outside
+		// it, which is the tenant administrator's to decide and nobody
+		// else's; it is not the operated_by consent, and the cluster's
+		// administrator does not set it for a tenant.
+		s.guarded("GET /v1/tenants/{t}/platform-access", "can_view", tenantObject, s.tenantPlatformAccess)
+		s.guarded("PUT /v1/tenants/{t}/platform-access", "can_administer", tenantObject, s.setTenantPlatformAccess)
 
 		// The privileges this tenant's components asked for and what was
 		// answered. A profile declaring a privilege is a request (AD-5); the

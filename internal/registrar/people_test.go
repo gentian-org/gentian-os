@@ -475,8 +475,16 @@ func (f *fakeIdentity) ActivateAccount(ctx context.Context, r identity.Realm, id
 	return identity.Activation{Link: "https://id.example/link?key=" + id, ExpiresAt: 1, Actions: actions}, nil
 }
 
-func (f *fakeIdentity) GroupMembers(ctx context.Context, r identity.Realm, _ string) ([]identity.Person, error) {
+func (f *fakeIdentity) GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error) {
 	f.note(ctx, r)
+	f.mu.Lock()
+	f.lastGroup = path
+	f.mu.Unlock()
+	// Each realm's admins group holds its administrator; every other group
+	// is empty here.
+	if strings.HasSuffix(path, ":admins") {
+		return []identity.Person{{ID: "a1", Username: "admin@" + r.Name() + ".example", Email: "admin@" + r.Name() + ".example", Enabled: true}}, nil
+	}
 	return nil, nil
 }
 

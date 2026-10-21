@@ -169,6 +169,10 @@ type Tenant struct {
 	SignUp bool `json:"signUp"`
 	// Country is spec.country: an ISO 3166-1 alpha-2 code, or "".
 	Country string `json:"country,omitempty"`
+	// AdminsEnter is spec.platformAccess.adminsEnter: the platform's
+	// administrators may sign in to the tenant. The tenant's own
+	// administrators set it; off unless set.
+	AdminsEnter bool `json:"adminsEnter"`
 }
 
 // PurgeAnnotation marks a tenant whose purge was asked for and not finished.
@@ -308,10 +312,14 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						SignUp struct {
 							Enabled bool `json:"enabled"`
 						} `json:"signUp"`
-						Country string `json:"country"`
+						Country        string `json:"country"`
+						PlatformAccess struct {
+							AdminsEnter bool `json:"adminsEnter"`
+						} `json:"platformAccess"`
 					} `json:"spec"`
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
+					t.AdminsEnter = doc.Spec.PlatformAccess.AdminsEnter
 					t.AdminsApprove = doc.Spec.Perimeter.AdminsApprove
 					t.CataloguesDelegated = doc.Spec.Catalogue.Delegated
 					t.SignUp = doc.Spec.SignUp.Enabled
