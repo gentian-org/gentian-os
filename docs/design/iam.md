@@ -29,7 +29,7 @@ user and group store for that organisation.
 - **The edge keeps the session**, not the app and not the desktop: on every host behind a session the Gateway runs the code flow against the zone's client (`gentian-edge-<zone>`), keeps the tokens in encrypted, host-scoped, `SameSite=Lax` cookies, renews them with the refresh token, and only then asks the bouncer whether this person may reach the host. The order, what the bouncer is shown and what it refuses are in [routing.md §4.1](routing.md).
 - **Signing out** is `/oauth2/logout` on the host the person is on: the Gateway drops that host's cookies and sends the browser to the realm's end-session endpoint with the session's ID token as the hint, so Keycloak ends the realm session without asking and returns to the host's front page, which is the realm's sign-in again. Ending the realm session is what signs the person out of the zone's other hosts, within one access-token lifetime ([routing.md §4.2](routing.md)). Ending the realm session is also what tells the apps: the realm calls each app that can be told, inside the cluster, and the app ends its own session for that person. Which apps can be told, and how long a session lasts in one that cannot, is §1.12.
 - **Tenant apps** use the same tenant realm for OIDC, so the realm session created at sign-in is reused silently by every app launch — no broker hop, no second login screen.
-- The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's administrators and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one.
+- The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's administrators and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one. The one exception is a tenant's administrator the cluster made a security officer, who holds a linked account there that signs in through their own realm (§1.1c).
 
 ### 1.1a The platform tenant, user tenants, and the two tenancy modes
 
@@ -155,7 +155,131 @@ where they come from. It is Keycloak's identity brokering, configured by an
 administrator in its console, not composed by the platform:
 [identity-brokering.md](../identity-brokering.md). The sign-in page shows
 every provider not set to *Hide on login page*; the platform's own (`kernel`,
-`vouch-*`) are, and so stay off it.
+`vouch-*`) are, and so stay off it. One brokering the platform does compose
+is the kernel realm's own, below.
+
+#### The kernel realm as hub
+
+The kernel realm holds the platform's administrators and nobody else (§1.1),
+and a platform role is held by a group of that realm (§1.2). The security
+officers (`cluster#security_officer`, behind `can_approve`) are meant to be
+people who are not the platform's administrators -- in practice the
+administrators of the tenants the cluster carries, whose accounts are in their
+tenant's realm. No kernel account is made for them. Instead the kernel realm
+**brokers** the tenant realms, for administrators only, and the cluster's
+administrator decides, in git, which tenant administrator holds the role.
+
+**Two gates, one per realm.** A tenant's realm is brokered through one client
+of its own, `broker-to-platform`, which authenticates the kernel realm by the
+JWT it signs against the kernel realm's published keys -- no secret crosses,
+as between two tenants (§1.1c). Only the tenant's administrators pass it: the
+client overrides the realm's browser flow with `gentian-hub-broker`, which is
+the realm's own sign-in (cookie, password, the person's second factor if they
+have one) followed by *Condition -- user role* on the realm role
+`platform-brokered`, a role only the group `gentian:tenant:<t>:admins` carries,
+and *Deny access* for everybody else. A member who follows the link is refused
+at their own realm with that message. The token the spoke issues carries the
+role as the claim `gentian_hub_roles`. The hub -- the kernel realm's identity
+provider `tenant-<t>` for that realm -- is **link only, never create**: its
+first-broker-login flow is `gentian-hub-first-login`, a single *Deny access*,
+so a sign-in succeeds only for a kernel account that already holds a federated
+identity to that provider with that subject; and it requires the claim
+(`gentian_hub_roles` must name `platform-brokered`, Keycloak's essential-claim
+check on the provider, before any flow runs) so a token the spoke's gate did
+not issue is refused twice. The provider trusts the tenant realm's verified
+address and follows it at every sign-in (sync mode force).
+
+**Who holds the role is declared in git.** The Cluster claim names the holders:
+
+```yaml
+spec:
+  platformAccess:
+    securityOfficers:
+      - tenant: acme
+        subject: 5b1e...          # the account's id in the tenant's realm
+        username: it@acme.example
+        email: it@acme.example
+```
+
+The entry is keyed by subject, which outlives a changed address; `username` and
+`email` are what the kernel realm shows and what the person signs in as until
+their first sign-in refreshes them. The cluster's administrator writes an
+entry through the director (`can_configure`), from the command line
+(`kubectl gentian platform-roles security-officers add <tenant> <login>`) or
+from the platform console's *Security officers* page, whose picker lists the
+administrators of every tenant -- the members of each tenant's `admins` group,
+read by the registrar across the realms it holds a credential for, under
+`can_configure` on the cluster. The platform tenant's composition then renders,
+for each holder, a kernel-realm Keycloak **user** with the federated identity
+link to `tenant-<t>` and its **membership** of the security officers' group
+(`spec.platformRoles.securityOfficer`, `gentian:platform:security` by default),
+exhaustively: the account is in that group and in no other. For each tenant
+with at least one holder it renders the identity provider `tenant-<t>` in the
+kernel realm and the gated client, role and flow in the tenant's realm; a
+tenant with none has neither, so the kernel sign-in page lists only the realms
+that have somebody. Removing an entry removes the user, its link and its
+membership. Keycloak records each of these as admin events, its listener
+states the account's memberships afresh, and the operator writes the tuple: the
+role still comes through a group (R2) and membership still reaches the graph
+only from Keycloak's events (R7); nothing here writes the graph. The console
+and the command line deep-link a holder to
+`https://platform.<KERNEL_DOMAIN>/?kc_idp_hint=tenant-<t>`: the sign-in page
+reads the hint off the edge's state and sends the browser to that provider at
+once.
+
+**No implicit privileges.** A linked account arrives with no group of its own
+(the kernel realm declares an empty default-groups list, so Keycloak adds
+none), no role of the platform's and no membership of the platform tenant: it
+holds exactly the group its entry gives it. Keycloak's own default realm roles
+(`default-roles-kernel`, which carry nothing on the platform) are the one
+thing every account of a realm has. What a security officer may reach is what
+the graph derives from `security_officer` and nothing else: the platform
+tenant's desktop and console through `can_enter` (`can_approve from cluster`),
+the approvals, the audit reads. The registrar changes nothing about such an
+account, as about any account that holds a platform role.
+
+**A second factor the hub owns, toggleable.** The kernel realm's identity
+provider for a tenant runs the post-login flow `gentian-hub-second-factor`:
+*OTP form*, required, which makes a person enrol an authenticator in the
+kernel realm the first time they arrive and asks for it on every sign-in
+after. It is the kernel realm's credential, on the linked account, separate
+from whatever the tenant realm asked for a moment earlier. The Cluster claim
+sets it: `spec.platformAccess.brokeredSecondFactor`, `required` by default,
+`off` renders the providers without the flow
+(`kubectl gentian settings set platformAccess.brokeredSecondFactor=off`). The
+trade-off in one sentence: `off` makes a security officer's approval exactly as
+strong as their tenant realm's sign-in policy, which the platform does not
+set. WebAuthn is not offered here; the enrolment is TOTP.
+
+**The reverse direction is the tenant's switch.** A tenant's administrators
+may grant the platform's administrators access to their tenant:
+`spec.platformAccess.adminsEnter` on the Tenant manifest, off by default,
+written by the tenant's own administrators through the director
+(`can_administer`), from the command line
+(`kubectl gentian tenants platform-access <tenant> on|off`) or from the
+switch *Platform administrators may enter this tenant* on the tenant
+console's *Security* screen. When it is on, the tenant's realm composes the
+identity provider `kernel` again, and the kernel realm the client
+`broker-to-<t>` it authenticates to -- the same JWT handshake, the other way
+round. The provider requires the `groups` claim to name
+`gentian:platform:admin` (no other kernel account gets an account in the
+tenant through it), and one mapper puts whoever arrives into
+`gentian:tenant:<t>:admins` from that claim, re-evaluated at every sign-in
+(sync mode force): a person who leaves the platform group is out of the
+tenant's admin group at their next sign-in through it. The person arrives as
+a new account of the tenant's realm, under Keycloak's own first-broker-login
+flow; an address the realm already has is linked only once its owner confirms
+it. The provider is hidden on the tenant's sign-in page: the way in is the
+*Enter tenant* action in the platform console, which is
+`https://desktop.<tenant domain>/?kc_idp_hint=kernel`. The tenant realm's
+login events record each entry as a sign-in through `kernel`. This switch is
+not the tenant's `operated_by` consent (authorization-model.md §3): that one
+lets the cluster's administrators act on the tenant through the director,
+this one lets them sign in to it, and each is set and withdrawn on its own.
+
+What a platform administrator is told when they enter a tenant this way is
+what any tenant administrator sees; the account they get holds `admins` and
+nothing else, like every administrator's (§1.3).
 
 ### 1.2 Group taxonomy
 
@@ -165,7 +289,7 @@ membership, and access to each app:
 | Group | Purpose |
 |---|---|
 | `gentian:platform:admin` | The platform administrator. The Cluster claim names the group that holds each platform role (`spec.platformRoles`); this is the default for `admin` |
-| `gentian:platform:security` | The security officers: who approves what escapes the default posture (`cluster#can_approve`). The default for `securityOfficer`; made empty by the install, never the administrators' group |
+| `gentian:platform:security` | The security officers: who approves what escapes the default posture (`cluster#can_approve`). The default for `securityOfficer`; made empty by the install, never the administrators' group. Filled from the holders the Cluster claim names, each a tenant's administrator linked through the kernel realm's hub (§1.1c) |
 | the groups the claim names for `auditor`, `serviceAdmin`, `sharedAppsAdmin`, `breakGlass` | The other platform roles. None has a holder unless the claim names a group |
 | `gentian:tenant:<t>:members` | All workspace members |
 | `gentian:tenant:<t>:admins` | Tenant IT admins |
@@ -327,13 +451,12 @@ service that only validates tokens (`gentian-dovecot`); it has no scope, role
 or group.
 
 The tenant realm keeps Keycloak's built-in `browser` flow, so it
-authenticates its own people with a credential form. Nobody reaches a tenant
-realm through the kernel realm: `tenant-default` no longer composes the
-identity provider `kernel` in a tenant realm, its mappers or the flow
-`first-broker-login-gentian`, and the realm Job no longer makes the client
-`broker-<tenant>` in the kernel realm. All four are switched off in place
-(`$kernelBroker` in the Composition, `kernelBrokerEnabled` in the operator),
-not removed.
+authenticates its own people with a credential form. A tenant realm carries
+the identity provider `kernel` only where the tenant switched it on
+(`spec.platformAccess.adminsEnter`, §1.1c), and then for the platform's
+administrators alone; its own people never reach it through the kernel realm.
+The gated client `broker-to-platform`, its role and its flow exist in a
+tenant realm only while a holder of a platform role comes from it (§1.1c).
 
 ### 1.8 Provisioning accounts in apps
 
@@ -375,7 +498,7 @@ sequenceDiagram
   opt apps with an OIDC pack, or with SAML
     TR->>KC: per-app client Jobs
   end
-  TR->>KC: kernel-realm flow Job, mail-server Job
+  TR->>KC: mail-server Job
   TR->>TR: IdentityReady=True
 ```
 
