@@ -144,6 +144,17 @@ var errInvalidName = errors.New("invalid name")
 // guarded registers a route with the relation it requires on the object it
 // is about. There is no other way to register a route.
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
+	s.guardedAny(pattern, []string{relation}, obj, h)
+}
+
+// guardedAny is guarded for a route that two relations open, either one on
+// the same object: a list that two offices read for two reasons. The
+// relations are asked in order and the first held answers; a caller holding
+// none is refused before anything is asked of the operator.
+func (s *Server) guardedAny(pattern string, relations []string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
+	if len(relations) == 0 {
+		panic("usher: a route needs a relation: " + pattern)
+	}
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		ident, err := s.cfg.Authn.FromRequest(r)
@@ -163,10 +174,17 @@ func (s *Server) guarded(pattern, relation string, obj object, h func(http.Respo
 			fail(w, http.StatusBadRequest, "invalid name")
 			return
 		}
-		allowed, err := s.cfg.Authz.Check(ctx, "", user, relation, target)
-		if err != nil {
-			fail(w, http.StatusServiceUnavailable, "authorization unavailable")
-			return
+		allowed := false
+		for _, relation := range relations {
+			ok, err := s.cfg.Authz.Check(ctx, "", user, relation, target)
+			if err != nil {
+				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
+				return
+			}
+			if ok {
+				allowed = true
+				break
+			}
 		}
 		if !allowed {
 			fail(w, http.StatusForbidden, "forbidden")

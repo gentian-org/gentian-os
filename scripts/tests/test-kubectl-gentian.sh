@@ -459,6 +459,19 @@ fresh
 gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
 refused "a request of no known kind is a usage error"
 
+# What awaits the security officer, across the cluster: the usher's list,
+# read as a table with who asked and why, and the command that answers it.
+fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[{"tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approvedBy":"security-officer","reason":"the vendor image writes its cache as root","requestedBy":"tom@example.com","requestedAt":"2026-10-21T09:12:00Z","note":"needed for the pilot"},{"tenant":"other","profile":"wiki","install":"wiki","privilege":"clusterRoles/node-reader","approvedBy":"security-officer"}]}'
+gentian approvals list
+is "approvals list asks the usher for the cluster's list" "$(cat "${CALLS}")" "GET /v1/clusters/c1/approvals "
+has "... and shows who asked" "${OUT}" "tom@example.com"
+has "... and the profile's reason with the note" "${OUT}" "team/aluvian-commerce podSecurity/run-as-root: the vendor image writes its cache as root; tom@example.com adds: needed for the pilot"
+has "... and a request nobody asked for yet" "${OUT}" "other/wiki clusterRoles/node-reader: the profile gives no reason"
+has "... and says how to answer" "${OUT}" "kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant>"
+fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[]}'
+gentian approvals list
+has "an empty list says so" "${OUT}" "Nothing awaits the security officer"
+
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true
 is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "

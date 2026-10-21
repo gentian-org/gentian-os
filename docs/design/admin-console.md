@@ -50,6 +50,7 @@ service's answer from OpenFGA.
 | **Audit** | Changes to declared state, from git (§4.7) | director |
 | **Cluster settings**, **Platform security**, **Customization**, **Usage Statistics** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last usage statistics report | director |
 | **Security officers** (platform administrator) | Who holds `cluster#security_officer`: a picker over every tenant's administrators, the holders as the Cluster claim declares them, each with their sign-in link (§7) | registrar (the picker), director |
+| **Approvals** (security officer; platform console) | Every tenant's app requests of a privilege that weakens what protects the node — pod-security waivers, cluster roles — with the profile's reason and who asked for it; Approve with a reason. The list is the usher's (`GET /v1/clusters/{c}/approvals`, `can_approve` or `can_configure`); the approval is the director's privilege route, decided by the kind ([store-contract.md](store-contract.md) §8) | usher (read), director |
 | **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, the two serving switches, and the switch for the gateway's own console. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
 | **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
 
@@ -101,6 +102,16 @@ What the console relies on:
 The same image runs for every tenant. The screens marked *platform
 administrator* in §1.1 are shown only to a person who holds the cluster's
 verbs; they are reachable from any console such a person can open.
+
+The console's context (`/admin/context`) is refused to anyone who does not
+hold `can_administer` on the tenant, with one widening: a person who holds
+`cluster#can_approve` — the security officer — is let in with
+`isTenantAdmin: false` and sees the **Approvals** screen alone, nothing of
+the tenant's. They act at the platform console; the App Store's install
+step links them there (`?tab=approvals&kc_idp_hint=<alias>`, the alias of
+their tenant realm in the kernel realm, [iam.md](iam.md)). The tenant
+console keeps its per-app Approve on the Apps screen for the egress
+requests that are the tenant administrator's.
 
 ### 4.2 First administrators
 
