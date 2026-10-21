@@ -72,7 +72,11 @@ if [[ "${code}" == "200" ]]; then cat "${file}" > "${out}"; else printf 'no\n' >
 [[ "${fmt}" == *http_code* ]] && printf '%s' "${code}"
 exit 0
 STUB
-printf '#!/usr/bin/env bash\necho "$*" >> "${KUBECTL_LOG}"\nexit 1\n' > "${BIN}/kubectl"
+cat > "${BIN}/kubectl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "${KUBECTL_LOG}"
+exit 1
+STUB
 chmod +x "${BIN}/curl" "${BIN}/kubectl"
 
 GENTIAN_URL="https://gentian.example/apps"
@@ -115,6 +119,8 @@ meta() {
         printf '{"apiVersion":"1.5","name":"S","catalogues":%s}\n' "$1" > "${STORE}/v1/meta"
     fi
 }
+# edit <sed script> -- the claim through sed, without -i (BSD sed differs).
+edit() { sed "$1" "${CLAIM}" > "${CLAIM}.x" && mv "${CLAIM}.x" "${CLAIM}"; }
 both() { meta '[{"name":"gentian","url":"'"${GENTIAN_URL}"'","displayName":"Gentian OS"},{"name":"publisher","url":"'"${PUB_URL}"'","displayName":"Publisher"}]'; }
 # run <shell> [VAR=value ...] -- the library in a fresh shell, as the
 # installer loads it.
@@ -216,7 +222,7 @@ done
 
 # Other shapes of the section.
 new_world; both
-sed -i 's|^    sources:$|    sources: []|; /^      - name: gentian$/d; /^        # The development catalogue.$/d; /^        url: https:\/\/gentian.example\/apps$/d' "${CLAIM}"
+edit 's|^    sources:$|    sources: []|; /^      - name: gentian$/d; /^        # The development catalogue.$/d; /^        url: https:\/\/gentian.example\/apps$/d'
 ensure >/dev/null
 is "sources: [] becomes the list of what the store lists" "$(sources)" \
     "gentian|${GENTIAN_URL}||store
@@ -224,13 +230,15 @@ publisher|${PUB_URL}||store"
 is "  and the comments after it stay" "$(grep -c '# - name: in-house' "${CLAIM}")" "1"
 
 new_world; both
-sed -i '/^    sources:$/,/^      #   url:/d' "${CLAIM}"
+edit '/^    sources:$/,/^      #   url:/d'
 ensure >/dev/null
 is "a section with no sources gets them" "$(sources | cut -d'|' -f1 | tr '\n' ' ')" "gentian publisher "
 is "  and the claim's other sections are as they were" "$(run 'yq_get .spec.mail.serviceMode "'"${CLAIM}"'"')" "internal"
 
 new_world; both
-sed -i '/^    sources:$/,/^      #   url:/c\    sources: [{name: gentian, url: https://gentian.example/apps}]' "${CLAIM}"
+awk '/^    sources:$/ { print "    sources: [{name: gentian, url: https://gentian.example/apps}]"; skip = 1; next }
+     skip && /^      #   url:/ { skip = 0; next }
+     !skip' "${CLAIM}" > "${CLAIM}.x" && mv "${CLAIM}.x" "${CLAIM}"
 before="$(cat "${CLAIM}")"
 said="$(ensure)"
 is "a list written on one line is not rewritten" "$(cat "${CLAIM}")" "${before}"
@@ -238,7 +246,7 @@ has "  and that is said" "${said}" "not written as a block"
 
 # No store; usage statistics off.
 new_world; both
-sed -i '/storeUrl:/d' "${CLAIM}"
+edit '/storeUrl:/d'
 ensure >/dev/null
 is "a claim that names no store asks none" "$(cat "${CURL_LOG}")" ""
 new_world; both

@@ -659,9 +659,9 @@ _tenant_catalogue_holders() {
 # claim moves, its comments included. Fails, writing nothing, on a catalogue
 # section written on one line.
 _claim_append_sources() {
-    local claim="$1" entries="$2" store="$3" tmp rc=0
+    local claim="$1" listed_file="$2" store="$3" tmp rc=0
     tmp="$(mktemp)"
-    awk -v store="${store}" -v entries="${entries}" '
+    awk -v store="${store}" -v entries="${listed_file}" '
         function emit(ind,    line, f, name) {
             while ((getline line < entries) > 0) {
                 split(line, f, "\t"); name = f[1]
