@@ -15,9 +15,10 @@ The Gentian CLI is a kubectl plugin (`kubectl-gentian`), installed with
 `make install-plugin` into `~/.local/bin`, with a shorthand symlink `gtnctl`.
 It is a client of the director, like the admin console: sign in once with
 `kubectl gentian login` (a code confirmed in the browser), and every command
-asks the director as you, which checks, commits and records it. The one
-command about a person, `tenants activate-admin`, asks the registrar, which
-checks the same way and acts at Keycloak. It reaches the director and the
+asks the director as you, which checks, commits and records it. The commands
+about a person -- `tenants activate-admin`, and the look-up behind
+`platform-roles` -- ask the registrar, which checks the same way and reads or
+acts at Keycloak. It reaches the director and the
 registrar of the current kubectl context, so it needs no configuration.
 
 People are invited, changed and removed in the Admin Console, *Members*;
@@ -808,6 +809,7 @@ checkout and running `./install.sh`, without the checkout.
 kubectl gentian settings show                                   # the claim's settings, as JSON
 kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
 kubectl gentian settings set certificates.dnsZones=gentian.org  # a list: comma-separated
+kubectl gentian settings set platformAccess.brokeredSecondFactor=off   # the hub's second factor (§7)
 ```
 
 The director holds the list of what may be set and refuses anything else, and
@@ -852,22 +854,50 @@ Approving what escapes the default posture — a pod-security waiver, a cluster
 role, `trustTier: platform` — is the security officers' (`cluster#can_approve`),
 never the administrators'. Their group is `gentian:platform:security`
 (`spec.platformRoles.securityOfficer`, the default), made empty by the install.
-A platform role holds kernel-realm accounts only, and the registrar changes
-neither its groups nor their members, so the cluster's administrator assigns
-one in the kernel realm's identity console:
+Its holders are administrators of the cluster's tenants, named on the Cluster
+claim (`spec.platformAccess.securityOfficers`) by the cluster's administrator;
+the kernel realm brokers their own realm for them, link only
+([iam.md §1.1c](design/iam.md)). No kernel account is made by hand.
 
-1. The person's own kernel-realm account, never the administrator's: invite
-   them in the platform tenant's Admin Console
-   (`https://admin.platform.<kernel-domain>`, People) and require a second
-   factor there — once they hold the role, the registrar no longer changes
-   their account.
-2. `https://id.<kernel-domain>/auth/admin/kernel/console/` → Users → the
-   person → Groups → Join group → `gentian:platform:security`. Leave group
-   removes them.
+```bash
+kubectl gentian platform-roles tenant-administrators            # who could hold it: every tenant's administrators
+kubectl gentian platform-roles security-officers                # who holds it, as the claim declares
+kubectl gentian platform-roles security-officers add acme it@acme.example     # one commit
+kubectl gentian platform-roles security-officers remove acme it@acme.example
+```
 
+`add` takes the tenant and the person's login in that tenant's realm, looks
+the account up through the registrar and commits its subject; the platform
+console's *Security officers* page does the same from a picker. Once Argo CD
+has synced, the platform tenant's composition renders the linked account in
+the kernel realm, its membership of the group and the sign-in gate in the
+tenant's realm. The person then signs in at
+`https://platform.<kernel-domain>/?kc_idp_hint=tenant-acme` (the command
+prints the link), with their tenant account, and enrols an authenticator the
+kernel realm keeps for them; only the tenant's administrators pass the gate.
+Removing the entry removes the account, its link and its membership.
 Membership reaches OpenFGA through the realm's event listener; nothing else is
-written. A person of a tenant (an account of that tenant's realm) cannot be
-put in the group: they are given a kernel-realm account of their own.
+written.
+
+Whether the kernel realm asks for that second factor is a cluster setting:
+
+```bash
+kubectl gentian settings set platformAccess.brokeredSecondFactor=off     # default: required
+```
+
+The other way round, a tenant's administrators may let the platform's
+administrators sign in to their tenant: the switch is the tenant's own, off by
+default, and it is not the tenant's `operated_by` consent (that one covers the
+director, this one the sign-in).
+
+```bash
+kubectl gentian tenants platform-access acme on      # members of gentian:platform:admin may enter acme as its administrators
+kubectl gentian tenants platform-access acme off
+```
+
+The way in is *Enter tenant* in the platform console, which is
+`https://desktop.acme.<kernel-domain>/?kc_idp_hint=kernel`; the tenant's own
+sign-in page shows no button for it.
 
 Keycloak master-realm admin:
 
