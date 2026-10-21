@@ -288,3 +288,32 @@ func TestTheUsageStatisticsIsTheOperatorsRecord(t *testing.T) {
 		}
 	}
 }
+
+// The cluster's approvals are read by the security officer, who answers
+// them, and by the cluster's administrator, who sees what it waits on. An
+// auditor, and a tenant's administrator however complete their authority
+// inside their tenant, read nothing of it.
+func TestTheApprovalsAreTheSecurityOfficersAndTheAdministratorsToRead(t *testing.T) {
+	op := &fakeOperator{}
+	s, _ := stateServer(op,
+		"user:ada can_approve cluster:demo",
+		"user:pat can_configure cluster:demo",
+		"user:aud can_audit cluster:demo",
+		"user:mel can_view tenant:acme", "user:mel can_administer tenant:acme",
+		"user:mel can_approve_privilege tenant:acme",
+	)
+	for _, who := range []string{"mel", "aud"} {
+		if code, _ := ask(t, s, "/v1/clusters/demo/approvals", who); code != http.StatusForbidden {
+			t.Errorf("%s read the approvals: %d", who, code)
+		}
+	}
+	if len(op.paths) != 0 {
+		t.Fatalf("the operator was asked before the store allowed it: %v", op.paths)
+	}
+	for _, who := range []string{"ada", "pat"} {
+		code, body := ask(t, s, "/v1/clusters/demo/approvals", who)
+		if code != http.StatusOK || body["asked"] != "/v1/approvals" {
+			t.Errorf("%s: %d %v", who, code, body)
+		}
+	}
+}
