@@ -3307,7 +3307,9 @@ Written by install.sh (step 0) and signed with this cluster's
 break-glass key: before the cluster exists there is no director to write it,
 and AD-2 names that case.${_GENTIAN_DEFAULT_PROFILE_NOTES:+
 
-${_GENTIAN_DEFAULT_PROFILE_NOTES}}" 2>&1; then
+${_GENTIAN_DEFAULT_PROFILE_NOTES}}${_GENTIAN_STORE_CATALOGUE_NOTES:+
+
+${_GENTIAN_STORE_CATALOGUE_NOTES}}" 2>&1; then
         error "The commit failed; clusters/${cluster} is still uncommitted."
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 1
@@ -3476,12 +3478,17 @@ require_cluster_deployment() {
     # produces a Service whose address nothing pins — the failure the old
     # requirement existed to prevent, now stated against the claim.
     local claim="${kernel_dir}/claims/cluster.yaml"
+    # The store's catalogues are asked for on every run, after the section
+    # exists: the store may list one it did not list last time
+    # (ensure_claim_store_catalogues, catalogue.sh).
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
+        preview_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
         preview_branding_removed_fields "${kernel_dir}/claims/branding.yaml"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
+        ensure_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
         drop_branding_removed_fields "${kernel_dir}/claims/branding.yaml"
     fi
     if [[ -f "${claim}" ]]; then

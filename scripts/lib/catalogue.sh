@@ -593,3 +593,280 @@ preview_default_profiles() {
     done
     return 0
 }
+
+# =============================================================================
+# The store's catalogues (store API 1.5, docs/design/store-contract.md §9).
+#
+# A store lists in GET /v1/meta the catalogue sources its entries come from.
+# An app bought there is installed from the catalogue its coordinate names,
+# and the director refuses a catalogue the cluster declares no source for. So
+# on every run step 0 reads the list of the store the claim names and adds to
+# spec.catalogue.sources each catalogue of a name the claim does not have,
+# marked addedBy: store. It adds and does nothing else: a source the claim
+# has is never changed or removed, whoever added it; a name it holds at
+# another address is left and said; a name a tenant uses for a catalogue of
+# its own is not added, as the director would refuse it; only https is
+# added; a store that cannot be reached, or lists none, is a warning. A
+# catalogue the store stops listing stays on the claim.
+#
+# This takes the store's word for where its catalogues are. Every bundle
+# fetched from one is still held to the digest of its install.
+# =============================================================================
+
+# _store_catalogue_name_ok <name> -- a catalogue's name: lower-case letters,
+# digits and hyphens, the first half of a coordinate.
+_store_catalogue_name_ok() {
+    local pattern='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+    [[ "$1" =~ ${pattern} ]]
+}
+
+# _store_catalogue_url_ok <url> -- an https address the claim can carry as a
+# plain scalar: what the director accepts of `catalogues add`
+# (gitops.checkCatalogueSource).
+_store_catalogue_url_ok() {
+    local pattern='^https://[^[:space:]#"'"'"']+$'
+    [[ "$1" =~ ${pattern} && ${#1} -le 2048 ]]
+}
+
+# _claim_sources_tsv <claim file> -- "<name>\t<url>\t<oci artifact>\t<addedBy>"
+# for every source the claim lists, as written.
+_claim_sources_tsv() {
+    _yaml_docs_json "$1" 2>/dev/null | jq -r '
+        select(type == "object") | (.spec.catalogue.sources // []) | .[]? | select(type == "object")
+        | [(.name // "" | tostring), (.url // "" | tostring), (.oci.artifact // "" | tostring), (.addedBy // "" | tostring)]
+        | @tsv' 2>/dev/null || true
+}
+
+# _tenant_catalogue_holders <tenants dir> <name> -- the tenants, comma
+# separated, that have a catalogue of their own of this name.
+_tenant_catalogue_holders() {
+    local dir="$1" name="$2" file out=""
+    [[ -d "${dir}" ]] || return 0
+    for file in "${dir}"/*/tenant.yaml; do
+        [[ -f "${file}" ]] || continue
+        if _yaml_docs_json "${file}" 2>/dev/null | jq -e --arg n "${name}" \
+            'select(type == "object") | (.spec.catalogue.sources // []) | any(.[]?; (.name // "") == $n)' >/dev/null 2>&1; then
+            out+="${out:+, }$(basename "$(dirname "${file}")")"
+        fi
+    done
+    printf '%s' "${out}"
+}
+
+# _claim_append_sources <claim file> <entries file> <store> -- add the
+# entries ("<name>\t<url>" lines) to spec.catalogue.sources, each marked
+# addedBy: store, after the last source the list has; or as the list, when
+# the claim has none or `sources: []`. A line editor: nothing else of the
+# claim moves, its comments included. Fails, writing nothing, on a catalogue
+# section written on one line.
+_claim_append_sources() {
+    local claim="$1" entries="$2" store="$3" tmp rc=0
+    tmp="$(mktemp)"
+    awk -v store="${store}" -v entries="${entries}" '
+        function emit(ind,    line, f, name) {
+            while ((getline line < entries) > 0) {
+                split(line, f, "\t"); name = f[1]
+                if (name ~ /^[0-9]+$/ || name ~ /^(true|false|null|yes|no|on|off|y|n)$/) name = "\"" name "\""
+                print ind "- name: " name
+                print ind "  # Listed by the store " store " (GET /v1/meta); added by the installer."
+                print ind "  url: " f[2]
+                print ind "  addedBy: store"
+            }
+            close(entries)
+        }
+        function content(t) { return t !~ /^[ \t]*$/ && t !~ /^[ \t]*#/ }
+        function indent(t) { match(t, /^ */); return RLENGTH }
+        { L[NR] = $0 }
+        END {
+            n = NR
+            for (i = 1; i <= n; i++) if (L[i] ~ /^spec:[ \t]*$/) { spec = i; break }
+            if (!spec) exit 3
+            for (i = spec + 1; i <= n; i++) {
+                if (content(L[i]) && indent(L[i]) == 0) break
+                if (L[i] ~ /^  catalogue:[ \t]*(#.*)?$/) { cat = i; break }
+            }
+            if (!cat) exit 4
+            catend = n + 1
+            for (i = cat + 1; i <= n; i++) if (content(L[i]) && indent(L[i]) <= 2) { catend = i; break }
+            for (i = cat + 1; i < catend; i++) if (L[i] ~ /^    sources:/) { src = i; break }
+            if (src) {
+                v = L[src]; sub(/^    sources:[ \t]*/, "", v); sub(/[ \t]*#.*$/, "", v)
+                if (v == "[]") {
+                    for (i = 1; i < src; i++) print L[i]
+                    print "    sources:"; emit("      ")
+                    for (i = src + 1; i <= n; i++) print L[i]
+                    exit 0
+                }
+                if (v != "") exit 5
+                ins = src; ind = ""
+                for (i = src + 1; i < catend; i++) {
+                    if (!content(L[i])) continue
+                    d = indent(L[i]); t = substr(L[i], d + 1)
+                    if (d < 4 || (d == 4 && t !~ /^- /)) break
+                    if (ind == "" && t ~ /^- /) ind = substr(L[i], 1, d)
+                    ins = i
+                }
+                if (ind == "") ind = "      "
+                for (i = 1; i <= ins; i++) print L[i]
+                emit(ind)
+                for (i = ins + 1; i <= n; i++) print L[i]
+                exit 0
+            }
+            last = cat
+            for (i = cat + 1; i < catend; i++) if (content(L[i])) last = i
+            for (i = 1; i <= last; i++) print L[i]
+            print "    sources:"; emit("      ")
+            for (i = last + 1; i <= n; i++) print L[i]
+        }' "${claim}" > "${tmp}" || rc=$?
+    if [[ "${rc}" != "0" ]]; then
+        rm -f "${tmp}"
+        return 1
+    fi
+    cat "${tmp}" > "${claim}"
+    rm -f "${tmp}"
+}
+
+# What this run added, for the commit that records it (bootstrap.sh).
+_GENTIAN_STORE_CATALOGUE_NOTES=""
+
+# ensure_claim_store_catalogues <claim file> <tenants dir> -- add to the claim
+# the catalogues its store lists and it has no source for (above).
+#
+# Never fails the install: whatever keeps a catalogue from being added is a
+# warning, and the claim is then as it was.
+ensure_claim_store_catalogues() {
+    local claim="$1" tenants="$2" store meta rc=0 have name url row holders
+    local entries added="" present=0 listed=0
+    [[ -f "${claim}" ]] || return 0
+    store="$(yq_get '.spec.catalogue.storeUrl' "${claim}" 2>/dev/null || true)"
+    store="$(printf '%s' "${store}" | tr -d '[:space:]')"
+    store="${store%/}"
+    [[ -n "${store}" ]] || return 0
+    if ! _store_catalogue_url_ok "${store}"; then
+        warn "claims/cluster.yaml names the store ${store}, which is not an https address;"
+        warn "  the catalogues it lists are not read."
+        return 0
+    fi
+    if [[ "$(gentian_usage_statistics_enabled)" != "true" ]]; then
+        info "The store's catalogues are not read: usage statistics are off, so the App Store is not offered."
+        return 0
+    fi
+
+    meta="$(mktemp)"
+    _catalogue_fetch "${store}/v1/meta" "${meta}" || rc=$?
+    if [[ "${rc}" != "0" ]]; then
+        rm -f "${meta}"
+        if [[ "${rc}" == "2" ]]; then
+            warn "The store ${store} cannot be reached; the catalogues it lists are not checked this run."
+        else
+            warn "The store ${store} answered ${_CATALOGUE_FETCH_CODE} to GET /v1/meta; the catalogues it lists are not checked this run."
+        fi
+        warn "  The install goes on. An app bought there installs only from a catalogue the cluster"
+        warn "  has; add one by hand with:  kubectl gentian catalogues add <name> <https address>"
+        return 0
+    fi
+    if ! jq -e 'type == "object" and ((.catalogues // null) | type == "array")' "${meta}" >/dev/null 2>&1; then
+        rm -f "${meta}"
+        warn "The store ${store} lists no catalogues in GET /v1/meta (store API 1.5); none were added."
+        warn "  An app bought there installs only from a catalogue the cluster has; add one by hand with:"
+        warn "    kubectl gentian catalogues add <name> <https address>"
+        return 0
+    fi
+
+    have="$(_claim_sources_tsv "${claim}")"
+    entries="$(mktemp)"
+    while IFS=$'\t' read -r name url; do
+        listed=$((listed + 1))
+        url="${url%/}"
+        if ! _store_catalogue_name_ok "${name}" || ! _store_catalogue_url_ok "${url}"; then
+            warn "The store ${store} lists a catalogue the cluster cannot take: name '${name}', address '${url}'."
+            warn "  A name is lower-case letters, digits and hyphens; an address is https. It was not added."
+            continue
+        fi
+        row="$(awk -F'\t' -v n="${name}" '$1 == n { print; exit }' <<< "${have}")"
+        if [[ -n "${row}" ]]; then
+            local own_url own_oci
+            own_url="$(cut -f2 <<< "${row}")"; own_oci="$(cut -f3 <<< "${row}")"
+            if [[ -z "${own_oci}" && "${own_url%/}" == "${url}" ]]; then
+                present=$((present + 1))
+                continue
+            fi
+            warn "The store ${store} lists the catalogue ${name} at ${url};"
+            warn "  claims/cluster.yaml names ${name} at ${own_url:-oci: ${own_oci}}. The claim's is kept."
+            warn "  An app bought there is installed from the claim's ${name}. To take the store's:"
+            warn "    kubectl gentian catalogues remove ${name} && kubectl gentian catalogues add ${name} ${url}"
+            continue
+        fi
+        holders="$(_tenant_catalogue_holders "${tenants}" "${name}")"
+        if [[ -n "${holders}" ]]; then
+            warn "The store ${store} lists the catalogue ${name}, and tenant ${holders} has a catalogue of"
+            warn "  its own of that name; the store's is not added for every tenant, as the name would then"
+            warn "  mean two things there. Each other tenant installs nothing bought from ${name}."
+            continue
+        fi
+        if grep -q "^${name}"$'\t' "${entries}"; then
+            continue
+        fi
+        printf '%s\t%s\n' "${name}" "${url}" >> "${entries}"
+        added+="${added:+, }${name} (${url})"
+        have+=$'\n'"${name}"$'\t'"${url}"$'\t\t'"store"
+    done < <(jq -r '.catalogues[]? | select(type == "object") | [(.name // "" | tostring), (.url // "" | tostring)] | @tsv' "${meta}" 2>/dev/null)
+    rm -f "${meta}"
+
+    if [[ -z "${added}" ]]; then
+        rm -f "${entries}"
+        if (( listed > 0 && present == listed )); then
+            info "  The store's catalogues are all on the claim (${listed})."
+        fi
+        return 0
+    fi
+
+    local before after copy
+    before="$(_claim_sources_tsv "${claim}" | wc -l | tr -d '[:space:]')"
+    copy="$(mktemp)"; cat "${claim}" > "${copy}"
+    if ! _claim_append_sources "${claim}" "${entries}" "${store}"; then
+        rm -f "${entries}" "${copy}"
+        warn "claims/cluster.yaml: spec.catalogue is not written as a block, so the store's catalogues"
+        warn "  ${added} were not added. Write the section as a block, or add them by hand."
+        return 0
+    fi
+    after="$(_claim_sources_tsv "${claim}")"
+    while IFS=$'\t' read -r name url; do
+        if ! grep -qxF "${name}"$'\t'"${url}"$'\t\t'"store" <<< "${after}"; then
+            after=""
+            break
+        fi
+    done < "${entries}"
+    if [[ -z "${after}" || "$(wc -l <<< "${after}" | tr -d '[:space:]')" != "$(( before + $(wc -l < "${entries}") ))" ]]; then
+        cat "${copy}" > "${claim}"
+        rm -f "${entries}" "${copy}"
+        warn "claims/cluster.yaml did not read back as written once the store's catalogues were added;"
+        warn "  it is left as it was. Add them by hand: ${added}."
+        return 0
+    fi
+    rm -f "${entries}" "${copy}"
+    _GENTIAN_STORE_CATALOGUE_NOTES+="Catalogues listed by the store ${store} (GET /v1/meta), added for every
+tenant with addedBy: store: ${added}.
+"
+    info "claims/cluster.yaml: added the catalogues the store ${store} lists: ${added}."
+    info "  Marked addedBy: store. Each bundle is still held to the digest of its install; a"
+    info "  catalogue the store stops listing stays until it is removed (kubectl gentian catalogues remove)."
+}
+
+# preview_claim_store_catalogues <claim file> <tenants dir> -- what
+# ensure_claim_store_catalogues would do, for --dry-run and --validate: the
+# same code on a copy of the claim. It reads the store, and writes nothing.
+preview_claim_store_catalogues() {
+    local claim="$1" tenants="$2" copy said
+    [[ -f "${claim}" ]] || return 0
+    copy="$(mktemp)"
+    cat "${claim}" > "${copy}"
+    said="$(ensure_claim_store_catalogues "${copy}" "${tenants}" 2>&1 || true)"
+    said="${said//${copy}/${claim}}"
+    if ! cmp -s "${claim}" "${copy}"; then
+        gentian_would "add the store's catalogues to claims/cluster.yaml, then commit and push the edit signed"
+        printf '%s\n' "${said}" | sed 's/^/    /'
+    elif [[ -n "${said}" ]]; then
+        printf '%s\n' "${said}"
+    fi
+    rm -f "${copy}"
+}

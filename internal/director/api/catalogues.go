@@ -87,7 +87,8 @@ type catalogueOut struct {
 	// one only this tenant does.
 	Scope string `json:"scope"`
 	// AddedBy is who added it: "cluster" for the cluster's administrator,
-	// "tenant" for the tenant's own.
+	// "tenant" for the tenant's own, "store" for a catalogue of the whole
+	// cluster the installer added because the cluster's store lists it.
 	AddedBy string `json:"addedBy"`
 }
 
@@ -212,8 +213,17 @@ func clusterSource(src gitops.CatalogueSource) visibleSource {
 			Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL,
 			OCI: ociSource("", src.OCI),
 		},
-		scope: scopeCluster, addedBy: string(gitops.ByCluster),
+		scope: scopeCluster, addedBy: clusterAddedBy(src),
 	}
+}
+
+// clusterAddedBy is who added one of the cluster's catalogues, as the lists
+// say it.
+func clusterAddedBy(src gitops.CatalogueSource) string {
+	if src.AddedBy == gitops.SourceAddedByStore {
+		return gitops.SourceAddedByStore
+	}
+	return string(gitops.ByCluster)
 }
 
 // resolveSource answers the catalogue a name means to a tenant, or false.
@@ -264,7 +274,7 @@ func (s *Server) listClusterCatalogues(w http.ResponseWriter, r *http.Request, _
 	own := make([]catalogueOut, 0, len(cluster.Sources))
 	for _, src := range cluster.Sources {
 		own = append(own, catalogueOut{
-			Name: src.Name, URL: src.URL, OCI: ociOutOf(src.OCI), Scope: scopeCluster, AddedBy: string(gitops.ByCluster),
+			Name: src.Name, URL: src.URL, OCI: ociOutOf(src.OCI), Scope: scopeCluster, AddedBy: clusterAddedBy(src),
 		})
 	}
 	perTenant, err := s.cfg.Repo.TenantCatalogues(ctx)

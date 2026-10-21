@@ -56,6 +56,21 @@ type CatalogueSource struct {
 	// A source states one of URL and OCI. A catalogue is never kept in the
 	// deployments repository: that holds the cluster's state only.
 	OCI CatalogueOCI `json:"oci,omitempty"`
+	// AddedBy is SourceAddedByStore for a source the installer added
+	// because the store the claim names lists it, and empty for one the
+	// cluster's administrator added. It is kept through every edit of the
+	// list and decides nothing: the source is the cluster's like any other.
+	AddedBy string `json:"addedBy,omitempty"`
+}
+
+// SourceAddedByStore marks a catalogue of the whole cluster the installer
+// added from the store's GET /v1/meta (scripts/lib/catalogue.sh, ensure_claim_store_catalogues).
+const SourceAddedByStore = "store"
+
+// sameSource says two sources are read from the same place, whoever added
+// them.
+func sameSource(a, b CatalogueSource) bool {
+	return a.Name == b.Name && a.URL == b.URL && a.OCI == b.OCI
 }
 
 // CatalogueOCI is a catalogue kept as an OCI artifact: the repository whose
@@ -357,7 +372,7 @@ func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, met
 			if src.Name != name {
 				continue
 			}
-			if src == want {
+			if sameSource(src, want) {
 				return text, "unchanged", false, nil
 			}
 			return text, "", false, fmt.Errorf("%w: %s is already a catalogue of this cluster, at %s; remove it first to change its address",
@@ -428,6 +443,9 @@ func renderClusterSources(sources []CatalogueSource) []string {
 	for _, src := range sources {
 		out = append(out, "      - name: "+quoteScalar(src.Name))
 		out = append(out, sourceLines(src.URL, src.OCI)...)
+		if src.AddedBy != "" {
+			out = append(out, "        addedBy: "+quoteScalar(src.AddedBy))
+		}
 	}
 	return out
 }

@@ -302,6 +302,29 @@ spec:
 	}
 }
 
+// A source the installer added from the store says so (addedBy: store), and
+// an edit of the list keeps the mark: the director rewrites every source of
+// the claim when it adds or removes one.
+func TestASourceTheStoreListedKeepsItsMarkThroughAnEdit(t *testing.T) {
+	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c\nspec:\n  catalogue:\n" +
+		"    storeUrl: https://store.example.com\n    sources:\n      - name: gentian\n        url: https://gentian.example/apps\n" +
+		"      - name: publisher\n        url: https://catalogue.publisher.example\n        addedBy: store\n"
+	have, err := claimCatalogueSources(claim)
+	if err != nil || len(have) != 2 || have[1].AddedBy != SourceAddedByStore || have[0].AddedBy != "" {
+		t.Fatalf("read as %+v (%v)", have, err)
+	}
+	out, err := setClaimSources(claim, append(have, CatalogueSource{Name: "partner", URL: "https://partner.example.com/apps"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "      - name: publisher\n        url: https://catalogue.publisher.example\n        addedBy: store\n      - name: partner\n") {
+		t.Fatalf("the mark is lost:\n%s", out)
+	}
+	if !sameSource(have[1], CatalogueSource{Name: "publisher", URL: "https://catalogue.publisher.example"}) {
+		t.Fatal("the same address under the same name is the same source, whoever added it")
+	}
+}
+
 // The platform's own profiles are not in the deployments repository, so the
 // director knows their names from a list. The list is the chart's.
 func TestThePlatformProfilesAreTheOnesTheChartShips(t *testing.T) {
