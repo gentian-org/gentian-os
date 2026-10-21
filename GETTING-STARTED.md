@@ -747,6 +747,17 @@ have (`store.<a domain a cluster is installed under>`). The platform tenant
 never has it. The install says which it is, on a line beginning
 `App Store app:` in step `D-03`.
 
+**The store's catalogues are added for you.** An app bought in the App Store
+is installed from the catalogue its entry names, and the director refuses a
+catalogue the cluster has no source for. So on every run step 0 reads the
+store's `GET /v1/meta` and adds each catalogue it lists that the claim has no
+source of that name for, to `spec.catalogue.sources` with `addedBy: store`.
+It never changes or removes a source: a name you have at another address is
+kept and warned about, and one the store stops listing stays until you remove
+it. A store that does not answer is a warning. This trusts the store's list
+of addresses; every bundle is still held to the digest of its install
+([docs/custom-catalogues.md](docs/custom-catalogues.md) §1).
+
 **When the tile is missing, or the App Store lists nothing**, check in this
 order:
 

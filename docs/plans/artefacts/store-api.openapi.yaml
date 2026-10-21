@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.4"
+  version: "1.5"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -2007,6 +2007,22 @@ components:
             (`POST /v1/apps/{catalogue}/{app}/support-requests`).
           items:
             type: string
+        catalogues:
+          type: array
+          description: |
+            The catalogue sources the store's entries come from: the first
+            half of every coordinate it serves is the `name` of one of them.
+            A cluster's installer that names this store may add each to the
+            cluster's own catalogue sources under that name, when the
+            cluster has none of the name, so an entry acquired here can be
+            installed without the administrator adding its catalogue by
+            hand. The bytes are still held to the digest of the install. A
+            catalogue whose entries are private still says where its
+            profiles are read from here; the charts and images they name are
+            pulled with the credential an acquisition confirms. Optional;
+            added in 1.5.
+          items:
+            $ref: "#/components/schemas/StoreCatalogue"
         links:
           type: object
           description: Pages of the store's a client may link to. Each is opened in a separate window.
@@ -2020,6 +2036,22 @@ components:
             account:
               $ref: "#/components/schemas/Url"
               description: Where a person manages their store account.
+    StoreCatalogue:
+      type: object
+      required: [name, url]
+      description: One catalogue source a store's entries come from. Added in 1.5.
+      properties:
+        name:
+          type: string
+          description: The catalogue's name, the first half of a coordinate.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        url:
+          $ref: "#/components/schemas/Url"
+          description: The https address the catalogue is served from, holding `index.yaml` and `profiles/<name>.yaml`.
+        displayName:
+          type: string
+          maxLength: 80
+          description: What the catalogue is called, in plain text.
     TenantStanding:
       type: object
       required: [tenantUrl, known, served, refusal, notices]
@@ -3181,6 +3213,13 @@ components:
         mediaOrigins: ["https://media.store.example"]
         checkoutOrigins: ["https://store.example"]
         features: [reviews, reports, checkout, support]
+        catalogues:
+          - name: gentian
+            url: https://catalogue.example/gentian
+            displayName: Gentian OS
+          - name: publisher
+            url: https://catalogue.publisher.example
+            displayName: Example Publisher
         links:
           terms: https://store.example/terms
           privacy: https://store.example/privacy

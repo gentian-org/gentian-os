@@ -36,19 +36,39 @@ Of the checks of §2 the installer runs those on kinds, names and metadata. At r
 holds the profile and what its bundle brings to that recorded bundle, for the Component it creates
 by default as for a pinned install ([install-reference.md §4](install-reference.md)).
 
-A catalogue exists on a cluster in one of three ways:
+A catalogue exists on a cluster in one of four ways:
 
 | Who sees it | Who adds it | Where it is declared |
 |---|---|---|
 | every tenant | the cluster's administrator | `spec.catalogue.sources` on the Cluster claim |
 | one tenant | the cluster's administrator | `spec.catalogue.sources` on that tenant's manifest, `addedBy: cluster` |
 | one tenant | that tenant's administrator, **only if the cluster's administrator delegated it** | the same list, `addedBy: tenant` |
+| every tenant | the installer, because the store the claim names lists it | `spec.catalogue.sources` on the Cluster claim, `addedBy: store` |
 
 Each entry of those lists states where the catalogue is read from, once: `url`, an https address,
 or `oci`, an artifact and the repository it is read with. An entry that names `path` (a directory of
 the deployments repository) is refused: that repository holds the cluster's state only.
 
-All three are written by the director as commits, through the commands in §5. A tenant never sees
+**The store's catalogues.** A store lists in `GET /v1/meta` the catalogues its entries come from
+(store API 1.5). On every run, step 0 of the installer reads that list from the store the claim
+names (`spec.catalogue.storeUrl`) and adds each catalogue the claim has no source of that name for,
+in the commit step 0 makes, so an app bought in the App Store installs without a `catalogues add`
+first. It adds and does nothing else:
+
+- a source the claim has is never changed or removed. A name it has at another address is kept, and
+  the installer warns with both addresses;
+- a name a tenant uses for a catalogue of its own is not added: the director would refuse it;
+- only an https address is added;
+- a store that cannot be reached, or lists no catalogues, is a warning; the install goes on;
+- a catalogue the store stops listing stays until you remove it (`kubectl gentian catalogues
+  remove`). One the store still lists is added again by the next run;
+- with usage statistics off there is no App Store, and the store is not asked.
+
+This trusts the store's word for where its catalogues are: the store decides which addresses the
+cluster may fetch profiles from. Every bundle fetched from one is still held to the digest of its
+install (§7), and the source is a commit on the claim you can read and remove.
+
+The first three are written by the director as commits, through the commands in §5. A tenant never sees
 another tenant's catalogue: it is not listed, and a coordinate that names it is refused in the same
 words as a catalogue that does not exist.
 

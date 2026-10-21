@@ -1128,7 +1128,7 @@ cmd_catalogues_list() {
         printf '%s' "${answer}" | jq -r "${_CATALOGUE_WHERE}"'
             (["CATALOGUE","FOR","ADDED BY","ADDRESS"] | @tsv),
             (.catalogues[] | [.name, (if .scope == "cluster" then "every tenant" else "this tenant" end),
-                (if .addedBy == "tenant" then "the tenant" else "the cluster" end), where] | @tsv)' |
+                (if .addedBy == "tenant" then "the tenant" elif .addedBy == "store" then "the store" else "the cluster" end), where] | @tsv)' |
             column -t -s $'\t'
         if [[ "$(printf '%s' "${answer}" | jq -r '.delegated')" == "true" ]]; then
             echo "The administrators of ${t} may add catalogues of their own."
@@ -1141,7 +1141,7 @@ cmd_catalogues_list() {
     answer="$(_call GET "/v1/clusters/${_CLUSTER}/catalogues")" || exit 1
     printf '%s' "${answer}" | jq -r "${_CATALOGUE_WHERE}"'
         (["CATALOGUE","FOR","ADDED BY","ADDRESS"] | @tsv),
-        (.catalogues[] | [.name, "every tenant", "the cluster", where] | @tsv),
+        (.catalogues[] | [.name, "every tenant", (if .addedBy == "store" then "the store" else "the cluster" end), where] | @tsv),
         (.tenants[] | .tenant as $t | .catalogues[] |
             [.name, ("tenant " + $t), (if .addedBy == "tenant" then "the tenant" else "the cluster" end), where] | @tsv)' |
         column -t -s $'\t'
