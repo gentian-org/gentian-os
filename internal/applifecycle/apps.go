@@ -101,17 +101,43 @@ type PendingPrivilege struct {
 	// security officer (cluster#can_approve). security.PrivilegeApprover
 	// decides it from the kind, as the director does on the approval.
 	ApprovedBy string `json:"approvedBy"`
+	// Reason is what the profile said it needs the privilege for, which is
+	// what an approver reads before deciding. Empty when the profile gave
+	// none, or is not on the cluster.
+	Reason string `json:"reason,omitempty"`
+	// RequestedBy, RequestedAt and Note are the request a tenant
+	// administrator made of the security officer (privilege_requests.go),
+	// absent while nobody asked. A tenant-approved privilege has none.
+	RequestedBy string `json:"requestedBy,omitempty"`
+	RequestedAt string `json:"requestedAt,omitempty"`
+	Note        string `json:"note,omitempty"`
+	// ExpiredAt is when a grant for this privilege stopped applying, for a
+	// request that was approved once and waits again.
+	ExpiredAt string `json:"expiredAt,omitempty"`
 }
 
-// pendingApprovals pairs each pending request with who answers it.
-func pendingApprovals(pending []string) []PendingPrivilege {
+// pendingApprovals pairs each pending request with who answers it, what the
+// profile said it is for, and what has been asked of the approver so far.
+// profile is nil for one the cluster no longer has.
+func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, now time.Time) []PendingPrivilege {
+	pending := comp.Status.PendingPrivileges
 	if len(pending) == 0 {
 		return nil
 	}
+	requests := requestsOf(comp)
 	out := make([]PendingPrivilege, 0, len(pending))
 	for _, ref := range pending {
 		kind, _ := security.SplitPrivilegeRef(ref)
-		out = append(out, PendingPrivilege{Privilege: ref, ApprovedBy: security.PrivilegeApprover(kind)})
+		p := PendingPrivilege{
+			Privilege:  ref,
+			ApprovedBy: security.PrivilegeApprover(kind),
+			Reason:     security.PrivilegeReason(profile, ref),
+			ExpiredAt:  expiredGrantAt(comp, ref, now),
+		}
+		if req, ok := requests[ref]; ok && p.ApprovedBy == security.PrivilegeApproverSecurityOfficer {
+			p.RequestedBy, p.RequestedAt, p.Note = req.RequestedBy, req.RequestedAt, req.Note
+		}
+		out = append(out, p)
 	}
 	return out
 }
@@ -188,6 +214,9 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			return nil, fmt.Errorf("get componentprofile %q: %w", profile, err)
 		}
 		state := componentState(comp)
+		if found {
+			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, time.Now())
+		}
 		pods, err := s.componentPods(ctx, comp)
 		if err != nil {
 			return nil, err
@@ -219,7 +248,7 @@ func componentState(comp *gentianov1alpha1.Component) AppState {
 		Phase:                     AppPhaseInstalling,
 		Message:                   "Provisioning in progress",
 		PendingPrivileges:         comp.Status.PendingPrivileges,
-		PendingPrivilegeApprovals: pendingApprovals(comp.Status.PendingPrivileges),
+		PendingPrivilegeApprovals: pendingApprovals(comp, nil, time.Now()),
 	}
 	for _, c := range comp.Status.Conditions {
 		state.Conditions = append(state.Conditions, AppCondition{

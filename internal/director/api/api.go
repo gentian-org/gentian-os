@@ -693,6 +693,10 @@ func (s *Server) routes() {
 		// administrator removes them at
 		// /v1/clusters/{c}/actions/remove-catalogue-residue.
 		s.action("POST /v1/tenants/{t}/apps/{p}/actions/remove-residue", "can_install_app", tenantObject, s.removeAppResidue)
+		// Asking the security officer for what the tenant cannot approve
+		// itself (apps.go, requestPrivilege). Whoever may install asks; the
+		// answer is the approval route above, decided by the kind.
+		s.action("POST /v1/tenants/{t}/apps/{p}/actions/request-privilege", "can_install_app", tenantObject, s.requestPrivilege)
 
 		// Choosing a plan is can_set_plan, model v1's own verb for it, and it
 		// is a commit: the operator learns the plan from git like everything
