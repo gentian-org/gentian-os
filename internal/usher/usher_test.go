@@ -33,6 +33,10 @@ func (f fakeAuthn) FromRequest(r *http.Request) (*authn.Identity, error) {
 	if !ok {
 		return nil, authn.ErrUnauthenticated
 	}
+	// "<realm>/<sub>" is a token the realm issued.
+	if realm, rest, found := strings.Cut(sub, "/"); found {
+		return &authn.Identity{Realm: realm, Subject: rest}, nil
+	}
 	return &authn.Identity{Subject: sub}, nil
 }
 

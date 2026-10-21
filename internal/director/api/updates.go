@@ -579,7 +579,7 @@ func (s *Server) moveAllowed(w http.ResponseWriter, r *http.Request, c call, ten
 	if mode == string(gitops.UpdateTenant) {
 		return true
 	}
-	ok, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, "can_configure", authz.Cluster(s.cfg.Cluster))
+	ok, err := s.can(r.Context(), c, "can_configure", authz.Cluster(s.cfg.Cluster))
 	if err != nil {
 		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 		return false

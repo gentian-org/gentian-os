@@ -49,8 +49,8 @@ service's answer from OpenFGA.
 | **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
 | **Audit** | Changes to declared state, from git (§4.7) | director |
 | **Cluster settings**, **Platform security**, **Customization**, **Usage Statistics** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last usage statistics report | director |
-| **Security officers** (platform administrator) | Who holds `cluster#security_officer`: a picker over every tenant's administrators, the holders as the Cluster claim declares them, each with their sign-in link (§7) | registrar (the picker), director |
-| **Approvals** (security officer; platform console) | Every tenant's app requests of a privilege that weakens what protects the node — pod-security waivers, cluster roles — with the profile's reason and who asked for it; Approve with a reason. The list is the usher's (`GET /v1/clusters/{c}/approvals`, `can_approve` or `can_configure`); the approval is the director's privilege route, decided by the kind ([store-contract.md](store-contract.md) §8) | usher (read), director |
+| **Role holders** (platform administrator) | Who holds `cluster#security_officer` or `cluster#auditor` by name: a picker over every tenant's administrators and a role, the holders as the Cluster claim declares them (§7) | registrar (the picker), director |
+| **Approvals** (security officer; the console of the officer's own tenant) | Every tenant's app requests of a privilege that weakens what protects the node — pod-security waivers, cluster roles — with the profile's reason and who asked for it; Approve with a reason. The list is the usher's (`GET /v1/clusters/{c}/approvals`, `can_approve` or `can_configure`); the approval is the director's privilege route, decided by the kind ([store-contract.md](store-contract.md) §8) | usher (read), director |
 | **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, the two serving switches, and the switch for the gateway's own console. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
 | **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
 
@@ -107,10 +107,10 @@ The console's context (`/admin/context`) is refused to anyone who does not
 hold `can_administer` on the tenant, with one widening: a person who holds
 `cluster#can_approve` — the security officer — is let in with
 `isTenantAdmin: false` and sees the **Approvals** screen alone, nothing of
-the tenant's. They act at the platform console; the App Store's install
-step links them there (`?tab=approvals&kc_idp_hint=<alias>`, the alias of
-their tenant realm in the kernel realm, [iam.md](iam.md)). The tenant
-console keeps its per-app Approve on the Apps screen for the egress
+the tenant's. A security officer who holds the role by name holds it signed
+in to their own tenant ([iam.md](iam.md) §1.1c) and acts in that tenant's
+console; the App Store's install step links them there
+(`?tab=approvals`). The tenant console keeps its per-app Approve on the Apps screen for the egress
 requests that are the tenant administrator's.
 
 ### 4.2 First administrators
@@ -340,13 +340,13 @@ Which Keycloak group holds which platform role is stated on the Cluster claim
 `securityOfficer` to `gentian:platform:security`, the other roles have no
 holder unless a group is named). The operator projects it into OpenFGA. Who is
 in those groups is not changed from this console by hand: the registrar
-refuses every write to a platform role's group and to its members. The
-security officers are declared: the *Security officers* page lists every
-tenant's administrators and the cluster's administrator picks from them; the
-director commits the choice to the Cluster claim
-(`spec.platformAccess.securityOfficers`), and the platform tenant's
-composition makes the linked kernel-realm account and its membership
-([iam.md §1.1c](iam.md), [commands.md](../commands.md) §7). A platform
+refuses every write to a platform role's group and to its members. A
+security officer or auditor can also be named: the *Role holders* page lists
+every tenant's administrators, the cluster's administrator picks one and a
+role, and the director commits the choice to the Cluster claim
+(`spec.platformAccess.roleHolders`); the operator writes the role for that
+account of that tenant's realm ([iam.md §1.1c](iam.md),
+[commands.md](../commands.md) §7). A platform
 administrator administers a tenant the cluster operates through that tenant's
 console, and signs in to it only where the tenant's administrators switched
 that on (*Security* → *Platform administrators may enter this tenant*,

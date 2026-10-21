@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"time"
 
@@ -100,7 +101,11 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		logger.Info("the Cluster claim assigns no platform roles, so nobody administers this cluster",
 			"setting", "spec.platformRoles")
 	}
-	if err := r.Graph.ReconcileClusterRoles(ctx, r.Cluster, roles); err != nil {
+	holders, err := r.roleHolders(ctx)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("read role holders from the Cluster claim: %w", err)
+	}
+	if err := r.Graph.ReconcileClusterRoles(ctx, r.Cluster, roles, holders); err != nil {
 		return ctrl.Result{}, fmt.Errorf("project cluster roles: %w", err)
 	}
 
@@ -124,7 +129,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 
 	logger.V(1).Info("authorization structure projected",
-		"cluster", r.Cluster, "roles", len(roles), "tenants", len(tenants))
+		"cluster", r.Cluster, "roles", len(roles), "holders", len(holders), "tenants", len(tenants))
 	return ctrl.Result{RequeueAfter: authzProjectionRequeue}, nil
 }
 
@@ -174,6 +179,56 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 	}
 	return out, nil
 }
+
+// roleHolders is spec.platformAccess.roleHolders from the Cluster claim: the
+// cluster roles the cluster's administrator gave accounts of the tenants'
+// realms by name, each keyed by the realm of its tenant. An entry whose role
+// a holder may not hold (authz.HolderRoles), whose tenant this cluster does
+// not have, or whose subject is not an account id grants nothing: the
+// claim's schema refuses those shapes, and a claim written past it is not
+// widened by guessing.
+func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context) ([]authz.RoleHolder, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
+	})
+	if err := r.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
+		return nil, err
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return nil, err
+	}
+	realms := map[string]string{}
+	for i := range tenants.Items {
+		if tenants.Items[i].DeletionTimestamp == nil {
+			realms[tenants.Items[i].Name] = tenantRealmName(&tenants.Items[i])
+		}
+	}
+	var out []authz.RoleHolder
+	for i := range list.Items {
+		entries, _, _ := unstructured.NestedSlice(list.Items[i].Object, "spec", "platformAccess", "roleHolders")
+		for _, e := range entries {
+			m, _ := e.(map[string]interface{})
+			role, _ := m["role"].(string)
+			tenant, _ := m["tenant"].(string)
+			subject, _ := m["subject"].(string)
+			rel, ok := authz.HolderRoles[role]
+			realm, known := realms[tenant]
+			if !ok || !known || !holderSubject.MatchString(subject) {
+				log.FromContext(ctx).Info("a role holder on the Cluster claim is not projected",
+					"role", role, "tenant", tenant, "subject", subject)
+				continue
+			}
+			out = append(out, authz.RoleHolder{Relation: rel, Realm: realm, Subject: subject})
+		}
+	}
+	return out, nil
+}
+
+// holderSubject is what a holder's subject may look like: Keycloak's user
+// ids are UUIDs.
+var holderSubject = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 // installedApps is what every tenant has installed, by profile name, with the
 // addons activated inside each. A tenant being deleted is listed with nothing,

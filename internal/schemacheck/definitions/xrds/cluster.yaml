@@ -330,44 +330,32 @@ spec:
                         filled only when it is needed.
                 platformAccess:
                   type: object
-                  # So brokeredSecondFactor's default materialises: a
-                  # property's default is only applied when the object
-                  # holding it exists.
-                  default: {}
                   description: >
-                    How people reach the platform's own roles across realm
-                    boundaries: the kernel realm as a hub for the tenants'
-                    administrators (iam.md 1.1c). Written by the director
-                    from the platform console and the command line; the
-                    platform tenant's composition renders what it declares.
+                    Who on the cluster holds which cluster role by name: an
+                    account of a tenant's realm, given a role by the
+                    cluster's administrator. Written by the director; the
+                    operator writes each entry into the authorization graph
+                    as the account of that tenant's realm, which only a
+                    token issued by that realm is matched against.
                   properties:
-                    brokeredSecondFactor:
-                      type: string
-                      enum: [required, "off"]
-                      default: required
-                      description: >
-                        Whether the kernel realm asks a brokered sign-in for a
-                        second factor of its own, enrolled on the linked
-                        account there. "off" makes a security officer's
-                        approval exactly as strong as their tenant realm's
-                        sign-in policy, which the platform does not set.
-                    securityOfficers:
+                    roleHolders:
                       type: array
-                      maxItems: 64
+                      maxItems: 256
                       description: >
-                        The administrators of the cluster's tenants who hold
-                        cluster#security_officer, each a linked account in the
-                        kernel realm that signs in through its own realm. Keyed
-                        by the account's subject in that realm, which outlives
-                        a changed address; username and email are what the
-                        kernel realm shows until the first sign-in refreshes
-                        them. The membership of the security officers' group
-                        (platformRoles.securityOfficer) follows from the entry
-                        and from nothing else.
+                        Keyed by role, tenant and the account's subject in
+                        the tenant's realm, which outlives a changed address;
+                        username and email say who it is to a person reading
+                        the claim. The roles are those that approve or read:
+                        never admin or breakGlass, because a tenant's
+                        administrators can take over any account of their
+                        realm.
                       items:
                         type: object
-                        required: [tenant, subject, username]
+                        required: [role, tenant, subject, username]
                         properties:
+                          role:
+                            type: string
+                            enum: [securityOfficer, auditor]
                           tenant:
                             type: string
                             pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'

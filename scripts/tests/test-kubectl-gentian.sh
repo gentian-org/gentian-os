@@ -1104,11 +1104,11 @@ echo ""
 echo "kubectl gentian platform-roles, tenants platform-access"
 echo ""
 
-# The security officers: who could hold the role is the registrar's answer,
-# who holds it the director's; add looks the login up and commits the
+# The role holders: who could hold a role is the registrar's answer, who
+# holds which the director's; add looks the login up and commits the
 # subject, remove takes the entry by the login.
 ADMINS='{"cluster":"c1","complete":true,"tenants":[{"tenant":"acme","realm":"acme","administrators":[{"id":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","enabled":true}]},{"tenant":"globex","realm":"globex","administrators":[]}]}'
-HOLDERS='{"cluster":"c1","securityOfficers":[{"tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","identityProvider":"tenant-acme","signIn":"https://platform.k.example/?kc_idp_hint=tenant-acme"}]}'
+HOLDERS='{"cluster":"c1","roles":["auditor","securityOfficer"],"roleHolders":[{"role":"securityOfficer","tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example"}]}'
 fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
 gentian platform-roles tenant-administrators
 has "tenant-administrators lists each tenant's administrators" "${OUT}" "it@acme.example"
@@ -1116,37 +1116,41 @@ has "... and a tenant with none" "${OUT}" "(no administrator)"
 is "... from the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenant-administrators "
 
 fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-reply PUT /v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian platform-roles security-officers add acme it@acme.example
-is "security-officers add commits the subject the registrar answered" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e{"username":"it@acme.example","email":"it@acme.example"}'
-has "... and says it is committed" "${OUT}" "it@acme.example of acme is a security officer: committed"
-has "... with the address the person signs in at" "${OUT}" "https://platform.k.example/?kc_idp_hint=tenant-acme"
+reply PUT /v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles holders add securityOfficer acme it@acme.example
+is "holders add commits the subject the registrar answered" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e{"username":"it@acme.example","email":"it@acme.example"}'
+has "... and says it is committed" "${OUT}" "it@acme.example of acme holds securityOfficer: committed"
 
 fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-gentian platform-roles security-officers add acme nobody@acme.example
+gentian platform-roles holders add securityOfficer acme nobody@acme.example
 refused "a login that is no administrator of the tenant is refused"
 is "... and nothing is committed" "$(writes)" ""
 has "... and the tenant's administrators are named" "${OUT}" "it@acme.example"
 fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-gentian platform-roles security-officers add nowhere it@acme.example
+gentian platform-roles holders add securityOfficer nowhere it@acme.example
 refused "a tenant the registrar does not list is refused"
 is "... and nothing is committed" "$(writes)" ""
 fresh
-gentian platform-roles security-officers add Acme it@acme.example
+gentian platform-roles holders add securityOfficer Acme it@acme.example
 refused "a tenant that is not a name is refused before anything is asked"
 is "... and nothing is asked" "$(cat "${CALLS}")" ""
+fresh
+gentian platform-roles holders add acme it@acme.example
+refused "add without a role is refused"
+is "... and nothing is asked" "$(cat "${CALLS}")" ""
 
-fresh; reply GET /v1/clusters/c1/platform-roles/security-officers 200 "${HOLDERS}"
-gentian platform-roles security-officers
-has "security-officers lists the holders" "${OUT}" "it@acme.example"
-has "... with the subject" "${OUT}" "7d0f3c2e"
-fresh; reply GET /v1/clusters/c1/platform-roles/security-officers 200 "${HOLDERS}"
-reply DELETE /v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian platform-roles security-officers remove acme it@acme.example
-is "security-officers remove sends one DELETE for the entry the login names" "$(writes)" "DELETE /v1/clusters/c1/platform-roles/security-officers/acme/7d0f3c2e "
-fresh; reply GET /v1/clusters/c1/platform-roles/security-officers 200 "${HOLDERS}"
-gentian platform-roles security-officers remove acme nobody@acme.example
-refused "removing a login the claim does not name is refused"
+fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
+gentian platform-roles holders
+has "holders lists the holders" "${OUT}" "it@acme.example"
+has "... with the role" "${OUT}" "securityOfficer"
+has "... and the subject" "${OUT}" "7d0f3c2e"
+fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
+reply DELETE /v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles holders remove securityOfficer acme it@acme.example
+is "holders remove sends one DELETE for the entry the login names" "$(writes)" "DELETE /v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e "
+fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
+gentian platform-roles holders remove auditor acme it@acme.example
+refused "removing a role the login does not hold is refused"
 is "... and nothing is committed" "$(writes)" ""
 
 # The tenant's own switch: one PUT, on or off; a name alone reads.

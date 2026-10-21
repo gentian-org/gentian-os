@@ -64,6 +64,9 @@ var ErrAuthorizationUnavailable = errors.New("the authorization store did not an
 type Principal struct {
 	// User is the caller as the store names them: user:<subject>.
 	User string
+	// Holder is the caller as a role holder of the realm that signed them
+	// in, user:<realm>/<subject>, asked when User is refused.
+	Holder string
 	// Name is for the record of who set a credential. Never used to decide.
 	Name string
 	// Tenant is the tenant whose realm signed the caller in, or empty for the
@@ -107,7 +110,8 @@ func (a *GraphAuthorizer) Identify(ctx context.Context, token string) (Principal
 	if err != nil {
 		return Principal{}, fmt.Errorf("%w: %v", ErrUnauthenticated, err)
 	}
-	p := Principal{User: user, Name: ident.Email}
+	holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
+	p := Principal{User: user, Holder: holder, Name: ident.Email}
 	if p.Name == "" {
 		p.Name = ident.Name
 	}
@@ -180,6 +184,9 @@ func (s *Server) viewOf(ctx context.Context, p Principal) (Viewer, error) {
 			return answer
 		}
 		allowed, err := s.Authz.Check(ctx, p.User, relation, object)
+		if err == nil && !allowed && p.Holder != "" {
+			allowed, err = s.Authz.Check(ctx, p.Holder, relation, object)
+		}
 		if err != nil {
 			if failed == nil {
 				failed = err

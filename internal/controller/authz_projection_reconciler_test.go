@@ -17,6 +17,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
 // The claim spells its roles one way (securityOfficer) and the graph another
@@ -83,5 +86,45 @@ func TestAMisspeltPlatformRoleIsSkippedAndTheRestProjected(t *testing.T) {
 	}
 	if n := len(r.unknownRoleWarned); n != 1 {
 		t.Errorf("warned about %d fields, want 1", n)
+	}
+}
+
+// A role holder is keyed by the realm of the tenant the claim names, so the
+// tuple answers only that realm's token; what a holder may not hold, a
+// tenant the cluster does not have and a subject that is no account id
+// grant nothing.
+func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
+	claim := clusterClaim("")
+	holder := func(role, tenant, subject string) interface{} {
+		return map[string]interface{}{"role": role, "tenant": tenant, "subject": subject, "username": "x@example.org"}
+	}
+	_ = unstructured.SetNestedSlice(claim.Object, []interface{}{
+		holder("securityOfficer", "test", "6f1c"),
+		holder("auditor", "acme", "a1"),
+		holder("admin", "test", "6f1c"),
+		holder("breakGlass", "test", "6f1c"),
+		holder("auditor", "gone", "b2"),
+		holder("auditor", "test", "not a subject"),
+	}, "spec", "platformAccess", "roleHolders")
+	test := &gentianov1alpha1.Tenant{}
+	test.Name = "test"
+	acme := &gentianov1alpha1.Tenant{}
+	acme.Name = "acme"
+	acme.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "acme-people"}
+
+	r := &AuthzProjectionReconciler{
+		Client:  fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(claim, test, acme).Build(),
+		Cluster: "test",
+	}
+	got, err := r.roleHolders(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []authz.RoleHolder{
+		{Relation: "security_officer", Realm: "test", Subject: "6f1c"},
+		{Relation: "auditor", Realm: "acme-people", Subject: "a1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("roleHolders() = %v, want %v", got, want)
 	}
 }

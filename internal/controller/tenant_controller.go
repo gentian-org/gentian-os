@@ -579,19 +579,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		)
 	}
 
-	// The hub (hub_projection.go): a tenant that opens itself to the
-	// platform's administrators, is renamed, or goes, is the kernel realm's
-	// tenant to recompose.
+	// Entering a tenant (kernel_enter.go): a tenant that opens itself to the
+	// platform's administrators, changes realm, or goes, is the kernel
+	// realm's tenant to recompose.
 	ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, tenantsAdoptingKernelRealm(mgr.GetClient(), r.KernelRealm),
-		builder.WithPredicates(tenantHubFactsChanged()))
+		builder.WithPredicates(tenantEnterFactsChanged()))
 	if r.WatchClusterClaim {
 		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(storeAddressChanged()))
-		// The security officers the claim names, and the hub's second factor:
-		// the kernel realm's tenant composes the hub from them, each source
-		// tenant its gate.
-		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
-			builder.WithPredicates(platformAccessChanged()))
 		// The verdict also turns on every tenant's domain (store_offer.go).
 		ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
@@ -1314,18 +1309,15 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	if len(signInFrom) > 0 {
 		spec["signInFrom"] = signInFrom
 	}
-	// The kernel realm's hub (hub_projection.go): the hub itself on the
-	// tenant that adopts the kernel realm, and on any other tenant whether
-	// its administrators are brokered and whether the platform's may enter.
-	hub, hubSpoke, kernelBroker, err := r.hubProjection(ctx, tenant)
+	// The platform's administrators entering tenants (kernel_enter.go): the
+	// clients on the tenant that adopts the kernel realm, and on any other
+	// tenant whether they may enter it.
+	kernelEnter, kernelBroker, err := r.kernelEnterProjection(ctx, tenant)
 	if err != nil {
-		return nil, fmt.Errorf("read what the kernel realm brokers for %s: %w", tenant.Name, err)
+		return nil, fmt.Errorf("read which tenants the platform's administrators enter, for %s: %w", tenant.Name, err)
 	}
-	if hub != nil {
-		spec["hub"] = hub
-	}
-	if hubSpoke {
-		spec["hubSpoke"] = true
+	if kernelEnter != nil {
+		spec["kernelEnter"] = kernelEnter
 	}
 	if kernelBroker {
 		spec["kernelBroker"] = true

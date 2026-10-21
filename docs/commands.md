@@ -847,7 +847,6 @@ checkout and running `./install.sh`, without the checkout.
 kubectl gentian settings show                                   # the claim's settings, as JSON
 kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
 kubectl gentian settings set certificates.dnsZones=gentian.org  # a list: comma-separated
-kubectl gentian settings set platformAccess.brokeredSecondFactor=off   # the hub's second factor (§7)
 ```
 
 The director holds the list of what may be set and refuses anything else, and
@@ -886,42 +885,38 @@ group that holds a platform role and answers 403 for the platform admin's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
-### Security officers
+### Cluster roles held by tenant accounts
 
 Approving what escapes the default posture — a pod-security waiver, a cluster
 role, `trustTier: platform` — is the security officers' (`cluster#can_approve`),
-never the administrators'. Their group is `gentian:platform:security`
-(`spec.platformRoles.securityOfficer`, the default), made empty by the install.
-Its holders are administrators of the cluster's tenants, named on the Cluster
-claim (`spec.platformAccess.securityOfficers`) by the cluster's administrator;
-the kernel realm brokers their own realm for them, link only
-([iam.md §1.1c](design/iam.md)). No kernel account is made by hand.
+never the administrators'; reading across the cluster is the auditors'
+(`cluster#can_audit`). Besides the kernel realm's groups
+(`spec.platformRoles`), the cluster's administrator can give either role to an
+administrator of one of the cluster's tenants, who keeps their own account:
+an entry of `spec.platformAccess.roleHolders` on the Cluster claim
+([iam.md §1.1c](design/iam.md)). The role is held only with a token of that
+tenant's realm, and used from that tenant's console.
 
 ```bash
-kubectl gentian platform-roles tenant-administrators            # who could hold it: every tenant's administrators
-kubectl gentian platform-roles security-officers                # who holds it, as the claim declares
-kubectl gentian platform-roles security-officers add acme it@acme.example     # one commit
-kubectl gentian platform-roles security-officers remove acme it@acme.example
+kubectl gentian platform-roles tenant-administrators                    # who could hold one: every tenant's administrators
+kubectl gentian platform-roles holders                                  # who holds which, as the claim declares
+kubectl gentian platform-roles holders add securityOfficer acme it@acme.example   # one commit
+kubectl gentian platform-roles holders remove securityOfficer acme it@acme.example
 ```
 
-`add` takes the tenant and the person's login in that tenant's realm, looks
-the account up through the registrar and commits its subject; the platform
-console's *Security officers* page does the same from a picker. Once Argo CD
-has synced, the platform tenant's composition renders the linked account in
-the kernel realm, its membership of the group and the sign-in gate in the
-tenant's realm. The person then signs in at
-`https://platform.<kernel-domain>/?kc_idp_hint=tenant-acme` (the command
-prints the link), with their tenant account, and enrols an authenticator the
-kernel realm keeps for them; only the tenant's administrators pass the gate.
-Removing the entry removes the account, its link and its membership.
-Membership reaches OpenFGA through the realm's event listener; nothing else is
-written.
+The role is `securityOfficer` or `auditor`. `add` looks the login up among the
+tenant's administrators through the registrar and commits the account's
+subject; once Argo CD has synced, the operator writes the role into OpenFGA
+for that account of that realm. `remove` takes the entry away, and the role
+with it.
 
-Whether the kernel realm asks for that second factor is a cluster setting:
+The director's routes, all on the Cluster claim:
 
-```bash
-kubectl gentian settings set platformAccess.brokeredSecondFactor=off     # default: required
-```
+| Route | Relation | Body | Answer |
+|---|---|---|---|
+| `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","securityOfficer"], "roleHolders": [{"role","tenant","subject","username","email"}]}` |
+| `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email"}` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `422` for a role, tenant or subject that cannot hold one |
+| `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
 
 The other way round, a tenant's administrators may let the platform's
 administrators sign in to their tenant: the switch is the tenant's own, off by

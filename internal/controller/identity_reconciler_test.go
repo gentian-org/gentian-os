@@ -134,7 +134,7 @@ func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 	t.Helper()
 	// No portal-public: that client and its openbao-audience mapper are
 	// Composition resources now, so no Job appears for this helper to wait on.
-	// Nor a kernel broker Job: the kernel realm's hub is composed, not a Job.
+	// Nor a kernel broker Job: what the kernel realm brokers is composed.
 	// SMTP realm config is only provisioned when cluster SMTP credentials exist.
 	smtpJob := "keycloak-tenant-smtp-" + tenantName
 	j := &batchv1.Job{}

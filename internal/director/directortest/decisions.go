@@ -134,6 +134,12 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	for _, role := range [][2]string{{"admin", "admin"}, {"auditor", "auditor"}, {"service-admin", "service_admin"}, {"security", "security_officer"}} {
 		tuples = append(tuples, map[string]any{"user": "group:gentian/platform/" + role[0] + "#member", "relation": role[1], "object": "cluster:" + Cluster})
 	}
+	// A role holder the claim names: ines, as the account of realm
+	// tenant-demo, holds security_officer -- on this cluster, and on the
+	// fixture's, which its tenants hang off.
+	for _, c := range []string{"cluster:" + Cluster, "cluster:main"} {
+		tuples = append(tuples, map[string]any{"user": "user:tenant-demo/ines", "relation": "security_officer", "object": c})
+	}
 	post("/stores/"+store.ID+"/write", map[string]any{
 		"authorization_model_id": written.ID,
 		"writes":                 map[string]any{"tuple_keys": tuples},

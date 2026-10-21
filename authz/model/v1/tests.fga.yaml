@@ -35,6 +35,9 @@ tuples:
   - {user: group:gentian/platform/service-admin#member,     relation: service_admin,     object: cluster:main}
   - {user: group:gentian/platform/shared-apps-admin#member, relation: shared_apps_admin, object: cluster:main}
   - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
+  # role holders the claim names (spec.platformAccess.roleHolders): accounts of a tenant's realm, by realm and subject
+  - {user: user:demo/tom,   relation: security_officer, object: cluster:main}
+  - {user: user:other/olaf, relation: auditor,          object: cluster:main}
 
   # --- tenant demo: operated by the platform. Its manifest says its own administrators approve public
   # addresses (spec.perimeter.adminsApprove), so the admins group holds perimeter_approver beside the perimeter group
@@ -91,6 +94,14 @@ tests:
       - {user: user:shari,  object: cluster:main, assertions: {can_install_shared: true, can_grant_shared: true, can_operate_system: false}}
       - {user: user:bea,    object: cluster:main, assertions: {can_edit_raw: true,   can_set_admission: true,  can_configure: false, can_audit: false}}
       - {user: user:mia,    object: cluster:main, assertions: {can_configure: false, can_audit: false, can_approve: false}}
+
+  - name: a role holder holds the role as the account of its own realm, and as nothing else
+    check:
+      - {user: user:demo/tom,   object: cluster:main, assertions: {can_approve: true,  can_audit: true, can_configure: false}}
+      - {user: user:tom,        object: cluster:main, assertions: {can_approve: false, can_audit: false}}
+      - {user: user:solo/tom,   object: cluster:main, assertions: {can_approve: false, can_audit: false}}
+      - {user: user:other/olaf, object: cluster:main, assertions: {can_audit: true,    can_approve: false, can_configure: false}}
+      - {user: user:other/olaf, object: tenant:solo,  assertions: {can_view: true,     can_install_app: false}}
 
   - name: the one who installs is not the one who approves
     check:

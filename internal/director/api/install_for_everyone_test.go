@@ -132,7 +132,9 @@ func TestAnInstallForEveryoneNeedsTheRightToGrantToo(t *testing.T) {
 	if msg, _ := body["error"].(string); !strings.Contains(msg, "can_grant") || !strings.Contains(msg, "for everyone") {
 		t.Fatalf("the refusal does not say what was missing: %v", body)
 	}
-	if got := h.asked.questions(); len(got) != 2 || got[1] != "user:tom can_grant tenant:demo" {
+	// The refusal asks again as tom of his token's realm, the one a role
+	// holder's tuple names (authz.CheckAs); nothing else is asked.
+	if got := h.asked.questions(); len(got) != 3 || got[1] != "user:tom can_grant tenant:demo" || got[2] != "user:tenant-demo/tom can_grant tenant:demo" {
 		t.Fatalf("asked %q, want can_install_app then can_grant", got)
 	}
 	if h.tip(t) != before {
@@ -149,8 +151,8 @@ func TestAnInstallForEveryoneNeedsTheRightToGrantToo(t *testing.T) {
 	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/notes", mia, `{"defaultGrant": true}`); code != http.StatusForbidden {
 		t.Fatalf("install for everyone by a member: %d", code)
 	}
-	if got := h.asked.questions(); len(got) != 1 {
-		t.Fatalf("a member's install asked %q, want only can_install_app", got)
+	if got := h.asked.questions(); len(got) != 2 || got[0] != "user:mia can_install_app tenant:demo" || got[1] != "user:tenant-demo/mia can_install_app tenant:demo" {
+		t.Fatalf("a member's install asked %q, want only can_install_app, as mia and as mia of her realm", got)
 	}
 }
 

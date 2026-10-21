@@ -109,7 +109,7 @@ func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, kin
 		relation, target = "can_approve", authz.Cluster(s.cfg.Cluster)
 		refusal = "a " + kind + " privilege weakens what protects the node; approving one is the security officer's"
 	}
-	ok, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, relation, target)
+	ok, err := s.can(r.Context(), *c, relation, target)
 	if err != nil {
 		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 		return "", false

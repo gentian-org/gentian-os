@@ -104,6 +104,19 @@ func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
 	}
 }
 
+// A role holder of a tenant's realm approves with a token of that realm, and
+// with no other: the same subject signed in by another realm is nobody here.
+func TestARoleHolderApprovesOnlyWithATokenOfItsOwnRealm(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", waiverPath, h.token(t, "tenant-solo", "ines"), reason("same subject, another realm")); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("PUT from another realm = %d, want 403", code)
+	}
+	if code, body := h.do(t, "PUT", waiverPath, h.token(t, "tenant-demo", "ines"), reason("reviewed by the officer of demo")); code != http.StatusAccepted {
+		t.Fatalf("PUT from the holder's realm = %d %v", code, body)
+	}
+}
+
 // Configuring the cluster is not approving for it. The model's own fixture
 // says alice has can_configure and can_approve: false, and this is what that
 // distinction is worth.

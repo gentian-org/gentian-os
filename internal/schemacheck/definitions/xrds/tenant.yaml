@@ -117,16 +117,6 @@ spec:
                         type: array
                         items:
                           type: string
-                hubSpoke:
-                  type: boolean
-                  description: >
-                    One of this tenant's administrators holds a platform role
-                    through the kernel realm's hub (the Cluster claim's
-                    platformAccess.securityOfficers names them; the operator
-                    projects the fact). The realm then carries the client
-                    broker-to-platform, the realm role platform-brokered on
-                    its admins group, and the flow gentian-hub-broker that
-                    lets the administrators and nobody else pass that client.
                 kernelBroker:
                   type: boolean
                   description: >
@@ -135,59 +125,22 @@ spec:
                     then carries the identity provider "kernel", for members
                     of gentian:platform:admin only, who land in the tenant's
                     admins group at every sign-in through it.
-                hub:
-                  type: object
+                kernelEnter:
+                  type: array
+                  maxItems: 1000
                   description: >
-                    The kernel realm's hub, projected onto the tenant that
-                    adopts the kernel realm from the Cluster claim: per source
-                    tenant an identity provider and per holder a linked account
-                    with its one membership, and per tenant that lets the
-                    platform's administrators enter the client their realm
-                    signs in to the kernel realm with.
-                  properties:
-                    secondFactor:
-                      type: string
-                      enum: [required, "off"]
-                    securityGroup:
-                      type: string
-                      description: The kernel-realm group that holds cluster#security_officer.
-                    spokes:
-                      type: array
-                      maxItems: 64
-                      items:
-                        type: object
-                        required: [tenant, realm, displayName]
-                        properties:
-                          tenant:
-                            type: string
-                          realm:
-                            type: string
-                          displayName:
-                            type: string
-                          holders:
-                            type: array
-                            maxItems: 64
-                            items:
-                              type: object
-                              required: [subject, username]
-                              properties:
-                                subject:
-                                  type: string
-                                username:
-                                  type: string
-                                email:
-                                  type: string
-                    enter:
-                      type: array
-                      maxItems: 1000
-                      items:
-                        type: object
-                        required: [tenant, realm]
-                        properties:
-                          tenant:
-                            type: string
-                          realm:
-                            type: string
+                    Projected onto the tenant that adopts the kernel realm:
+                    every tenant that lets the platform's administrators sign
+                    in to it, each given the client its realm's provider
+                    "kernel" signs in to the kernel realm with.
+                  items:
+                    type: object
+                    required: [tenant, realm]
+                    properties:
+                      tenant:
+                        type: string
+                      realm:
+                        type: string
                 brokeredFrom:
                   type: array
                   maxItems: 1000

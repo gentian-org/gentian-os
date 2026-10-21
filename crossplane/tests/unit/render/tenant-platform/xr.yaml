@@ -24,35 +24,14 @@ spec:
     databasePrefix: platform_
     s3Prefix: platform-
   deletionPolicy: Retain
-  # The kernel realm's hub, as the operator projects it from the Cluster
-  # claim: one tenant two of whose administrators are security officers, and
-  # a second whose name is not a label, which composes nothing; one tenant
-  # that lets the platform's administrators enter. The second factor is the
-  # default, so each provider names the post-login flow.
-  hub:
-    secondFactor: required
-    securityGroup: gentian:platform:security
-    spokes:
-      - tenant: acme
-        realm: acme
-        displayName: Acme AG
-        holders:
-          - subject: 7d0f3c2e-5b1a-4e9c-9f1e-2a3b4c5d6e7f
-            username: it@acme.example
-            email: it@acme.example
-          - subject: 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
-            username: ciso@acme.example
-      - tenant: Not_A_Label
-        realm: x
-        displayName: X
-        holders:
-          - subject: 1111
-            username: x@x.example
-    enter:
-      - tenant: acme
-        realm: acme
-      - tenant: Not_A_Label
-        realm: x
+  # The tenants the platform's administrators may enter, as the operator
+  # projects them: one, and a second whose name is not a label, which
+  # composes nothing.
+  kernelEnter:
+    - tenant: acme
+      realm: acme
+    - tenant: Not_A_Label
+      realm: x
   apps: []
   quotas:
     requestsCpu: "4"

@@ -631,7 +631,11 @@ var facts = dt.Table{
 	// tenant because can_audit reaches it. Deliberately NOT a tenant
 	// administrator, which is the case the kind-scoped check exists for.
 	"user:sam can_approve cluster:demo-cluster": true,
-	"user:sam can_view tenant:demo":             true,
+	// ines of tenant-demo's realm holds security_officer by name on the
+	// claim (spec.platformAccess.roleHolders): the tuple is keyed by realm.
+	"user:tenant-demo/ines can_approve cluster:demo-cluster": true,
+	"user:tenant-demo/ines can_view tenant:demo":             true,
+	"user:sam can_view tenant:demo":                          true,
 	// alice configures the cluster and is not a security officer -- the
 	// model's own fixture says can_approve: false for her.
 	"user:alice can_audit cluster:demo-cluster":            true,

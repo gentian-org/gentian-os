@@ -1996,6 +1996,45 @@ _remove_retired_suze_claim() {
     return 0
 }
 
+# _claim_security_officers_to_role_holders <kernel_dir>
+#
+# A Cluster claim names who holds a cluster role in
+# spec.platformAccess.roleHolders, each entry with its role. A claim written
+# before then names its security officers in securityOfficers, entries
+# without a role, beside brokeredSecondFactor; the schema has neither, and
+# the API server would drop them in silence. Rewritten here, in place and
+# committed with the rest: the list under its new key, each entry given
+# role securityOfficer, and the switch removed. Returns 1 when there was
+# nothing to rewrite.
+_claim_security_officers_to_role_holders() {
+    local file="$1/claims/cluster.yaml"
+    [[ -f "${file}" ]] || return 1
+    grep -Eq '^[[:space:]#]*(securityOfficers|brokeredSecondFactor):' "${file}" || return 1
+    local tmp
+    tmp="$(mktemp)"
+    awk '
+        /^[[:space:]#]*brokeredSecondFactor:/ { next }
+        match($0, /^[[:space:]#]*securityOfficers:/) {
+            sub(/securityOfficers:/, "roleHolders:")
+            inside = ($0 !~ /^[[:space:]]*#/)
+            match($0, /^ */); keyIndent = RLENGTH
+            print; next
+        }
+        inside {
+            match($0, /^ */)
+            if ($0 !~ /^[[:space:]]*$/ && RLENGTH <= keyIndent) { inside = 0 }
+            else if (match($0, /^ *- tenant:/)) {
+                pad = substr($0, 1, index($0, "-") - 1)
+                print pad "- role: securityOfficer"
+                sub(/- tenant:/, "  tenant:")
+            }
+        }
+        { print }
+    ' "${file}" > "${tmp}" && mv "${tmp}" "${file}"
+    info "Rewrote ${file}: security officers are role holders (spec.platformAccess.roleHolders, role securityOfficer)."
+    return 0
+}
+
 # gentian_catalogue_url
 #
 # The address a new Cluster claim names for the default catalogue, `gentian`.
@@ -2548,15 +2587,13 @@ spec:
   platformRoles:
     admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
     securityOfficer: gentian:platform:security
-  # Who holds the security officers' role: administrators of this cluster's
-  # tenants, each a linked account in the kernel realm that signs in through
-  # their own realm. Written by the director (kubectl gentian platform-roles
-  # security-officers add <tenant> <login>, or the platform console); the
-  # kernel realm asks them for a second factor of its own unless
-  # brokeredSecondFactor is "off".
+  # Who on the cluster holds a cluster role by name: accounts of this
+  # cluster's tenants' realms, each with its role (securityOfficer or
+  # auditor), held only with a token of that tenant's realm. Written by the
+  # director (kubectl gentian platform-roles holders add <role> <tenant>
+  # <login>, or the platform console).
   # platformAccess:
-  #   brokeredSecondFactor: required
-  #   securityOfficers: []
+  #   roleHolders: []
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
@@ -2571,6 +2608,7 @@ EOF
     # Application would fail on a kind the cluster does not serve -- so it is
     # removed here, and the removal is committed with the rest.
     _remove_retired_suze_claim "${kernel_dir}" && generated=1
+    _claim_security_officers_to_role_holders "${kernel_dir}" && generated=1
 
     # The deployments repository's own credential.
     #

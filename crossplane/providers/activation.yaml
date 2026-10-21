@@ -70,14 +70,6 @@ spec:
     # redirect address computed from it: a client policy and its profile.
     - clientpolicyprofiles.realm.keycloak.crossplane.io
     - clientpolicyprofilepolicies.realm.keycloak.crossplane.io
-    # The kernel realm as hub for the tenants' administrators (iam.md 1.1c):
-    # a linked user per security officer and its one membership, the realm's
-    # default groups declared empty, and the settings of the two flow
-    # executions that gate the way in.
-    - users.user.keycloak.crossplane.io
-    - groups.user.keycloak.crossplane.io
-    - defaultgroups.defaults.keycloak.crossplane.io
-    - executionconfigs.authenticationflow.keycloak.crossplane.io
     # -- provider-vault (7 of 248) ----------------------------------------
     - backends.auth.vault.upbound.io
     - authbackends.jwt.vault.upbound.io

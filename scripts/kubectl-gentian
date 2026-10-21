@@ -48,10 +48,10 @@
 #   kubectl gentian tenants platform-access <name> [on|off]    whether the platform's administrators may sign in
 #                                                             to the tenant as its administrators (the tenant's switch)
 #
-#   kubectl gentian platform-roles security-officers           who holds the security officer role, as the claim declares
-#   kubectl gentian platform-roles security-officers add <tenant> <login>      a tenant's administrator holds it: one commit
-#   kubectl gentian platform-roles security-officers remove <tenant> <login>   no longer
-#   kubectl gentian platform-roles tenant-administrators       who could hold it: every tenant's administrators
+#   kubectl gentian platform-roles holders                     who holds which cluster role by name, as the claim declares
+#   kubectl gentian platform-roles holders add <role> <tenant> <login>      a tenant's administrator holds it: one commit
+#   kubectl gentian platform-roles holders remove <role> <tenant> <login>   no longer
+#   kubectl gentian platform-roles tenant-administrators       who could hold one: every tenant's administrators
 #
 #   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
 #   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
@@ -82,7 +82,7 @@
 #   kubectl gentian settings show                the Cluster claim's settings, as JSON
 #   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
 #                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
-#                                                platformAccess.brokeredSecondFactor=off ...
+#                                                platformRoles.auditor=gentian:platform:auditor ...
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
@@ -1633,17 +1633,15 @@ cmd_tenants_platform_access() {
     fi
 }
 
-# platform-roles: who holds the platform's roles. Today the security
-# officers, who are administrators of the cluster's tenants, named on the
-# Cluster claim by the cluster's administrator; the kernel realm brokers
-# their own realm for them, link only, and asks them for a second factor of
-# its own (kubectl gentian settings set platformAccess.brokeredSecondFactor=off
-# switches that off).
+# platform-roles: who on the cluster holds which cluster role by name. The
+# cluster's administrator gives an administrator of one of the cluster's
+# tenants a role (securityOfficer or auditor) on the Cluster claim; it is
+# held with a token of that tenant's realm and no other.
 #
-#   platform-roles tenant-administrators          who could hold it, from the registrar
-#   platform-roles security-officers              who holds it, as the claim declares
-#   platform-roles security-officers add <tenant> <login>
-#   platform-roles security-officers remove <tenant> <login>
+#   platform-roles tenant-administrators          who could hold one, from the registrar
+#   platform-roles holders                        who holds which, as the claim declares
+#   platform-roles holders add <role> <tenant> <login>
+#   platform-roles holders remove <role> <tenant> <login>
 #
 # add looks the login up in the tenant's administrators through the registrar
 # and commits the account's subject; remove takes the claim's entry by the
@@ -1653,8 +1651,8 @@ cmd_platform_roles() {
     shift || true
     case "${sub}" in
         tenant-administrators) cmd_platform_roles_tenant_administrators "$@" ;;
-        security-officer|security-officers) cmd_platform_roles_security_officers "$@" ;;
-        *) die "usage: kubectl gentian platform-roles tenant-administrators | security-officers [add|remove <tenant> <login>]" ;;
+        holders) cmd_platform_roles_holders "$@" ;;
+        *) die "usage: kubectl gentian platform-roles tenant-administrators | holders [add|remove <role> <tenant> <login>]" ;;
     esac
 }
 
@@ -1665,7 +1663,7 @@ cmd_platform_roles_tenant_administrators() {
     local answer
     answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/tenant-administrators")" || exit 1
     if [[ "$(jq '.tenants | length' <<<"${answer}")" == "0" ]]; then
-        echo "This cluster has no tenant with a realm of its own, and so nobody to make a security officer."
+        echo "This cluster has no tenant with a realm of its own, and so nobody to give a cluster role."
         return 0
     fi
     jq -r '(["TENANT","LOGIN","EMAIL","NAME","SUBJECT"] | @tsv),
@@ -1678,25 +1676,26 @@ cmd_platform_roles_tenant_administrators() {
     fi
 }
 
-cmd_platform_roles_security_officers() {
-    local action="${1:-list}" tenant="${2:-}" login="${3:-}" answer
+cmd_platform_roles_holders() {
+    local action="${1:-list}" role="${2:-}" tenant="${3:-}" login="${4:-}" answer
+    local usage="usage: kubectl gentian platform-roles holders [list | add <role> <tenant> <login> | remove <role> <tenant> <login>]"
     need jq
     case "${action}" in
         list)
-            [[ $# -le 1 ]] || die "usage: kubectl gentian platform-roles security-officers [list]"
+            [[ $# -le 1 ]] || die "${usage}"
             _discover
-            answer="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/security-officers")" || exit 1
-            if [[ "$(jq '.securityOfficers | length' <<<"${answer}")" == "0" ]]; then
-                echo "Nobody holds the security officer role. The claim names no tenant administrator:"
-                echo "  kubectl gentian platform-roles security-officers add <tenant> <login>"
+            answer="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
+            if [[ "$(jq '.roleHolders | length' <<<"${answer}")" == "0" ]]; then
+                echo "The claim gives nobody a cluster role by name. Roles: $(jq -r '.roles | join(", ")' <<<"${answer}")."
+                echo "  kubectl gentian platform-roles holders add <role> <tenant> <login>"
                 return 0
             fi
-            jq -r '(["TENANT","LOGIN","EMAIL","SUBJECT","SIGNS IN AT"] | @tsv),
-                (.securityOfficers[] | [.tenant, .username, (.email // ""), .subject, (.signIn // "")] | @tsv)' <<<"${answer}" |
+            jq -r '(["ROLE","TENANT","LOGIN","EMAIL","SUBJECT"] | @tsv),
+                (.roleHolders[] | [.role, .tenant, .username, (.email // ""), .subject] | @tsv)' <<<"${answer}" |
                 column -t -s $'\t'
             ;;
         add)
-            [[ -n "${tenant}" && -n "${login}" && $# -eq 3 ]] || die "usage: kubectl gentian platform-roles security-officers add <tenant> <login>"
+            [[ -n "${role}" && -n "${tenant}" && -n "${login}" && $# -eq 4 ]] || die "${usage}"
             _label "The tenant" "${tenant}"
             _discover
             local people person
@@ -1715,36 +1714,33 @@ cmd_platform_roles_security_officers() {
             subject="$(jq -r '.id' <<<"${person}")"
             username="$(jq -r '.username' <<<"${person}")"
             email="$(jq -r '.email // ""' <<<"${person}")"
-            answer="$(_call PUT "/v1/clusters/${_CLUSTER}/platform-roles/security-officers/${tenant}/${subject}" \
+            answer="$(_call PUT "/v1/clusters/${_CLUSTER}/platform-roles/holders/${role}/${tenant}/${subject}" \
                 "$(jq -n --arg u "${username}" --arg e "${email}" '{username: $u, email: $e}')")" || exit 1
             if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
-                echo "${username} of ${tenant} is a security officer already; nothing was committed."
+                echo "${username} of ${tenant} holds ${role} already; nothing was committed."
                 return 0
             fi
-            echo "${username} of ${tenant} is a security officer: committed ($(_committed "${answer}"))."
-            echo "Once Argo CD has synced, the kernel realm has their linked account and its membership of the"
-            echo "security officers' group, and their realm the gate only its administrators pass. They sign in with"
-            echo "their ${tenant} account, and enrol an authenticator the kernel realm keeps for them, at"
-            echo "  https://platform.${_KERNEL_DOMAIN:-<kernel-domain>}/?kc_idp_hint=tenant-${tenant}"
+            echo "${username} of ${tenant} holds ${role}: committed ($(_committed "${answer}"))."
+            echo "Once Argo CD has synced, the operator writes the role for their ${tenant} account; they use it"
+            echo "signed in to ${tenant}, from its admin console."
             ;;
         remove)
-            [[ -n "${tenant}" && -n "${login}" && $# -eq 3 ]] || die "usage: kubectl gentian platform-roles security-officers remove <tenant> <login>"
+            [[ -n "${role}" && -n "${tenant}" && -n "${login}" && $# -eq 4 ]] || die "${usage}"
             _label "The tenant" "${tenant}"
             _discover
             local holders subject
-            holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/security-officers")" || exit 1
-            subject="$(jq -r --arg t "${tenant}" --arg l "${login}" '[.securityOfficers[] | select(.tenant == $t) |
+            holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
+            subject="$(jq -r --arg r "${role}" --arg t "${tenant}" --arg l "${login}" '[.roleHolders[] | select(.role == $r and .tenant == $t) |
                 select((.username | ascii_downcase) == ($l | ascii_downcase) or ((.email // "") | ascii_downcase) == ($l | ascii_downcase) or .subject == $l)] | first | .subject // empty' <<<"${holders}")"
-            [[ -n "${subject}" ]] || die "no security officer of tenant ${tenant} is ${login}; see kubectl gentian platform-roles security-officers"
-            answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/platform-roles/security-officers/${tenant}/${subject}")" || exit 1
+            [[ -n "${subject}" ]] || die "no ${role} of tenant ${tenant} is ${login}; see kubectl gentian platform-roles holders"
+            answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/platform-roles/holders/${role}/${tenant}/${subject}")" || exit 1
             if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
-                echo "The claim names no such security officer; nothing was committed."
+                echo "The claim names no such holder; nothing was committed."
                 return 0
             fi
-            echo "${login} of ${tenant} is no longer a security officer: committed ($(_committed "${answer}"))."
-            echo "Once Argo CD has synced, their linked account in the kernel realm and its membership are gone."
+            echo "${login} of ${tenant} no longer holds ${role}: committed ($(_committed "${answer}"))."
             ;;
-        *) die "usage: kubectl gentian platform-roles security-officers [list | add <tenant> <login> | remove <tenant> <login>]" ;;
+        *) die "${usage}" ;;
     esac
 }
 

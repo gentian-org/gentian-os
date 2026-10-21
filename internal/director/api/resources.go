@@ -44,7 +44,7 @@ func (s *Server) selfService(r *http.Request, c call) (bool, error) {
 	if s.cfg.Cluster == "" {
 		return true, nil
 	}
-	configures, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, "can_configure", authz.Cluster(s.cfg.Cluster))
+	configures, err := s.can(r.Context(), c, "can_configure", authz.Cluster(s.cfg.Cluster))
 	if err != nil {
 		return false, err
 	}
