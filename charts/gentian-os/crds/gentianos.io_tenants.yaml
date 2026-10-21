@@ -955,6 +955,23 @@ spec:
                       administrator turns it on; a tenant's administrator cannot.
                     type: boolean
                 type: object
+              platformAccess:
+                description: |-
+                  PlatformAccess is what the tenant opens to the platform's own people
+                  beyond the director: whether the platform's administrators may sign in
+                  to the tenant. The tenant's own administrators write it, through the
+                  director, in the tenant's manifest in git; it is not the tenant's
+                  operated_by consent and is set and withdrawn on its own.
+                properties:
+                  adminsEnter:
+                    description: |-
+                      AdminsEnter says the members of the platform's administrators' group
+                      may sign in to this tenant, through the kernel realm, and hold its
+                      admins group for as long as they hold that one: the tenant's realm
+                      composes the identity provider "kernel" while this is on. Off unless
+                      the tenant's own administrators turn it on.
+                    type: boolean
+                type: object
               privileges:
                 description: |-
                   Privileges are the privilege requests a person granted for this

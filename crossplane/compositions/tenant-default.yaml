@@ -130,11 +130,14 @@ spec:
                  — the same rule oidc.discoveryUrl follows. */}}
             {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
             {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
-            {{- /* Switched off: nobody signs in to a tenant realm through the kernel
-                 realm, so the kernel identity provider, its mappers, its
-                 first-login flow and the client it signs in as are not
-                 composed. The code stays; true composes them again. */}}
-            {{- $kernelBroker := false }}
+            {{- /* The kernel realm as hub (iam.md 1.1c), as the operator projects
+                 it: on the tenant that adopts the kernel realm the hub itself;
+                 on any other tenant whether its administrators are brokered to
+                 the kernel realm (hubSpoke) and whether the platform's
+                 administrators may enter it (kernelBroker). */}}
+            {{- $hub         := dig "hub" dict $spec }}
+            {{- $hubSpoke    := dig "hubSpoke" false $spec }}
+            {{- $kernelBroker := dig "kernelBroker" false $spec }}
             {{- /* Where Keycloak runs, and so where the broker clients' secrets
                  are published for the IdPs that read them back. Nothing outside
                  this Composition reads them; the namespace only has to exist. */}}
@@ -2149,144 +2152,6 @@ spec:
               providerConfigRef:
                 name: keycloak
 
-            {{- if $kernelBroker }}
-            {{- /* ── the claims that carry a user across a realm boundary ──────
-                 A brokered login copies a user from one realm into another, and
-                 these four decide what survives the crossing. Without them the
-                 tenant realm's scope mappers see an empty uid, so anything keyed
-                 on the username — Synapse localparts among them — breaks quietly.
-
-                 gentian_username travels twice: the kernel broker client must
-                 EMIT it in the token, and the tenant realm's IdP must IMPORT it
-                 back into the user's uid attribute. One claim, two objects, two
-                 realms.
-              */}}
-            {{- /* The broker client's id, read off the observed Client. A ref would
-                 give its external-name, which is the client's NAME because that
-                 client is adopted by name and Observe-only — and the API path
-                 needs a UUID. */}}
-            {{- $brokerClientID := dig "resources" "keycloak-broker-client" "resource" "status" "atProvider" "id" "" $observed }}
-            {{- if $brokerClientID }}
-            ---
-            apiVersion: client.keycloak.crossplane.io/v1alpha1
-            kind: ProtocolMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client-username-mapper
-              name: {{ $tenant }}-broker-client-username-mapper
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $kernelRealm }}
-                name: gentian_username
-                protocol: openid-connect
-                protocolMapper: oidc-usermodel-attribute-mapper
-                clientId: {{ $brokerClientID }}
-                config:
-                  user.attribute: uid
-                  claim.name: gentian_username
-                  jsonType.label: String
-                  multivalued: "false"
-                  id.token.claim: "true"
-                  access.token.claim: "true"
-                  userinfo.token.claim: "true"
-                  introspection.token.claim: "true"
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            ---
-            {{- /* The other half: import that claim into the tenant user's uid. */}}
-            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
-            kind: IdentityProviderMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-username-mapper
-              name: {{ $tenant }}-kernel-idp-username-mapper
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realm: {{ $realm }}
-                identityProviderAlias: kernel
-                name: gentian_username
-                identityProviderMapper: oidc-user-attribute-idp-mapper
-                {{- /* extraConfig, not config: the CRD has no config field and
-                     carries the mapper's settings here instead. */}}
-                extraConfig:
-                  syncMode: IMPORT
-                  claim: gentian_username
-                  user.attribute: uid
-              providerConfigRef:
-                name: keycloak
-            {{- if $kernelRealm }}
-            {{- end }}
-
-            {{- /* ── the first-broker-login flow ──────────────────────────────
-                 What a tenant user meets the first time they arrive through the
-                 kernel IdP. Its three executions match a returning user to the
-                 account already provisioned for them by email; the built-in flow
-                 stops and asks them to confirm the link instead.
-
-                 The IdP above names this flow by alias, so the alias is the
-                 contract — recreating the flow under a new id is fine, losing the
-                 alias is not.
-
-                 The flow only. Its executions are NOT declared yet: Keycloak does
-                 not require an execution to be uniquely named within a flow, so a
-                 create that failed to resolve the existing ones would add a second
-                 set rather than conflict, and a first login would run every step
-                 twice. That wants proving on the adopted flow first.
-              */}}
-            ---
-            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: Flow
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-first-broker-login-flow
-              name: {{ $tenant }}-first-broker-login-flow
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                alias: first-broker-login-gentian
-                description: Confirm/verify link kernel IdP to tenant users by email
-                providerId: basic-flow
-              providerConfigRef:
-                name: keycloak
-
-            {{- /* The flow's three executions, in order.
-
-                 They adopt. That was not a given: every other adoption here works
-                 because a duplicate is impossible — a mapper, a role, a group all
-                 collide on name — while Keycloak lets a flow hold two executions
-                 of the same authenticator, and provider-keycloak documents no
-                 import identity for the kind. Proven with one execution first,
-                 which took the existing id and left the flow at three.
-
-                 Together they match a returning user to the account already
-                 provisioned for them by email. The built-in first broker login
-                 stops and asks them to confirm the link instead, which is what
-                 this flow exists to avoid.
-              */}}
-            {{- range $i, $auth := (list "idp-detect-existing-broker-user" "idp-confirm-link" "idp-email-verification") }}
-            ---
-            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: Execution
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-fbl-exec-{{ $auth }}
-              name: {{ $tenant }}-fbl-exec-{{ $auth }}
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                parentFlowAlias: first-broker-login-gentian
-                authenticator: {{ $auth }}
-                requirement: REQUIRED
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-
-            {{- end }}{{- /* $kernelBroker */}}
 
             {{- /* ── brokered to ──────────────────────────────────────────
                  Realms outside the tenant -- usually of another cluster --
@@ -3111,85 +2976,53 @@ spec:
               providerConfigRef:
                 name: keycloak
 
-            {{- if $kernelBroker }}
-            {{- /* ── kernel broker client, observed ────────────────────────────
-                 The tenant realm brokers to the kernel realm, and broker-<tenant>
-                 in the KERNEL realm is the client it authenticates as. The realm
-                 Job creates it, so this does not.
+            {{- if and $kernelBroker $kd $kcInternal $kernelRealm }}
+            {{- /* ── the kernel realm's administrators entering this tenant ──
+                 The tenant let the platform's administrators sign in to it
+                 (Tenant spec.platformAccess.adminsEnter; the operator projects
+                 spec.kernelBroker). The identity provider "kernel" sends them
+                 to the kernel realm and takes them back as an account of this
+                 realm, through the client broker-to-<tenant> the platform
+                 tenant composes in the kernel realm: authenticated by the JWT
+                 this realm signs, checked against this realm's published
+                 keys. No secret; the provider insists on one, so a fixed word
+                 that is never sent fills it.
 
-                 Observe-only, and here for one reason: writeConnectionSecretToRef
-                 republishes the client's existing secret into Kubernetes without
-                 rotating it. That is what lets the IdP below take its credentials
-                 from a Secret instead of a Job curling the admin API for them —
-                 the step that kept the broker imperative.
+                 For the platform's administrators only. The provider requires
+                 the token's groups claim to name gentian:platform:admin, so no
+                 other kernel account gets an account here through it, and the
+                 one mapper puts whoever arrives into this tenant's admins
+                 group from that claim at every sign-in (FORCE): a person who
+                 left the platform group is out of the admins group at their
+                 next sign-in through it. Keycloak's own first-broker-login
+                 flow, with no profile page: an address this realm already has
+                 is linked once its owner confirms it.
 
-                 Not fully managed on purpose. Managing it would put the secret
-                 under the provider's control, and a rotation would break brokered
-                 login for as long as the IdP still held the old value.
-              */}}
-            ---
-            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-            kind: Client
-            metadata:
-              name: {{ $tenant }}-broker-client
-              annotations:
-                crossplane.io/external-name: broker-{{ $tenant }}
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client
-            spec:
-              deletionPolicy: Orphan
-              managementPolicies: ["Observe"]
-              forProvider:
-                clientId: broker-{{ $tenant }}
-                realmId: {{ $kernelRealm }}
-              writeConnectionSecretToRef:
-                name: {{ $tenant }}-broker-client
-                namespace: {{ $identityNs }}
-              providerConfigRef:
-                name: keycloak
-            {{- /* ── kernel IdP in the tenant realm ──────────────────────────────
-                 What tenant login actually runs on: the tenant realm delegates
-                 to the kernel realm through this.
-
-                 Managed, and every field is declared, because two Jobs also write
-                 this object and they disagreed about firstBrokerLoginFlowAlias.
-                 The realm script in identity_reconciler.go sets the built-in
-                 "first broker login"; the broker-idp Job sets the gentian flow.
-                 Both ran on 2026-08-21 — the realm job at 07:02:56, the broker-idp
-                 job at 07:04:37 — leaving roughly two minutes of that reconcile in
-                 which a first-time login was sent to a flow that stops to ask the
-                 user to confirm the link, instead of matching them to the account
-                 already provisioned for them by email.
-
-                 It was adopted Observe-only first and read back against the Admin
-                 API before anything was declared. That is the check the portal BFF
-                 client did not get: a Job writes through the Admin API, which
-                 enforces less than the schema the provider validates against, so
-                 anything a Job created may hold a state the provider cannot
-                 express.
-              */}}
-            {{- /* The broker client's id. Not a secret, but clientIdSecretRef is the
-                 only way the provider will take it, so it needs somewhere to live.
-                 The client_secret beside it is the one the observed Client above
-                 republishes. */}}
+                 Hidden on the sign-in page: the way in is the platform
+                 console's "Enter tenant", which is the desktop's address with
+                 kc_idp_hint=kernel. Delete and not Orphan: a switch turned off
+                 ends the way in. */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client-id
-              name: {{ $tenant }}-broker-client-id
+                gotemplating.fn.crossplane.io/composition-resource-name: kernel-idp-client
+              name: {{ $tenant }}-kernel-idp-client
             spec:
               forProvider:
                 manifest:
                   apiVersion: v1
                   kind: Secret
                   metadata:
-                    name: {{ $tenant }}-broker-client-id
+                    name: {{ $tenant }}-kernel-idp-client
                     namespace: {{ $identityNs }}
                     labels:
                       app.kubernetes.io/managed-by: crossplane
                   stringData:
-                    client_id: broker-{{ $tenant }}
+                    client_id: broker-to-{{ $tenant }}
+                    # Never sent: the client authenticates by a signed JWT.
+                    client_secret: private-key-jwt
               providerConfigRef:
                 name: kubernetes
             ---
@@ -3201,67 +3034,711 @@ spec:
                 crossplane.io/external-name: kernel
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp
             spec:
-              deletionPolicy: Orphan
-              # Everything except LateInitialize. Late-init copies the live object's
-              # values back over this spec for every field it does read, which is how
-              # the portal BFF client ended up unable to reconcile at all.
+              deletionPolicy: Delete
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 realm: {{ $realm }}
                 alias: kernel
-                displayName: {{ printf "%s SSO" $brandName | quote }}
+                displayName: {{ printf "%s administrators" $brandName | quote }}
                 providerId: oidc
                 enabled: true
                 trustEmail: true
-                storeToken: true
+                storeToken: false
                 hideOnLoginPage: true
                 linkOnly: false
                 authenticateByDefault: false
                 addReadTokenRoleOnCreate: false
-                syncMode: IMPORT
+                syncMode: FORCE
                 validateSignature: true
-                backchannelSupported: true
-                # openid alone is the provider's default, and it is not enough:
-                # dropping profile and email costs every brokered login the user's
-                # name and address.
                 defaultScopes: openid profile email
-                {{- /* Browser-facing endpoints go to the public URL; the
-                     server-to-server half stays inside the cluster, so Keycloak does
-                     not hairpin out through the ingress and back to reach itself
-                     during the broker code exchange. */}}
-                issuer: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}
-                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}/protocol/openid-connect/auth
-                logoutUrl: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}/protocol/openid-connect/logout
-                tokenUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/token
-                jwksUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/certs
-                userInfoUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/userinfo
-                # Matches a returning user to the account already provisioned for
-                # them by email.
-                firstBrokerLoginFlowAlias: first-broker-login-gentian
-                {{- /* updateProfileFirstLoginMode has no field on the provider and is
-                     read back, so it is carried here rather than left to a default.
-
-                     useJwksUrl is not, and no longer appears: the provider sets it
-                     from the jwksUrl field above. Verified against the Admin API —
-                     this broker carries useJwksUrl=true and validateSignature=true
-                     with nothing declaring them. Declaring it anyway left a key the
-                     provider writes but never reads back into extraConfig, so the
-                     resource could not converge and was updated on every pass. */}}
+                issuer: {{ printf "https://id.%s/auth/realms/%s" $kd $kernelRealm | quote }}
+                authorizationUrl: {{ printf "https://id.%s/auth/realms/%s/protocol/openid-connect/auth" $kd $kernelRealm | quote }}
+                logoutUrl: {{ printf "https://id.%s/auth/realms/%s/protocol/openid-connect/logout" $kd $kernelRealm | quote }}
+                tokenUrl: {{ printf "%s/realms/%s/protocol/openid-connect/token" $kcInternal $kernelRealm | quote }}
+                jwksUrl: {{ printf "%s/realms/%s/protocol/openid-connect/certs" $kcInternal $kernelRealm | quote }}
+                userInfoUrl: {{ printf "%s/realms/%s/protocol/openid-connect/userinfo" $kcInternal $kernelRealm | quote }}
+                firstBrokerLoginFlowAlias: first broker login
                 extraConfig:
-                  updateProfileFirstLoginMode: "on"
+                  clientAuthMethod: private_key_jwt
+                  clientAssertionAudience: {{ printf "https://id.%s/auth/realms/%s" $kd $kernelRealm | quote }}
+                  filteredByClaim: "true"
+                  claimFilterName: groups
+                  claimFilterValue: gentian:platform:admin
+                  updateProfileFirstLoginMode: "off"
                 clientIdSecretRef:
-                  name: {{ $tenant }}-broker-client-id
+                  name: {{ $tenant }}-kernel-idp-client
                   namespace: {{ $identityNs }}
                   key: client_id
                 clientSecretSecretRef:
-                  name: {{ $tenant }}-broker-client
+                  name: {{ $tenant }}-kernel-idp-client
                   namespace: {{ $identityNs }}
-                  key: attribute.client_secret
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-admins-mapper
+              name: {{ $tenant }}-kernel-idp-admins-mapper
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                identityProviderAlias: kernel
+                name: platform administrators are this tenant's administrators
+                identityProviderMapper: oidc-advanced-group-idp-mapper
+                extraConfig:
+                  syncMode: FORCE
+                  claims: '[{"key":"groups","value":"gentian:platform:admin"}]'
+                  are.claim.values.regex: "false"
+                  group: {{ printf "/gentian:tenant:%s:admins" $tenant | quote }}
               providerConfigRef:
                 name: keycloak
             {{- end }}{{- /* $kernelBroker */}}
+            {{- if and $hubSpoke $kd $kernelRealm }}
+            {{- /* ── the spoke: this realm's administrators, brokered to the kernel realm ──
+                 One of this tenant's administrators holds a platform role
+                 (the Cluster claim names them; the operator projects
+                 spec.hubSpoke). The kernel realm's identity provider
+                 tenant-<tenant> signs them in here, through the client
+                 broker-to-platform, which authenticates the kernel realm by
+                 the JWT it signs against the kernel realm's published keys --
+                 the handshake two tenants of this cluster use, no secret.
+
+                 Only the administrators pass it. The client overrides the
+                 realm's browser flow with gentian-hub-broker: the realm's own
+                 sign-in -- cookie, password, the person's second factor where
+                 they have one -- then a condition on the realm role
+                 platform-brokered, which the admins group alone carries, and
+                 Deny access for everybody else. The gate is a conditional
+                 subflow after the sign-in subflow, at the same level, so it is
+                 evaluated once the person is known whichever way they signed
+                 in; inside the forms it would not see a session cookie.
+
+                 The role is what the hub checks for too: the client's one
+                 mapper puts the person's realm roles in the token as
+                 gentian_hub_roles, and the kernel realm's provider refuses a
+                 token that does not name platform-brokered there. Full scope,
+                 because a mapper for realm roles sees only the roles in the
+                 client's scope, and the token goes to the kernel realm and
+                 nowhere else.
+
+                 Delete and not Orphan, all of it: a tenant none of whose
+                 administrators holds a role any more has no way into the
+                 kernel realm, not a dormant one. */}}
+            ---
+            apiVersion: role.keycloak.crossplane.io/v1alpha1
+            kind: Role
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-role
+              name: {{ $tenant }}-hub-spoke-role
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                name: platform-brokered
+                description: "The administrators the kernel realm may broker; grants nothing here"
+                attributes:
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Roles
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-group-roles
+              name: {{ $tenant }}-hub-spoke-group-roles
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                groupIdRef:
+                  name: {{ printf "gentian:tenant:%s:admins" $tenant | lower | replace ":" "-" }}
+                roleIdsRefs:
+                  - name: {{ $tenant }}-hub-spoke-role
+                {{- /* Not exhaustive: an app's pack maps its client role onto
+                     groups of this realm, and this must add the one role and
+                     take nothing away. */}}
+                exhaustive: false
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-flow
+              name: {{ $tenant }}-hub-spoke-flow
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker
+                description: Sign in as usual, then only an administrator may go on to the kernel realm
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            {{- /* The sign-in half, as Keycloak's built-in browser flow has it:
+                 the cookie, or the forms -- password, then the second factor
+                 where the person has one. */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-sign-in
+              name: {{ $tenant }}-hub-spoke-subflow-sign-in
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker-sign-in
+                parentFlowAlias: gentian-hub-broker
+                providerId: basic-flow
+                requirement: REQUIRED
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-forms
+              name: {{ $tenant }}-hub-spoke-subflow-forms
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker-forms
+                parentFlowAlias: gentian-hub-broker-sign-in
+                providerId: basic-flow
+                requirement: ALTERNATIVE
+                priority: 20
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-2fa
+              name: {{ $tenant }}-hub-spoke-subflow-2fa
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker-2fa
+                parentFlowAlias: gentian-hub-broker-forms
+                providerId: basic-flow
+                requirement: CONDITIONAL
+                priority: 20
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-subflow-gate
+              name: {{ $tenant }}-hub-spoke-subflow-gate
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker-gate
+                parentFlowAlias: gentian-hub-broker
+                providerId: basic-flow
+                requirement: CONDITIONAL
+                priority: 20
+              providerConfigRef:
+                name: keycloak
+            {{- /* The executions, each under its subflow, in order: a name
+                 for the resource, the authenticator, the parent, the
+                 requirement and the priority. */}}
+            {{- range $e := (list
+                  (dict "name" "cookie" "auth" "auth-cookie" "parent" "gentian-hub-broker-sign-in" "req" "ALTERNATIVE" "prio" 10)
+                  (dict "name" "password" "auth" "auth-username-password-form" "parent" "gentian-hub-broker-forms" "req" "REQUIRED" "prio" 10)
+                  (dict "name" "2fa-configured" "auth" "conditional-user-configured" "parent" "gentian-hub-broker-2fa" "req" "REQUIRED" "prio" 10)
+                  (dict "name" "2fa-otp" "auth" "auth-otp-form" "parent" "gentian-hub-broker-2fa" "req" "ALTERNATIVE" "prio" 20)
+                  (dict "name" "2fa-webauthn" "auth" "webauthn-authenticator" "parent" "gentian-hub-broker-2fa" "req" "ALTERNATIVE" "prio" 30)
+                  (dict "name" "gate-role" "auth" "conditional-user-role" "parent" "gentian-hub-broker-gate" "req" "REQUIRED" "prio" 10)
+                  (dict "name" "gate-deny" "auth" "deny-access-authenticator" "parent" "gentian-hub-broker-gate" "req" "REQUIRED" "prio" 20)) }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-exec-{{ $e.name }}
+              name: {{ $tenant }}-hub-spoke-exec-{{ $e.name }}
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: {{ $e.parent }}
+                authenticator: {{ $e.auth }}
+                requirement: {{ $e.req }}
+                priority: {{ $e.prio }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- /* The gate's two settings: the condition holds for whoever
+                 does NOT carry the role (negate), and the refusal says why. */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: ExecutionConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-config-gate-role
+              name: {{ $tenant }}-hub-spoke-config-gate-role
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker-without-role
+                executionIdRef:
+                  name: {{ $tenant }}-hub-spoke-exec-gate-role
+                config:
+                  condUserRole: platform-brokered
+                  negate: "true"
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: ExecutionConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-config-gate-deny
+              name: {{ $tenant }}-hub-spoke-config-gate-deny
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-broker-denied
+                executionIdRef:
+                  name: {{ $tenant }}-hub-spoke-exec-gate-deny
+                config:
+                  denyErrorMessage: "Only this workspace's administrators may sign in to the platform with their account here."
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-hub-spoke-client
+              annotations:
+                crossplane.io/external-name: broker-to-platform
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-client
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: broker-to-platform
+                name: {{ printf "%s platform" $brandName | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                clientAuthenticatorType: client-jwt
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: true
+                validRedirectUris:
+                  - {{ printf "https://id.%s/auth/realms/%s/broker/tenant-%s/endpoint" $kd $kernelRealm $tenant | quote }}
+                authenticationFlowBindingOverrides:
+                  - browserIdRef:
+                      name: {{ $tenant }}-hub-spoke-flow
+                extraConfig:
+                  use.jwks.url: "true"
+                  jwks.url: {{ printf "https://id.%s/auth/realms/%s/protocol/openid-connect/certs" $kd $kernelRealm | quote }}
+                  token.endpoint.auth.signing.alg: RS256
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-spoke-roles-mapper
+              name: {{ $tenant }}-hub-spoke-roles-mapper
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                name: gentian_hub_roles
+                protocol: openid-connect
+                protocolMapper: oidc-usermodel-realm-role-mapper
+                clientIdRef:
+                  name: {{ $tenant }}-hub-spoke-client
+                  policy:
+                    resolve: Always
+                config:
+                  claim.name: gentian_hub_roles
+                  jsonType.label: String
+                  multivalued: "true"
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+                  introspection.token.claim: "true"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}{{- /* $hubSpoke */}}
             {{- end }}
             {{- end }}
+
+            {{- /* ── the kernel realm as hub ──────────────────────────────────
+                 Composed by the tenant that adopts the kernel realm, from
+                 what the operator projects of the Cluster claim (spec.hub):
+                 the security officers it names, each an administrator of a
+                 tenant of this cluster, and the tenants that let the
+                 platform's administrators enter. Realm state of the kernel
+                 realm, which this Composition otherwise leaves alone -- made
+                 here because nothing else composes that realm, and declared
+                 whole so that removing an entry removes what it made.
+
+                 Per source tenant an identity provider, tenant-<tenant>,
+                 which links and never creates: its first-broker-login flow
+                 is one Deny access, so a sign-in succeeds only for an account
+                 below that already holds the federated identity; it trusts
+                 the realm's verified address and follows it (FORCE); and it
+                 refuses a token whose gentian_hub_roles claim does not name
+                 platform-brokered, before any flow runs -- the role the
+                 tenant's realm gives its administrators alone. Shown on the
+                 sign-in page under the tenant's name, and reached directly
+                 with kc_idp_hint=tenant-<tenant>.
+
+                 Per holder a user, linked to that provider by the subject the
+                 claim names, and its membership of the security officers'
+                 group: exhaustive, so the account is in that group and in no
+                 other, whatever anybody adds by hand. The kernel realm's
+                 default groups are declared empty for the same reason. The
+                 membership is what Keycloak's listener states and the
+                 operator writes to the graph; nothing here writes it.
+
+                 The second factor is the hub's own: the post-login flow asks
+                 for an authenticator enrolled in this realm on the linked
+                 account, and makes the person enrol one the first time. The
+                 claim switches it off (spec.hub.secondFactor); the flow stays
+                 and the providers stop naming it.
+
+                 Per entering tenant the client its realm's provider "kernel"
+                 signs in with, broker-to-<tenant>: authenticated by the JWT
+                 that realm signs, checked against its published keys, and
+                 carrying the groups claim the provider reads the platform
+                 group off. */}}
+            {{- if and $adoptsKernelRealm $hub $kd $kcInternal $kernelRealm }}
+            {{- $hubSpokes := dig "spokes" list $hub }}
+            {{- $hubEnter := dig "enter" list $hub }}
+            {{- $hubGroup := default "gentian:platform:security" (dig "securityGroup" "" $hub) }}
+            {{- $hubOTP := ne (dig "secondFactor" "required" $hub) "off" }}
+            ---
+            apiVersion: defaults.keycloak.crossplane.io/v1alpha1
+            kind: DefaultGroups
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-default-groups
+              name: {{ $tenant }}-hub-default-groups
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                groupIds: []
+              providerConfigRef:
+                name: keycloak
+            {{- if $hubSpokes }}
+            {{- /* The group the holders are put in, adopted by its name;
+                 the install made it empty. */}}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-security-group
+              name: {{ $tenant }}-hub-security-group
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $hubGroup | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- /* The two hub flows. */}}
+            {{- range $f := (list
+                  (dict "name" "first-login" "alias" "gentian-hub-first-login" "desc" "A brokered sign-in links an account the claim declares; it never makes one")
+                  (dict "name" "second-factor" "alias" "gentian-hub-second-factor" "desc" "A brokered sign-in presents an authenticator enrolled in this realm")) }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-flow-{{ $f.name }}
+              name: {{ $tenant }}-hub-flow-{{ $f.name }}
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: {{ $f.alias }}
+                description: {{ $f.desc | quote }}
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- range $e := (list
+                  (dict "name" "first-login-deny" "auth" "deny-access-authenticator" "parent" "gentian-hub-first-login")
+                  (dict "name" "second-factor-otp" "auth" "auth-otp-form" "parent" "gentian-hub-second-factor")) }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-exec-{{ $e.name }}
+              name: {{ $tenant }}-hub-exec-{{ $e.name }}
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: {{ $e.parent }}
+                authenticator: {{ $e.auth }}
+                requirement: REQUIRED
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: ExecutionConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-config-first-login-deny
+              name: {{ $tenant }}-hub-config-first-login-deny
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-hub-first-login-denied
+                executionIdRef:
+                  name: {{ $tenant }}-hub-exec-first-login-deny
+                config:
+                  denyErrorMessage: "No platform role is declared for this account. The cluster's administrator assigns one."
+              providerConfigRef:
+                name: keycloak
+            {{- end }}{{- /* $hubSpokes: the flows and the group */}}
+            {{- range $s := $hubSpokes }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $s.tenant)) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $s.realm)) }}
+            {{- $srcIssuer := printf "https://id.%s/auth/realms/%s" $kd $s.realm }}
+            {{- $srcInternal := printf "%s/realms/%s" $kcInternal $s.realm }}
+            {{- $alias := printf "tenant-%s" $s.tenant }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: hub-spoke-{{ $s.tenant }}-client
+              name: {{ $tenant }}-hub-spoke-{{ $s.tenant }}-client
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-hub-spoke-{{ $s.tenant }}-client
+                    namespace: {{ $identityNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: broker-to-platform
+                    # Never sent: the client authenticates by a signed JWT.
+                    client_secret: private-key-jwt
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-hub-idp-{{ $s.tenant }}
+              annotations:
+                crossplane.io/external-name: {{ $alias }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-idp-{{ $s.tenant }}
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                alias: {{ $alias }}
+                displayName: {{ $s.displayName | quote }}
+                providerId: oidc
+                enabled: true
+                trustEmail: true
+                storeToken: false
+                hideOnLoginPage: false
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: FORCE
+                validateSignature: true
+                defaultScopes: openid profile email
+                issuer: {{ $srcIssuer | quote }}
+                authorizationUrl: {{ printf "%s/protocol/openid-connect/auth" $srcIssuer | quote }}
+                logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $srcIssuer | quote }}
+                tokenUrl: {{ printf "%s/protocol/openid-connect/token" $srcInternal | quote }}
+                jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $srcInternal | quote }}
+                userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $srcInternal | quote }}
+                firstBrokerLoginFlowAlias: gentian-hub-first-login
+                {{- if $hubOTP }}
+                postBrokerLoginFlowAlias: gentian-hub-second-factor
+                {{- end }}
+                extraConfig:
+                  clientAuthMethod: private_key_jwt
+                  clientAssertionAudience: {{ $srcIssuer | quote }}
+                  filteredByClaim: "true"
+                  claimFilterName: gentian_hub_roles
+                  claimFilterValue: platform-brokered
+                  updateProfileFirstLoginMode: "off"
+                clientIdSecretRef:
+                  name: {{ $tenant }}-hub-spoke-{{ $s.tenant }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-hub-spoke-{{ $s.tenant }}-client
+                  namespace: {{ $identityNs }}
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- range $h := (default list $s.holders) }}
+            {{- $subject := toString $h.subject }}
+            {{- if regexMatch "^[A-Za-z0-9._-]{1,128}$" $subject }}
+            {{- $slug := printf "%s-%s" $s.tenant ($subject | lower | replace "." "-" | replace "_" "-") }}
+            ---
+            apiVersion: user.keycloak.crossplane.io/v1alpha1
+            kind: User
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-user-{{ $slug }}
+              name: {{ $tenant }}-hub-user-{{ $slug }}
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                username: {{ $h.username | quote }}
+                {{- if $h.email }}
+                email: {{ $h.email | quote }}
+                emailVerified: true
+                {{- end }}
+                enabled: true
+                federatedIdentity:
+                  - identityProvider: {{ $alias }}
+                    userId: {{ $subject | quote }}
+                    userName: {{ $h.username | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: user.keycloak.crossplane.io/v1alpha1
+            kind: Groups
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-membership-{{ $slug }}
+              name: {{ $tenant }}-hub-membership-{{ $slug }}
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                userIdRef:
+                  name: {{ $tenant }}-hub-user-{{ $slug }}
+                groupIdsRefs:
+                  - name: {{ $tenant }}-hub-security-group
+                exhaustive: true
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}{{- /* spokes */}}
+            {{- range $e := $hubEnter }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $e.tenant)) (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $e.realm)) }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-hub-enter-{{ $e.tenant }}-client
+              annotations:
+                crossplane.io/external-name: broker-to-{{ $e.tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-enter-{{ $e.tenant }}-client
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: broker-to-{{ $e.tenant }}
+                name: {{ printf "Enter %s" $e.tenant | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                clientAuthenticatorType: client-jwt
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                validRedirectUris:
+                  - {{ printf "https://id.%s/auth/realms/%s/broker/kernel/endpoint" $kd $e.realm | quote }}
+                extraConfig:
+                  use.jwks.url: "true"
+                  jwks.url: {{ printf "https://id.%s/auth/realms/%s/protocol/openid-connect/certs" $kd $e.realm | quote }}
+                  token.endpoint.auth.signing.alg: RS256
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
+            kind: GroupMembershipProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-enter-{{ $e.tenant }}-groups-mapper
+              name: {{ $tenant }}-hub-enter-{{ $e.tenant }}-groups-mapper
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-hub-enter-{{ $e.tenant }}-client
+                  policy:
+                    resolve: Always
+                name: groups
+                claimName: groups
+                fullPath: false
+                addToIdToken: true
+                addToAccessToken: true
+                addToUserinfo: true
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}{{- /* enter */}}
+            {{- end }}{{- /* $hub */}}
 
             {{- /* No App claims. An installed app is a Component, and its
                  Component writes the claim the app Composition answers
@@ -3353,3 +3830,42 @@ spec:
             - keycloak-registration-form.*
             - keycloak-registration-exec-.*
             - keycloak-registration-bindings.*
+          # The spoke of the kernel realm's hub: the role before the group
+          # that carries it; the flow before its subflows, each parent before
+          # its children, before the executions, before their settings,
+          # before the client that binds the flow. Patterns, so a tenant
+          # with no holder, which renders none of them, is not held back.
+          - sequence:
+            - ^keycloak-hub-spoke-role$
+            - ^keycloak-hub-spoke-group-roles$
+          - sequence:
+            - ^keycloak-hub-spoke-flow$
+            - ^keycloak-hub-spoke-subflow-sign-in$
+            - ^keycloak-hub-spoke-subflow-forms$
+            - ^keycloak-hub-spoke-subflow-(2fa|gate)$
+            - ^keycloak-hub-spoke-exec-.*
+            - ^keycloak-hub-spoke-config-.*
+            - ^keycloak-hub-spoke-client$
+          # The hub itself: the flows the providers name before the
+          # providers, the providers before the users linked to them, the
+          # group before the memberships in it; and each provider's Secret
+          # before the provider that reads it.
+          - sequence:
+            - ^keycloak-hub-flow-.*
+            - ^keycloak-hub-exec-.*
+            - ^keycloak-hub-config-.*
+            - ^keycloak-hub-idp-.*
+            - ^keycloak-hub-user-.*
+            - ^keycloak-hub-membership-.*
+          - sequence:
+            - ^keycloak-hub-security-group$
+            - ^keycloak-hub-membership-.*
+          - sequence:
+            - ^hub-spoke-.*-client$
+            - ^keycloak-hub-idp-.*
+          # The platform's administrators entering a tenant: the provider's
+          # Secret before the provider, the provider before its mapper.
+          - sequence:
+            - ^kernel-idp-client$
+            - ^keycloak-kernel-idp$
+            - ^keycloak-kernel-idp-admins-mapper$

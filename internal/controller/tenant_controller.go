@@ -579,9 +579,19 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		)
 	}
 
+	// The hub (hub_projection.go): a tenant that opens itself to the
+	// platform's administrators, is renamed, or goes, is the kernel realm's
+	// tenant to recompose.
+	ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, tenantsAdoptingKernelRealm(mgr.GetClient(), r.KernelRealm),
+		builder.WithPredicates(tenantHubFactsChanged()))
 	if r.WatchClusterClaim {
 		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(storeAddressChanged()))
+		// The security officers the claim names, and the hub's second factor:
+		// the kernel realm's tenant composes the hub from them, each source
+		// tenant its gate.
+		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(platformAccessChanged()))
 		// The verdict also turns on every tenant's domain (store_offer.go).
 		ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
@@ -1303,6 +1313,22 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	}
 	if len(signInFrom) > 0 {
 		spec["signInFrom"] = signInFrom
+	}
+	// The kernel realm's hub (hub_projection.go): the hub itself on the
+	// tenant that adopts the kernel realm, and on any other tenant whether
+	// its administrators are brokered and whether the platform's may enter.
+	hub, hubSpoke, kernelBroker, err := r.hubProjection(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("read what the kernel realm brokers for %s: %w", tenant.Name, err)
+	}
+	if hub != nil {
+		spec["hub"] = hub
+	}
+	if hubSpoke {
+		spec["hubSpoke"] = true
+	}
+	if kernelBroker {
+		spec["kernelBroker"] = true
 	}
 	if len(tenant.Spec.Groups) > 0 {
 		groups := make([]interface{}, 0, len(tenant.Spec.Groups))

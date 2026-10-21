@@ -328,6 +328,59 @@ spec:
                         Admission overlays and raw file edits. No standing
                         membership is expected; this names the group that is
                         filled only when it is needed.
+                platformAccess:
+                  type: object
+                  # So brokeredSecondFactor's default materialises: a
+                  # property's default is only applied when the object
+                  # holding it exists.
+                  default: {}
+                  description: >
+                    How people reach the platform's own roles across realm
+                    boundaries: the kernel realm as a hub for the tenants'
+                    administrators (iam.md 1.1c). Written by the director
+                    from the platform console and the command line; the
+                    platform tenant's composition renders what it declares.
+                  properties:
+                    brokeredSecondFactor:
+                      type: string
+                      enum: [required, "off"]
+                      default: required
+                      description: >
+                        Whether the kernel realm asks a brokered sign-in for a
+                        second factor of its own, enrolled on the linked
+                        account there. "off" makes a security officer's
+                        approval exactly as strong as their tenant realm's
+                        sign-in policy, which the platform does not set.
+                    securityOfficers:
+                      type: array
+                      maxItems: 64
+                      description: >
+                        The administrators of the cluster's tenants who hold
+                        cluster#security_officer, each a linked account in the
+                        kernel realm that signs in through its own realm. Keyed
+                        by the account's subject in that realm, which outlives
+                        a changed address; username and email are what the
+                        kernel realm shows until the first sign-in refreshes
+                        them. The membership of the security officers' group
+                        (platformRoles.securityOfficer) follows from the entry
+                        and from nothing else.
+                      items:
+                        type: object
+                        required: [tenant, subject, username]
+                        properties:
+                          tenant:
+                            type: string
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            maxLength: 63
+                          subject:
+                            type: string
+                            pattern: '^[A-Za-z0-9._-]{1,128}$'
+                          username:
+                            type: string
+                            maxLength: 255
+                          email:
+                            type: string
+                            maxLength: 255
                 masterPasswordSecretRef:
                   type: object
                   description: >

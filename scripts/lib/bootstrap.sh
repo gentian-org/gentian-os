@@ -2548,6 +2548,15 @@ spec:
   platformRoles:
     admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
     securityOfficer: gentian:platform:security
+  # Who holds the security officers' role: administrators of this cluster's
+  # tenants, each a linked account in the kernel realm that signs in through
+  # their own realm. Written by the director (kubectl gentian platform-roles
+  # security-officers add <tenant> <login>, or the platform console); the
+  # kernel realm asks them for a second factor of its own unless
+  # brokeredSecondFactor is "off".
+  # platformAccess:
+  #   brokeredSecondFactor: required
+  #   securityOfficers: []
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"

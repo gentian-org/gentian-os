@@ -180,15 +180,8 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	// administrator, no broker and no mail server: those are the realm's,
 	// and the realm is the identity bootstrap's. See adoptsKernelRealm.
 	adopted := r.adoptsKernelRealm(tenant)
-	var broker *realmBrokerParams
-	if kernelBrokerEnabled && r.KernelRealm != "" && r.KernelDomain != "" {
-		broker = &realmBrokerParams{
-			kernelRealm:       r.KernelRealm,
-			kernelExternalURL: kernelExternalURL(r.KernelDomain),
-		}
-	}
 	if !adopted {
-		jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
+		jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain))
 	}
 
 	// An app whose client is refused gets no Job; ensureIdentity says why.
@@ -238,16 +231,8 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	}
 
 	if r.KernelRealm != "" && r.KernelDomain != "" && !adopted {
-		// No broker IdP Job. Every object it wrote — the kernel IdP, the tenant
-		// realm's first-broker-login flow, the two gentian_username mappers — is
-		// a Composition resource now, so the Job had nothing left to do.
-		//
-		// The kernel broker Job is down to one thing: the kernel realm's own
-		// first-broker-login flow. No XTenant covers the kernel realm, so nothing
-		// composes it. Not built while kernelBroker is off: nothing names the flow.
-		if kernelBroker {
-			jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
-		}
+		// No broker Jobs. The bridges between a tenant realm and the kernel
+		// realm, in either direction, are the Compositions' (hub_projection.go).
 		// No portal clients at all: the portal is retired, and a tenant's people
 		// sign in through the edge's zone client, which tenant-default composes.
 		// The Job writes the mail server the Composition declares, password

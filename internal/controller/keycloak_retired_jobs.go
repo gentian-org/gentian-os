@@ -39,6 +39,13 @@ func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
 }
 
+// kernelTenantBrokerJobName made the kernel realm's first-broker-login flow for
+// people a tenant realm sent there. The kernel realm's flows are the platform
+// tenant's composition's now (hub_projection.go), and that one nothing names.
+func kernelTenantBrokerJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-kernel-tenant-broker-%s", tenantName)
+}
+
 // oidcBrowserFlowJobName bound the realm's browser flow and login theme, which
 // the composed Realm declares. What remained hunted a legacy browser-kernel-idp
 // flow that is no longer in any realm.

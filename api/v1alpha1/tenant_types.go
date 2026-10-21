@@ -358,6 +358,14 @@ type TenantSpec struct {
 	// +optional
 	Perimeter *TenantPerimeter `json:"perimeter,omitempty"`
 
+	// PlatformAccess is what the tenant opens to the platform's own people
+	// beyond the director: whether the platform's administrators may sign in
+	// to the tenant. The tenant's own administrators write it, through the
+	// director, in the tenant's manifest in git; it is not the tenant's
+	// operated_by consent and is set and withdrawn on its own.
+	// +optional
+	PlatformAccess *TenantPlatformAccess `json:"platformAccess,omitempty"`
+
 	// Locales are the languages this tenant's realm renders its login and
 	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
 	// platform's own set.
@@ -738,6 +746,23 @@ type TenantPerimeter struct {
 	// administrator turns it on; a tenant's administrator cannot.
 	// +optional
 	AdminsApprove bool `json:"adminsApprove,omitempty"`
+}
+
+// TenantPlatformAccess is what a tenant opens to the platform's own people.
+type TenantPlatformAccess struct {
+	// AdminsEnter says the members of the platform's administrators' group
+	// may sign in to this tenant, through the kernel realm, and hold its
+	// admins group for as long as they hold that one: the tenant's realm
+	// composes the identity provider "kernel" while this is on. Off unless
+	// the tenant's own administrators turn it on.
+	// +optional
+	AdminsEnter bool `json:"adminsEnter,omitempty"`
+}
+
+// PlatformAdminsEnter says whether the platform's administrators may sign in
+// to this tenant (spec.platformAccess.adminsEnter).
+func (t *Tenant) PlatformAdminsEnter() bool {
+	return t.Spec.PlatformAccess != nil && t.Spec.PlatformAccess.AdminsEnter
 }
 
 // TenantCatalogue is a tenant's own catalogues and who may add them.
