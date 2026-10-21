@@ -150,6 +150,60 @@ func TestOutdatedAppsAreReportedAndMovedUnderTheirMode(t *testing.T) {
 	}
 }
 
+// An app the catalogue lists for the store alone -- an ee entry, acquired
+// and installed through the App Store -- moves like any other once it is
+// installed: the report names its newest build and move-outdated moves it.
+// The acquisition is per app, not per build. For a tenant that does not have
+// it, the entry stays out of the listing, so a new install of it is still
+// the store's.
+func TestAnInstalledStoreOnlyAppMovesLikeAnyOther(t *testing.T) {
+	one := "# edition: ee\n" + profileNamed("ledger", "one")
+	two := strings.ReplaceAll(one, `version: "1.0.0"`, `version: "2.0.0"`)
+	content := served{"gentian": {"ledger": one}}
+	src := catalogues(t, content)
+	op := &rolloutsOperator{}
+	h := startCatalogues(t, src, withOperator(op))
+	alice := h.token(t, "gentian", "alice")
+	// The store installs by coordinate and digest, through the same route.
+	// Nothing reads the index until the catalogue has moved on: it is cached
+	// once read.
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/ledger", alice,
+		fmt.Sprintf(`{"coordinate":"gentian/ledger","digest":%q}`, sha(one))); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	op.set([]map[string]any{{"tenant": "demo", "profile": "ledger", "pinned": sha(one), "running": sha(one), "phase": "Done", "ready": true}})
+	content["gentian"]["ledger"] = two
+	listed := func() (int, int) {
+		_, out := h.do(t, "GET", "/v1/tenants/demo/catalogues/gentian/entries", alice, "")
+		return len(out["entries"].([]any)), int(out["storeOnly"].(float64))
+	}
+	if entries, storeOnly := listed(); entries != 0 || storeOnly != 1 {
+		t.Fatalf("the listing has %d entries and %d store-only; want 0 and 1", entries, storeOnly)
+	}
+	code, out := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/updates", alice, "")
+	if code != http.StatusOK {
+		t.Fatalf("report = %d %v", code, out)
+	}
+	if e := updateEntryOf(t, out, "demo", "ledger"); e["outdated"] != true || e["newest"] != sha(two) || e["catalogue"] != "gentian" || e["held"] != nil {
+		t.Fatalf("an installed store-only app is not reported outdated: %v", e)
+	}
+	code, out = h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/actions/move-outdated", alice, `{"apps":["ledger"]}`)
+	if code != http.StatusAccepted || len(out["moved"].([]any)) != 1 || len(out["skipped"].([]any)) != 0 {
+		t.Fatalf("move-outdated = %d %v", code, out)
+	}
+	if moved := out["moved"].([]any)[0].(map[string]any); moved["to"] != sha(two) || moved["status"] != "updated" {
+		t.Fatalf("moved = %v", moved)
+	}
+	_, out = h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/updates", alice, "")
+	if e := updateEntryOf(t, out, "demo", "ledger"); e["outdated"] != false || e["pinned"] != sha(two) {
+		t.Fatalf("after the move: %v", e)
+	}
+	// Still not listed: the move changed nothing about who installs it anew.
+	if entries, storeOnly := listed(); entries != 0 || storeOnly != 1 {
+		t.Fatalf("after the move the listing has %d entries and %d store-only; want 0 and 1", entries, storeOnly)
+	}
+}
+
 // The tenant mode, written by the cluster's administrator for one tenant's
 // app, lets the tenant's administrator move it; a tenant's administrator
 // cannot write it for themselves.

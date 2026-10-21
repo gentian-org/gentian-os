@@ -48,6 +48,11 @@ func profileNamed(name, note string) string {
 
 var platformFloorLine = regexp.MustCompile(`(?m)^    platform: (\S+)$`)
 
+// editionLine is a test's way of saying which edition the index states for
+// a profile: a comment in the body, which the bundle's digest covers like
+// any other byte. Without one the index says pe.
+var editionLine = regexp.MustCompile(`(?m)^# edition: (\S+)$`)
+
 func catalogues(t *testing.T, content served) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +65,11 @@ func catalogues(t *testing.T, content served) *httptest.Server {
 		if parts[1] == "index.yaml" {
 			index := "entries:\n"
 			for name, body := range profiles {
-				index += "  - name: " + name + "\n    version: \"1.0.0\"\n    edition: pe\n    digest: " + sha(body) + "\n"
+				edition := "pe"
+				if m := editionLine.FindStringSubmatch(body); m != nil {
+					edition = m[1]
+				}
+				index += "  - name: " + name + "\n    version: \"1.0.0\"\n    edition: " + edition + "\n    digest: " + sha(body) + "\n"
 				// The floor, repeated in the index as the catalogue build does.
 				if m := platformFloorLine.FindStringSubmatch(body); m != nil {
 					index += "    platform: " + m[1] + "\n"

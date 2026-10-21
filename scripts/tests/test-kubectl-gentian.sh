@@ -1006,6 +1006,18 @@ reply POST /v1/tenants/acme/apps/notes 200 '{"status":"already_installed"}'
 gentian apps install notes --tenant acme
 has "a current app installed again commits nothing" "${OUT}" "notes is already installed in acme at this build; nothing was committed."
 
+# An entry the catalogue leaves to the store (me or ee) is not in the
+# listing, only counted, so by name it is not installed from here: the store
+# is the route. Once a tenant has it, the update report moves it like any
+# other app; a new install of it is still the store's.
+fresh
+reply GET /v1/tenants/acme/catalogues 200 '{"catalogues":[{"name":"gentian"}]}'
+reply GET /v1/tenants/acme/catalogues/gentian/entries 200 '{"entries":[],"storeOnly":1}'
+gentian apps install ledger --tenant acme
+refused "an app the catalogue leaves to the store is not installed by name"
+has "... and the refusal says it is not listed" "${OUT}" "ledger is not listed by any catalogue acme installs from (catalogues: gentian)"
+is "... and nothing was asked of the director that writes" "$(writes)" ""
+
 fresh
 reply POST /v1/clusters/c1/actions/move-outdated 202 '{"moved":[{"tenant":"acme","profile":"notes","to":"'"${PINNED}"'","status":"retried","detail":"0123456789abcdef","message":"retrying the move that did not start: the export before the move failed"}],"skipped":[]}'
 gentian apps move-outdated

@@ -78,19 +78,26 @@ type Index struct {
 type cachedIndex struct {
 	at      time.Time
 	entries []IndexEntry
-	// dropped counts entries this cluster does not list for itself -- me and
-	// ee. Kept as a number so a screen can say how many are in the App Store
-	// without listing them, which is the whole shape of AD-14: the store is
-	// the route, this is what remains when it is not.
-	dropped int
+	// storeOnly holds the entries this cluster does not list for itself --
+	// me and ee. A screen says how many are in the App Store without
+	// listing them, which is the whole shape of AD-14: the store is the
+	// route, this is what remains when it is not. They are kept all the
+	// same, for the one reader that is not a screen: the update report,
+	// which compares an app a tenant has already acquired and installed
+	// through the store with the build its catalogue offers now.
+	storeOnly []IndexEntry
 }
 
 // Listing is a source's index as the director serves it.
 type Listing struct {
-	// Entries are the ce and pe entries, sorted by name.
+	// Entries are the ce and pe entries, sorted by name: what a tenant may
+	// install from here by naming it.
 	Entries []IndexEntry
-	// StoreOnly is how many entries were left out because they are me or ee.
-	StoreOnly int
+	// StoreOnly are the me and ee entries, sorted by name. They are not
+	// listed and not installed from a listing; the store is the route to
+	// them. An app that was acquired and installed that way is already the
+	// tenant's, and these say what its newest build is.
+	StoreOnly []IndexEntry
 }
 
 // Index fetches and caches one source's index, keeping only the editions a
@@ -120,8 +127,9 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 // serve copies the cached index out, so a caller cannot change what the next
 // one is given.
 func serve(c cachedIndex) Listing {
-	out := Listing{Entries: make([]IndexEntry, len(c.entries)), StoreOnly: c.dropped}
+	out := Listing{Entries: make([]IndexEntry, len(c.entries)), StoreOnly: make([]IndexEntry, len(c.storeOnly))}
 	copy(out.Entries, c.entries)
+	copy(out.StoreOnly, c.storeOnly)
 	return out
 }
 
@@ -172,16 +180,20 @@ func (f *Fetcher) fetchIndex(ctx context.Context, src Source) (cachedIndex, erro
 		if e.Edition == "" {
 			e.Edition = gentianov1alpha1.EditionCE
 		}
-		if !e.Edition.Local() {
-			out.dropped++
-			continue
-		}
 		if _, err := normaliseDigest(e.Digest); err != nil {
 			e.Digest = ""
 		}
+		if !e.Edition.Local() {
+			out.storeOnly = append(out.storeOnly, e)
+			continue
+		}
 		out.entries = append(out.entries, e)
 	}
-	sort.Slice(out.entries, func(i, j int) bool { return out.entries[i].Name < out.entries[j].Name })
+	byName := func(entries []IndexEntry) func(i, j int) bool {
+		return func(i, j int) bool { return entries[i].Name < entries[j].Name }
+	}
+	sort.Slice(out.entries, byName(out.entries))
+	sort.Slice(out.storeOnly, byName(out.storeOnly))
 	return out, nil
 }
 

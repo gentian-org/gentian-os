@@ -356,7 +356,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant": tenant, "catalogue": name, "scope": src.scope,
-		"storeUrl": s.cfg.StoreURL, "entries": entries, "storeOnly": listing.StoreOnly,
+		"storeUrl": s.cfg.StoreURL, "entries": entries, "storeOnly": len(listing.StoreOnly),
 	})
 }
 
