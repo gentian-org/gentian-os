@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 func appsService(t *testing.T, objects ...runtime.Object) *Service {
@@ -263,5 +264,38 @@ func TestAnAppWaitingForASuppliedCredentialNamesIt(t *testing.T) {
 	}
 	if a := got["wiki"].AwaitingCredentials; len(a) != 0 {
 		t.Errorf("a ready app awaits %+v", a)
+	}
+}
+
+// Each pending request says who answers it, so a console offers the approval
+// to that person and nobody else; the plain list stays as it was for a reader
+// that knows only that.
+func TestEachPendingPrivilegeSaysWhoAnswersIt(t *testing.T) {
+	crm := component("crm", "PrivilegesPending", "waiting for approval", false)
+	crm.Status.PendingPrivileges = []string{"egress/smtp-relay", "podSecurity/run-as-root"}
+	s := appsService(t, demoTenant(), crm, component("wiki", "Ready", "release deployed", true))
+	states, err := s.AppStates(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byProfile(t, states)
+	if len(got["crm"].PendingPrivileges) != 2 {
+		t.Fatalf("pendingPrivileges = %v", got["crm"].PendingPrivileges)
+	}
+	want := []PendingPrivilege{
+		{Privilege: "egress/smtp-relay", ApprovedBy: security.PrivilegeApproverTenant},
+		{Privilege: "podSecurity/run-as-root", ApprovedBy: security.PrivilegeApproverSecurityOfficer},
+	}
+	approvals := got["crm"].PendingPrivilegeApprovals
+	if len(approvals) != len(want) {
+		t.Fatalf("pendingPrivilegeApprovals = %+v, want %+v", approvals, want)
+	}
+	for i := range want {
+		if approvals[i] != want[i] {
+			t.Errorf("pendingPrivilegeApprovals[%d] = %+v, want %+v", i, approvals[i], want[i])
+		}
+	}
+	if got["wiki"].PendingPrivilegeApprovals != nil {
+		t.Errorf("an app waiting for nothing lists %+v", got["wiki"].PendingPrivilegeApprovals)
 	}
 }

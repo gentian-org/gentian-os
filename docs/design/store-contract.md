@@ -824,6 +824,13 @@ keeps exiting — which Kubernetes retries for ever and which therefore reads as
 "still installing" to anything that only looks at readiness. An app whose
 repository credential is missing or refused reads as `failing` here, with
 that reason.
+An app that waits on a person lists each request nobody granted yet in
+`pendingPrivileges`, and again in `pendingPrivilegeApprovals` as
+`{privilege, approvedBy}`: `approvedBy` is `tenant` (the tenant's
+administrator, `tenant#can_approve_privilege`) for `egress`, and
+`security-officer` (`cluster#can_approve`) for every other kind. It is the
+answer the director applies to the approval, so a console offers the button
+by it and the director still decides.
 
 **Uninstalling and purging are two different acts.**
 

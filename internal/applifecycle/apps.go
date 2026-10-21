@@ -32,6 +32,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // What the cluster has made of a tenant's apps, and the two things that can
@@ -73,8 +74,13 @@ type AppState struct {
 	Failure string `json:"failure,omitempty"`
 	// PendingPrivileges are requests of the profile nobody has granted yet.
 	// While any is listed the install waits on a person, not on the cluster.
-	PendingPrivileges []string       `json:"pendingPrivileges,omitempty"`
-	Conditions        []AppCondition `json:"conditions,omitempty"`
+	PendingPrivileges []string `json:"pendingPrivileges,omitempty"`
+	// PendingPrivilegeApprovals is the same list, each with who answers it,
+	// so that a console offers an approval only to whom the director would
+	// allow one. Additive: a reader that knows only pendingPrivileges is
+	// told the same requests.
+	PendingPrivilegeApprovals []PendingPrivilege `json:"pendingPrivilegeApprovals,omitempty"`
+	Conditions                []AppCondition     `json:"conditions,omitempty"`
 	// AwaitingCredentials are the credentials the app's profile asks a
 	// person for (spec.secrets.supplied) that are not set yet, while the
 	// app is not up: it waits for them. A bundle carries none, so an
@@ -84,6 +90,30 @@ type AppState struct {
 	// tenant's ceiling, not what it happens to be using. Absent for an app
 	// with no pods.
 	Reserved *AppReservation `json:"reserved,omitempty"`
+}
+
+// PendingPrivilege is one request nobody has granted yet, and who may.
+type PendingPrivilege struct {
+	// Privilege is <kind>/<name>, as in PendingPrivileges.
+	Privilege string `json:"privilege"`
+	// ApprovedBy is who answers it: "tenant" for the tenant's administrator
+	// (tenant#can_approve_privilege), "security-officer" for the cluster's
+	// security officer (cluster#can_approve). security.PrivilegeApprover
+	// decides it from the kind, as the director does on the approval.
+	ApprovedBy string `json:"approvedBy"`
+}
+
+// pendingApprovals pairs each pending request with who answers it.
+func pendingApprovals(pending []string) []PendingPrivilege {
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]PendingPrivilege, 0, len(pending))
+	for _, ref := range pending {
+		kind, _ := security.SplitPrivilegeRef(ref)
+		out = append(out, PendingPrivilege{Privilege: ref, ApprovedBy: security.PrivilegeApprover(kind)})
+	}
+	return out
 }
 
 // AppReservation is the sum of an app's container requests.
@@ -184,11 +214,12 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 // componentState reads a Component's own account of itself.
 func componentState(comp *gentianov1alpha1.Component) AppState {
 	state := AppState{
-		Profile:           comp.Spec.ProfileRef.Name,
-		Name:              comp.Name,
-		Phase:             AppPhaseInstalling,
-		Message:           "Provisioning in progress",
-		PendingPrivileges: comp.Status.PendingPrivileges,
+		Profile:                   comp.Spec.ProfileRef.Name,
+		Name:                      comp.Name,
+		Phase:                     AppPhaseInstalling,
+		Message:                   "Provisioning in progress",
+		PendingPrivileges:         comp.Status.PendingPrivileges,
+		PendingPrivilegeApprovals: pendingApprovals(comp.Status.PendingPrivileges),
 	}
 	for _, c := range comp.Status.Conditions {
 		state.Conditions = append(state.Conditions, AppCondition{

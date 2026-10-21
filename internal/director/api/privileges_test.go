@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 const egressPath = "/v1/tenants/demo/privileges/nextcloud/egress/smtp-relay"
@@ -188,5 +189,33 @@ func TestApprovingNeedsToSeeTheTenantAtAll(t *testing.T) {
 	}
 	if h.tip(t) != before {
 		t.Fatal("a refused grant committed anyway")
+	}
+}
+
+// What the operator tells a console about each pending request
+// (security.PrivilegeApprover) is what this API then allows, kind by kind:
+// the tenant's administrator for one, the security officer for the others,
+// and never both. A console that offers the button by that answer offers it
+// to exactly whom the director would let through.
+func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
+	for _, kind := range []string{security.PrivilegeEgress, security.PrivilegePodSecurity, security.PrivilegeClusterRoles} {
+		h := start(t)
+		path := "/v1/tenants/demo/privileges/nextcloud/" + kind + "/something"
+		for _, who := range []struct {
+			name, realm, user, approver string
+		}{
+			{"tenant administrator", "tenant-demo", "tom", security.PrivilegeApproverTenant},
+			{"security officer", "gentian", "sam", security.PrivilegeApproverSecurityOfficer},
+		} {
+			token := h.token(t, who.realm, who.user)
+			code, body := h.do(t, "PUT", path, token, reason("reviewed and agreed for this install"))
+			want := http.StatusForbidden
+			if security.PrivilegeApprover(kind) == who.approver {
+				want = http.StatusAccepted
+			}
+			if code != want {
+				t.Errorf("%s approving %s = %d %v, want %d", who.name, kind, code, body, want)
+			}
+		}
 	}
 }
