@@ -324,9 +324,13 @@ the setting today.
 ## 7. Platform roles
 
 Which Keycloak group holds which platform role is stated on the Cluster claim
-(`spec.platformRoles`; `admin` defaults to `gentian:platform:admin`, the other
-roles have no holder unless a group is named). The operator projects it into
-OpenFGA. A platform administrator administers a tenant the cluster operates
+(`spec.platformRoles`; `admin` defaults to `gentian:platform:admin`,
+`securityOfficer` to `gentian:platform:security`, the other roles have no
+holder unless a group is named). The operator projects it into OpenFGA. Who is
+in those groups is not changed from this console: the registrar refuses every
+write to a platform role's group and to its members, and the cluster's
+administrator assigns them in the kernel realm's identity console
+([commands.md](../commands.md) §7). A platform administrator administers a tenant the cluster operates
 through that tenant's console.
 
 A mode that withholds routine access to tenants' people from platform

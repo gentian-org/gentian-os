@@ -846,6 +846,29 @@ group that holds a platform role and answers 403 for the platform admin's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
+### Security officers
+
+Approving what escapes the default posture — a pod-security waiver, a cluster
+role, `trustTier: platform` — is the security officers' (`cluster#can_approve`),
+never the administrators'. Their group is `gentian:platform:security`
+(`spec.platformRoles.securityOfficer`, the default), made empty by the install.
+A platform role holds kernel-realm accounts only, and the registrar changes
+neither its groups nor their members, so the cluster's administrator assigns
+one in the kernel realm's identity console:
+
+1. The person's own kernel-realm account, never the administrator's: invite
+   them in the platform tenant's Admin Console
+   (`https://admin.platform.<kernel-domain>`, People) and require a second
+   factor there — once they hold the role, the registrar no longer changes
+   their account.
+2. `https://id.<kernel-domain>/auth/admin/kernel/console/` → Users → the
+   person → Groups → Join group → `gentian:platform:security`. Leave group
+   removes them.
+
+Membership reaches OpenFGA through the realm's event listener; nothing else is
+written. A person of a tenant (an account of that tenant's realm) cannot be
+put in the group: they are given a kernel-realm account of their own.
+
 Keycloak master-realm admin:
 
 ```bash

@@ -59,12 +59,14 @@ func (e *TenantSyncFailed) Unwrap() error { return ErrTenantNotFound }
 // are the platform's own, and its groups are gentian:platform:*.
 const platformTenant = "platform"
 
-// defaultAdminGroup is the group the Cluster claim's schema names as the
-// platform's administrators when the claim says nothing else.
-const defaultAdminGroup = "gentian:platform:admin"
-
-// adminRole is the field of spec.platformRoles that default belongs to.
-const adminRole = "admin"
+// roleDefaults are the groups the Cluster claim's schema names for a platform
+// role when the claim says nothing else, by the field of spec.platformRoles
+// each belongs to: the administrators' and, apart from them, the security
+// officers'.
+var roleDefaults = map[string]string{
+	"admin":           "gentian:platform:admin",
+	"securityOfficer": "gentian:platform:security",
+}
 
 // Tenant is what the routes need to know about one tenant.
 type Tenant struct {
@@ -274,10 +276,11 @@ var clusterClaimList = schema.GroupVersionKind{Group: "gentianos.io", Version: "
 // differ. The map is read whole rather than field by field, so a role the
 // schema gains is protected without this function learning its name.
 //
-// The one default is the schema's own: a claim that names no administrators'
-// group leaves gentian:platform:admin, which is also where the install puts
-// the first administrator. No other role has a default, and a role the claim
-// leaves unset has no group to protect.
+// The defaults are the schema's own (roleDefaults): a claim that names no
+// administrators' group leaves gentian:platform:admin, which is also where
+// the install puts the first administrator, and one that names no security
+// officers' group leaves gentian:platform:security. No other role has a
+// default, and a role the claim leaves unset has no group to protect.
 //
 // An error is an error: the caller refuses the write rather than assume a
 // name. That includes a platformRoles that is not a map of strings, which the
@@ -306,12 +309,16 @@ func ClaimPlatformRoleGroups(reader client.Reader) func(ctx context.Context) ([]
 			for _, group := range roles {
 				add(group)
 			}
-			if strings.TrimSpace(roles[adminRole]) == "" {
-				add(defaultAdminGroup)
+			for role, group := range roleDefaults {
+				if strings.TrimSpace(roles[role]) == "" {
+					add(group)
+				}
 			}
 		}
 		if len(out) == 0 {
-			out = []string{defaultAdminGroup}
+			for _, group := range roleDefaults {
+				add(group)
+			}
 		}
 		sort.Strings(out)
 		return out, nil

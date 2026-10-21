@@ -880,6 +880,12 @@ run_keycloak_portal_bootstrap_job() {
     # The group model v1 names for the platform administrator role; the
     # claim binds it to cluster#admin and every console derives from that.
     local platform_admin_group="gentian:platform:admin"
+    # The security officers' group, the claim's default for
+    # platformRoles.securityOfficer: made here, empty, beside the
+    # administrators' and never joined to it. The one who installs is not the
+    # one who approves exceptions; the cluster's administrator puts people in
+    # it in the kernel realm's console.
+    local platform_security_group="gentian:platform:security"
 
     export PORTAL_LOGIN_USERNAME="${username}"
     local require_mfa
@@ -927,6 +933,7 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=email="${email}"
         --from-literal=require_mfa="${require_mfa}"
         --from-literal=platform_admin_group="${platform_admin_group}"
+        --from-literal=platform_security_group="${platform_security_group}"
         --from-literal=legacy_username="${legacy_username}"
         --from-literal=argocd_client_secret="${argocd_secret}"
         --from-literal=headlamp_client_secret="${headlamp_secret}"
@@ -1223,6 +1230,22 @@ spec:
               curl -sf -X PUT -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
               echo "User \${PORTAL_USERNAME} joined \${ADMIN_GROUP}"
+
+              # The security officers' group: made if absent, and nothing else.
+              # Nobody is put in it here and it is granted no role of the
+              # realm -- approving is the cluster's relation, not Keycloak's.
+              SECURITY_GROUP="\${PLATFORM_SECURITY_GROUP}"
+              SECURITY_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SECURITY_GROUP}&exact=true" \\
+                | jq -r --arg n "\${SECURITY_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+              if [ -z "\${SECURITY_ID}" ] || [ "\${SECURITY_ID}" = "null" ]; then
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups" \\
+                  -d "{\"name\":\"\${SECURITY_GROUP}\"}"
+                echo "Created group \${SECURITY_GROUP}"
+              else
+                echo "Group \${SECURITY_GROUP} already exists"
+              fi
 
               # The account this one replaces. Removed rather than left
               # disabled: two administrators, one of whom cannot be reached by
@@ -1643,6 +1666,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: platform_admin_group
+            - name: PLATFORM_SECURITY_GROUP
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: platform_security_group
             - name: LEGACY_USERNAME
               valueFrom:
                 secretKeyRef:
