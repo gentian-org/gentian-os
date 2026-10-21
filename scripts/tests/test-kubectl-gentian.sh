@@ -459,15 +459,35 @@ fresh
 gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
 refused "a request of no known kind is a usage error"
 
+# Declining is the approver's no, relayed as an action on the app with the
+# reason; nothing is committed, and the app keeps waiting.
+fresh; reply POST /v1/tenants/team/apps/aluvian-commerce/actions/decline-privilege 202 '{"status":"declined","tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","request":{"declinedBy":"sam@example.com","declinedAt":"2026-10-21T10:00:00Z","declineReason":"no root on shared nodes; use the rootless image"}}'
+gentian apps decline aluvian-commerce podSecurity/run-as-root --tenant team --reason "no root on shared nodes; use the rootless image"
+is "apps decline sends one POST with the privilege and the reason" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'POST /v1/tenants/team/apps/aluvian-commerce/actions/decline-privilege { "privilege": "podSecurity/run-as-root", "reason": "no root on shared nodes; use the rootless image"}'
+has "... and says it is recorded, not committed" "${OUT}" "Declined podSecurity/run-as-root for aluvian-commerce in team: recorded, nothing committed"
+fresh
+gentian apps decline aluvian-commerce podSecurity/run-as-root --tenant team --reason "no"
+refused "a decline without a reason of ten characters is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian apps decline aluvian-commerce --tenant team --reason "no root on shared nodes"
+refused "a decline must name the request"
+fresh
+gentian apps decline aluvian-commerce hostNetwork/x --tenant team --reason "because it must not"
+refused "a decline of no known kind is a usage error"
+
 # What awaits the security officer, across the cluster: the usher's list,
 # read as a table with who asked and why, and the command that answers it.
-fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[{"tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approvedBy":"security-officer","reason":"the vendor image writes its cache as root","requestedBy":"tom@example.com","requestedAt":"2026-10-21T09:12:00Z","note":"needed for the pilot"},{"tenant":"other","profile":"wiki","install":"wiki","privilege":"clusterRoles/node-reader","approvedBy":"security-officer"}]}'
+fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[{"tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approvedBy":"security-officer","reason":"the vendor image writes its cache as root","requestedBy":"tom@example.com","requestedAt":"2026-10-21T09:12:00Z","note":"needed for the pilot"},{"tenant":"other","profile":"wiki","install":"wiki","privilege":"clusterRoles/node-reader","approvedBy":"security-officer","declinedBy":"sam@example.com","declinedAt":"2026-10-21T10:00:00Z","declineReason":"node access is not for a wiki"}]}'
 gentian approvals list
 is "approvals list asks the usher for the cluster's list" "$(cat "${CALLS}")" "GET /v1/clusters/c1/approvals "
 has "... and shows who asked" "${OUT}" "tom@example.com"
 has "... and the profile's reason with the note" "${OUT}" "team/aluvian-commerce podSecurity/run-as-root: the vendor image writes its cache as root; tom@example.com adds: needed for the pilot"
-has "... and a request nobody asked for yet" "${OUT}" "other/wiki clusterRoles/node-reader: the profile gives no reason"
+has "... and a request nobody asked for yet, declined" "${OUT}" "other/wiki clusterRoles/node-reader: the profile gives no reason; declined by sam@example.com on 2026-10-21: node access is not for a wiki"
+has "... with the decliner in the table" "${OUT}" "DECLINED BY"
 has "... and says how to answer" "${OUT}" "kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant>"
+has "... either way" "${OUT}" "kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant>"
 fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[]}'
 gentian approvals list
 has "an empty list says so" "${OUT}" "Nothing awaits the security officer"

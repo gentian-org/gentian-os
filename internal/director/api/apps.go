@@ -105,19 +105,68 @@ func (s *Server) requestPrivilege(w http.ResponseWriter, r *http.Request, c call
 		s.fail(w, r, http.StatusBadRequest, `body must be {"privilege": "<kind>/<name>", "note": "..."}`)
 		return
 	}
-	kind, name := security.SplitPrivilegeRef(body.Privilege)
-	switch kind {
-	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles:
-	default:
-		s.fail(w, r, http.StatusBadRequest, "the privilege is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles")
-		return
-	}
-	if !gitops.ValidName(name) || !gitops.ValidName(r.PathValue("p")) {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
+	if _, ok := s.pendingPrivilegeRef(w, r, body.Privilege); !ok {
 		return
 	}
 	status, answer, err := s.cfg.Lifecycle.Do(r.Context(), appsPath(r, "/actions/request-privilege"), c.meta.ActorName(),
 		map[string]string{"profile": r.PathValue("p"), "privilege": body.Privilege, "note": strings.TrimSpace(body.Note)})
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
+}
+
+// pendingPrivilegeRef checks the privilege an action on {p} names, and
+// answers the call when it is not one. It returns the kind.
+func (s *Server) pendingPrivilegeRef(w http.ResponseWriter, r *http.Request, privilege string) (string, bool) {
+	kind, name := security.SplitPrivilegeRef(privilege)
+	switch kind {
+	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles:
+	default:
+		s.fail(w, r, http.StatusBadRequest, "the privilege is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles")
+		return "", false
+	}
+	if !gitops.ValidName(name) || !gitops.ValidName(r.PathValue("p")) {
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return "", false
+	}
+	return kind, true
+}
+
+// declinePrivilege is the approver's no. Whoever may approve a privilege of
+// this kind may decline it -- mayApprove, the same check as the grant's, so
+// a tenant administrator cannot decline a waiver any more than approve one
+// -- and nobody else. It is an action and not a commit: a decline changes
+// nothing the platform gives the app. The privilege stays pending, the
+// install keeps waiting, and the operator records on the Component who
+// declined, when and why (privilege_requests.go), which the tenant's console
+// and the install step show. A later approval is the commit it always was,
+// and clears the decline; a new request clears it too.
+func (s *Server) declinePrivilege(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Privilege string `json:"privilege"`
+		Reason    string `json:"reason"`
+	}
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"privilege": "<kind>/<name>", "reason": "..."}`)
+		return
+	}
+	kind, ok := s.pendingPrivilegeRef(w, r, body.Privilege)
+	if !ok {
+		return
+	}
+	if _, ok := s.mayApprove(w, r, &c, kind); !ok {
+		return
+	}
+	// As much as a grant asks for, and for the same reader: the person who
+	// asked, and whoever reviews the answer later.
+	if len(strings.TrimSpace(body.Reason)) < 10 {
+		s.fail(w, r, http.StatusBadRequest, "a decline needs a reason of at least ten characters, in your own words")
+		return
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(), appsPath(r, "/actions/decline-privilege"), c.meta.ActorName(),
+		map[string]string{"profile": r.PathValue("p"), "privilege": body.Privilege, "reason": strings.TrimSpace(body.Reason)})
 	if err != nil {
 		s.lifecycleError(w, r, err)
 		return

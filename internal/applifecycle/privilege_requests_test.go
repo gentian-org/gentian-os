@@ -229,4 +229,155 @@ func TestTheApprovalRoutes(t *testing.T) {
 	if code != http.StatusConflict || out["reason"] != "not-pending" {
 		t.Fatalf("not pending: %d %v", code, out)
 	}
+
+	decline := "/v1/tenants/demo/actions/decline-privilege"
+	body = `{"profile":"crm","privilege":"podSecurity/run-as-root","reason":"no root on shared nodes"}`
+	if code, _ := call("POST", decline, "usher", body); code != http.StatusForbidden {
+		t.Fatalf("the usher declined a privilege: %d", code)
+	}
+	if code, _ := call("POST", decline, "director", `{"profile":"crm","privilege":"podSecurity/run-as-root","reason":"no"}`); code != http.StatusBadRequest {
+		t.Fatalf("a decline without a reason: %d", code)
+	}
+	code, out = call("POST", decline, "director", body)
+	req, _ = out["request"].(map[string]any)
+	if code != http.StatusAccepted || out["status"] != "declined" || req["declinedBy"] != "tom@example.com" || req["declineReason"] != "no root on shared nodes" {
+		t.Fatalf("the decline: %d %v", code, out)
+	}
+	code, out = call("POST", decline, "director", `{"profile":"crm","privilege":"podSecurity/other","reason":"no root on shared nodes"}`)
+	if code != http.StatusConflict || out["reason"] != "not-pending" {
+		t.Fatalf("declining what is not pending: %d %v", code, out)
+	}
+	if _, listed := call("GET", "/v1/approvals", "usher", ""); listed["approvals"].([]any)[0].(map[string]any)["declinedBy"] != "tom@example.com" {
+		t.Fatalf("the list after the decline: %v", listed)
+	}
+}
+
+// A decline is recorded with who, when and why, shown on the app's state and
+// on the cluster's list, and installs nothing: the privilege stays pending.
+// A new request clears it; so does an approval made after it.
+func TestADeclineIsRecordedAndCleared(t *testing.T) {
+	s := appsService(t, demoTenant(), crmProfile(), waitingCRM())
+	ctx := context.Background()
+	if _, err := s.RequestPrivilege(ctx, "demo", "crm", "podSecurity/run-as-root", "for the pilot", "tom@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.DeclinePrivilege(ctx, "demo", "crm", "podSecurity/run-as-root", "  no root on shared nodes; use the rootless image  ", "sam@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "declined" || out.Install != "crm" || out.Request.DeclinedBy != "sam@example.com" ||
+		out.Request.DeclineReason != "no root on shared nodes; use the rootless image" || out.Request.RequestedBy != "tom@example.com" {
+		t.Fatalf("decline = %+v", out)
+	}
+	if _, err := time.Parse(time.RFC3339, out.Request.DeclinedAt); err != nil {
+		t.Fatalf("declinedAt = %q: %v", out.Request.DeclinedAt, err)
+	}
+
+	states, err := s.AppStates(ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crm := byProfile(t, states)["crm"]
+	if len(crm.PendingPrivileges) != 2 {
+		t.Fatalf("a decline took the privilege off the pending list: %v", crm.PendingPrivileges)
+	}
+	got := crm.PendingPrivilegeApprovals[1]
+	if got.DeclinedBy != "sam@example.com" || got.DeclinedAt != out.Request.DeclinedAt ||
+		got.DeclineReason != out.Request.DeclineReason || got.RequestedBy != "tom@example.com" {
+		t.Fatalf("after the decline: %+v", got)
+	}
+	list, err := s.PendingApprovals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].DeclinedBy != "sam@example.com" || list[0].DeclineReason == "" {
+		t.Fatalf("the cluster's list: %+v", list)
+	}
+
+	// Asking again after a no is a new request, not the first one repeated,
+	// and it clears the decline.
+	again, err := s.RequestPrivilege(ctx, "demo", "crm", "podSecurity/run-as-root", "now with the rootless image", "tom@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Status != "requested" || again.Request.Note != "now with the rootless image" || again.Request.declined() {
+		t.Fatalf("the request after a decline = %+v", again)
+	}
+	states, _ = s.AppStates(ctx, "demo")
+	if got := byProfile(t, states)["crm"].PendingPrivilegeApprovals[1]; got.DeclinedBy != "" || got.Note != "now with the rootless image" {
+		t.Fatalf("after asking again: %+v", got)
+	}
+
+	// Declined once more, then approved: the grant stands and the decline
+	// does not show, even while the entry is still on the annotation and
+	// the grant has since run out.
+	if _, err := s.DeclinePrivilege(ctx, "demo", "crm", "podSecurity/run-as-root", "still no; the image still runs as root", "sam@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	var comp gentianov1alpha1.Component
+	if err := s.client.Get(ctx, types.NamespacedName{Namespace: "tenant-demo", Name: "crm"}, &comp); err != nil {
+		t.Fatal(err)
+	}
+	comp.Spec.Privileges = []gentianov1alpha1.PrivilegeGrant{{
+		Privilege: "podSecurity/run-as-root", Approver: "sam", Reason: "reviewed; for the pilot only",
+		ApprovedAt: metav1.NewTime(time.Now().Add(time.Minute)),
+		ExpiresAt:  &metav1.Time{Time: time.Now().Add(-time.Second)},
+	}}
+	if err := s.client.Update(ctx, &comp); err != nil {
+		t.Fatal(err)
+	}
+	states, _ = s.AppStates(ctx, "demo")
+	if got := byProfile(t, states)["crm"].PendingPrivilegeApprovals[1]; got.DeclinedBy != "" || got.ExpiredAt == "" {
+		t.Fatalf("after an approval: %+v", got)
+	}
+}
+
+// What cannot be declined, and a decline of something nobody asked for.
+func TestWhatCannotBeDeclined(t *testing.T) {
+	s := appsService(t, demoTenant(), crmProfile(), waitingCRM())
+	ctx := context.Background()
+	good := "no root on shared nodes"
+	for name, c := range map[string]struct {
+		profile, privilege, reason string
+		want                       error
+	}{
+		"not pending": {"crm", "podSecurity/keep-capabilities", good, ErrNotPending},
+		"no such app": {"wiki", "podSecurity/run-as-root", good, ErrNotPending},
+	} {
+		if _, err := s.DeclinePrivilege(ctx, "demo", c.profile, c.privilege, c.reason, "sam@example.com"); !errors.Is(err, c.want) {
+			t.Errorf("%s: err = %v, want %v", name, err, c.want)
+		}
+	}
+	for name, reason := range map[string]string{"none": "", "short": "   nope   ", "endless": strings.Repeat("x", noteLimit+1)} {
+		if _, err := s.DeclinePrivilege(ctx, "demo", "crm", "podSecurity/run-as-root", reason, "sam@example.com"); err == nil {
+			t.Errorf("a %s reason was accepted", name)
+		}
+	}
+	if _, err := s.DeclinePrivilege(ctx, "demo", "crm", "run-as-root", good, "sam@example.com"); err == nil {
+		t.Error("a privilege that is not <kind>/<name> was accepted")
+	}
+	var crm gentianov1alpha1.Component
+	if err := s.client.Get(ctx, types.NamespacedName{Namespace: "tenant-demo", Name: "crm"}, &crm); err != nil {
+		t.Fatal(err)
+	}
+	if crm.Annotations[privilegeRequestsAnnotation] != "" {
+		t.Fatalf("a refused decline was recorded: %s", crm.Annotations[privilegeRequestsAnnotation])
+	}
+
+	// Nobody asked, and the tenant's own kind: declined all the same, since
+	// the director let whoever could have approved it say no.
+	out, err := s.DeclinePrivilege(ctx, "demo", "crm", "egress/smtp-relay", "the relay is not for this app", "tom@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Request.RequestedBy != "" || out.Request.DeclinedBy != "tom@example.com" {
+		t.Fatalf("decline = %+v", out)
+	}
+	states, err := s.AppStates(ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := byProfile(t, states)["crm"].PendingPrivilegeApprovals[0]; got.Privilege != "egress/smtp-relay" || got.DeclinedBy != "tom@example.com" {
+		t.Fatalf("the egress entry: %+v", got)
+	}
 }

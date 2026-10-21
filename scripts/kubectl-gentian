@@ -88,8 +88,11 @@
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
 #                                                             approve one request: egress (the tenant's administrator),
 #                                                             podSecurity or clusterRoles (the cluster's security officer)
+#   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
+#                                                             decline one, with the same right; the app keeps waiting
 #   kubectl gentian approvals list                             what awaits the cluster's security officer, across all
-#                                                             tenants: who asked, when, and why the app wants it
+#                                                             tenants: who asked, when, why the app wants it, and
+#                                                             what was declined
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
 #                                                               of their own Authorization header behind sign-in
@@ -2553,7 +2556,8 @@ cmd_apps() {
             fi
             ;;
         approve) cmd_apps_approve "$@" ;;
-        *) die "usage: kubectl gentian apps list|install|uninstall|approve ..." ;;
+        decline) cmd_apps_decline "$@" ;;
+        *) die "usage: kubectl gentian apps list|install|uninstall|approve|decline ..." ;;
     esac
 }
 
@@ -2606,15 +2610,9 @@ cmd_apps_approve() {
         return 0
     fi
 
-    kind="${privilege%%/*}"
-    name="${privilege#*/}"
-    case "${kind}" in
-        egress|podSecurity|clusterRoles) ;;
-        *) die "the request is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles: not '${privilege}'" ;;
-    esac
-    [[ "${privilege}" == */* && -n "${name}" && "${name}" != */* ]] ||
-        die "the request is <kind>/<name>, as the app's state names it: not '${privilege}'"
-    _label "a request" "${name}"
+    _privilege_ref "${privilege}"
+    kind="${PRIV_KIND}"
+    name="${PRIV_NAME}"
     reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what a reviewer reads in the commit."
 
@@ -2625,6 +2623,59 @@ cmd_apps_approve() {
         return 0
     fi
     echo "Approved ${privilege} for ${app} in ${t}: committed ($(_committed "${answer}")). The app goes on once the platform has it."
+}
+
+# _privilege_ref <kind>/<name> -- checks the request's shape and names the
+# two parts in PRIV_KIND and PRIV_NAME.
+_privilege_ref() {
+    local privilege="$1"
+    PRIV_KIND="${privilege%%/*}"
+    PRIV_NAME="${privilege#*/}"
+    case "${PRIV_KIND}" in
+        egress|podSecurity|clusterRoles) ;;
+        *) die "the request is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles: not '${privilege}'" ;;
+    esac
+    [[ "${privilege}" == */* && -n "${PRIV_NAME}" && "${PRIV_NAME}" != */* ]] ||
+        die "the request is <kind>/<name>, as the app's state names it: not '${privilege}'"
+    _label "a request" "${PRIV_NAME}"
+}
+
+# kubectl gentian apps decline <app> <kind>/<name> --tenant <t> --reason "<why>"
+#
+# The approver's no. Whoever may approve a request of the kind may decline
+# it -- the director checks the same right -- and nobody else. Nothing is
+# committed: a decline changes nothing the platform gives the app, so the
+# request stays pending and the app keeps waiting. The operator records who
+# declined, when and why on the app's Component, which the tenant's console
+# and the App Store's install step show, with the way to ask again. An
+# approval made later stands, and clears the decline.
+cmd_apps_decline() {
+    local usage_text app="" privilege="" reason="" t answer
+    usage_text='usage: kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            --reason) reason="${2:-}"; shift 2 || die "--reason needs a value" ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${app}" ]]; then app="$1"
+                elif [[ -z "${privilege}" ]]; then privilege="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${app}" && -n "${privilege}" && -n "${t:-}" ]] || die "${usage_text}"
+    _label "an app" "${app}"
+    _label "a tenant" "${t}"
+    _privilege_ref "${privilege}"
+    reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what the person who asked reads."
+    need curl jq
+
+    answer="$(_call POST "/v1/tenants/${t}/apps/${app}/actions/decline-privilege" \
+        "$(jq -n --arg p "${privilege}" --arg r "${reason}" '{privilege: $p, reason: $r}')")" || exit 1
+    echo "Declined ${privilege} for ${app} in ${t}: recorded, nothing committed. The app keeps waiting; the tenant sees your reason and may ask again."
 }
 
 # kubectl gentian credentials list [--tenant <t>]
@@ -2756,8 +2807,9 @@ usage() {
 # What waits for the cluster's security officer: every tenant's request of a
 # podSecurity waiver or a cluster role, as the cluster has it. The usher's
 # list, read by whoever holds cluster#can_approve or can_configure. Each line
-# says who asked, when, and what the app's profile gives as its reason; the
-# answer is `apps approve`, which is the security officer's by the kind.
+# says who asked, when, and what the app's profile gives as its reason, and
+# whether it was declined and by whom; the answer is `apps approve` or `apps
+# decline`, both the security officer's by the kind.
 cmd_approvals_list() {
     local answer
     need jq
@@ -2768,20 +2820,23 @@ cmd_approvals_list() {
         return 0
     fi
     printf '%s' "${answer}" | jq -r '
-        (["TENANT","APP","PRIVILEGE","REQUESTED BY","REQUESTED","EXPIRED"] | @tsv),
+        (["TENANT","APP","PRIVILEGE","REQUESTED BY","REQUESTED","EXPIRED","DECLINED BY"] | @tsv),
         (.approvals[] | [
             .tenant, .install, .privilege,
             (.requestedBy // "-"),
             (.requestedAt // "" | if . == "" then "-" else .[0:16] end),
-            (.expiredAt // "" | if . == "" then "-" else .[0:10] end)
+            (.expiredAt // "" | if . == "" then "-" else .[0:10] end),
+            (.declinedBy // "-")
         ] | @tsv)' | column -t -s $'\t'
     echo
     printf '%s' "${answer}" | jq -r '.approvals[] |
         "  " + .tenant + "/" + .install + " " + .privilege + ": "
         + (if (.reason // "") != "" then .reason else "the profile gives no reason" end)
-        + (if (.note // "") != "" then "; " + .requestedBy + " adds: " + .note else "" end)'
+        + (if (.note // "") != "" then "; " + .requestedBy + " adds: " + .note else "" end)
+        + (if (.declinedBy // "") != "" then "; declined by " + .declinedBy + " on " + (.declinedAt // "")[0:10] + ": " + (.declineReason // "") else "" end)'
     echo
     echo "Approve one with: kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason \"<why, in your words>\" [--expires <RFC 3339>]"
+    echo "Decline one with: kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason \"<why, in your words>\""
 }
 
 cmd_approvals() {

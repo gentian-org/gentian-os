@@ -691,7 +691,14 @@ token:
    Approvals page, beside a link to that page. No mail is sent: the
    platform has no mail path of its own, only the realm's. A request
    recorded is shown as such on the step; a grant that ran out is shown as
-   waiting again (`expiredAt`). Reopening the page shows the same step.
+   waiting again (`expiredAt`). One the approver **declined** — `POST
+   /v1/tenants/{t}/apps/{p}/actions/decline-privilege` `{privilege,
+   reason}`, authorised as the approval of that kind is, recorded on the
+   Component by the operator and still pending — is shown as
+   "Declined by `declinedBy` on `declinedAt`: `declineReason`" with
+   **Request again**, which is the request above made anew and clears the
+   decline. Nothing is installed either way. Reopening the page shows the
+   same step.
 
 The OS decides nothing about supply at any step. Whether the app then
 arrives is the repository's answer to the credential.
@@ -847,7 +854,8 @@ repository credential is missing or refused reads as `failing` here, with
 that reason.
 An app that waits on a person lists each request nobody granted yet in
 `pendingPrivileges`, and again in `pendingPrivilegeApprovals` as
-`{privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt}`:
+`{privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt,
+declinedBy, declinedAt, declineReason}`:
 `approvedBy` is `tenant` (the tenant's administrator,
 `tenant#can_approve_privilege`) for `egress`, and `security-officer`
 (`cluster#can_approve`) for every other kind. It is the answer the director
@@ -856,17 +864,24 @@ director still decides. `reason` is the profile's own, for the approver to
 read. `requestedBy`, `requestedAt` and `note` are the request a tenant
 administrator made of the security officer (§6.4 step 4), absent until one
 is made; `expiredAt` is when a grant for it ran out, for a request that was
-approved once and waits again. The same entries, across every tenant and
-for the security officer's kinds only, are the cluster's list:
+approved once and waits again. `declinedBy`, `declinedAt` and
+`declineReason` are the approver's no (`POST
+/v1/tenants/{t}/apps/{p}/actions/decline-privilege` `{privilege, reason}`,
+the reason at least ten characters, authorised exactly as the approval of
+that kind is): the privilege is still pending and the app still waits, but
+whoever asked is told why. A new request clears the decline, and so does an
+approval made after it. The same entries, across every tenant and for the
+security officer's kinds only, are the cluster's list:
 
 ```
-usher      GET /v1/clusters/{c}/approvals     {approvals: [{tenant, profile, install, privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt}]}
+usher      GET /v1/clusters/{c}/approvals     {approvals: [{tenant, profile, install, privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt, declinedBy, declinedAt, declineReason}]}
 ```
 
-read under `can_approve` or `can_configure` on the cluster. The request
-lives on the Component as an annotation the operator writes
-(`gentianos.io/privilege-requests`), not in git: it decides nothing, and the
-approval that answers it is the commit.
+read under `can_approve` or `can_configure` on the cluster. The request and
+the decline live on the Component as an annotation the operator writes
+(`gentianos.io/privilege-requests`), not in git: neither decides anything
+the platform gives the app, and the approval that answers them is the
+commit.
 
 **Uninstalling and purging are two different acts.**
 
