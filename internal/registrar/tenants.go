@@ -71,6 +71,8 @@ var roleDefaults = map[string]string{
 // Tenant is what the routes need to know about one tenant.
 type Tenant struct {
 	Name string
+	// DisplayName is what a person called it; empty falls back to the name.
+	DisplayName string
 	// Realm is the Keycloak realm its people live in.
 	Realm string
 	// LoginDomain is the domain its people sign in under: the part after the
@@ -190,6 +192,7 @@ func (c *ClusterTenants) facts(t *gentianov1alpha1.Tenant) Tenant {
 	domain := c.loginDomain(t, realm)
 	return Tenant{
 		Name:             t.Name,
+		DisplayName:      t.Spec.DisplayName,
 		Realm:            realm,
 		LoginDomain:      domain,
 		AdminLogin:       adminLogin(t, realm, domain),

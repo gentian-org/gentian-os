@@ -456,6 +456,10 @@ func (s *Server) routes() {
 	// names, so it is can_audit like every other read of the cluster.
 	s.guarded("GET /v1/clusters/{c}/people/count", "can_audit", s.clusterObject, s.clusterUserCount)
 
+	// Who could be made a security officer: every tenant's administrators,
+	// for whoever assigns the role (tenant_administrators.go).
+	s.guarded("GET /v1/clusters/{c}/tenant-administrators", "can_configure", s.clusterObject, s.listTenantAdministrators)
+
 	// A person's link to a component that vouches for people, which is that
 	// person's consent to it (vouching.go). Linking is open to whoever may
 	// enter the tenant and links the caller and nobody else. The link is read

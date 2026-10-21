@@ -106,6 +106,7 @@ var clusterSettings = []ClusterSetting{
 	{Path: "platformRoles.serviceAdmin", Doc: "The Keycloak group that runs the system services."},
 	{Path: "platformRoles.sharedAppsAdmin", Doc: "The Keycloak group that runs shared applications."},
 	{Path: "platformRoles.breakGlass", Doc: "The Keycloak group for recovery when the normal path is down."},
+	{Path: "platformAccess.brokeredSecondFactor", Doc: "Whether the kernel realm asks a security officer who signs in through their own tenant's realm for a second factor of its own, enrolled there. Off makes their approval exactly as strong as their tenant realm's sign-in policy, which the platform does not set.", OneOf: []string{"required", "off"}},
 	{Path: "tenantDefaults.limitRange.defaultCpu", Doc: "Default CPU limit for a tenant's containers."},
 	{Path: "tenantDefaults.limitRange.defaultMemory", Doc: "Default memory limit for a tenant's containers."},
 	{Path: "tenantDefaults.limitRange.defaultRequestCpu", Doc: "Default CPU request for a tenant's containers."},

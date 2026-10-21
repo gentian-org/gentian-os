@@ -30,6 +30,7 @@ var clusterSettingDefaults = map[string]string{
 	"tenancyMode":                                    "multi",
 	"platformRoles.admin":                            "gentian:platform:admin",
 	"platformRoles.securityOfficer":                  "gentian:platform:security",
+	"platformAccess.brokeredSecondFactor":            "required",
 	"tenantDefaults.limitRange.defaultCpu":           "500m",
 	"tenantDefaults.limitRange.defaultMemory":        "512Mi",
 	"tenantDefaults.limitRange.defaultRequestCpu":    "100m",
