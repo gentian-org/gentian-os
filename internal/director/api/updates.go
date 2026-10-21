@@ -324,6 +324,11 @@ func heldReasons(e updateEntry, holds []customizationHold, tenant string) []stri
 // newestFor is the catalogue entry an install is compared with: from the
 // catalogue it was installed from where the tenant still sees it, otherwise
 // from the first catalogue the tenant sees that serves the name.
+//
+// The entries a listing leaves to the store count here. An app is acquired
+// once, not per build: a tenant that has a store-only app installed moves
+// to its newest build like any other tenant does, whether the platform
+// moves it or a person does. A new install of one is still the store's.
 func (s *Server) newestFor(ctx context.Context, sources []visibleSource, app gitops.App, unread map[string]bool) (visibleSource, catalogue.IndexEntry, bool) {
 	if s.cfg.Catalogue == nil {
 		return visibleSource{}, catalogue.IndexEntry{}, false
@@ -342,7 +347,7 @@ func (s *Server) newestFor(ctx context.Context, sources []visibleSource, app git
 			unread[src.Name] = true
 			continue
 		}
-		for _, e := range listing.Entries {
+		for _, e := range append(listing.Entries, listing.StoreOnly...) {
 			if e.Name == app.Profile {
 				return src, e, true
 			}
