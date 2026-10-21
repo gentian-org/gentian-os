@@ -166,6 +166,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	h.registerDefinitionRoutes(guarded)
 	h.registerRolloutRoutes(guarded)
 	h.registerResidueRoutes(guarded)
+	h.registerApprovalRoutes(guarded)
 	h.registerRefreshRoutes(guarded)
 	return mux
 }

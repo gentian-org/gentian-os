@@ -575,6 +575,19 @@ kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 
+A `podSecurity` or `clusterRoles` request is the security officer's to
+answer, so the App Store's install step asks them for it (the director's
+`POST /v1/tenants/{t}/apps/{p}/actions/request-privilege`, recorded on the
+app's Component) and the platform console's Approvals page lists what was
+asked. The same list, from the command line:
+
+```bash
+kubectl gentian approvals list     # every tenant's waiting podSecurity and clusterRoles requests: who asked, when, why
+```
+
+It is read with `cluster#can_approve` or `can_configure`; the answer is
+`apps approve` as above, with the request's tenant.
+
 ### What a tenant has on the internet
 
 An entry of a profile that the public reaches (`surface: perimeter`) answers

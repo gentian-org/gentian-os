@@ -80,6 +80,8 @@
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
 #                                                             approve one request: egress (the tenant's administrator),
 #                                                             podSecurity or clusterRoles (the cluster's security officer)
+#   kubectl gentian approvals list                             what awaits the cluster's security officer, across all
+#                                                             tenants: who asked, when, and why the app wants it
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
 #                                                               of their own Authorization header behind sign-in
@@ -2581,6 +2583,48 @@ usage() {
     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
+# kubectl gentian approvals list
+#
+# What waits for the cluster's security officer: every tenant's request of a
+# podSecurity waiver or a cluster role, as the cluster has it. The usher's
+# list, read by whoever holds cluster#can_approve or can_configure. Each line
+# says who asked, when, and what the app's profile gives as its reason; the
+# answer is `apps approve`, which is the security officer's by the kind.
+cmd_approvals_list() {
+    local answer
+    need jq
+    _discover
+    answer="$(_call_usher GET "/v1/clusters/${_CLUSTER}/approvals")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.approvals | length')" == "0" ]]; then
+        echo "Nothing awaits the security officer: no app of any tenant waits for a podSecurity or clusterRoles approval."
+        return 0
+    fi
+    printf '%s' "${answer}" | jq -r '
+        (["TENANT","APP","PRIVILEGE","REQUESTED BY","REQUESTED","EXPIRED"] | @tsv),
+        (.approvals[] | [
+            .tenant, .install, .privilege,
+            (.requestedBy // "-"),
+            (.requestedAt // "" | if . == "" then "-" else .[0:16] end),
+            (.expiredAt // "" | if . == "" then "-" else .[0:10] end)
+        ] | @tsv)' | column -t -s $'\t'
+    echo
+    printf '%s' "${answer}" | jq -r '.approvals[] |
+        "  " + .tenant + "/" + .install + " " + .privilege + ": "
+        + (if (.reason // "") != "" then .reason else "the profile gives no reason" end)
+        + (if (.note // "") != "" then "; " + .requestedBy + " adds: " + .note else "" end)'
+    echo
+    echo "Approve one with: kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason \"<why, in your words>\" [--expires <RFC 3339>]"
+}
+
+cmd_approvals() {
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        list) cmd_approvals_list "$@" ;;
+        *) die "usage: kubectl gentian approvals list" ;;
+    esac
+}
+
 main() {
     local cmd="${1:-help}"
     shift || true
@@ -2613,6 +2657,7 @@ main() {
         model|models) cmd_models "$@" ;;
         setting|settings) cmd_settings "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
+        approval|approvals) cmd_approvals "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         credential|credentials) cmd_credentials "$@" ;;
         version|--version|-v) cmd_version ;;

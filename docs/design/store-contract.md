@@ -677,6 +677,21 @@ token:
 3. For the add-ons the confirmation lists: sets the app's add-ons at the
    director (§3), each as the item's `coordinate` and `digest`. Step 2 has
    pinned the app, which is what the director requires of a pinned add-on.
+4. Waits on the cluster (usher, `apps/status`, §8). While the app lists a
+   `pendingPrivilegeApprovals` entry, the sequence stands at **Approvals**
+   and the page carries on by itself once none is left. Each entry is shown
+   with what it is, the profile's `reason`, and who answers it: one with
+   `approvedBy: tenant` is approved there and then, with the person's
+   reason, through the director's approval route; one with
+   `approvedBy: security-officer` is **requested** — `POST
+   /v1/tenants/{t}/apps/{p}/actions/request-privilege` `{privilege, note}`,
+   `can_install_app` — which the operator records on the Component (who
+   asked, when, the note) and lists at `GET /v1/clusters/{c}/approvals`
+   (usher; `can_approve` or `can_configure`) for the platform console's
+   Approvals page, beside a link to that page. No mail is sent: the
+   platform has no mail path of its own, only the realm's. A request
+   recorded is shown as such on the step; a grant that ran out is shown as
+   waiting again (`expiredAt`). Reopening the page shows the same step.
 
 The OS decides nothing about supply at any step. Whether the app then
 arrives is the repository's answer to the credential.
@@ -832,11 +847,26 @@ repository credential is missing or refused reads as `failing` here, with
 that reason.
 An app that waits on a person lists each request nobody granted yet in
 `pendingPrivileges`, and again in `pendingPrivilegeApprovals` as
-`{privilege, approvedBy}`: `approvedBy` is `tenant` (the tenant's
-administrator, `tenant#can_approve_privilege`) for `egress`, and
-`security-officer` (`cluster#can_approve`) for every other kind. It is the
-answer the director applies to the approval, so a console offers the button
-by it and the director still decides.
+`{privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt}`:
+`approvedBy` is `tenant` (the tenant's administrator,
+`tenant#can_approve_privilege`) for `egress`, and `security-officer`
+(`cluster#can_approve`) for every other kind. It is the answer the director
+applies to the approval, so a console offers the button by it and the
+director still decides. `reason` is the profile's own, for the approver to
+read. `requestedBy`, `requestedAt` and `note` are the request a tenant
+administrator made of the security officer (§6.4 step 4), absent until one
+is made; `expiredAt` is when a grant for it ran out, for a request that was
+approved once and waits again. The same entries, across every tenant and
+for the security officer's kinds only, are the cluster's list:
+
+```
+usher      GET /v1/clusters/{c}/approvals     {approvals: [{tenant, profile, install, privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt}]}
+```
+
+read under `can_approve` or `can_configure` on the cluster. The request
+lives on the Component as an annotation the operator writes
+(`gentianos.io/privilege-requests`), not in git: it decides nothing, and the
+approval that answers it is the commit.
 
 **Uninstalling and purging are two different acts.**
 
