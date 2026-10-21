@@ -710,6 +710,11 @@ func (s *Server) routes() {
 		// itself (apps.go, requestPrivilege). Whoever may install asks; the
 		// answer is the approval route above, decided by the kind.
 		s.action("POST /v1/tenants/{t}/apps/{p}/actions/request-privilege", "can_install_app", tenantObject, s.requestPrivilege)
+		// Saying no to one (apps.go, declinePrivilege). can_view carries the
+		// route, as the approval's does: who may decline follows from the
+		// kind, which the handler checks with mayApprove, and a security
+		// officer holds can_view on every tenant without administering one.
+		s.action("POST /v1/tenants/{t}/apps/{p}/actions/decline-privilege", "can_view", tenantObject, s.declinePrivilege)
 
 		// Choosing a plan is can_set_plan, model v1's own verb for it, and it
 		// is a commit: the operator learns the plan from git like everything

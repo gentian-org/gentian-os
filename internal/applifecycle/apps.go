@@ -114,6 +114,14 @@ type PendingPrivilege struct {
 	// ExpiredAt is when a grant for this privilege stopped applying, for a
 	// request that was approved once and waits again.
 	ExpiredAt string `json:"expiredAt,omitempty"`
+	// DeclinedBy, DeclinedAt and DeclineReason are an approver's no
+	// (privilege_requests.go): who, when and why. The privilege is still
+	// pending -- a decline installs nothing and the app keeps waiting -- but
+	// whoever asked is told. Cleared by a new request, and by an approval
+	// made after it.
+	DeclinedBy    string `json:"declinedBy,omitempty"`
+	DeclinedAt    string `json:"declinedAt,omitempty"`
+	DeclineReason string `json:"declineReason,omitempty"`
 }
 
 // pendingApprovals pairs each pending request with who answers it, what the
@@ -134,8 +142,11 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 			Reason:     security.PrivilegeReason(profile, ref),
 			ExpiredAt:  expiredGrantAt(comp, ref, now),
 		}
-		if req, ok := requests[ref]; ok && p.ApprovedBy == security.PrivilegeApproverSecurityOfficer {
-			p.RequestedBy, p.RequestedAt, p.Note = req.RequestedBy, req.RequestedAt, req.Note
+		if req, ok := requests[ref]; ok {
+			if p.ApprovedBy == security.PrivilegeApproverSecurityOfficer {
+				p.RequestedBy, p.RequestedAt, p.Note = req.RequestedBy, req.RequestedAt, req.Note
+			}
+			p.DeclinedBy, p.DeclinedAt, p.DeclineReason = declineOf(comp, req, ref)
 		}
 		out = append(out, p)
 	}

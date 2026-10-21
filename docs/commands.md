@@ -583,11 +583,22 @@ app's Component) and the platform console's Approvals page lists what was
 asked. The same list, from the command line:
 
 ```bash
-kubectl gentian approvals list     # every tenant's waiting podSecurity and clusterRoles requests: who asked, when, why
+kubectl gentian approvals list     # every tenant's waiting podSecurity and clusterRoles requests: who asked, when, why, and what was declined
 ```
 
 It is read with `cluster#can_approve` or `can_configure`; the answer is
-`apps approve` as above, with the request's tenant.
+`apps approve` as above, with the request's tenant -- or a no:
+
+```bash
+kubectl gentian apps decline aluvian-commerce podSecurity/run-as-root --tenant team \
+  --reason "no root on shared nodes; the rootless build of the image runs without it"
+```
+
+Whoever may approve a request of the kind may decline it, and nobody else.
+A decline commits nothing: the request stays pending and the app keeps
+waiting, but the tenant's console and the App Store's install step show who
+declined, when and why, and offer to ask again. Asking again clears the
+decline, as does an approval made after it.
 
 ### What a tenant has on the internet
 

@@ -316,4 +316,15 @@ func TestTheApprovalsAreTheSecurityOfficersAndTheAdministratorsToRead(t *testing
 			t.Errorf("%s: %d %v", who, code, body)
 		}
 	}
+	// A declined entry comes through as the operator gave it: the decline
+	// is the operator's record, and the usher adds and removes nothing.
+	op.status, op.body = http.StatusOK, `{"approvals":[{"tenant":"acme","profile":"wiki","install":"wiki","privilege":"clusterRoles/node-reader","approvedBy":"security-officer","declinedBy":"ada@example.com","declinedAt":"2026-10-21T10:00:00Z","declineReason":"node access is not for a wiki"}]}`
+	code, body := ask(t, s, "/v1/clusters/demo/approvals", "ada")
+	list, _ := body["approvals"].([]any)
+	if code != http.StatusOK || len(list) != 1 {
+		t.Fatalf("the list: %d %v", code, body)
+	}
+	if entry, _ := list[0].(map[string]any); entry["declinedBy"] != "ada@example.com" || entry["declineReason"] != "node access is not for a wiki" {
+		t.Fatalf("the declined entry = %v", list[0])
+	}
 }
