@@ -157,6 +157,22 @@ func TestScopeFollowsTheKindNotTheProfile(t *testing.T) {
 	}
 }
 
+// What a console is told about who answers is PrivilegeScope in other words,
+// never a decision of its own: the tenant's administrator for egress, the
+// security officer for everything else, an unknown kind included.
+func TestTheApproverIsTheScopeInAConsolesWords(t *testing.T) {
+	for kind, want := range map[string]string{
+		security.PrivilegeEgress:       security.PrivilegeApproverTenant,
+		security.PrivilegePodSecurity:  security.PrivilegeApproverSecurityOfficer,
+		security.PrivilegeClusterRoles: security.PrivilegeApproverSecurityOfficer,
+		"something-new":                security.PrivilegeApproverSecurityOfficer,
+	} {
+		if got := security.PrivilegeApprover(kind); got != want {
+			t.Errorf("%s is answered by %q, want %q", kind, got, want)
+		}
+	}
+}
+
 func TestSplitPrivilegeRefRejectsWhatIsNotARef(t *testing.T) {
 	kind, name := security.SplitPrivilegeRef("egress/smtp-relay")
 	if kind != "egress" || name != "smtp-relay" {

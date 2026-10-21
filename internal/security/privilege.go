@@ -62,6 +62,27 @@ func PrivilegeScope(kind string) string {
 	return "cluster"
 }
 
+// Who answers a request, as a console names the person: the tenant's
+// administrator (tenant#can_approve_privilege) or the cluster's security
+// officer (cluster#can_approve).
+const (
+	PrivilegeApproverTenant          = "tenant"
+	PrivilegeApproverSecurityOfficer = "security-officer"
+)
+
+// PrivilegeApprover is PrivilegeScope in the words a console shows, so that
+// a console asks which relation a request needs instead of deciding it from
+// the kind again. It is derived from PrivilegeScope and nothing else: the
+// director's authorization of an approval (mayApprove) reads the same
+// function, so what a console offers and what the director allows cannot
+// drift apart.
+func PrivilegeApprover(kind string) string {
+	if PrivilegeScope(kind) == "tenant" {
+		return PrivilegeApproverTenant
+	}
+	return PrivilegeApproverSecurityOfficer
+}
+
 // RequestedPrivileges lists every privilege a profile asks for, as
 // <kind>/<name>, sorted so that a status field and a console list do not
 // reorder between reconciles for no reason.
