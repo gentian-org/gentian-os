@@ -17,6 +17,8 @@
 #     it is read with (--oci, --repository), never both, refuses --path (no
 #     catalogue is kept in the deployments repository), and `catalogues list`
 #     shows which;
+#   - `catalogues rename` is one request to the cluster administrator's route,
+#     with --tenant as without, carrying the new name and nothing else;
 #   - `tenants create` states a switch only when it is typed, and reports
 #     what the director wrote;
 #   - `exposures requests` lists what a tenant's apps ask to have on the
@@ -898,6 +900,33 @@ gentian catalogues add acme https://acme.example/apps --oci ghcr.io/acme/catalog
 refused "an address and an artifact together are refused"
 gentian catalogues remove acme --oci ghcr.io/acme/catalogue:1
 refused "remove takes no --oci"
+
+# A rename: one request to the cluster administrator's route, with --tenant
+# as without, with the new name as its body and nothing else.
+fresh; reply POST /v1/clusters/c1/catalogues/acme/actions/rename 202 '{"status":"renamed","name":"acme","newName":"acme-apps","scope":"cluster","commit":"0123456789abcdef"}'
+gentian catalogues rename acme acme-apps
+is "rename asks the cluster's route with the new name" "$(tr -d ' \n' < "${CALLS}")" 'POST/v1/clusters/c1/catalogues/acme/actions/rename{"name":"acme-apps"}'
+has "... and names the commit" "${OUT}" "Catalogue acme renamed to acme-apps for every tenant of this cluster: committed (01234567)"
+has "... and what followed" "${OUT}" "no build moves"
+fresh; reply POST /v1/clusters/c1/tenants/demo/catalogues/aluvian/actions/rename 202 '{"status":"renamed","name":"aluvian","newName":"aluvian-team","scope":"tenant","tenant":"demo","commit":"0123456789abcdef"}'
+gentian catalogues rename aluvian aluvian-team --tenant demo
+is "rename --tenant asks the tenant's route of the cluster, and no other" "$(tr -d ' \n' < "${CALLS}")" 'POST/v1/clusters/c1/tenants/demo/catalogues/aluvian/actions/rename{"name":"aluvian-team"}'
+has "... for the tenant" "${OUT}" "Catalogue aluvian renamed to aluvian-team for tenant demo: committed (01234567)"
+fresh; reply POST /v1/clusters/c1/catalogues/acme/actions/rename 200 '{"status":"unchanged","name":"acme","newName":"acme","scope":"cluster"}'
+gentian catalogues rename acme acme
+has "the same name again is not a commit" "${OUT}" "Catalogue acme is already named acme for every tenant of this cluster; nothing was committed."
+fresh; reply POST /v1/clusters/c1/catalogues/acme/actions/rename 409 '{"error":"acme-apps is a catalogue of tenant demo; remove it there or choose another name"}'
+gentian catalogues rename acme acme-apps
+refused "a name the director refuses is a refusal"
+has "... in the director's words" "${OUT}" "acme-apps is a catalogue of tenant demo"
+fresh
+gentian catalogues rename acme
+refused "rename needs both names"
+gentian catalogues rename acme acme-apps extra
+refused "... and no more"
+gentian catalogues rename acme acme-apps --oci ghcr.io/acme/catalogue:1
+refused "... and takes no --oci"
+is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
 is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
 
 fresh; reply GET /v1/tenants/demo/catalogues 200 '{"tenant":"demo","delegated":true,"catalogues":[{"name":"acme","url":"","oci":{"repository":"acme","artifact":"ghcr.io/acme/catalogue:1"},"scope":"tenant","addedBy":"tenant"}]}'

@@ -309,6 +309,8 @@ kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --r
 kubectl gentian catalogues add ours --oci ghcr.io/ours/catalogue:1 --repository ours   # for every tenant, read with the cluster's repository ours
 kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
+kubectl gentian catalogues rename acme acme-apps       # the same catalogue under another name; what was installed from it follows
+kubectl gentian catalogues rename acme acme-apps --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
 kubectl gentian tenants delegate-catalogues demo off   # the same switch as: tenants set demo --admins-add-catalogues=true|false
 kubectl gentian catalogues residue                     # what the catalogue left on the cluster
@@ -340,6 +342,18 @@ directory of the deployments repository, which holds the cluster's state only;
 `--path` is refused.
 [custom-catalogues.md](custom-catalogues.md) says how to build and publish a
 catalogue.
+
+`rename` is the cluster administrator's, with `--tenant` as without, and is one
+commit to everything that carries the name: the source entry, the `catalogue:`
+of every app entry and add-on pin installed from it (every tenant's, for a
+catalogue of the cluster), and the origin of every profile materialised from
+it. No build moves, since no digest changes; the next install from the new
+name is the same profile again. Refused when the new name is taken — by the
+cluster, by that tenant, or for a catalogue of the cluster by any tenant — and
+when the old one is not a catalogue of that scope. Removing a catalogue and
+adding it under another name is not the same thing: the profiles' origin would
+keep the old name, and an install from the new one would be refused as another
+origin's.
 
 Nothing a profile's bundle brought is removed automatically: a piece a newer
 build drops stays, and so does a profile after its last uninstall. `residue`

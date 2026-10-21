@@ -63,6 +63,9 @@
 #                                  a catalogue kept as an OCI artifact, read with the credential of a
 #                                  repository declared for the tenant (or, without --tenant, for the cluster)
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
+#   kubectl gentian catalogues rename <old> <new> [--tenant <tenant>]
+#                                  the same catalogue under another name: what was installed from
+#                                  it follows, in the same commit, and no build moves
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
 #
@@ -1213,6 +1216,32 @@ _catalogues_change() {
     fi
 }
 
+# catalogues rename: the catalogue under another name, with everything that
+# names it -- the source entry, the entries installed from it, the profiles'
+# origin -- as one commit of the director. The cluster administrator's route,
+# with --tenant as without: a tenant's administrator does not rename.
+cmd_catalogues_rename() {
+    local old="$1" new="$2" t="$3" body whose="every tenant of this cluster"
+    _discover
+    body="$(jq -n --arg n "${new}" '{name: $n}')"
+    if [[ -z "${t}" ]]; then
+        _try POST "/v1/clusters/${_CLUSTER}/catalogues/${old}/actions/rename" "${body}"
+    else
+        whose="tenant ${t}"
+        _try POST "/v1/clusters/${_CLUSTER}/tenants/${t}/catalogues/${old}/actions/rename" "${body}"
+    fi
+    [[ "${_TRY_STATUS}" -lt 300 ]] || die "the director answered ${_TRY_STATUS}: ${_TRY_ANSWER:-no detail}"
+    local status commit
+    status="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.status // ""')"
+    commit="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.commit // "" | .[0:8]')"
+    if [[ "${status}" == "unchanged" ]]; then
+        echo "Catalogue ${old} is already named ${new} for ${whose}; nothing was committed."
+    else
+        echo "Catalogue ${old} renamed to ${new} for ${whose}: committed (${commit:-no commit id})."
+        echo "What was installed from it follows: its entries and the profiles' origin now name ${new}; no build moves."
+    fi
+}
+
 # catalogues residue: what the catalogue left on the cluster -- objects a
 # profile's bundle once brought and no bundle owns now, and profiles nobody
 # uses. Nothing removes them by itself. The list is the usher's, worked out
@@ -1366,7 +1395,26 @@ ${add_usage}"
                 _catalogues_change remove DELETE "${name}" "${t}"
             fi
             ;;
-        *) die "usage: kubectl gentian catalogues list|add|remove|residue ..." ;;
+        rename)
+            local old="" new="" t=""
+            local rename_usage="usage: kubectl gentian catalogues rename <old> <new> [--tenant <tenant>]"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tenant|-t) t="${2:?${rename_usage}}"; shift 2 ;;
+                    -*) die "unknown option $1" ;;
+                    *)
+                        if [[ -z "${old}" ]]; then old="$1"
+                        elif [[ -z "${new}" ]]; then new="$1"
+                        else die "unexpected argument $1"
+                        fi
+                        shift ;;
+                esac
+            done
+            [[ -n "${old}" && -n "${new}" ]] || die "${rename_usage}"
+            need jq
+            cmd_catalogues_rename "${old}" "${new}" "${t}"
+            ;;
+        *) die "usage: kubectl gentian catalogues list|add|remove|rename|residue ..." ;;
     esac
 }
 

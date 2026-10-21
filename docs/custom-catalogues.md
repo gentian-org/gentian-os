@@ -826,6 +826,19 @@ kubectl gentian catalogues remove acme --tenant demo
 
 What was installed from it stays installed.
 
+**Rename** a catalogue in place rather than removing and re-adding it (the cluster's administrator,
+with `--tenant` as without):
+
+```bash
+kubectl gentian catalogues rename acme acme-apps --tenant demo
+```
+
+One commit renames the source entry, the `catalogue:` of every app entry and add-on pin installed
+from it, and the origin of every profile materialised from it; no digest changes, so nothing is
+rolled out, and the next install from the new name is the same profile again. Removed and re-added
+under another name, the profiles would keep the old origin and an install from the new name would be
+refused as another origin's (§7).
+
 ## 6. Updates
 
 A changed profile is a new build with a new digest, and so is a changed companion: the digest is of
