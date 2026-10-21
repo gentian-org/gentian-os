@@ -546,7 +546,6 @@ kind: ClientScope
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes
-    crossplane.io/external-name: app-notes
   labels:
     crossplane.io/composite: render-fixture
   name: render-fixture-edge-exchange-scope-notes
@@ -703,7 +702,6 @@ kind: ClientScope
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-wiki
-    crossplane.io/external-name: app-wiki
   labels:
     crossplane.io/composite: render-fixture
   name: render-fixture-edge-exchange-scope-wiki
@@ -1142,7 +1140,6 @@ kind: ClientScope
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-mailbox-scope
-    crossplane.io/external-name: mailbox
   labels:
     crossplane.io/composite: render-fixture
   name: render-fixture-mailbox-scope

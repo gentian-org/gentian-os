@@ -1209,7 +1209,17 @@ spec:
 
                  The scope's observed id rather than a ref, as for the mailbox
                  scope: a mapper's API path needs the UUID, so the mapper is
-                 not rendered until the scope has been observed once. */}}
+                 not rendered until the scope has been observed once.
+
+                 No external-name, as on the protocol mappers and for the
+                 same reason: a client scope's external name is its UUID,
+                 and the provider finds an existing scope by realm and name
+                 without being told anything. Seeding the annotation with
+                 the scope's name is worse than useless here, because this
+                 MR late-initialises: every reconcile the provider wrote the
+                 UUID back, the composite wrote the name back, and the two
+                 writes a second opened the composite's watch circuit
+                 (Responsive=False, WatchCircuitOpen). */}}
             {{- $exchangeScopes := list }}
             {{- range $p := $exchangeProfiles }}
             {{- $scope := printf "app-%s" $p }}
@@ -1219,7 +1229,6 @@ spec:
             metadata:
               name: {{ $tenant }}-edge-exchange-scope-{{ $p }}
               annotations:
-                crossplane.io/external-name: {{ $scope }}
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}
             spec:
               deletionPolicy: Orphan
@@ -1872,14 +1881,18 @@ spec:
                  here -- no mail server client, no mailbox tokens.
 
                  includeInTokenScope is what puts the name in the token's
-                 scope claim, which is what Dovecot reads. */}}
+                 scope claim, which is what Dovecot reads.
+
+                 No external-name, for the reason given at the exchange
+                 scopes above: the provider finds the scope by its name and
+                 stores its UUID, and seeding the name set off a write loop
+                 with it. */}}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientScope
             metadata:
               name: {{ $tenant }}-mailbox-scope
               annotations:
-                crossplane.io/external-name: mailbox
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-mailbox-scope
             spec:
               deletionPolicy: Orphan

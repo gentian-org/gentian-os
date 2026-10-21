@@ -422,7 +422,6 @@ kind: ClientScope
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-cloud
-    crossplane.io/external-name: app-cloud
   labels:
     crossplane.io/composite: user
   name: user-edge-exchange-scope-cloud
@@ -733,7 +732,6 @@ kind: ClientScope
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-mailbox-scope
-    crossplane.io/external-name: mailbox
   labels:
     crossplane.io/composite: user
   name: user-mailbox-scope

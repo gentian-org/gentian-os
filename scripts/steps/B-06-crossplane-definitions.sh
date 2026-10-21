@@ -24,6 +24,27 @@ _v5_current() {
     [[ "$(kubectl get "${kind}" "${name}" -o jsonpath='{.metadata.annotations.gentianos\.io/source-sha}' 2>/dev/null)" == "$(_v5_sha "${file}")" ]]
 }
 
+# A Composition is applied with its checksum already on it: ONE write, not an
+# apply and then an annotate. Crossplane cuts a CompositionRevision from every
+# distinct state of a Composition -- its labels and annotations are hashed
+# with the spec -- and numbers the new one from the revisions its cache
+# holds at that moment. Applied and then annotated, a Composition passes
+# through two states within a second, and the revision controller once
+# numbered both 1 (repository-default: two revisions, same spec, two hashes).
+# A composite whose update policy is automatic picks "the highest number",
+# and with a tie that is whichever the list returns first: it moved between
+# the two on every reconcile, each move a write to its own spec that fired
+# its own watch, until its watch circuit opened. The checksum travelling in
+# the manifest makes an apply one state and so one revision.
+_v5_apply_composition() {
+    local file="$1" annotated
+    annotated="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '${annotated}'" RETURN
+    kubectl annotate --local -f "${file}" --overwrite "gentianos.io/source-sha=$(_v5_sha "${file}")" -o yaml > "${annotated}" || return 1
+    _kubectl_retry apply -f "${annotated}"
+}
+
 check() {
     local f name
     for f in "${SCRIPT_DIR}"/crossplane/xrds/*.yaml; do
@@ -52,10 +73,7 @@ apply() {
         done
     done
     for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
-        _kubectl_retry apply -f "${f}"
-        for name in $(_v5_composition_names "${f}"); do
-            kubectl annotate composition "${name}" --overwrite "gentianos.io/source-sha=$(_v5_sha "${f}")" >/dev/null
-        done
+        _v5_apply_composition "${f}"
     done
 }
 
