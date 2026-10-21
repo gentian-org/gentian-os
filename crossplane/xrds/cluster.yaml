@@ -222,6 +222,16 @@ spec:
                               bytes are untrusted -- the digest an install
                               asks for is what admits them -- so this may be
                               any host.
+                          addedBy:
+                            type: string
+                            enum: [store]
+                            description: >
+                              store: the installer added this source because
+                              the store this cluster names (storeUrl) lists
+                              it in GET /v1/meta. Absent: the cluster's
+                              administrator added it. The installer adds a
+                              source of a name the claim does not have, and
+                              never changes or removes one, whoever added it.
                           oci:
                             type: object
                             required:

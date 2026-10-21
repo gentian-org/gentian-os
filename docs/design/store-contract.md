@@ -330,7 +330,7 @@ their tenant.
 
 | Operation | Token | Answers |
 |---|---|---|
-| `GET /v1/meta` | open | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on |
+| `GET /v1/meta` | open | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on, and the catalogue sources its entries come from (1.5) |
 | `GET /v1/categories` | open | The categories apps are filed under |
 | `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price, how many add-ons |
 | `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons each with its icon, edition and list price, links, license; and the partners that offer support for it, narrowed to a country when asked |
@@ -779,6 +779,12 @@ approval (AD-5).
 **Where the bound stops.** Three things it does not cover, each already a
 property of the design rather than of this contract:
 
+* **A store names catalogue sources at install time** (§9): the installer
+  adds what `GET /v1/meta` lists, under names the cluster has not used. A
+  store can thereby make a cluster able to install from an address of its
+  choosing. What stands is that the source is a commit on the claim the
+  administrator can read and remove, and that every bundle is still held to
+  the digest of the install.
 * **A store and a catalogue source run by the same party** are one trust,
   not two. The digest protects against a source that is compromised alone
   and a store that is compromised alone. A party that controls both can
@@ -824,6 +830,13 @@ keeps exiting — which Kubernetes retries for ever and which therefore reads as
 "still installing" to anything that only looks at readiness. An app whose
 repository credential is missing or refused reads as `failing` here, with
 that reason.
+An app that waits on a person lists each request nobody granted yet in
+`pendingPrivileges`, and again in `pendingPrivilegeApprovals` as
+`{privilege, approvedBy}`: `approvedBy` is `tenant` (the tenant's
+administrator, `tenant#can_approve_privilege`) for `egress`, and
+`security-officer` (`cluster#can_approve`) for every other kind. It is the
+answer the director applies to the approval, so a console offers the button
+by it and the director still decides.
 
 **Uninstalling and purging are two different acts.**
 
@@ -1023,6 +1036,32 @@ under development (`…/gentian-apps/develop`), and a ref that cannot be read
 the released one. `GENTIAN_CATALOGUE_URL` names another address whatever the
 ref. The reason is written above the address in the claim. A claim that
 exists is not rewritten.
+
+**The store's catalogues.** A store may list in `GET /v1/meta` the
+catalogue sources its entries come from (`catalogues`, 1.5). On every run,
+the installer of a cluster whose claim names a store reads that list and
+adds each catalogue the claim has no source of that name for to
+`catalogue.sources`, marked `addedBy: store`, in the commit step 0 makes. So
+an app bought at the store installs without a `kubectl gentian catalogues
+add` first. It adds and does nothing else:
+
+* a source the claim has is never changed or removed. A name the claim
+  holds at another address is left as it is, and the installer warns with
+  both addresses;
+* a name a tenant uses for a catalogue of its own is not added, as the
+  director would refuse it;
+* only an https address is added;
+* a store that cannot be reached, or lists no `catalogues`, is a warning,
+  and the install goes on;
+* a catalogue the store stops listing stays on the claim, until the
+  administrator removes it (`kubectl gentian catalogues remove`). One the
+  store still lists is added again by the next run.
+
+This makes the cluster take the store's word for where a catalogue is, at
+install time: the store chooses which addresses the cluster may fetch
+profiles from. A bundle fetched from one is still held to the digest of the
+install, which the store also names, so the bound of §7 is the bound for a
+store and a catalogue source run by the same party.
 
 **Catalogues exist at two levels.**
 

@@ -564,7 +564,7 @@ its component reads `waiting for approval of <kind>/<name>`. The answer is a
 commit through the director, with you as the approver and your reason in it.
 An `egress` request is the tenant administrator's to answer; the other two
 are the cluster's security officer's. The Admin Console's Apps page offers
-the same as a button.
+the same as a button, to whoever holds the right the request needs.
 
 ```bash
 kubectl gentian apps approve aluvian-commerce --tenant team     # what it waits for

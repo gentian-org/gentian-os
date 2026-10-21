@@ -27,6 +27,15 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-21** (1.5, additive: a 1.4 client reads every answer as before)
+
+1. **`GET /v1/meta` may list `catalogues`**: the catalogue sources the
+   store's entries come from, each `{name, url, displayName}`, https only.
+   The first half of every coordinate the store serves is one of the
+   names. A cluster's installer adds a listed catalogue the cluster has no
+   source of that name for, so an entry acquired at the store can be
+   installed without the administrator adding its catalogue first.
+
 **2026-10-20** (1.4, additive: a 1.3 client reads every answer as before)
 
 1. **An app summary may say how many add-ons it has** (`addonCount`), so a
@@ -411,6 +420,10 @@ cacheable for the `max-age` it states.
   "mediaOrigins": ["https://media.store.example"],   // images come from here and nowhere else
   "checkoutOrigins": ["https://store.example"],      // a checkoutUrl is on one of these
   "features": ["reviews", "reports", "checkout"],
+  "catalogues": [                            // optional, 1.5: where the entries come from
+    {"name": "gentian", "url": "https://catalogue.example/gentian", "displayName": "Gentian OS"},
+    {"name": "publisher", "url": "https://catalogue.publisher.example", "displayName": "Example Publisher"}
+  ],
   "links": {"terms": "https://store.example/terms", "privacy": "https://store.example/privacy",
             "support": "https://store.example/support", "account": "https://accounts.store.example/account"}
 }
@@ -428,6 +441,7 @@ cacheable for the `max-age` it states.
 | `mediaOrigins` | origin[] | yes | Where image URLs may point. The app fixes its content security policy from it |
 | `checkoutOrigins` | origin[] | yes | Where a `checkoutUrl` may point |
 | `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3). Unknown values are ignored |
+| `catalogues` | `{name, url, displayName?}[]` | no | The catalogue sources the store's entries come from. `name` is the first half of the coordinates from that source; `url` its https address (`index.yaml` and `profiles/` beneath it); `displayName` plain text ≤ 80. A cluster's installer adds each one the cluster has no source of that name for, and changes or removes none ([store-contract.md](../../design/store-contract.md) §9). Added in 1.5 |
 | `links` | object | no | `terms`, `privacy`, `support`, `account`: pages of the store's, each a URL |
 
 ## 4. Tenant standing

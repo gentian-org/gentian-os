@@ -84,7 +84,11 @@ func (s *Server) tenantPrivileges(w http.ResponseWriter, r *http.Request, _ call
 // an audit of a privilege grant is for.
 func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, kind string) (string, bool) {
 	relation, target, refusal := "can_approve_privilege", "", ""
-	if security.PrivilegeScope(kind) == "tenant" {
+	// security.PrivilegeApprover is the one place the kind decides the
+	// approver; the operator reports the same answer on each pending
+	// request (pendingPrivilegeApprovals), which is how a console knows
+	// whom to offer the button without deciding it again.
+	if security.PrivilegeApprover(kind) == security.PrivilegeApproverTenant {
 		tenant, err := tenantObject(r)
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "invalid name")
