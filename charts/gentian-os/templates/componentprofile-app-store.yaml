@@ -19,6 +19,8 @@ metadata:
   name: app-store
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
+    # The app Composition selects the profile by this label.
+    gentianos.io/profile-name: app-store
 spec:
   classes: [app]
   # Reached from the App Store tile on the web exposure.

@@ -32,6 +32,8 @@ const elementProfile = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: element
+  labels:
+    gentianos.io/profile-name: element
 spec:
   classes: [app]
   launch: none

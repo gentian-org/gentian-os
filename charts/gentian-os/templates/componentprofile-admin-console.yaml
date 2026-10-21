@@ -14,6 +14,8 @@ metadata:
   name: admin-console
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
+    # The app Composition selects the profile by this label.
+    gentianos.io/profile-name: admin-console
 spec:
   classes: [app]
   # Reached from the Admin Console tile on the web exposure. The api

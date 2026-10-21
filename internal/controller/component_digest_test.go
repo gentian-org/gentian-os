@@ -40,6 +40,8 @@ const wikiBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: wiki
+  labels:
+    gentianos.io/profile-name: wiki
 spec:
   classes: [app]
   launch: none
@@ -293,6 +295,8 @@ const talkBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: wiki-talk
+  labels:
+    gentianos.io/profile-name: wiki-talk
 spec:
   classes: [app]
   launch: none

@@ -87,6 +87,8 @@ apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: acme-notes
+  labels:
+    gentianos.io/profile-name: acme-notes
 spec:
   package:
     composition: app-acme-notes
@@ -109,6 +111,8 @@ The profile:
 - **Exactly one `ComponentProfile`, and it is first.**
 - **`metadata.name` equals the file name** without `.yaml`. `profiles/acme-notes.yaml` holds the
   profile named `acme-notes`. The name is a DNS label: lower-case letters, digits and hyphens.
+- **It carries the label `gentianos.io/profile-name: <name>`**, its own name: the app Composition
+  selects the profile by that label, and a bundle whose profile lacks it is refused.
 - It must not carry the annotations `gentianos.io/profile-bundle` or `gentianos.io/catalogue-origin`
   (the platform writes those), any label or annotation beginning `argocd.argoproj.io/`, or the label
   `gentianos.io/profile-name` with another profile's name.
@@ -269,6 +273,8 @@ apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: acme-notes
+  labels:
+    gentianos.io/profile-name: acme-notes
 spec:
   classes: [app]
   launch: tile

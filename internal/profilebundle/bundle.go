@@ -199,12 +199,15 @@ func Check(body []byte, name, origin string) (*Bundle, error) {
 	return b, nil
 }
 
-// checkProfile holds the profile document to what no catalogue states.
+// checkProfile holds the profile document to what a Composition needs of it
+// and to what no catalogue states.
 //
-// The label by which a Composition finds a profile is that profile's own
-// name or absent: a profile carrying another's would be found in its place.
-// And nothing addressed to Argo CD, which applies this document and would
-// take a sync option or a hook from it.
+// The app Composition selects the profile by the label ProfileLabel with
+// the profile's own name (crossplane/compositions/app-default.yaml,
+// fetch-extra-resources): a profile without it is never found, and one
+// carrying another's name would be found in that one's place. And nothing
+// addressed to Argo CD, which applies this document and would take a sync
+// option or a hook from it.
 func checkProfile(b *Bundle) error {
 	meta, _ := b.Profile["metadata"].(map[string]any)
 	for _, field := range []string{"labels", "annotations"} {
@@ -217,6 +220,10 @@ func checkProfile(b *Bundle) error {
 				return fmt.Errorf("%w: its profile carries the label %s: %v, which is another profile's name", ErrRefused, key, value)
 			}
 		}
+	}
+	if labels, _ := meta["labels"].(map[string]any); labels[ProfileLabel] != b.Name {
+		return fmt.Errorf("%w: the profile %s must carry the label %s: %s; the app Composition selects it by that label",
+			ErrRefused, b.Name, ProfileLabel, b.Name)
 	}
 	return nil
 }

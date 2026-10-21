@@ -29,7 +29,7 @@ import (
 // shopBundle is a profile and what travels with it: one file, as a catalogue
 // publishes it.
 func shopBundle(extra ...string) string {
-	profile := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: shop\n" +
+	profile := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: shop\n  labels:\n    gentianos.io/profile-name: shop\n" +
 		"spec:\n  classes: [app]\n  launch: tile\n  trustTier: experimental\n  version: \"1.0.0\"\n" +
 		"  package:\n    composition: app-shop\n    chart:\n      repository: oci://registry.example.com/shop\n      name: shop\n      version: \"1.0.0\"\n"
 	composition := "apiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: app-shop\n" +

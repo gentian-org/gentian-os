@@ -191,6 +191,8 @@ func TestWhatABundleMayNotHoldIsRefused(t *testing.T) {
 		{"a profile second", stream(shopPage, shop), "not a ComponentProfile"},
 		{"a second profile", stream(shop, swap(wiki, "name: wiki", "name: shop-two")), "second ComponentProfile"},
 		{"a profile wearing another's label", swap(shop, "gentianos.io/profile-name: shop", "gentianos.io/profile-name: nextcloud-base-ce"), "another profile's name"},
+		{"a profile without its label", swap(shop, "    gentianos.io/profile-name: shop\n", ""), "must carry the label gentianos.io/profile-name: shop"},
+		{"a profile with no labels at all", swap(shop, "  labels:\n    gentianos.io/profile-name: shop\n", ""), "must carry the label gentianos.io/profile-name: shop"},
 		{"a profile with a sync option", swap(shop, "  labels:\n", "  annotations:\n    argocd.argoproj.io/sync-options: Replace=true\n  labels:\n"), "addressed to Argo CD"},
 
 		// Kinds.

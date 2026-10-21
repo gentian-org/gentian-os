@@ -34,14 +34,14 @@ func TestTheFirstEntryFillsAnEmptyResourceList(t *testing.T) {
 // patch that states the same; otherwise the whole catalogue directory stops
 // building, for every entry in it.
 func TestTheBundleNamesItsProfileAsTheProfileNamesItself(t *testing.T) {
-	plain, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n"), "cluster/main")
+	plain, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  labels:\n    gentianos.io/profile-name: element\n"), "cluster/main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(plain), "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  annotations:\n") {
 		t.Fatalf("bundle:\n%s", plain)
 	}
-	odd, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1beta7\nkind: ComponentProfile\nmetadata:\n  name: element\n  namespace: odd\n"), "cluster/main")
+	odd, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1beta7\nkind: ComponentProfile\nmetadata:\n  name: element\n  namespace: odd\n  labels:\n    gentianos.io/profile-name: element\n"), "cluster/main")
 	if err != nil {
 		t.Fatal(err)
 	}

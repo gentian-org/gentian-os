@@ -41,7 +41,7 @@ type served map[string]map[string]string
 
 func profileNamed(name, note string) string {
 	return "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: " + name +
-		"\nspec:\n  classes: [app]\n  launch: tile\n  trustTier: experimental\n  version: \"1.0.0\"\n" +
+		"\n  labels:\n    gentianos.io/profile-name: " + name + "\nspec:\n  classes: [app]\n  launch: tile\n  trustTier: experimental\n  version: \"1.0.0\"\n" +
 		"  package:\n    chart:\n      repository: oci://registry.example.com/" + note + "\n      name: " + name +
 		"\n      version: \"1.0.0\"\n"
 }
@@ -579,7 +579,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 // profile that is not on the cluster.
 func TestATenantsOwnProfileIsNotInstalledInAnotherTenant(t *testing.T) {
 	app := profileNamed("demo-app", "demo")
-	addon := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: demo-wiki-search\nspec:\n  classes: [app]\n" +
+	addon := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: demo-wiki-search\n  labels:\n    gentianos.io/profile-name: demo-wiki-search\nspec:\n  classes: [app]\n" +
 		"  launch: none\n  trustTier: experimental\n  version: \"1.0.0\"\n  package:\n    addon:\n      of: demo-app\n"
 	src := catalogues(t, served{"gentian": {}, "ours": {"demo-app": app, "demo-wiki-search": addon}})
 	h := startCatalogues(t, src)

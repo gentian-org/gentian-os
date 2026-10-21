@@ -39,6 +39,8 @@ const shopBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
   name: shop
+  labels:
+    gentianos.io/profile-name: shop
 spec:
   classes: [app]
   launch: none
@@ -96,7 +98,7 @@ spec:
 // alone is a bundle that is its profile and nothing else.
 func alone(name string) string {
 	return "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: " + name +
-		"\nspec:\n  classes: [app]\n  launch: none\n  trustTier: certified\n  version: \"1.0.0\"\n"
+		"\n  labels:\n    gentianos.io/profile-name: " + name + "\nspec:\n  classes: [app]\n  launch: none\n  trustTier: certified\n  version: \"1.0.0\"\n"
 }
 
 // carrying is a profile on the cluster as the director materialised it: the
