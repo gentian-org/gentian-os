@@ -1698,8 +1698,9 @@ cmd_platform_roles_holders() {
                 echo "  kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why>"
                 return 0
             fi
-            jq -r '(["ROLE","SCOPE","TENANT","LOGIN","EMAIL","EXPIRES","REASON"] | @tsv),
-                (.roleHolders[] | [.role, (.scope // "cluster"), .tenant, .username, (.email // ""), (.expiresAt // "-"), (.reason // "")] | @tsv)' <<<"${answer}" |
+            jq -r '(["ROLE","SCOPE","TENANT","LOGIN","EMAIL","EXPIRES","REASON","IN EFFECT"] | @tsv),
+                (.roleHolders[] | [.role, (.scope // "cluster"), .tenant, .username, (.email // ""), (.expiresAt // "-"), (.reason // "-"),
+                    (if .notInEffect then "no: " + .notInEffect else "yes" end)] | @tsv)' <<<"${answer}" |
                 column -t -s $'\t'
             ;;
         add)

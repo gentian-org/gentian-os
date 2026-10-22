@@ -65,6 +65,7 @@ type cluster
     define can_set_admission: break_glass     # PolicyException, admission overlays (kernel tier)
     define can_edit_raw: break_glass          # /v1/files
     define can_audit: auditor or security_officer or admin
+    define can_open_kernel_tools: can_configure or can_operate_system   # Headlamp: the cluster as Kubernetes sees it
     define can_approve_perimeter: perimeter_approver   # public addresses and egress, on every tenant
 
     # Kernel and system credentials, asked by the custodian before OpenBao

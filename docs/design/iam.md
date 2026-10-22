@@ -200,7 +200,12 @@ name. An entry is keyed by role, tenant and subject, which outlives a changed
 address; `username` and `email` say who it is to a person reading the claim,
 `reason` why they hold it. An entry whose `expiresAt` has passed grants
 nothing: the operator projects no tuple for it and requeues at the next
-expiry.
+expiry. Nor does the entry of a person of another tenant while they are not
+in its `admins` group as the store holds it: the entry stays in the claim,
+the operator logs once that it is not in effect, and the role holds again
+once they are an administrator (at the next projection, at most ten minutes
+on). The director's list says of each entry that is not in effect why
+(`notInEffect`: `expired`, or `no longer an administrator of <t>`).
 
 The cluster's administrator writes an entry through the director
 (`can_configure`), from the command line

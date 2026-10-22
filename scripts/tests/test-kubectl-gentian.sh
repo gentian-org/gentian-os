@@ -1088,7 +1088,7 @@ echo ""
 # holds which the director's; add looks the login up and commits the
 # subject with the reason, remove takes the entry by the login.
 ADMINS='{"cluster":"c1","complete":true,"tenants":[{"tenant":"platform","realm":"kernel","platform":true,"people":[{"id":"k-1","username":"sam@k.example","enabled":true}]},{"tenant":"acme","realm":"acme","people":[{"id":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","enabled":true}]},{"tenant":"globex","realm":"globex","people":[]}]}'
-HOLDERS='{"cluster":"c1","roles":["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin"],"roleHolders":[{"role":"securityOfficer","scope":"cluster","tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","reason":"the deputy","expiresAt":"2027-01-01T00:00:00Z"}]}'
+HOLDERS='{"cluster":"c1","roles":["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin"],"roleHolders":[{"role":"securityOfficer","scope":"cluster","tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","reason":"the deputy","expiresAt":"2027-01-01T00:00:00Z"},{"role":"auditor","scope":"cluster","tenant":"acme","subject":"b2","username":"gone@acme.example","reason":"x","notInEffect":"no longer an administrator of acme"}]}'
 fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
 gentian platform-roles candidates
 has "candidates lists each tenant's administrators" "${OUT}" "it@acme.example"
@@ -1133,6 +1133,7 @@ gentian platform-roles holders
 has "holders lists the holders" "${OUT}" "it@acme.example"
 has "... with the role and its scope" "$(grep '^securityOfficer' <<<"${OUT}" | tr -s ' ')" "securityOfficer cluster acme"
 has "... and the expiry and the reason" "${OUT}" "2027-01-01T00:00:00Z  the deputy"
+has "... and whether each is in effect" "${OUT}" "no: no longer an administrator of acme"
 fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 reply DELETE /v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian platform-roles holders remove securityOfficer acme it@acme.example

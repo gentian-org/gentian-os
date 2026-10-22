@@ -920,4 +920,3 @@ func TestATenantWhoseNamesAreAnothersIsRefused(t *testing.T) {
 // cluster.
 const singleTenancyClaim = "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
 	"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n  tenancyMode: single\n"
-

@@ -559,8 +559,9 @@ func kernelHTTPRouteSpecs(
 			},
 			authz: &routeAuthz{relation: "can_configure", object: clusterObject},
 		})
-		// The cluster view, read-only: an auditor's right. A route the
-		// operator owns is the one that gets a tunnel hostname and a DNS
+		// The cluster as Kubernetes sees it: for who runs the cluster, its
+		// administrators and its service administrators, and not for who
+		// reads or approves (the tile asks the same). A route the operator owns is the one that gets a tunnel hostname and a DNS
 		// record; only where the layout has an observability namespace, since
 		// a route to a Service that does not exist would still claim the host.
 		if observabilityNamespace != "" {
@@ -572,7 +573,7 @@ func kernelHTTPRouteSpecs(
 					kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80,
 						kernelConsoleFrameFilters(kernelDomain)...),
 				},
-				authz: &routeAuthz{relation: "can_audit", object: clusterObject},
+				authz: &routeAuthz{relation: "can_open_kernel_tools", object: clusterObject},
 			})
 		}
 	}

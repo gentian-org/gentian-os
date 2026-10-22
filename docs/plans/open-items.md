@@ -521,10 +521,10 @@ they keep their numbers. Numbers 33 to 54 were added on 2026-10-11.
 | State | Decisions |
 | --- | --- |
 | **Open, awaiting the owner** | 8, 9, 14, 15, 29, 30, 33, 34, 35, 36, 37, 46, 49 |
-| **Open in part** (one part decided, one part not) | 2, 23, 25, 32 |
+| **Open in part** (one part decided, one part not) | 23, 25, 32 |
 | **Built, not decided** (the owner is asked to confirm or reject) | 6, 19, 24, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 50, 51, 52, 53, 54 |
 | **Answered, and the answer needs confirming** | 7, 22 |
-| **Decided** | 1, 3, 4, 5, 10, 11, 12, 13, 16, 17, 18, 20, 21, 26, 27, 28, 31 |
+| **Decided** | 1, 2, 3, 4, 5, 10, 11, 12, 13, 16, 17, 18, 20, 21, 26, 27, 28, 31 |
 
 Every open entry is written the same way: what the options are, what is in
 the code today and since which commit, why it was built so where a reason
@@ -539,19 +539,15 @@ the code or its commit, the entry says so.
    Cluster claim or the Component, is not built now; on the roadmap, item
    1.39.
 
-2. **Who may publish by default** (AD-6). **Open in part.**
-   The owner's answer of 2026-10-09 was: create the perimeter group at
-   install, add the cluster's administrator, and make it a flag at tenant
-   creation and tenant editing whether the tenant's administrators may
-   approve. The question that had been put offered two other options.
-   **Decided 2026-10-09**: the install writes the user tenant of a
-   single-tenancy cluster with the flag on, so the user admin approves
-   there.
-   **Superseded by gentian-org/gentian-os#395**: who approves is a role
-   holder on the Cluster claim (`perimeterApprover`, AD-6 and AD-16), and the
-   cluster's administrator approves through the model's rule
-   (`can_expose: perimeter_approver or admin from operated_by`); the
-   perimeter group, the flag and the registrar's guard for them are gone.
+2. **Who may publish by default** (AD-6). **Decided.** A public address
+   and egress beyond the baseline are approved by the tenant's perimeter
+   approver, a role holder on the Cluster claim (`perimeterApprover`, AD-6
+   and AD-16): an administrator of the tenant, held while they are one, or a
+   person of the platform tenant, for every tenant. The cluster's
+   administrator approves through the model's rule
+   (`can_expose: perimeter_approver or admin from operated_by`). A new
+   tenant, the user tenant of a single-tenancy cluster too, starts with no
+   perimeter approver of its own.
 
 3. **Sessions and offline tokens when a person's groups change** (AD-12).
    **Decided 2026-10-09**: AD-12 states both as an aim, not as something the

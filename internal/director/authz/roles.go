@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // ClusterRoles are the cluster's role relations: admin and break_glass, held
@@ -145,6 +146,23 @@ func HolderUser(realm, sub string) (string, error) {
 		return "", err
 	}
 	return "user:" + realm + "/" + id, nil
+}
+
+// TenantAdministrator says whether the account sub is a member of tenant's
+// admins group, as the store holds it from Keycloak's events: whether a
+// person of that tenant may hold a role by name (HolderScope's rule for a
+// tenant other than the platform's). A tenant or subject that cannot be
+// named is not one.
+func TenantAdministrator(ctx context.Context, c Checker, requestID, tenant, sub string) (bool, error) {
+	user, err := User(sub)
+	if err != nil {
+		return false, nil
+	}
+	group, err := Group("gentian:tenant:" + tenant + ":admins")
+	if err != nil || strings.ContainsAny(tenant, ":/") {
+		return false, nil
+	}
+	return c.Check(ctx, requestID, user, "member", group)
 }
 
 // CheckAs asks for a verified caller: as user, and, when that is refused and

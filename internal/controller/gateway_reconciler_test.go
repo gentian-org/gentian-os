@@ -1079,3 +1079,22 @@ func TestEveryKernelRouteIsBehindAQuestionOrDeliberatelyPublic(t *testing.T) {
 		}
 	}
 }
+
+// Headlamp is for who runs the cluster, as its tile is: a person who reads it
+// (can_audit) or approves its exceptions is not let through the edge.
+func TestHeadlampIsRoutedForWhoRunsTheCluster(t *testing.T) {
+	saved := observabilityNamespace
+	observabilityNamespace = "kernel-observability"
+	t.Cleanup(func() { observabilityNamespace = saved })
+
+	for _, spec := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{}) {
+		if spec.name != kernelRouteHeadlamp {
+			continue
+		}
+		if spec.authz == nil || spec.authz.relation != "can_open_kernel_tools" {
+			t.Fatalf("headlamp asks %+v, want can_open_kernel_tools", spec.authz)
+		}
+		return
+	}
+	t.Fatal("no headlamp route")
+}

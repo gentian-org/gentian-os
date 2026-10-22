@@ -13,6 +13,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -26,14 +27,40 @@ import (
 // Both are commits. The director writes nothing to the authorization graph
 // here: the operator projects the claim's holders into it.
 
-// roleHolders answers who the claim names.
+// roleHolders answers who the claim names, each with whether it is in
+// effect: an entry whose expiresAt has passed, or whose person of a tenant
+// other than the platform's is no longer one of its administrators, stays
+// in the claim -- it is the record -- and grants nothing, as the operator
+// projects it.
 func (s *Server) roleHolders(w http.ResponseWriter, r *http.Request, _ call) {
 	holders, err := s.cfg.Repo.RoleHolders(r.Context())
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": holders})
+	type entry struct {
+		gitops.RoleHolder
+		// NotInEffect says why the entry grants nothing; empty while it does.
+		NotInEffect string `json:"notInEffect,omitempty"`
+	}
+	out := make([]entry, 0, len(holders))
+	for _, h := range holders {
+		e := entry{RoleHolder: h}
+		if at, err := time.Parse(time.RFC3339, h.ExpiresAt); err == nil && !at.After(time.Now()) {
+			e.NotInEffect = "expired"
+		} else if h.Tenant != authz.PlatformTenant {
+			admin, err := s.tenantAdministrator(r, h.Tenant, h.Subject)
+			if err != nil {
+				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+				return
+			}
+			if !admin {
+				e.NotInEffect = "no longer an administrator of " + h.Tenant
+			}
+		}
+		out = append(out, e)
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": out})
 }
 
 // setRoleHolder gives a person, by their subject in their tenant's realm, a
@@ -76,22 +103,14 @@ func (s *Server) setRoleHolder(w http.ResponseWriter, r *http.Request, c call) {
 	s.written(w, r, res, err)
 }
 
-// tenantAdministrator says whether the account subject is a member of the
-// tenant's admins group, as the store holds it from Keycloak's events. A
-// subject or tenant that cannot be named is not one.
+// tenantAdministrator says whether the account subject is an administrator
+// of tenant (authz.TenantAdministrator). A tenant that is not a name is not
+// asked about.
 func (s *Server) tenantAdministrator(r *http.Request, tenant, subject string) (bool, error) {
 	if !gitops.ValidName(tenant) {
 		return false, nil
 	}
-	user, err := authz.User(subject)
-	if err != nil {
-		return false, nil
-	}
-	group, err := authz.Group("gentian:tenant:" + tenant + ":admins")
-	if err != nil {
-		return false, nil
-	}
-	return s.cfg.Authz.Check(r.Context(), reqID(r.Context()), user, "member", group)
+	return authz.TenantAdministrator(r.Context(), s.cfg.Authz, reqID(r.Context()), tenant, subject)
 }
 
 func (s *Server) removeRoleHolder(w http.ResponseWriter, r *http.Request, c call) {

@@ -76,6 +76,14 @@ type AuthzProjectionReconciler struct {
 	// which is what a cluster with no authorization service runs.
 	Graph *authz.OpenFGA
 
+	// Admins answers whether an account is an administrator of a tenant, as
+	// the store holds it (authz.TenantAdministrator). Nil asks Graph.
+	Admins func(ctx context.Context, tenant, sub string) (bool, error)
+
+	// notInEffectWarned holds the role holders already reported as not in
+	// effect, so each is one log line and not one every requeue.
+	notInEffectWarned map[string]bool
+
 	// unknownRoleWarned holds the claim fields already reported as naming no
 	// relation, so a misspelt role is one log line and not one every requeue.
 	unknownRoleWarned map[string]bool
@@ -198,8 +206,11 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 // when its subject is not an account id: the claim's schema refuses those
 // shapes, and a claim written past it is not widened by guessing.
 //
-// An entry whose expiresAt has passed grants nothing either. next is the
-// earliest expiry still ahead, zero when none is.
+// An entry whose expiresAt has passed grants nothing either, and nor does one
+// whose person of a tenant other than the platform's is no longer an
+// administrator of it: the entry stays in the claim, which is the record,
+// and its role holds again once they are. next is the earliest expiry still
+// ahead, zero when none is.
 func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context, now time.Time) (out []authz.RoleHolder, next time.Time, err error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
@@ -253,6 +264,25 @@ func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context, now time.Ti
 					next = at
 				}
 			}
+			if tenant != authz.PlatformTenant {
+				admin, err := r.isAdmin(ctx, tenant, subject)
+				if err != nil {
+					return nil, time.Time{}, fmt.Errorf("ask whether %s administers %s: %w", subject, tenant, err)
+				}
+				key := role + "/" + tenant + "/" + subject
+				if !admin {
+					if r.notInEffectWarned == nil {
+						r.notInEffectWarned = map[string]bool{}
+					}
+					if !r.notInEffectWarned[key] {
+						r.notInEffectWarned[key] = true
+						log.FromContext(ctx).Info("a role holder on the Cluster claim is not in effect: no longer an administrator of the tenant",
+							"role", role, "tenant", tenant, "subject", subject)
+					}
+					continue
+				}
+				delete(r.notInEffectWarned, key)
+			}
 			h := authz.RoleHolder{Relation: rel, Realm: realm, Subject: subject}
 			if scope != authz.ScopeCluster {
 				h.Tenant = tenant
@@ -261,6 +291,13 @@ func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context, now time.Ti
 		}
 	}
 	return out, next, nil
+}
+
+func (r *AuthzProjectionReconciler) isAdmin(ctx context.Context, tenant, sub string) (bool, error) {
+	if r.Admins != nil {
+		return r.Admins(ctx, tenant, sub)
+	}
+	return authz.TenantAdministrator(ctx, r.Graph, "", tenant, sub)
 }
 
 // holderSubject is what a holder's subject may look like: Keycloak's user

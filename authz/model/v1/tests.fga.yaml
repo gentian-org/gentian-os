@@ -86,6 +86,14 @@ tests:
       - {user: user:kernel/serge,  object: cluster:main, assertions: {can_operate_system: true, can_configure: false,  can_install_shared: false}}
       - {user: user:kernel/shari,  object: cluster:main, assertions: {can_install_shared: true, can_grant_shared: true, can_operate_system: false}}
       - {user: user:kernel/petra,  object: cluster:main, assertions: {can_approve_perimeter: true, can_approve: false, can_audit: false, can_configure: false}}
+
+  - name: the kernel tools open for who runs the cluster, not for who reads or approves
+    check:
+      - {user: user:alice,         object: cluster:main, assertions: {can_open_kernel_tools: true}}
+      - {user: user:kernel/serge,  object: cluster:main, assertions: {can_open_kernel_tools: true}}
+      - {user: user:kernel/audrey, object: cluster:main, assertions: {can_open_kernel_tools: false}}
+      - {user: user:kernel/sam,    object: cluster:main, assertions: {can_open_kernel_tools: false}}
+      - {user: user:kernel/petra,  object: cluster:main, assertions: {can_open_kernel_tools: false}}
       - {user: user:bea,           object: cluster:main, assertions: {can_edit_raw: true,   can_set_admission: true,  can_configure: false, can_audit: false}}
       - {user: user:mia,           object: cluster:main, assertions: {can_configure: false, can_audit: false, can_approve: false}}
 

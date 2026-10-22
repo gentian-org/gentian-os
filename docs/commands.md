@@ -911,7 +911,7 @@ token of that person's realm, and used from their tenant's console.
 
 ```bash
 kubectl gentian platform-roles candidates                               # who could hold one: the platform tenant's people, every other tenant's administrators
-kubectl gentian platform-roles holders                                  # ROLE SCOPE TENANT LOGIN EMAIL EXPIRES REASON, as the claim declares
+kubectl gentian platform-roles holders                                  # ROLE SCOPE TENANT LOGIN EMAIL EXPIRES REASON IN EFFECT, as the claim declares
 kubectl gentian platform-roles members                                  # who holds admin and breakGlass through their kernel Keycloak group
 kubectl gentian platform-roles holders add securityOfficer acme it@acme.example --reason "acme's CISO approves waivers"   # one commit
 kubectl gentian platform-roles holders add perimeterApprover acme it@acme.example --reason "acme publishes its shop" --expires 2027-06-30T00:00:00Z

@@ -123,7 +123,7 @@ token of the realm the claim names for it.
 
 | PEP | Object | Relations |
 |---|---|---|
-| Gateway ext-auth bouncer | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host; `session:<sid>` on every miss | `can_enter`; `can_use`; `can_configure`, `can_audit`; `revoked` (deny if true) |
+| Gateway ext-auth bouncer | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host; `session:<sid>` on every miss | `can_enter`; `can_use`; `can_configure`, `can_open_kernel_tools`; `revoked` (deny if true) |
 | — | — | *The gateway and the desktop resolve the **same** relation on the **same** object: `can_use`, and `can_launch` which derives from it. One rule, two enforcement points, no second implementation to drift. The tile list is the usher's answer to the same question; a second computation beside it is how the tile list and the route would come to disagree.* |
 | *(none yet)* | `contract:<t>/<name>` | `can_consume` — the relation exists so the vocabulary is complete and the director can bound what it binds; there is no east-west PEP to ask it until G8 |
 | Custodian | `cluster:<c>` for kernel and system credentials; `tenant:<t>` for a tenant's; `app:<t>/<p>` for a component's own, which follow its tenant's | `can_read_credential` to see that one is required, whether it is set and by whom -- never its value; `can_write_credential` to set it |

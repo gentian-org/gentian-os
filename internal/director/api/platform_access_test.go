@@ -13,6 +13,7 @@ package api_test
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -95,7 +96,8 @@ func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T)
 		t.Fatalf("read back: %d %v", code, body)
 	}
 	first := list[0].(map[string]any)
-	if first["role"] != "auditor" || first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["username"] != "it@demo.example" {
+	if first["role"] != "auditor" || first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["username"] != "it@demo.example" ||
+		first["notInEffect"] != nil {
 		t.Fatalf("first holder = %v", first)
 	}
 	// Whoever may audit the cluster may read who holds a role; a tenant's
@@ -172,5 +174,32 @@ func TestATenantOpensItselfToThePlatformsAdministrators(t *testing.T) {
 	}
 	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "platformAccess") {
 		t.Fatalf("a closed switch is still in the manifest:\n%s", manifest)
+	}
+}
+
+// An entry whose person is no longer an administrator of the tenant, or
+// whose expiry has passed, stays in the claim and is listed as not in effect.
+func TestARoleHolderNotInEffectIsListedAsSuch(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		claim := dt.RemoteFile(t, remote, dt.ClaimPath)
+		claim = strings.TrimRight(claim, "\n") + "\n  platformAccess:\n    roleHolders:\n" +
+			"      - role: auditor\n        scope: cluster\n        tenant: demo\n        subject: u-mia\n        username: mia@demo.example\n        reason: r\n" +
+			"      - role: auditor\n        scope: cluster\n        tenant: demo\n        subject: 7d0f3c2e\n        username: it@demo.example\n        reason: r\n        expiresAt: \"2020-01-01T00:00:00Z\"\n" +
+			"      - role: securityOfficer\n        scope: cluster\n        tenant: demo\n        subject: 7d0f3c2e\n        username: it@demo.example\n        reason: r\n"
+		dt.Commit(t, remote, map[string]string{dt.ClaimPath: claim})
+	})
+	_, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/platform-roles/holders", h.token(t, "gentian", "alice"), "")
+	got := map[string]any{}
+	for _, raw := range body["roleHolders"].([]any) {
+		e := raw.(map[string]any)
+		got[e["role"].(string)+"/"+e["subject"].(string)] = e["notInEffect"]
+	}
+	want := map[string]any{
+		"auditor/u-mia":            "no longer an administrator of demo",
+		"auditor/7d0f3c2e":         "expired",
+		"securityOfficer/7d0f3c2e": nil,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("not in effect: %v, want %v", got, want)
 	}
 }

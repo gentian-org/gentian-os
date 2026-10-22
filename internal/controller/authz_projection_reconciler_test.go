@@ -96,7 +96,8 @@ func TestAMisspeltPlatformRoleIsSkippedAndTheRestProjected(t *testing.T) {
 // realm's token. What a holder may not hold, a role the tenant's people may
 // not hold, a scope other than the role's, a tenant the cluster does not
 // have or that has no realm of its own, a subject that is no account id and
-// an entry that has expired grant nothing. A perimeter approver of a tenant
+// an entry that has expired grant nothing, and nor does one whose person of
+// a tenant is no longer its administrator. A perimeter approver of a tenant
 // is held on that tenant; one of the platform tenant on the cluster.
 func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 	claim := clusterClaim("")
@@ -122,6 +123,7 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 		holder("breakGlass", "test", "6f1c"),
 		holder("auditor", "gone", "b2"),
 		holder("auditor", "test", "not a subject"),
+		holder("auditor", "test", "n1"), // no longer an administrator of test
 	}, "spec", "platformAccess", "roleHolders")
 	test := &gentianov1alpha1.Tenant{}
 	test.Name = "test"
@@ -135,6 +137,12 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 	r := &AuthzProjectionReconciler{
 		Client:  fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(claim, test, acme, platform).Build(),
 		Cluster: "test",
+		Admins: func(_ context.Context, tenant, sub string) (bool, error) {
+			if tenant == "platform" {
+				t.Errorf("a person of the platform tenant was asked about: %s", sub)
+			}
+			return sub != "n1", nil
+		},
 	}
 	got, next, err := r.roleHolders(context.Background(), now)
 	if err != nil {
@@ -149,6 +157,9 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("roleHolders() = %v, want %v", got, want)
+	}
+	if !r.notInEffectWarned["auditor/test/n1"] {
+		t.Error("the entry that is not in effect was not reported")
 	}
 	if want := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC); !next.Equal(want) {
 		t.Errorf("next expiry %v, want %v", next, want)

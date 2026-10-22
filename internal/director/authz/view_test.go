@@ -53,7 +53,7 @@ func TestTheViewResolvesWhoHoldsWhatAndWhatItCarries(t *testing.T) {
 	}
 	// Setting a kernel credential is administering the cluster; seeing that one
 	// is required, and who set it, is also the auditor's.
-	if strings.Join(admin.Grants, ",") != "can_audit,can_configure,can_deploy_tenant,can_read_credential,can_write_credential" {
+	if strings.Join(admin.Grants, ",") != "can_audit,can_configure,can_deploy_tenant,can_open_kernel_tools,can_read_credential,can_write_credential" {
 		t.Fatalf("admin grants = %v", admin.Grants)
 	}
 	if strings.Join(by["auditor"].Grants, ",") != "can_audit,can_read_credential" {
