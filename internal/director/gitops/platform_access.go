@@ -19,6 +19,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -29,18 +30,22 @@ import (
 // platform's administrators sign in to it, as git declares them.
 //
 // On the Cluster claim, the role holders (spec.platformAccess.roleHolders):
-// accounts of the cluster's tenants' realms, each by its subject there,
-// holding a cluster role the cluster's administrator gave them. The operator
-// writes each entry into the authorization graph as the account of that
-// tenant's realm. On a Tenant's manifest, whether the platform's
-// administrators may sign in to it (spec.platformAccess.adminsEnter), which
-// the tenant's own administrators set; its realm then composes the identity
-// provider "kernel" for them.
+// people of the platform tenant and administrators of the cluster's other
+// tenants, each by their subject in their tenant's realm, holding a role the
+// cluster's administrator gave them, with the reason and, if it ends, when.
+// The operator writes each entry into the authorization graph as the
+// account of that tenant's realm. On a Tenant's manifest, whether the
+// platform's administrators may sign in to it
+// (spec.platformAccess.adminsEnter), which the tenant's own administrators
+// set; its realm then composes the identity provider "kernel" for them.
 
 // RoleHolder is one entry of spec.platformAccess.roleHolders.
 type RoleHolder struct {
-	// Role is the claim's name for the cluster role: one of authz.HolderRoles.
+	// Role is the claim's name for the role: one of authz.HolderRoles.
 	Role string `json:"role"`
+	// Scope is how far it reaches: "cluster", or "tenant:<t>" for the
+	// perimeter approver of one tenant (authz.HolderScope).
+	Scope string `json:"scope,omitempty"`
 	// Tenant is the tenant whose realm holds the account.
 	Tenant string `json:"tenant"`
 	// Subject is the account's id in that realm, which outlives a changed
@@ -49,6 +54,10 @@ type RoleHolder struct {
 	// Username and Email say who it is to a person reading the claim.
 	Username string `json:"username"`
 	Email    string `json:"email,omitempty"`
+	// Reason is why the cluster's administrator gave the role.
+	Reason string `json:"reason,omitempty"`
+	// ExpiresAt, RFC 3339, is when the role ends; empty when it does not.
+	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
 // ErrInvalidRoleHolder is an entry that cannot be written.
@@ -131,8 +140,9 @@ func validHolderKey(role, tenant, subject string) error {
 	return nil
 }
 
-// validHolder says what is wrong with an entry, or nothing.
-func validHolder(h RoleHolder) error {
+// validHolder says what is wrong with an entry, or nothing. now is the time
+// an expiry must lie after.
+func validHolder(h RoleHolder, now time.Time) error {
 	if err := validHolderKey(h.Role, h.Tenant, h.Subject); err != nil {
 		return err
 	}
@@ -141,18 +151,45 @@ func validHolder(h RoleHolder) error {
 			return fmt.Errorf("%w: %s %q", ErrInvalidRoleHolder, field, v)
 		}
 	}
+	if len(h.Reason) > 500 || strings.ContainsAny(h.Reason, "\n\r\t\\") || strings.TrimSpace(h.Reason) != h.Reason {
+		return fmt.Errorf("%w: the reason is one line of at most 500 characters", ErrInvalidRoleHolder)
+	}
 	if h.Username == "" {
 		return fmt.Errorf("%w: the login is missing", ErrInvalidRoleHolder)
+	}
+	if h.Reason == "" {
+		return fmt.Errorf("%w: the reason is missing", ErrInvalidRoleHolder)
+	}
+	scope, ok := authz.HolderScope(h.Role, h.Tenant)
+	if !ok {
+		return fmt.Errorf("%w: %s is held by people of the platform tenant only", ErrInvalidRoleHolder, h.Role)
+	}
+	if h.Scope != scope {
+		return fmt.Errorf("%w: %s held by a person of tenant %s has scope %s, not %q", ErrInvalidRoleHolder, h.Role, h.Tenant, scope, h.Scope)
+	}
+	if h.ExpiresAt != "" {
+		at, err := time.Parse(time.RFC3339, h.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("%w: expiresAt %q is not an RFC 3339 time", ErrInvalidRoleHolder, h.ExpiresAt)
+		}
+		if !at.After(now) {
+			return fmt.Errorf("%w: expiresAt %s has passed", ErrInvalidRoleHolder, h.ExpiresAt)
+		}
 	}
 	return nil
 }
 
-// SetRoleHolder gives an account of a tenant's realm a cluster role, or
-// restates it: one commit to the claim. The tenant has to be one git
-// declares, with a realm of its own -- the platform tenant's people hold
-// cluster roles through the kernel realm's groups.
+// SetRoleHolder gives a person a role, or restates it: one commit to the
+// claim. The tenant has to be one git declares, and either the platform
+// tenant, whose people are the kernel realm's, or one with a realm of its
+// own. That the person is an administrator of that tenant, where the role
+// asks for one, is the caller's to have checked. An empty scope is filled in
+// with the one the role has for the tenant's people.
 func (g *GitOps) SetRoleHolder(ctx context.Context, h RoleHolder, meta Meta) (Result, error) {
-	if err := validHolder(h); err != nil {
+	if h.Scope == "" {
+		h.Scope, _ = authz.HolderScope(h.Role, h.Tenant)
+	}
+	if err := validHolder(h, time.Now()); err != nil {
 		return Result{}, err
 	}
 	names, err := g.Tenants(ctx)
@@ -162,15 +199,14 @@ func (g *GitOps) SetRoleHolder(ctx context.Context, h RoleHolder, meta Meta) (Re
 	if !slices.Contains(names, h.Tenant) {
 		return Result{}, fmt.Errorf("%w: this cluster has no tenant %q", ErrInvalidRoleHolder, h.Tenant)
 	}
-	platform, err := g.IsPlatformTenant(ctx, h.Tenant)
+	adopts, err := g.IsPlatformTenant(ctx, h.Tenant)
 	if err != nil {
 		return Result{}, err
 	}
-	if platform {
-		return Result{}, fmt.Errorf("%w: %s is the platform tenant, whose people hold cluster roles "+
-			"through the kernel realm's groups (spec.platformRoles)", ErrInvalidRoleHolder, h.Tenant)
+	if adopts != (h.Tenant == authz.PlatformTenant) {
+		return Result{}, fmt.Errorf("%w: tenant %s has no realm of its own, so nobody of it can be named", ErrInvalidRoleHolder, h.Tenant)
 	}
-	message := fmt.Sprintf("feat(cluster): %s of tenant %s holds %s (via %s)", h.Username, h.Tenant, h.Role, meta.actor())
+	message := fmt.Sprintf("feat(cluster): %s of tenant %s holds %s over %s (via %s)", h.Username, h.Tenant, h.Role, h.Scope, meta.actor())
 	return g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
 		list = slices.DeleteFunc(list, func(e RoleHolder) bool {
 			return e.Role == h.Role && e.Tenant == h.Tenant && e.Subject == h.Subject
@@ -235,13 +271,18 @@ func (l holdersLeaf) render(indent int, key string) []string {
 	}
 	out := []string{pad + key + ":"}
 	for _, h := range l {
+		out = append(out, fmt.Sprintf("%s  - role: %s", pad, quoteScalar(h.Role)))
+		if h.Scope != "" {
+			out = append(out, fmt.Sprintf("%s    scope: %s", pad, quoteScalar(h.Scope)))
+		}
 		out = append(out,
-			fmt.Sprintf("%s  - role: %s", pad, quoteScalar(h.Role)),
 			fmt.Sprintf("%s    tenant: %s", pad, quoteScalar(h.Tenant)),
 			fmt.Sprintf("%s    subject: %s", pad, quoteScalar(h.Subject)),
 			fmt.Sprintf("%s    username: %s", pad, quoteScalar(h.Username)))
-		if h.Email != "" {
-			out = append(out, fmt.Sprintf("%s    email: %s", pad, quoteScalar(h.Email)))
+		for _, f := range [][2]string{{"email", h.Email}, {"reason", h.Reason}, {"expiresAt", h.ExpiresAt}} {
+			if f[1] != "" {
+				out = append(out, fmt.Sprintf("%s    %s: %s", pad, f[0], quoteScalar(f[1])))
+			}
 		}
 	}
 	return out

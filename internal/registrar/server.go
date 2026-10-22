@@ -319,7 +319,11 @@ func (s *Server) authorizeAs(
 		return call{}, false
 	}
 	relation := relationFor(ident)
-	allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), user, relation, target)
+	// As the account, and, refused, as a role holder of the token's realm
+	// (authz.CheckAs): the security officer reads here as the director lets
+	// them.
+	holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
+	allowed, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), user, holder, relation, target)
 	if err != nil {
 		// The decision point is unreachable: refuse, and say it is us.
 		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
@@ -341,55 +345,9 @@ func (s *Server) authorizeAs(
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if c, ok := s.authorize(w, r, pattern, relation, obj); ok {
-			h(w, s.holdApprovers(r, c), c)
+			h(w, r, c)
 		}
 	})
-}
-
-// holdApprovers marks a write so that it cannot change who approves the
-// tenant's public addresses, unless the caller may approve them.
-//
-// Every route here is opened by can_manage_users or a relation beside it,
-// which a tenant's administrator holds. can_expose is its own relation
-// (tenant#perimeter_approver): by default a tenant's administrators do not
-// hold it, and the members of gentian:tenant:<t>:perimeter do. A registrar
-// that put anybody in that group for whoever manages people would make the
-// two the same relation again, one step removed. So the second question is
-// asked here, once, for every write that names a tenant, and the answer
-// travels with the request to the one place writes leave from
-// (identity/guard.go), which refuses the group's membership, the group, and
-// every write to a person in it.
-//
-// The caller who holds can_expose is not held back: the cluster's
-// administrator in a tenant its cluster operates, a member of the perimeter
-// group, and a tenant's administrator where the cluster's administrator said
-// its administrators approve. A store that does not answer holds back.
-func (s *Server) holdApprovers(r *http.Request, c call) *http.Request {
-	tenant := r.PathValue("t")
-	if r.Method == http.MethodGet || !dnsLabel.MatchString(tenant) {
-		return r
-	}
-	ctx := r.Context()
-	return r.WithContext(s.approversHeld(ctx, reqID(ctx), c.subject, tenant))
-}
-
-// approversHeld is holdApprovers' question and its answer, for a write made
-// for subject in tenant: ctx as it is where subject may approve the tenant's
-// public addresses, and marked where not, or where the store did not say.
-func (s *Server) approversHeld(ctx context.Context, requestID, subject, tenant string) context.Context {
-	allowed, err := s.cfg.Authz.Check(ctx, requestID, "user:"+subject, "can_expose", authz.Tenant(tenant))
-	if err == nil && allowed {
-		return ctx
-	}
-	return identity.WithApproversHeld(ctx, perimeterGroup(tenant))
-}
-
-// perimeterGroup is the group whose members approve a tenant's public
-// addresses: internal/keycloak.TenantPerimeterGroup, and the group the
-// operator projects as tenant#perimeter_approver. For every tenant, the
-// platform's too, it is under gentian:tenant:<t>:.
-func perimeterGroup(tenant string) string {
-	return "gentian:tenant:" + tenant + ":perimeter"
 }
 
 // action registers something that happens once. The pattern must be a POST
@@ -460,9 +418,10 @@ func (s *Server) routes() {
 	// names, so it is can_audit like every other read of the cluster.
 	s.guarded("GET /v1/clusters/{c}/people/count", "can_audit", s.clusterObject, s.clusterUserCount)
 
-	// Who could be made a security officer: every tenant's administrators,
-	// for whoever assigns the role (tenant_administrators.go).
-	s.guarded("GET /v1/clusters/{c}/tenant-administrators", "can_configure", s.clusterObject, s.listTenantAdministrators)
+	// Who could be named a role holder: the platform tenant's people and
+	// every other tenant's administrators, for whoever assigns the role
+	// (role_candidates.go).
+	s.guarded("GET /v1/clusters/{c}/role-candidates", "can_configure", s.clusterObject, s.listRoleCandidates)
 
 	// Who holds each platform role through its kernel-realm group, for
 	// whoever may audit the cluster (platform_role_members.go).

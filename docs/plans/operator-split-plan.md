@@ -597,12 +597,13 @@ A *projection* is a copy of facts kept in a second place, always rebuilt from
 the original and never edited there. The operator creates the OpenFGA store
 and its model, and writes four things into it:
 
-- **Platform roles**: which Keycloak group holds which role over the cluster,
-  from `spec.platformRoles` on the Cluster claim.
-- **Tenants**: each tenant attached to the cluster, with its admins',
-  members' and perimeter approvers' groups. The tenant's admins group is
-  written as a perimeter approver only while the tenant's manifest says
-  `spec.perimeter.adminsApprove: true`, and removed again when it does not.
+- **Platform roles**: which Keycloak group holds `admin` and `break_glass`
+  over the cluster, from `spec.platformRoles` on the Cluster claim, and each
+  role holder of `spec.platformAccess.roleHolders` as the account of its
+  realm, on the cluster or, for a tenant's perimeter approver, on that
+  tenant; an entry past its `expiresAt` is not written.
+- **Tenants**: each tenant attached to the cluster, with its admins' and
+  members' groups.
 - **Apps**: each installed app attached to its tenant, with the group whose
   members may use it.
 - **Memberships**: which person is in which group, from Keycloak's signed
@@ -837,8 +838,9 @@ cluster, the `MailboxRemoval` above.
   OpenFGA answers, every change to a group the Cluster claim names under
   `spec.platformRoles`: adding to it, removing from it, renaming, deleting or
   re-creating it. It also refuses any change to a person who is in such a
-  group, because changing a role holder's address and mailing a password link
-  replaces them. The rule is applied in the one place every write leaves for
+  group, or who is a person of the platform tenant the claim names a role
+  holder, because changing a role holder's address and mailing a password
+  link replaces them. The rule is applied in the one place every write leaves for
   Keycloak ([guard.go](../../internal/registrar/identity/guard.go)), and a
   write it does not recognise is refused. If the claim cannot be read, the
   write is refused.

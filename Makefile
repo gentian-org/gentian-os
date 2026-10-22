@@ -221,10 +221,11 @@ test-stage-values-scaffold:
 test-catalogue-default:
 	@bash scripts/tests/test-catalogue-default.sh
 
-## test-platform-role-groups: a new Cluster claim names two separate groups,
-## gentian:platform:admin and gentian:platform:security, and the kernel
-## realm's bootstrap Job makes the security officers' group empty, granting it
-## no realm role. Stand-ins for kubectl and curl; no cluster, no network.
+## test-platform-role-groups: a new Cluster claim names a group for admin
+## alone, a claim set up before roles were held by name is carried over to
+## role holders (the members Keycloak holds, the tenant's switch, warnings for
+## whoever cannot be), and the kernel realm's bootstrap Job makes no security
+## officers' group. A stand-in for kubectl and a local fake Keycloak; no cluster.
 test-platform-role-groups:
 	@bash scripts/tests/test-platform-role-groups.sh
 

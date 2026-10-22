@@ -21,8 +21,9 @@ import (
 //
 // The store is a projection, mostly (AD-12). Who is whose member follows
 // from the identity provider; which cluster a tenant is attached to, which
-// groups hold its three roles, which apps it has and which groups are
-// entitled to them follow from the tenant's entry in git, and the operator
+// groups hold its two roles, which apps it has and which groups are entitled
+// to them follow from the tenant's entry in git, who approves its perimeter
+// from the Cluster claim, and the operator
 // writes all of that again wherever the tenant is (ReconcileTenants,
 // ReconcileApps). A backup that carried those would carry a second copy of
 // git, and a restore that wrote them back would overrule it.
@@ -104,16 +105,6 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 	for _, t := range once {
 		derived[key(t)] = true
 	}
-	// Whether the tenant's administrators approve its public addresses is
-	// the manifest's to say, and the projection removes the entry where the
-	// manifest does not. Present or not, it is not a right only the store
-	// knows, and it does not travel in a bundle: on the cluster a tenant is
-	// imported to, that is its administrator's decision.
-	approve, err := adminsApprove(tenant)
-	if err != nil {
-		return out, err
-	}
-	derived[key(approve)] = true
 	want, err := appTuples(tenant, apps)
 	if err != nil {
 		return out, err
@@ -141,6 +132,14 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 		return out, fmt.Errorf("%w: %s", ErrNotProjected, tenant)
 	}
 	for _, t := range onTenant {
+		// Who approves the tenant's perimeter is the Cluster claim's to say,
+		// and the projection removes every entry it does not name. Present or
+		// not, it is not a right only the store knows, and it does not travel
+		// in a bundle: on the cluster a tenant is imported to, that is its
+		// administrator's decision.
+		if t.Relation == "perimeter_approver" {
+			continue
+		}
 		if p := plain(t); !derived[key(p)] {
 			out.Granted = append(out.Granted, p)
 		}

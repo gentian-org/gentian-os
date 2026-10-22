@@ -145,7 +145,11 @@ type Config struct {
 	// role. Required: every write is checked against them (guard.go), and a
 	// client that did not know the names could only let everything through.
 	PlatformRoleGroups RoleGroups
-	Logger             *slog.Logger
+	// PlatformRoleHolders names the subjects of the platform tenant's people
+	// the Cluster claim names role holders, whose accounts are not written
+	// from here either (guard.go). Nil names none.
+	PlatformRoleHolders RoleGroups
+	Logger              *slog.Logger
 	// HTTPClient is optional; the default has a timeout because an admin
 	// call on a request path must not outlive the request.
 	HTTPClient *http.Client
@@ -153,11 +157,12 @@ type Config struct {
 
 // Client is the registrar's Keycloak administrative client.
 type Client struct {
-	base   string
-	source CredentialSource
-	roles  RoleGroups
-	http   *http.Client
-	log    *slog.Logger
+	base    string
+	source  CredentialSource
+	roles   RoleGroups
+	holders RoleGroups
+	http    *http.Client
+	log     *slog.Logger
 
 	mu     sync.Mutex
 	tokens map[string]cachedToken
@@ -195,7 +200,7 @@ func New(cfg Config) (*Client, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{base: base, source: cfg.Source, roles: cfg.PlatformRoleGroups, http: hc, log: log,
+	return &Client{base: base, source: cfg.Source, roles: cfg.PlatformRoleGroups, holders: cfg.PlatformRoleHolders, http: hc, log: log,
 		tokens: map[string]cachedToken{}}, nil
 }
 

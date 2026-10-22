@@ -57,7 +57,7 @@ var PlatformClientPatterns = []string{
 
 // PlatformGroupPattern matches the names of the groups the platform makes,
 // for a bundle taken before the marker was set: the tenant's
-// gentian:tenant:<tenant>:… (members, admins, app-admins, perimeter and
+// gentian:tenant:<tenant>:… (members, admins, app-admins and
 // app:<profile>; TenantMembersGroup and the others) and the kernel realm's
 // gentian:platform:… (the platform administrators' group).
 const PlatformGroupPattern = `^gentian:(tenant|platform):`

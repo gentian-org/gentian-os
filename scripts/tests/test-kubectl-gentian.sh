@@ -297,28 +297,26 @@ refused "a tenant name that is not a name is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
-echo "kubectl gentian tenants: who approves public addresses, who adds catalogues"
+echo "kubectl gentian tenants: who adds catalogues"
 echo ""
 
-SWITCHES='{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false,"adminsApprove":false,"cataloguesDelegated":false},{"name":"acme","displayName":"Acme","apps":["cloud"],"protected":false,"adminsApprove":true,"cataloguesDelegated":false}]}'
-APPROVE_ROUTE="/v1/clusters/c1/tenants/globex/perimeter-delegation"
+SWITCHES='{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false,"cataloguesDelegated":false},{"name":"acme","displayName":"Acme","apps":["cloud"],"protected":false,"cataloguesDelegated":true}]}'
 CATALOGUE_ROUTE="/v1/clusters/c1/tenants/globex/catalogue-delegation"
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${SWITCHES}"
 gentian tenants list
-has "list names the two switches" "$(head -1 <<<"${OUT}")" "ADMINS-APPROVE"
-has "... and each tenant's" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "yes no"
-has "... off where nothing was switched on" "$(grep '^globex' <<<"${OUT}" | tr -s ' ')" "no no"
-# A director that does not answer the fields yet shows them off, never on.
+has "list names the switch" "$(head -1 <<<"${OUT}")" "ADMINS-ADD-CATALOGUES"
+has "... and each tenant's" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "- yes"
+has "... off where nothing was switched on" "$(grep '^globex' <<<"${OUT}" | tr -s ' ')" "- no"
+# A director that does not answer the field yet shows it off, never on.
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 gentian tenants list
-has "a listing without the fields shows both off" "$(grep '^globex' <<<"${OUT}" | tr -s ' ')" "no no"
+has "a listing without the field shows it off" "$(grep '^globex' <<<"${OUT}" | tr -s ' ')" "- no"
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${SWITCHES}"
 gentian tenants show acme
-has "show says whether its administrators approve" "${OUT}" "Its administrators may approve public addresses:  yes"
-has "... and whether they add catalogues" "${OUT}" "Its administrators may add catalogues:            no"
-has "... and who always approves" "${OUT}" "gentian:tenant:acme:perimeter"
+has "show says whether its administrators add catalogues" "${OUT}" "Its administrators may add catalogues:            yes"
+has "... and who approves its perimeter" "${OUT}" "platform-roles holders add perimeterApprover acme <login>"
 is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenants "
 gentian tenants show nobody
 refused "show of a tenant that is not there is refused"
@@ -326,30 +324,10 @@ refused "show of a tenant that is not there is refused"
 fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
 gentian tenants create globex
 is "create names no switch unless one is given" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true}'
-has "... and says who approves then" "${OUT}" "not by its own administrators"
-
-fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
-gentian tenants create globex --admins-approve-public-addresses --admins-add-catalogues
-is "create with both switches states both, as the manifest names them" "$(writes | tr -d ' \n')" \
-    'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true,"perimeter":{"adminsApprove":true},"catalogue":{"delegated":true}}'
-has "... and says so" "${OUT}" "Its administrators may approve its public addresses."
-
-# The user tenant of a single-tenancy cluster: the director turns approving on
-# where the request does not say, and the command reports what it wrote.
-fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","adminsApprove":true}'
-gentian tenants create user
-is "create for the user tenant states no switch either" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/tenants{"name":"user","displayName":"","requireMFA":true}'
-has "... and says what the director wrote, not what was typed" "${OUT}" "Its administrators may approve its public addresses."
-
-fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","adminsApprove":false}'
-gentian tenants create user --admins-approve-public-addresses=false
-is "create states an explicit off" "$(writes | tr -d ' \n')" \
-    'POST/v1/clusters/c1/tenants{"name":"user","displayName":"","requireMFA":true,"perimeter":{"adminsApprove":false}}'
-has "... and says who approves then" "${OUT}" "not by its own administrators"
 
 fresh
-gentian tenants create user --admins-approve-public-addresses=maybe
-refused "create refuses a value that is neither true nor false"
+gentian tenants create user --admins-approve-public-addresses
+refused "create refuses the retired approving switch"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
@@ -479,8 +457,8 @@ fresh
 gentian apps decline aluvian-commerce hostNetwork/x --tenant team --reason "because it must not"
 refused "a decline of no known kind is a usage error"
 
-# What awaits the security officer, across the cluster: the usher's list,
-# read as a table with who asked and why, and the command that answers it.
+# What awaits an approver, across the cluster: the usher's list, read as a
+# table with who answers, who asked and why, and the command that answers it.
 fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[{"tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approvedBy":"security-officer","reason":"the vendor image writes its cache as root","requestedBy":"tom@example.com","requestedAt":"2026-10-21T09:12:00Z","note":"needed for the pilot"},{"tenant":"other","profile":"wiki","install":"wiki","privilege":"clusterRoles/node-reader","approvedBy":"security-officer","declinedBy":"sam@example.com","declinedAt":"2026-10-21T10:00:00Z","declineReason":"node access is not for a wiki"}]}'
 gentian approvals list
 is "approvals list asks the usher for the cluster's list" "$(cat "${CALLS}")" "GET /v1/clusters/c1/approvals "
@@ -488,11 +466,12 @@ has "... and shows who asked" "${OUT}" "tom@example.com"
 has "... and the profile's reason with the note" "${OUT}" "team/aluvian-commerce podSecurity/run-as-root: the vendor image writes its cache as root; tom@example.com adds: needed for the pilot"
 has "... and a request nobody asked for yet, declined" "${OUT}" "other/wiki clusterRoles/node-reader: the profile gives no reason; declined by sam@example.com on 2026-10-21: node access is not for a wiki"
 has "... with the decliner in the table" "${OUT}" "DECLINED BY"
+has "... and who answers each" "${OUT}" "security-officer"
 has "... and says how to answer" "${OUT}" "kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant>"
 has "... either way" "${OUT}" "kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant>"
 fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[]}'
 gentian approvals list
-has "an empty list says so" "${OUT}" "Nothing awaits the security officer"
+has "an empty list says so" "${OUT}" "Nothing awaits an approver"
 
 # What was granted, across the cluster: the director's list, as a table.
 fresh; reply GET /v1/clusters/c1/privileges 200 '{"cluster":"c1","privileges":[{"tenant":"team","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approver":"sam","approvedAt":"2026-10-21T09:12:00Z","reason":"reviewed by the officer","expiresAt":"2027-01-01T00:00:00Z"}]}'
@@ -505,26 +484,16 @@ fresh; reply GET /v1/clusters/c1/privileges 200 '{"cluster":"c1","privileges":[]
 gentian approvals granted
 has "an empty grant list says so" "${OUT}" "No tenant of this cluster has an approved privilege exception"
 
-fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
-gentian tenants set globex --admins-approve-public-addresses=true
-is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "
-has "... and says it is committed" "${OUT}" "may now approve its public addresses: committed"
-
-fresh; reply DELETE "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":false,"commit":"0123456789abcdef"}'
-gentian tenants set globex --admins-approve-public-addresses=false
-is "set turns approving off with one DELETE" "$(cat "${CALLS}")" "DELETE ${APPROVE_ROUTE} "
-has "... and says what stays" "${OUT}" "What is published stays until it is withdrawn"
-
-fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated"}'; reply DELETE "${CATALOGUE_ROUTE}" 202 '{"status":"updated"}'
-gentian tenants set globex --admins-add-catalogues=false --admins-approve-public-addresses=true
-is "set changes both, each by its own route" "$(tr '\n' '|' < "${CALLS}")" "PUT ${APPROVE_ROUTE} |DELETE ${CATALOGUE_ROUTE} |"
+fresh; reply DELETE "${CATALOGUE_ROUTE}" 202 '{"status":"updated"}'
+gentian tenants set globex --admins-add-catalogues=false
+is "set takes catalogues back with one DELETE" "$(cat "${CALLS}")" "DELETE ${CATALOGUE_ROUTE} "
 
 fresh; reply PUT "${CATALOGUE_ROUTE}" 202 '{"status":"updated"}'
 gentian tenants set globex --admins-add-catalogues=true
 is "set delegates catalogues through the route that always did" "$(cat "${CALLS}")" "PUT ${CATALOGUE_ROUTE} "
 
-fresh; reply PUT "${APPROVE_ROUTE}" 403 '{"error":"forbidden"}'
-gentian tenants set globex --admins-approve-public-addresses=true
+fresh; reply PUT "${CATALOGUE_ROUTE}" 403 '{"error":"forbidden"}'
+gentian tenants set globex --admins-add-catalogues=true
 refused "a refusal by the director ends the command non-zero"
 has "... with the director's own word" "${OUT}" "the director answered 403: forbidden"
 
@@ -551,7 +520,7 @@ gentian tenants set globex
 refused "set with nothing to set is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 fresh
-gentian tenants set 'globex/../acme' --admins-approve-public-addresses=true
+gentian tenants set 'globex/../acme' --admins-add-catalogues=true
 refused "set refuses a tenant that is not a name"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
@@ -1117,44 +1086,54 @@ echo ""
 
 # The role holders: who could hold a role is the registrar's answer, who
 # holds which the director's; add looks the login up and commits the
-# subject, remove takes the entry by the login.
-ADMINS='{"cluster":"c1","complete":true,"tenants":[{"tenant":"acme","realm":"acme","administrators":[{"id":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","enabled":true}]},{"tenant":"globex","realm":"globex","administrators":[]}]}'
-HOLDERS='{"cluster":"c1","roles":["auditor","securityOfficer"],"roleHolders":[{"role":"securityOfficer","tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example"}]}'
-fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-gentian platform-roles tenant-administrators
-has "tenant-administrators lists each tenant's administrators" "${OUT}" "it@acme.example"
-has "... and a tenant with none" "${OUT}" "(no administrator)"
-is "... from the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenant-administrators "
+# subject with the reason, remove takes the entry by the login.
+ADMINS='{"cluster":"c1","complete":true,"tenants":[{"tenant":"platform","realm":"kernel","platform":true,"people":[{"id":"k-1","username":"sam@k.example","enabled":true}]},{"tenant":"acme","realm":"acme","people":[{"id":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","enabled":true}]},{"tenant":"globex","realm":"globex","people":[]}]}'
+HOLDERS='{"cluster":"c1","roles":["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin"],"roleHolders":[{"role":"securityOfficer","scope":"cluster","tenant":"acme","subject":"7d0f3c2e","username":"it@acme.example","email":"it@acme.example","reason":"the deputy","expiresAt":"2027-01-01T00:00:00Z"},{"role":"auditor","scope":"cluster","tenant":"acme","subject":"b2","username":"gone@acme.example","reason":"x","notInEffect":"no longer an administrator of acme"}]}'
+fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
+gentian platform-roles candidates
+has "candidates lists each tenant's administrators" "${OUT}" "it@acme.example"
+has "... and the platform tenant's people" "$(grep '^platform' <<<"${OUT}" | tr -s ' ')" "platform person sam@k.example"
+has "... and a tenant with nobody" "${OUT}" "(nobody)"
+is "... from the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/role-candidates "
 
-fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-reply PUT /v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
+fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
+reply PUT /v1/clusters/c1/platform-roles/holders/perimeterApprover/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles holders add perimeterApprover acme it@acme.example --reason website --expires 2027-01-01T00:00:00Z
+is "holders add commits the subject the registrar answered, with reason and expiry" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/holders/perimeterApprover/acme/7d0f3c2e{"username":"it@acme.example","email":"it@acme.example","reason":"website","expiresAt":"2027-01-01T00:00:00Z"}'
+has "... and says it is committed" "${OUT}" "it@acme.example of acme holds perimeterApprover until 2027-01-01T00:00:00Z: committed"
+
+fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
+reply PUT /v1/clusters/c1/platform-roles/holders/serviceAdmin/platform/k-1 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles holders add serviceAdmin platform sam@k.example --reason services
+is "a person of the platform tenant is named the same way" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/holders/serviceAdmin/platform/k-1{"username":"sam@k.example","email":"","reason":"services"}'
+
+fresh
 gentian platform-roles holders add securityOfficer acme it@acme.example
-is "holders add commits the subject the registrar answered" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e{"username":"it@acme.example","email":"it@acme.example"}'
-has "... and says it is committed" "${OUT}" "it@acme.example of acme holds securityOfficer: committed"
-
-fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-gentian platform-roles holders add securityOfficer acme nobody@acme.example
-refused "a login that is no administrator of the tenant is refused"
+refused "add without a reason is refused"
+is "... and nothing is asked" "$(cat "${CALLS}")" ""
+fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
+gentian platform-roles holders add securityOfficer acme nobody@acme.example --reason x
+refused "a login that is no candidate of the tenant is refused"
 is "... and nothing is committed" "$(writes)" ""
-has "... and the tenant's administrators are named" "${OUT}" "it@acme.example"
-fresh; reply GET /v1/clusters/c1/tenant-administrators 200 "${ADMINS}"
-gentian platform-roles holders add securityOfficer nowhere it@acme.example
+has "... and the tenant's candidates are named" "${OUT}" "it@acme.example"
+fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
+gentian platform-roles holders add securityOfficer nowhere it@acme.example --reason x
 refused "a tenant the registrar does not list is refused"
 is "... and nothing is committed" "$(writes)" ""
 fresh
-gentian platform-roles holders add securityOfficer Acme it@acme.example
+gentian platform-roles holders add securityOfficer Acme it@acme.example --reason x
 refused "a tenant that is not a name is refused before anything is asked"
 is "... and nothing is asked" "$(cat "${CALLS}")" ""
 fresh
-gentian platform-roles holders add acme it@acme.example
+gentian platform-roles holders add acme it@acme.example --reason x
 refused "add without a role is refused"
-is "... and nothing is asked" "$(cat "${CALLS}")" ""
 
 fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 gentian platform-roles holders
 has "holders lists the holders" "${OUT}" "it@acme.example"
-has "... with the role" "${OUT}" "securityOfficer"
-has "... and the subject" "${OUT}" "7d0f3c2e"
+has "... with the role and its scope" "$(grep '^securityOfficer' <<<"${OUT}" | tr -s ' ')" "securityOfficer cluster acme"
+has "... and the expiry and the reason" "${OUT}" "2027-01-01T00:00:00Z  the deputy"
+has "... and whether each is in effect" "${OUT}" "no: no longer an administrator of acme"
 fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 reply DELETE /v1/clusters/c1/platform-roles/holders/securityOfficer/acme/7d0f3c2e 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian platform-roles holders remove securityOfficer acme it@acme.example
@@ -1165,7 +1144,7 @@ refused "removing a role the login does not hold is refused"
 is "... and nothing is committed" "$(writes)" ""
 
 # Who holds each role through its group: the registrar's answer, read only.
-fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"auditor","group":"gentian:platform:auditor","members":[]},{"role":"securityOfficer","group":"gentian:platform:security","members":null,"unavailable":true}]}'
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]},{"role":"other","group":"gentian:platform:other","members":null,"unavailable":true}]}'
 gentian platform-roles members
 is "members asks the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/platform-role-members "
 has "... and lists a member with the group" "${OUT}" "ops@k.example"

@@ -61,11 +61,9 @@ const platformTenant = "platform"
 
 // roleDefaults are the groups the Cluster claim's schema names for a platform
 // role when the claim says nothing else, by the field of spec.platformRoles
-// each belongs to: the administrators' and, apart from them, the security
-// officers'.
+// each belongs to: the administrators'.
 var roleDefaults = map[string]string{
-	"admin":           "gentian:platform:admin",
-	"securityOfficer": "gentian:platform:security",
+	"admin": "gentian:platform:admin",
 }
 
 // Tenant is what the routes need to know about one tenant.
@@ -279,11 +277,10 @@ var clusterClaimList = schema.GroupVersionKind{Group: "gentianos.io", Version: "
 // differ. The map is read whole rather than field by field, so a role the
 // schema gains is protected without this function learning its name.
 //
-// The defaults are the schema's own (roleDefaults): a claim that names no
+// The default is the schema's own (roleDefaults): a claim that names no
 // administrators' group leaves gentian:platform:admin, which is also where
-// the install puts the first administrator, and one that names no security
-// officers' group leaves gentian:platform:security. No other role has a
-// default, and a role the claim leaves unset has no group to protect.
+// the install puts the first administrator. No other role has a default,
+// and a role the claim leaves unset has no group to protect.
 //
 // An error is an error: the caller refuses the write rather than assume a
 // name. That includes a platformRoles that is not a map of strings, which the
@@ -360,6 +357,38 @@ func ClaimPlatformRoles(reader client.Reader) func(ctx context.Context) ([]RoleG
 			}
 			return out[i].Group < out[j].Group
 		})
+		return out, nil
+	}
+}
+
+// ClaimPlatformRoleHolders answers the subjects of the platform tenant's
+// people the Cluster claim names role holders
+// (spec.platformAccess.roleHolders, tenant platform): the kernel-realm
+// accounts the registrar does not write to (identity/guard.go). Read from the
+// same claim as ClaimPlatformRoles, on every write.
+func ClaimPlatformRoleHolders(reader client.Reader) func(ctx context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(clusterClaimList)
+		if err := reader.List(ctx, list, client.InNamespace(layout.Namespace(layout.Provisioning))); err != nil {
+			return nil, fmt.Errorf("reading the Cluster claim: %w", err)
+		}
+		var out []string
+		for i := range list.Items {
+			entries, _, err := unstructured.NestedSlice(list.Items[i].Object, "spec", "platformAccess", "roleHolders")
+			if err != nil {
+				return nil, fmt.Errorf("reading spec.platformAccess.roleHolders of the Cluster claim %s: %w", list.Items[i].GetName(), err)
+			}
+			for _, e := range entries {
+				m, _ := e.(map[string]interface{})
+				if tenant, _ := m["tenant"].(string); tenant != platformTenant {
+					continue
+				}
+				if sub, _ := m["subject"].(string); sub != "" {
+					out = append(out, sub)
+				}
+			}
+		}
 		return out, nil
 	}
 }

@@ -252,17 +252,16 @@ func TestTheHolderOfAPlatformRoleIsNotLinkedAndCanBeUnlinked(t *testing.T) {
 	if !errors.Is(err, ErrProtected) {
 		t.Fatalf("removing a role holder's sign-in link: %v, want ErrProtected", err)
 	}
-	// Somebody held back from the tenant's approvers is not linked either,
-	// and is unlinked like anybody.
-	held := WithApproversHeld(ctx, "gentian:tenant:demo:perimeter")
+	// A person of the platform tenant who holds a role by name is not
+	// linked either, and is unlinked like anybody.
+	c.holders = func(context.Context) ([]string, error) { return []string{"u-mia"}, nil }
 	f.mu.Lock()
-	f.groups["u-mia"] = []string{"gentian:tenant:demo:perimeter"}
 	f.links["u-mia/vouch-notary"] = federatedIdentityRep{IdentityProvider: "vouch-notary", UserID: "u-mia"}
 	f.mu.Unlock()
-	if err := c.UnlinkVouching(held, realm, "u-mia", "notary"); err != nil {
-		t.Fatalf("unlinking an approver: %v", err)
+	if err := c.UnlinkVouching(ctx, realm, "u-mia", "notary"); err != nil {
+		t.Fatalf("unlinking a role holder: %v", err)
 	}
-	if err := c.LinkVouching(held, realm, "u-mia", "notary"); !errors.Is(err, ErrApproversOnly) {
-		t.Fatalf("linking an approver for a caller who may not approve: %v, want ErrApproversOnly", err)
+	if err := c.LinkVouching(ctx, realm, "u-mia", "notary"); !errors.Is(err, ErrProtected) {
+		t.Fatalf("linking a role holder: %v, want ErrProtected", err)
 	}
 }

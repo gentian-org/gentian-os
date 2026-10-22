@@ -157,12 +157,9 @@ type Tenant struct {
 	// deletionPolicy: Delete and carries PurgeAnnotation, and the director
 	// removes it as soon as the cluster has taken that in.
 	Purging bool `json:"purging,omitempty"`
-	// AdminsApprove is spec.perimeter.adminsApprove: the tenant's own
-	// administrators may approve its public addresses. CataloguesDelegated
-	// is spec.catalogue.delegated: they may add catalogues for the tenant.
-	// The two switches the cluster's administrator alone sets, both off
-	// unless set.
-	AdminsApprove       bool `json:"adminsApprove"`
+	// CataloguesDelegated is spec.catalogue.delegated: the tenant's own
+	// administrators may add catalogues for the tenant. The cluster's
+	// administrator alone sets it; off unless set.
 	CataloguesDelegated bool `json:"cataloguesDelegated"`
 	// SignUp is spec.signUp.enabled: anybody may make an account in the
 	// tenant's realm. Chosen when the tenant is made.
@@ -303,9 +300,6 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						Apps []struct {
 							Profile string `json:"profile"`
 						} `json:"apps"`
-						Perimeter struct {
-							AdminsApprove bool `json:"adminsApprove"`
-						} `json:"perimeter"`
 						Catalogue struct {
 							Delegated bool `json:"delegated"`
 						} `json:"catalogue"`
@@ -320,7 +314,6 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
 					t.AdminsEnter = doc.Spec.PlatformAccess.AdminsEnter
-					t.AdminsApprove = doc.Spec.Perimeter.AdminsApprove
 					t.CataloguesDelegated = doc.Spec.Catalogue.Delegated
 					t.SignUp = doc.Spec.SignUp.Enabled
 					t.Country = doc.Spec.Country
@@ -368,46 +361,11 @@ type NewTenant struct {
 	// Country is the tenant's country (Tenant spec.country), an ISO 3166-1
 	// alpha-2 code; empty names none.
 	Country string `json:"country,omitempty"`
-	// Perimeter and Catalogue are the two switches a tenant is created
-	// with, named as the manifest names them: whether its own
-	// administrators may approve public addresses
-	// (perimeter.adminsApprove) and add catalogues (catalogue.delegated).
-	// Left out, both are off -- but for the one user tenant of a
-	// single-tenancy cluster, whose administrators approve its public
-	// addresses unless the request says they do not (AdminsApproveAtCreation).
-	// The route that creates a tenant is the cluster administrator's, as the
-	// routes that change them are.
-	Perimeter *NewTenantPerimeter `json:"perimeter,omitempty"`
+	// Catalogue is the switch a tenant is created with, named as the
+	// manifest names it: whether its own administrators may add catalogues
+	// (catalogue.delegated). Left out, it is off. The route that creates a
+	// tenant is the cluster administrator's, as the route that changes it is.
 	Catalogue *NewTenantCatalogue `json:"catalogue,omitempty"`
-}
-
-// NewTenantPerimeter is spec.perimeter of a tenant being created.
-type NewTenantPerimeter struct {
-	// AdminsApprove is nil when the request does not say: an explicit false
-	// is a decision, and is kept as one.
-	AdminsApprove *bool `json:"adminsApprove,omitempty"`
-}
-
-// AdminsApproveAtCreation says whether a tenant being created starts with
-// its own administrators approving its public addresses.
-//
-// What the request states is what is written, on or off. Where it states
-// nothing the switch is off, with one exception: the user tenant of a
-// single-tenancy cluster. That cluster has one organisation on it and the
-// person who administers the tenant is the one who answers for what it puts
-// on the internet, so the install writes that tenant with the switch on --
-// and a tenant of that name created here is the same tenant, and starts the
-// same way. The platform tenant and every tenant of a multi-tenancy cluster
-// start with it off.
-func (g *GitOps) AdminsApproveAtCreation(ctx context.Context, req NewTenant) (bool, error) {
-	if req.Perimeter != nil && req.Perimeter.AdminsApprove != nil {
-		return *req.Perimeter.AdminsApprove, nil
-	}
-	settings, err := g.ClusterSettingValues(ctx)
-	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
-		return false, err
-	}
-	return tenancy.SoleUserTenant(settings["tenancyMode"], req.Name), nil
 }
 
 // NewTenantCatalogue is the switch in spec.catalogue of a tenant being
@@ -434,10 +392,6 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	adminsApprove, err := g.AdminsApproveAtCreation(ctx, req)
-	if err != nil {
-		return Result{}, err
-	}
 	return g.createTenant(ctx, req.Name, func() ([]byte, error) {
 		text := tenantManifest(req.Name, display, requireMFA, req.SignUp)
 		text = withBrokeredTo(text, req.BrokeredTo)
@@ -449,11 +403,6 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 		}
 		if req.Catalogue != nil && req.Catalogue.Delegated {
 			if text, err = setTenantCatalogue(text, TenantCatalogue{Delegated: true}); err != nil {
-				return nil, err
-			}
-		}
-		if adminsApprove {
-			if text, err = setTenantPerimeter(text, true); err != nil {
 				return nil, err
 			}
 		}

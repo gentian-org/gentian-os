@@ -577,56 +577,64 @@ func (failing) Check(context.Context, string, string, string, string) (bool, err
 // facts is what model v1 answers for the fixture, for the questions these
 // tests ask. The OpenFGA run is what shows the table is not wishful.
 var facts = dt.Table{
-	"user:tom can_install_app tenant:demo":       true,
-	"user:tom can_view tenant:demo":              true,
-	"user:mia can_view tenant:demo":              true,
-	"user:mia can_enter tenant:demo":             true,
-	"user:tom can_enter tenant:demo":             true,
-	"user:tom can_administer tenant:demo":        true,
-	"user:tom can_set_plan tenant:demo":          true,
-	"user:alice can_set_plan tenant:demo":        true,
-	"user:tom can_set_policy tenant:demo":        true,
-	"user:tom can_grant tenant:demo":             true,
-	"user:alice can_set_policy tenant:demo":      true,
-	"user:tom can_manage_users tenant:demo":      true,
-	"user:alice can_enter tenant:demo":           true,
-	"user:alice can_administer tenant:demo":      true,
-	"user:alice can_manage_users tenant:demo":    true,
-	"user:alice can_install_app tenant:demo":     true,
-	"user:alice can_view tenant:demo":            true,
-	"user:tina can_install_app tenant:solo":      true,
-	"user:tina can_view tenant:solo":             true,
-	"user:tom can_approve_privilege tenant:demo": true,
+	"user:tom can_install_app tenant:demo":    true,
+	"user:tom can_view tenant:demo":           true,
+	"user:mia can_view tenant:demo":           true,
+	"user:mia can_enter tenant:demo":          true,
+	"user:tom can_enter tenant:demo":          true,
+	"user:tom can_administer tenant:demo":     true,
+	"user:tom can_set_plan tenant:demo":       true,
+	"user:alice can_set_plan tenant:demo":     true,
+	"user:tom can_set_policy tenant:demo":     true,
+	"user:tom can_grant tenant:demo":          true,
+	"user:alice can_set_policy tenant:demo":   true,
+	"user:tom can_manage_users tenant:demo":   true,
+	"user:alice can_enter tenant:demo":        true,
+	"user:alice can_administer tenant:demo":   true,
+	"user:alice can_manage_users tenant:demo": true,
+	"user:alice can_install_app tenant:demo":  true,
+	"user:alice can_view tenant:demo":         true,
+	"user:tina can_install_app tenant:solo":   true,
+	"user:tina can_view tenant:solo":          true,
 	// Tenant user carries the name of the one user tenant of a
 	// single-tenancy cluster. uma administers it, ulf is a member, and the
 	// platform operates it as it does demo.
 	"user:uma can_install_app tenant:user": true,
 	"user:uma can_view tenant:user":        true,
 	"user:ulf can_view tenant:user":        true,
-	// Its admins approve what it publishes, as demo's do: in the fixture
-	// both tenants are ones whose administrators the cluster's
-	// administrator let approve (spec.perimeter.adminsApprove).
-	"user:uma can_expose tenant:user":        true,
-	"user:alice can_install_app tenant:user": true,
-	"user:alice can_view tenant:user":        true,
+	// uma is also its perimeter approver, named on the claim: the account
+	// of the tenant's realm holds it (spec.platformAccess.roleHolders).
+	"user:tenant-user/uma can_expose tenant:user": true,
+	"user:alice can_install_app tenant:user":      true,
+	"user:alice can_view tenant:user":             true,
 	// Declaring where software comes from is asked as can_write_credential,
 	// the relation the custodian asked when it kept the repositories. Tenant
 	// solo administers itself, so alice holds it on demo and not on solo.
 	"user:tom can_write_credential tenant:demo":   true,
 	"user:alice can_write_credential tenant:demo": true,
 	"user:tina can_write_credential tenant:solo":  true,
-	// can_expose is the perimeter approver's (AD-6). pat holds it and nothing
-	// else -- the model's own fixture for the role existing separately from
-	// running the tenant. tom holds it because demo's administrators were
-	// let approve; alice because she administers the cluster that operates
-	// demo and user. In solo, which administers itself and where nobody
-	// switched anything on, paul of the perimeter group holds it and neither
-	// tina, its administrator, nor alice does.
-	"user:tom can_expose tenant:demo":   true,
-	"user:pat can_expose tenant:demo":   true,
-	"user:alice can_expose tenant:demo": true,
-	"user:alice can_expose tenant:user": true,
-	"user:paul can_expose tenant:solo":  true,
+	// can_expose and can_approve_privilege are the perimeter approver's
+	// (AD-6): the administrator of the tenant the claim names, as the
+	// account of the tenant's realm, and nobody by running the tenant. tom
+	// is demo's, as the account of tenant-demo's realm -- the same tom
+	// asked as user:tom holds neither; alice holds both because she
+	// administers the cluster that operates demo and user. In solo, which
+	// administers itself, paul is its approver and neither tina, its other
+	// administrator, nor alice is.
+	"user:tenant-demo/tom can_expose tenant:demo":            true,
+	"user:tenant-demo/tom can_approve_privilege tenant:demo": true,
+	// 7d0f3c2e is an administrator of demo, as the store holds its admins
+	// group's members: whom the cluster's administrator may name from demo.
+	"user:7d0f3c2e member group:gentian/tenant/demo/admins": true,
+	// petra of the kernel realm is the cluster's perimeter approver, which
+	// reaches every tenant: she approves and sees, and administers nothing.
+	"user:gentian/petra can_expose tenant:demo":            true,
+	"user:gentian/petra can_approve_privilege tenant:demo": true,
+	"user:gentian/petra can_view tenant:demo":              true,
+	"user:alice can_expose tenant:demo":                    true,
+	"user:alice can_approve_privilege tenant:demo":         true,
+	"user:alice can_expose tenant:user":                    true,
+	"user:tenant-solo/paul can_expose tenant:solo":         true,
 	// sam is the security officer: cluster#can_approve, and can_view on every
 	// tenant because can_audit reaches it. Deliberately NOT a tenant
 	// administrator, which is the case the kind-scoped check exists for.

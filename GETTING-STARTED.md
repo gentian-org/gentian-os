@@ -559,12 +559,13 @@ waits for nothing after that and closes by naming both roles:
   `https://desktop.<kernel-domain>/`
 
 They are two accounts in two realms, and may or may not be the same person.
-The user admin may approve what the user tenant puts on the internet: the
-install creates this one tenant with that switched on, and the platform admin
-can switch it off (`kubectl gentian tenants set user
---admins-approve-public-addresses=false`). A user tenant that was there before
-is left as it is; one created anew with `kubectl gentian tenants create user`
-starts with it on as well.
+What the user tenant puts on the internet, and its egress, is approved by
+the platform admin; the platform admin can make the user admin its perimeter
+approver too (`kubectl gentian platform-roles holders add perimeterApprover
+user user-admin@<kernel-domain> --reason <why>`). A cluster installed when
+the user admin approved by a switch on the tenant keeps that: the install
+carries it over to such an entry, once, with the reason "carried over at
+upgrade".
 If the tenant is not Ready within the wait, the install says what it is
 waiting for and does not fail: `kubectl get tenant user` shows its state, and
 `./install.sh --only E-04` — or `kubectl gentian tenants activate-admin user`,
@@ -715,9 +716,8 @@ is a copy, not a link — and `gtnctl version` shows which copy answers.
 
 ```bash
 kubectl gentian tenants create acme --display-name "ACME AG"   # --no-mfa to skip the second factor
-#   --admins-approve-public-addresses   its own admins may approve what it puts on the internet
 #   --admins-add-catalogues             its own admins may add catalogues to install from
-#   both are off unless given, and changed later with: kubectl gentian tenants set acme --...=true|false
+#   off unless given, and changed later with: kubectl gentian tenants set acme --admins-add-catalogues=true|false
 kubectl gentian tenants activate-admin acme --recovery-email owner@acme.example
 kubectl get tenant acme -w
 ```
@@ -980,18 +980,16 @@ differs is listed here, in the order you meet it.
 
    Publishing the entry is two commands, for whoever may publish in the
    tenant ([docs/app-customization.md](docs/app-customization.md) §2.10).
-   That is the platform admin, in every tenant the cluster operates, and any
-   member of the tenant's group `gentian:tenant:<tenant>:perimeter`. The
-   group is made with the tenant and starts empty; the platform admin adds
-   whoever approves, in the admin console. The
-   tenant's own admin does not approve, and cannot add anybody to that
-   group, unless the platform admin switched it on for the tenant. It is
-   on from the start for the user tenant of a single-tenancy cluster, and
-   for no other:
+   That is the platform admin, in every tenant the cluster operates, and the
+   perimeter approvers the platform admin names on the Cluster claim: an
+   administrator of the tenant, for that tenant, or a person of the platform
+   tenant, for every tenant. The tenant's own admin does not approve unless
+   named:
 
    ```bash
-   kubectl gentian tenants set <tenant> --admins-approve-public-addresses=true
-   kubectl gentian tenants show <tenant>      # what is switched on for it
+   kubectl gentian platform-roles candidates                    # who could be named
+   kubectl gentian platform-roles holders add perimeterApprover <tenant> <login> --reason <why>
+   kubectl gentian platform-roles holders                       # who holds which role
    ```
 
    Anybody else is refused with 403.

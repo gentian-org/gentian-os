@@ -320,9 +320,9 @@ func TestAKeyOpensItsOwnLinksOnly(t *testing.T) {
 	if seen := f.realmsSeen(); len(seen) != before {
 		t.Fatalf("a refused key reached %v", seen[before:])
 	}
-	if q := h.asked.questions(); len(q) != 2 {
-		// The two questions of mia's own link, and none for a key: the
-		// store knows people, and a component is not one.
+	if q := h.asked.questions(); len(q) != 1 {
+		// The question of mia's own link, and none for a key: the store
+		// knows people, and a component is not one.
 		t.Fatalf("the store was asked %v", q)
 	}
 }
@@ -342,7 +342,8 @@ func TestAMemberUnlinksOnlyThemself(t *testing.T) {
 		}
 	}
 	for _, q := range h.asked.questions()[before:] {
-		if q != "user:mia can_manage_users tenant:demo" {
+		// As mia, and, refused, as a role holder of her realm (CheckAs).
+		if q != "user:mia can_manage_users tenant:demo" && q != "user:demo/mia can_manage_users tenant:demo" {
 			t.Errorf("for somebody else's link the store was asked %q", q)
 		}
 	}

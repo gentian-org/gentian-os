@@ -18,19 +18,12 @@ import (
 
 func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
 	roles, unknown := RolesFromClaim(map[string]string{
-		"admin":           "gentian:platform:admin",
-		"securityOfficer": "gentian:platform:security",
-		"serviceAdmin":    "gentian:platform:service",
-		"sharedAppsAdmin": "gentian:platform:shared-apps",
-		"breakGlass":      "gentian:platform:break-glass",
-		"auditor":         "", // set to nothing grants nothing
+		"admin":      "gentian:platform:admin",
+		"breakGlass": "gentian:platform:break-glass",
 	})
 	want := map[string]string{
-		"admin":             "gentian:platform:admin",
-		"security_officer":  "gentian:platform:security",
-		"service_admin":     "gentian:platform:service",
-		"shared_apps_admin": "gentian:platform:shared-apps",
-		"break_glass":       "gentian:platform:break-glass",
+		"admin":       "gentian:platform:admin",
+		"break_glass": "gentian:platform:break-glass",
 	}
 	if !reflect.DeepEqual(roles, want) {
 		t.Errorf("roles = %v, want %v", roles, want)
@@ -39,34 +32,46 @@ func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
 		t.Errorf("unknown = %v, want none", unknown)
 	}
 
-	// Every translated field is a relation ReconcileClusterRoles accepts, and
-	// every relation it accepts has a field: the two lists cannot drift apart.
+	// Every relation a group or a holder holds is one ReconcileClusterRoles
+	// accepts, and every one it accepts is held one way or the other, never
+	// both: the lists cannot drift apart.
 	for field, rel := range ClaimRoles {
 		if !knownClusterRole(rel) {
 			t.Errorf("ClaimRoles[%q] = %q, which is not a cluster relation", field, rel)
 		}
+		if _, both := HolderRoles[field]; both {
+			t.Errorf("%s is held by a group and by name", field)
+		}
 	}
 	for _, rel := range ClusterRoles {
-		found := false
+		found := 0
 		for _, r := range ClaimRoles {
-			found = found || r == rel
+			if r == rel {
+				found++
+			}
 		}
-		if !found {
-			t.Errorf("relation %q has no field in the claim", rel)
+		for _, r := range HolderRoles {
+			if r == rel {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Errorf("relation %q is held %d ways", rel, found)
 		}
 	}
 }
 
 func TestAFieldTheClaimShouldNotHaveIsReportedNotTranslated(t *testing.T) {
 	roles, unknown := RolesFromClaim(map[string]string{
-		"securityOfficer":  "gentian:platform:security",
-		"security_officer": "gentian:platform:security", // the relation's spelling is not a field
-		"auditer":          "gentian:platform:auditor",  // a typo
+		"admin":           "gentian:platform:admin",
+		"securityOfficer": "gentian:platform:security", // held by name, not by a group
+		"break_glass":     "gentian:platform:x",        // the relation's spelling is not a field
+		"auditer":         "gentian:platform:auditor",  // a typo
 	})
-	if want := map[string]string{"security_officer": "gentian:platform:security"}; !reflect.DeepEqual(roles, want) {
+	if want := map[string]string{"admin": "gentian:platform:admin"}; !reflect.DeepEqual(roles, want) {
 		t.Errorf("roles = %v, want %v", roles, want)
 	}
-	if want := []string{"auditer", "security_officer"}; !reflect.DeepEqual(unknown, want) {
+	if want := []string{"auditer", "break_glass", "securityOfficer"}; !reflect.DeepEqual(unknown, want) {
 		t.Errorf("unknown = %v, want %v", unknown, want)
 	}
 }
@@ -80,14 +85,37 @@ func TestARoleHolderIsKeyedByTheRealmThatHoldsTheAccount(t *testing.T) {
 			t.Errorf("HolderUser(%q, %q) should be refused", bad[0], bad[1])
 		}
 	}
-	for field, rel := range HolderRoles {
-		if ClaimRoles[field] != rel {
-			t.Errorf("HolderRoles[%q] = %q, but the claim's field means %q", field, rel, ClaimRoles[field])
+	for _, rel := range HolderRoles {
+		if !knownClusterRole(rel) {
+			t.Errorf("%q is not a cluster relation", rel)
 		}
 	}
 	for _, never := range []string{"admin", "breakGlass"} {
 		if _, ok := HolderRoles[never]; ok {
-			t.Errorf("%s must not be a role a tenant realm's account holds", never)
+			t.Errorf("%s must not be a role held by name", never)
+		}
+	}
+}
+
+// How far a role reaches follows from the role and the holder's tenant.
+func TestARoleHoldersScopeFollowsTheRoleAndTheTenant(t *testing.T) {
+	for _, c := range []struct {
+		role, tenant, scope string
+		ok                  bool
+	}{
+		{"securityOfficer", "acme", "cluster", true},
+		{"securityOfficer", PlatformTenant, "cluster", true},
+		{"auditor", "acme", "cluster", true},
+		{"serviceAdmin", PlatformTenant, "cluster", true},
+		{"serviceAdmin", "acme", "cluster", false},
+		{"sharedAppsAdmin", "acme", "cluster", false},
+		{"perimeterApprover", PlatformTenant, "cluster", true},
+		{"perimeterApprover", "acme", "tenant:acme", true},
+		{"admin", PlatformTenant, "", false},
+	} {
+		scope, ok := HolderScope(c.role, c.tenant)
+		if ok != c.ok || (ok && scope != c.scope) {
+			t.Errorf("HolderScope(%s, %s) = %q, %v; want %q, %v", c.role, c.tenant, scope, ok, c.scope, c.ok)
 		}
 	}
 }

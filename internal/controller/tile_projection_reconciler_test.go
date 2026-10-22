@@ -133,8 +133,8 @@ func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 		icon  string
 		anyOf string
 	}{
-		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system can_audit]"},
-		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system can_audit]"},
+		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system]"},
+		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system]"},
 		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "key", "[can_configure]"},
 		"llm":      {"https://llm.k.example/", "analytics", "[can_configure]"},
 	}
@@ -334,5 +334,19 @@ func TestAnEntryThatRunsNothingIsALink(t *testing.T) {
 	silent.Spec.Package.API.TenantBinding = gentianov1alpha1.APIIntegrationTenantBindingNone
 	if got := project(t, tenant, comp, silent); len(got) != 1 || got[0].URL != "https://corp.example/" {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// The kernel's consoles are for who runs the cluster. Reading it (can_audit)
+// or approving its exceptions (can_approve, can_approve_perimeter) opens none
+// of them: Headlamp and Argo CD take kernel-realm sign-ins alone, and a role
+// held by name is held for the consoles that answer it.
+func TestNoKernelConsoleOpensForReadingOrApproving(t *testing.T) {
+	for _, tile := range kernelTileTable("kernel") {
+		for _, rel := range tile.anyOf {
+			if rel != "can_configure" && rel != "can_operate_system" {
+				t.Errorf("%s opens for %s", tile.name, rel)
+			}
+		}
 	}
 }

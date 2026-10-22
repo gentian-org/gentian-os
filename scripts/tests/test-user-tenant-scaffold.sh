@@ -148,7 +148,7 @@ checks = {
     "second factor on": s["admin"]["requireMFA"] is True,
     "retain": s["deletionPolicy"] == "Retain",
     "no apps": s["apps"] == [],
-    "its administrators approve public addresses": s.get("perimeter") == {"adminsApprove": True},
+    "no perimeter switch": "perimeter" not in s,
     "its administrators add no catalogues": "catalogue" not in s,
     "no handover override": "gentianos.io/handover-override" not in m["annotations"],
     "only the sync wave": list(m["annotations"]) == ["argocd.argoproj.io/sync-wave"] and m["annotations"]["argocd.argoproj.io/sync-wave"] == "2",

@@ -111,7 +111,7 @@ the tenant's. A security officer who holds the role by name holds it signed
 in to their own tenant ([iam.md](iam.md) §1.1c) and acts in that tenant's
 console; the App Store's install step links them there
 (`?tab=approvals`). The tenant console keeps its per-app Approve on the Apps screen for the egress
-requests that are the tenant administrator's.
+requests, which are the tenant's perimeter approver's (`can_approve_privilege`).
 
 ### 4.2 First administrators
 
@@ -335,17 +335,19 @@ the setting today.
 
 ## 7. Platform roles
 
-Which Keycloak group holds which platform role is stated on the Cluster claim
-(`spec.platformRoles`; `admin` defaults to `gentian:platform:admin`,
-`securityOfficer` to `gentian:platform:security`, the other roles have no
-holder unless a group is named). The operator projects it into OpenFGA. Who is
-in those groups is not changed from this console by hand: the registrar
-refuses every write to a platform role's group and to its members. A
-security officer or auditor can also be named: the *Role holders* page lists
-every tenant's administrators, the cluster's administrator picks one and a
-role, and the director commits the choice to the Cluster claim
-(`spec.platformAccess.roleHolders`); the operator writes the role for that
-account of that tenant's realm ([iam.md §1.1c](iam.md),
+Which Keycloak group holds `admin` and `breakGlass` is stated on the Cluster
+claim (`spec.platformRoles`; `admin` defaults to `gentian:platform:admin`,
+`breakGlass` has no holder unless a group is named). The operator projects it
+into OpenFGA. Who is in those groups is not changed from this console by
+hand: the registrar refuses every write to a platform role's group and to its
+members. Every other cluster role -- security officer, auditor, service
+admin, shared-apps admin, perimeter approver -- is held by name: the *Role
+holders* page lists the candidates (every person of the platform tenant and
+every other tenant's administrators), the cluster's administrator picks one,
+a role and a reason, optionally an expiry, and the director commits the
+choice to the Cluster claim (`spec.platformAccess.roleHolders`); the operator
+writes the role for that account of that tenant's realm, over the cluster or,
+for a tenant's perimeter approver, over that tenant ([iam.md §1.1c](iam.md),
 [commands.md](../commands.md) §7). A platform
 administrator administers a tenant the cluster operates through that tenant's
 console, and signs in to it only where the tenant's administrators switched

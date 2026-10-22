@@ -13,11 +13,13 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// Who on the cluster holds which cluster role (spec.platformAccess.roleHolders
+// Who on the cluster holds which role by name (spec.platformAccess.roleHolders
 // on the Cluster claim), declared by the cluster's administrator, and whether
 // a tenant lets the platform's administrators sign in to it, declared on its
 // manifest by its own.
@@ -25,30 +27,73 @@ import (
 // Both are commits. The director writes nothing to the authorization graph
 // here: the operator projects the claim's holders into it.
 
-// roleHolders answers who the claim names.
+// roleHolders answers who the claim names, each with whether it is in
+// effect: an entry whose expiresAt has passed, or whose person of a tenant
+// other than the platform's is no longer one of its administrators, stays
+// in the claim -- it is the record -- and grants nothing, as the operator
+// projects it.
 func (s *Server) roleHolders(w http.ResponseWriter, r *http.Request, _ call) {
 	holders, err := s.cfg.Repo.RoleHolders(r.Context())
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": holders})
+	type entry struct {
+		gitops.RoleHolder
+		// NotInEffect says why the entry grants nothing; empty while it does.
+		NotInEffect string `json:"notInEffect,omitempty"`
+	}
+	out := make([]entry, 0, len(holders))
+	for _, h := range holders {
+		e := entry{RoleHolder: h}
+		if at, err := time.Parse(time.RFC3339, h.ExpiresAt); err == nil && !at.After(time.Now()) {
+			e.NotInEffect = "expired"
+		} else if h.Tenant != authz.PlatformTenant {
+			admin, err := s.tenantAdministrator(r, h.Tenant, h.Subject)
+			if err != nil {
+				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+				return
+			}
+			if !admin {
+				e.NotInEffect = "no longer an administrator of " + h.Tenant
+			}
+		}
+		out = append(out, e)
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": out})
 }
 
-// setRoleHolder gives an account of a tenant's realm, by its subject there,
-// a cluster role. The body says who it is to a person reading the claim.
+// setRoleHolder gives a person, by their subject in their tenant's realm, a
+// role. The body says who it is to a person reading the claim, why, and
+// until when. A person of a tenant other than the platform's has to be one
+// of its administrators, as the store holds its admins group's members.
 func (s *Server) setRoleHolder(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
-		Username string `json:"username"`
-		Email    string `json:"email"`
+		Scope     string `json:"scope"`
+		Username  string `json:"username"`
+		Email     string `json:"email"`
+		Reason    string `json:"reason"`
+		ExpiresAt string `json:"expiresAt"`
 	}
-	if err := decode(r, &body); err != nil || body.Username == "" {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"username": "<the login in the tenant's realm>", "email": "<address, if any>"}`)
+	if err := decode(r, &body); err != nil || body.Username == "" || body.Reason == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"username": "<the login in the tenant's realm>", "email": "<address, if any>", `+
+			`"reason": "<why>", "expiresAt": "<RFC 3339, if it ends>"}`)
 		return
 	}
 	h := gitops.RoleHolder{
-		Role: r.PathValue("role"), Tenant: r.PathValue("tenant"), Subject: r.PathValue("subject"),
-		Username: body.Username, Email: body.Email,
+		Role: r.PathValue("role"), Scope: body.Scope, Tenant: r.PathValue("tenant"), Subject: r.PathValue("subject"),
+		Username: body.Username, Email: body.Email, Reason: body.Reason, ExpiresAt: body.ExpiresAt,
+	}
+	if h.Tenant != authz.PlatformTenant {
+		admin, err := s.tenantAdministrator(r, h.Tenant, h.Subject)
+		if err != nil {
+			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		if !admin {
+			s.fail(w, r, http.StatusUnprocessableEntity, "only an administrator of "+h.Tenant+" can be named from that tenant")
+			return
+		}
 	}
 	res, err := s.cfg.Repo.SetRoleHolder(r.Context(), h, c.meta)
 	if errors.Is(err, gitops.ErrInvalidRoleHolder) {
@@ -56,6 +101,16 @@ func (s *Server) setRoleHolder(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	s.written(w, r, res, err)
+}
+
+// tenantAdministrator says whether the account subject is an administrator
+// of tenant (authz.TenantAdministrator). A tenant that is not a name is not
+// asked about.
+func (s *Server) tenantAdministrator(r *http.Request, tenant, subject string) (bool, error) {
+	if !gitops.ValidName(tenant) {
+		return false, nil
+	}
+	return authz.TenantAdministrator(r.Context(), s.cfg.Authz, reqID(r.Context()), tenant, subject)
 }
 
 func (s *Server) removeRoleHolder(w http.ResponseWriter, r *http.Request, c call) {

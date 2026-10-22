@@ -13,12 +13,13 @@ model
 #                   else changes, and the mapping is reversible because tenant
 #                   and profile names are DNS labels and contain no '/'.
 #   role            a noun, assigned through group#member — one Keycloak
-#                   group per role. The one exception is a cluster role the
-#                   Cluster claim gives a user of a tenant's realm by name
-#                   (spec.platformAccess.roleHolders): security_officer and
-#                   auditor take user:<realm>/<sub>, the account qualified by
-#                   the realm that holds it, which a token from any other
-#                   realm can never name
+#                   group per role. The exception is a role the Cluster claim
+#                   gives a person by name (spec.platformAccess.roleHolders):
+#                   security_officer, auditor, service_admin,
+#                   shared_apps_admin and perimeter_approver take
+#                   user:<realm>/<sub>, the account qualified by the realm
+#                   that holds it, which a token from any other realm can
+#                   never name
 #   permission      can_<verb>, one per verb an enforcement point exposes;
 #                   PEPs check permissions, never roles
 #   hierarchy       one parent relation per type (cluster, tenant), derived
@@ -43,12 +44,15 @@ type group
 
 type cluster
   relations
-    # roles — from the Cluster claim's role-to-group assignments
+    # roles — admin and break_glass from the Cluster claim's role-to-group
+    # assignments (spec.platformRoles); the rest from its role holders
+    # (spec.platformAccess.roleHolders), each user:<realm>/<sub>
     define admin: [group#member]              # gentian:platform:admin
-    define security_officer: [group#member, user]   # gentian:platform:security; or a role holder, user:<realm>/<sub>
-    define auditor: [group#member, user]            # gentian:platform:auditor; or a role holder, user:<realm>/<sub>
-    define service_admin: [group#member]      # gentian:platform:service-admin
-    define shared_apps_admin: [group#member]  # gentian:platform:shared-apps-admin
+    define security_officer: [user]
+    define auditor: [user]
+    define service_admin: [user]              # a person of the platform tenant
+    define shared_apps_admin: [user]          # a person of the platform tenant
+    define perimeter_approver: [user]         # a person of the platform tenant; approves for every tenant
     define break_glass: [group#member]        # gentian:platform:break-glass — no standing membership
 
     # permissions — the director's cluster-level verbs
@@ -61,6 +65,8 @@ type cluster
     define can_set_admission: break_glass     # PolicyException, admission overlays (kernel tier)
     define can_edit_raw: break_glass          # /v1/files
     define can_audit: auditor or security_officer or admin
+    define can_open_kernel_tools: can_configure or can_operate_system   # Headlamp: the cluster as Kubernetes sees it
+    define can_approve_perimeter: perimeter_approver   # public addresses and egress, on every tenant
 
     # Kernel and system credentials, asked by the custodian before OpenBao
     # sees the request. Writing one is administering the cluster. Reading is
@@ -86,13 +92,15 @@ type tenant
     # approval derive through, and it is not removable.
     define operated_by: [cluster]
     define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
-    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter; and :admins where the manifest says so
+    # A role holder of scope tenant:<t> (an administrator of this tenant), or
+    # the cluster's perimeter approver.
+    define perimeter_approver: [user] or perimeter_approver from cluster
     define member: [group#member]              # gentian:tenant:<t>:members
 
     # reach — the desktop host at L2. An admin account must get in to
     # administer, and in tenant-platform the console's own users are the
     # security officer and the auditor, who are members of no tenant.
-    define can_enter: member or admin or can_audit from cluster or can_approve from cluster
+    define can_enter: member or admin or perimeter_approver or can_audit from cluster or can_approve from cluster
 
     # permissions — the director's tenant-level verbs
     define can_install_app: admin
@@ -100,23 +108,20 @@ type tenant
     define can_set_policy: admin          # backup, grants, export schedules, tenant network intent
     define can_grant: admin               # AppGrant: integration consent
     define can_manage_users: admin
-    define can_approve_privilege: admin   # tenant-scope privilege requests (§ component-profile 3.1)
-    # Publishing to the internet is its own grant, asked as its own relation
-    # and never as admin. Three ways to hold it:
+    # The perimeter, both directions, is its own grant, asked as its own
+    # relation and never as admin: publishing to the internet (can_expose)
+    # and egress beyond the baseline (can_approve_privilege, the tenant-scope
+    # privilege requests of component-profile 3.1). Held by
     #
-    #   - a member of the tenant's perimeter group, which exists from the day
-    #     the tenant does;
+    #   - the tenant's perimeter approver: an administrator of this tenant the
+    #     cluster's administrator named, or the cluster's perimeter approver;
     #   - the cluster's administrators, while the tenant is operated by its
     #     cluster: `admin from operated_by` is the cluster's admin relation
     #     alone, not the tenant's, and it goes with the consent tuple like
-    #     every other platform-admin verb here;
-    #   - the tenant's own administrators, only where the cluster's
-    #     administrator said so on the tenant's manifest
-    #     (spec.perimeter.adminsApprove): the operator then writes the admins
-    #     group into perimeter_approver, and removes it when the manifest
-    #     stops saying so.
+    #     every other platform-admin verb here.
     define can_expose: perimeter_approver or admin from operated_by
-    define can_view: member or admin or can_audit from cluster
+    define can_approve_privilege: can_expose
+    define can_view: member or admin or perimeter_approver or can_audit from cluster
 
     # Admin tiles on the desktop. Not an app permission: app#can_use excludes
     # admin accounts by design, so an admin account can reach no app object —

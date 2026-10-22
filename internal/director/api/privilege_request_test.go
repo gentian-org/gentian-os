@@ -189,7 +189,10 @@ func TestWhoeverMayApproveMayDecline(t *testing.T) {
 	if code != http.StatusAccepted || out["status"] != "declined" {
 		t.Fatalf("the security officer: %d %v", code, out)
 	}
-	if asked := h.asked.questions(); len(asked) != 2 || asked[1] != "user:sam can_approve cluster:demo-cluster" {
+	// Each asked as the account and, refused, as the role holder of its
+	// realm (authz.CheckAs); what decides is the security officer's verb.
+	if asked := h.asked.questions(); len(asked) == 0 || !strings.HasSuffix(asked[len(asked)-1], "sam can_approve cluster:demo-cluster") ||
+		!strings.Contains(strings.Join(asked, ","), "sam can_view tenant:demo") {
 		t.Errorf("asked %v, want the route's can_view and then the security officer's verb", asked)
 	}
 	// The operator was told who declined -- the token's holder -- and why.

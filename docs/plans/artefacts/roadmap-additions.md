@@ -64,7 +64,9 @@ supervisor. Either way tenants get nothing.
 
 - `[ ]` Decide per cluster type: structured auth config or Pinniped.
 - `[ ]` Bind `gentian:platform:break-glass` to `cluster-admin` and
-  `gentian:platform:auditor` to a read-only ClusterRole; nothing else.
+  `gentian:platform:admin` to a read-only ClusterRole; nothing else. The
+  roles held by name on the Cluster claim (`spec.platformAccess.roleHolders`)
+  are no group in a token and get no Kubernetes identity.
 - `[ ]` Retire the pasted ServiceAccount token in 2.23.
 
 ## New — Step-up authentication for high-impact permissions

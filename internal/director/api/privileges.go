@@ -94,8 +94,8 @@ func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ cal
 // it -- which is why it takes the ResponseWriter and answers the call itself
 // rather than returning a reason for a caller to remember to use.
 //
-//	egress                    the traffic leaves the tenant's own namespace,
-//	                          so the tenant's administrator answers:
+//	egress                    the traffic leaves through the tenant's
+//	                          perimeter, so its perimeter approver answers:
 //	                          tenant#can_approve_privilege.
 //	podSecurity, clusterRoles these weaken what protects the NODE, and every
 //	                          tenant on it. cluster#can_approve, the security
@@ -103,7 +103,7 @@ func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ cal
 //	                          authority inside their own tenant is not it.
 //
 // The two are alternatives rather than both. A security officer is
-// deliberately not a tenant administrator, and requiring both relations would
+// deliberately not a perimeter approver, and requiring both relations would
 // mean nobody could approve a waiver without holding an authority they should
 // not need.
 // It returns the decision it made, in the form the commit trailer records --
@@ -116,14 +116,14 @@ func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, kin
 	// approver; the operator reports the same answer on each pending
 	// request (pendingPrivilegeApprovals), which is how a console knows
 	// whom to offer the button without deciding it again.
-	if security.PrivilegeApprover(kind) == security.PrivilegeApproverTenant {
+	if security.PrivilegeApprover(kind) == security.PrivilegeApproverPerimeter {
 		tenant, err := tenantObject(r)
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "invalid name")
 			return "", false
 		}
 		target = tenant
-		refusal = "approving an egress request is the tenant administrator's"
+		refusal = "approving an egress request is the perimeter approver's"
 	} else {
 		if s.cfg.Cluster == "" {
 			// No cluster object to check against, so there is no security

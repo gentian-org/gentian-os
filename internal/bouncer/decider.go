@@ -242,7 +242,12 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	// it: the edge holds a short-lived access token and refreshes it, and a
 	// refresh against an ended session fails. The bound is the access token's
 	// lifetime, which the realm sets.
-	ok, err := d.store.Check(ctx, req.ID, user, route.Relation, route.Object)
+	//
+	// As the account, and, refused, as a role holder of the token's realm
+	// (authz.CheckAs): a perimeter approver or security officer the Cluster
+	// claim names reaches the console host as the director then lets them.
+	holder, _ := authz.HolderUser(id.Realm, id.Subject)
+	ok, err := authz.CheckAs(ctx, d.store, req.ID, user, holder, route.Relation, route.Object)
 	if err != nil {
 		d.log.WarnContext(ctx, "store unreachable; failing closed", "host", req.Host, "error", err.Error())
 		return deny(http.StatusServiceUnavailable, "authorization store unreachable")

@@ -11,16 +11,19 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
 
-// A role holder is an account of a tenant's realm the claim names, written
-// by the cluster's administrator alone, read by whoever may audit, and taken
-// away by the same commit path.
+// A role holder is an account of a tenant's realm the claim names -- of a
+// tenant other than the platform's, one of its administrators -- written by
+// the cluster's administrator alone with a reason, read by whoever may
+// audit, and taken away by the same commit path.
 func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T) {
 	h := startWith(t, nil)
 	alice := h.token(t, "gentian", "alice") // the cluster's administrator
@@ -34,47 +37,67 @@ func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T)
 	if list, _ := body["roleHolders"].([]any); len(list) != 0 {
 		t.Fatalf("holders before anybody was named: %v", list)
 	}
-	if roles, _ := body["roles"].([]any); len(roles) != 2 || roles[0] != "auditor" || roles[1] != "securityOfficer" {
+	if roles, _ := body["roles"].([]any); fmt.Sprint(roles) != "[auditor perimeterApprover securityOfficer serviceAdmin sharedAppsAdmin]" {
 		t.Fatalf("the roles a holder may hold: %v", body["roles"])
 	}
 
 	before := h.tip(t)
-	if code, _ := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", tom, `{"username":"tom@demo.example"}`); code != http.StatusForbidden || h.tip(t) != before {
+	if code, _ := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", tom, `{"username":"tom@demo.example","reason":"r"}`); code != http.StatusForbidden || h.tip(t) != before {
 		t.Fatalf("a tenant's administrator named a holder: %d", code)
 	}
-	if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{}`); code != http.StatusBadRequest || h.tip(t) != before {
-		t.Fatalf("a body without a login: %d %v", code, body)
+	for _, b := range []string{`{}`, `{"username":"it@demo.example"}`} {
+		if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, b); code != http.StatusBadRequest || h.tip(t) != before {
+			t.Fatalf("a body without a login or a reason: %d %v", code, body)
+		}
 	}
-	for _, path := range []string{"/securityOfficer/nowhere/7d0f3c2e", "/securityOfficer/demo/not%20a%20subject", "/admin/demo/7d0f3c2e", "/breakGlass/demo/7d0f3c2e"} {
-		if code, body := h.do(t, "PUT", base+path, alice, `{"username":"x@demo.example"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
+	for _, path := range []string{
+		"/securityOfficer/nowhere/7d0f3c2e", "/securityOfficer/demo/not%20a%20subject", "/admin/demo/7d0f3c2e", "/breakGlass/demo/7d0f3c2e",
+		"/serviceAdmin/demo/7d0f3c2e", // the platform tenant's people's alone
+		"/securityOfficer/demo/u-mia", // not one of demo's administrators
+	} {
+		if code, body := h.do(t, "PUT", base+path, alice, `{"username":"x@demo.example","reason":"r"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
 			t.Fatalf("%s: %d %v", path, code, body)
 		}
 	}
+	for name, b := range map[string]string{
+		"an expiry that has passed": `{"username":"it@demo.example","reason":"r","expiresAt":"2020-01-01T00:00:00Z"}`,
+		"another scope":             `{"username":"it@demo.example","reason":"r","scope":"tenant:demo"}`,
+	} {
+		if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, b); code != http.StatusUnprocessableEntity || h.tip(t) != before {
+			t.Fatalf("%s: %d %v", name, code, body)
+		}
+	}
 
-	code, body = h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`)
+	code, body = h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example","reason":"the deputy","expiresAt":"2099-01-01T00:00:00Z"}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
 		t.Fatalf("name: %d %v", code, body)
 	}
 	claim := dt.RemoteFile(t, h.remote, dt.ClaimPath)
-	for _, line := range []string{"  platformAccess:", "    roleHolders:", "      - role: securityOfficer", "        tenant: demo", "        subject: 7d0f3c2e", "        username: \"it@demo.example\"", "        email: \"it@demo.example\""} {
+	for _, line := range []string{"  platformAccess:", "    roleHolders:", "      - role: securityOfficer", "        scope: cluster", "        tenant: demo", "        subject: 7d0f3c2e",
+		"        username: \"it@demo.example\"", "        email: \"it@demo.example\"", "        reason: the deputy", "        expiresAt: \"2099-01-01T00:00:00Z\""} {
 		if !strings.Contains(claim+"\n", line+"\n") {
 			t.Fatalf("the claim lacks %q:\n%s", line, claim)
 		}
 	}
-	if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example"}`); code != http.StatusOK || body["status"] != "unchanged" {
+	if code, body := h.do(t, "PUT", base+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","email":"it@demo.example","reason":"the deputy","expiresAt":"2099-01-01T00:00:00Z"}`); code != http.StatusOK || body["status"] != "unchanged" {
 		t.Fatalf("naming the same holder again: %d %v", code, body)
 	}
-	if code, _ := h.do(t, "PUT", base+"/auditor/demo/7d0f3c2e", alice, `{"username":"it@demo.example"}`); code != http.StatusAccepted {
+	if code, _ := h.do(t, "PUT", base+"/auditor/demo/7d0f3c2e", alice, `{"username":"it@demo.example","reason":"r"}`); code != http.StatusAccepted {
 		t.Fatalf("the same account, a second role: %d", code)
+	}
+	code, body = h.do(t, "PUT", base+"/perimeterApprover/demo/7d0f3c2e", alice, `{"username":"it@demo.example","reason":"runs the website"}`)
+	if code != http.StatusAccepted || !strings.Contains(dt.RemoteFile(t, h.remote, dt.ClaimPath), "scope: \"tenant:demo\"") {
+		t.Fatalf("a perimeter approver of their own tenant: %d %v", code, body)
 	}
 
 	code, body = h.do(t, "GET", base, alice, "")
 	list, _ := body["roleHolders"].([]any)
-	if code != http.StatusOK || len(list) != 2 {
+	if code != http.StatusOK || len(list) != 3 {
 		t.Fatalf("read back: %d %v", code, body)
 	}
 	first := list[0].(map[string]any)
-	if first["role"] != "auditor" || first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["username"] != "it@demo.example" {
+	if first["role"] != "auditor" || first["tenant"] != "demo" || first["subject"] != "7d0f3c2e" || first["username"] != "it@demo.example" ||
+		first["notInEffect"] != nil {
 		t.Fatalf("first holder = %v", first)
 	}
 	// Whoever may audit the cluster may read who holds a role; a tenant's
@@ -151,5 +174,32 @@ func TestATenantOpensItselfToThePlatformsAdministrators(t *testing.T) {
 	}
 	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "platformAccess") {
 		t.Fatalf("a closed switch is still in the manifest:\n%s", manifest)
+	}
+}
+
+// An entry whose person is no longer an administrator of the tenant, or
+// whose expiry has passed, stays in the claim and is listed as not in effect.
+func TestARoleHolderNotInEffectIsListedAsSuch(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		claim := dt.RemoteFile(t, remote, dt.ClaimPath)
+		claim = strings.TrimRight(claim, "\n") + "\n  platformAccess:\n    roleHolders:\n" +
+			"      - role: auditor\n        scope: cluster\n        tenant: demo\n        subject: u-mia\n        username: mia@demo.example\n        reason: r\n" +
+			"      - role: auditor\n        scope: cluster\n        tenant: demo\n        subject: 7d0f3c2e\n        username: it@demo.example\n        reason: r\n        expiresAt: \"2020-01-01T00:00:00Z\"\n" +
+			"      - role: securityOfficer\n        scope: cluster\n        tenant: demo\n        subject: 7d0f3c2e\n        username: it@demo.example\n        reason: r\n"
+		dt.Commit(t, remote, map[string]string{dt.ClaimPath: claim})
+	})
+	_, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/platform-roles/holders", h.token(t, "gentian", "alice"), "")
+	got := map[string]any{}
+	for _, raw := range body["roleHolders"].([]any) {
+		e := raw.(map[string]any)
+		got[e["role"].(string)+"/"+e["subject"].(string)] = e["notInEffect"]
+	}
+	want := map[string]any{
+		"auditor/u-mia":            "no longer an administrator of demo",
+		"auditor/7d0f3c2e":         "expired",
+		"securityOfficer/7d0f3c2e": nil,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("not in effect: %v, want %v", got, want)
 	}
 }

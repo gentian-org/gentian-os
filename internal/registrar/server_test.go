@@ -239,11 +239,6 @@ func routes() []route {
 // Each route asks the store the question written beside it: the same
 // relation on the same object as when the director served the path. Moving
 // the routes must not have widened or narrowed any.
-//
-// A write asks one question more, and always the same one: whether the
-// caller may approve the tenant's public addresses. It opens nothing -- the
-// first question has been answered by then -- and decides only whether the
-// write may change who approves them (holdApprovers).
 func TestEveryRouteAsksWhatTheDirectorAsked(t *testing.T) {
 	f := newFakeIdentity("demo", "solo", "other")
 	h := startWithIdentity(t, f)
@@ -256,9 +251,6 @@ func TestEveryRouteAsksWhatTheDirectorAsked(t *testing.T) {
 		}
 		got := h.asked.questions()[before:]
 		want := []string{"user:alice " + rt.relation + " " + rt.object}
-		if rt.method != "GET" {
-			want = append(want, "user:alice can_expose tenant:demo")
-		}
 		if strings.Join(got, ", ") != strings.Join(want, ", ") {
 			t.Errorf("%s %s asked %v, want exactly %v", rt.method, rt.path, got, want)
 		}

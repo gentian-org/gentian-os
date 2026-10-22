@@ -314,7 +314,7 @@ could ask for the cheaper approver.
 |---|---|---|---|
 | pod-security waiver | cluster: weakens an admission rule protecting the node | security officer | `cluster#can_approve` |
 | cluster role | cluster: reaches the Kubernetes API | security officer | `cluster#can_approve` |
-| egress beyond baseline | tenant: leaves the tenant's own namespace | tenant administrator | `tenant#can_approve_privilege` |
+| egress beyond baseline | tenant: leaves the tenant's own namespace | perimeter approver | `tenant#can_approve_privilege` |
 
 The grant sits on the Component, written only by the director from the caller's
 token. `approver` and `approvedAt` are immutable: a new approval is a new

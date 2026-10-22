@@ -107,15 +107,16 @@ func (s *Server) stateRoutes() {
 		// read is the platform's, under can_audit. Removing one is the
 		// director's command.
 		s.guarded("GET /v1/clusters/{c}/catalogue/residue", "can_audit", clusterObject, s.relayCluster("/v1/catalogue/residue"))
-		// What awaits the security officer: every tenant's requests of a
-		// privilege that weakens what protects the node, with who asked.
-		// Read by the officer who answers them (can_approve) and by the
-		// cluster's administrator (can_configure), who sees what the
-		// cluster is waiting on without being able to answer it -- the
+		// What awaits an approver: every tenant's pending privileges, each
+		// naming who answers it -- the security officer for one that weakens
+		// what protects the node, with who asked, and the perimeter approver
+		// for egress. Read by the two who answer them (can_approve,
+		// can_approve_perimeter) and by the cluster's administrator
+		// (can_configure), who sees what the cluster is waiting on; the
 		// director decides each approval again. Not can_audit: the list
 		// names people and their notes, and an auditor reads the record of
 		// what was decided, not the queue.
-		s.guardedAny("GET /v1/clusters/{c}/approvals", []string{"can_approve", "can_configure"}, clusterObject, s.relayCluster("/v1/approvals"))
+		s.guardedAny("GET /v1/clusters/{c}/approvals", []string{"can_approve", "can_approve_perimeter", "can_configure"}, clusterObject, s.relayCluster("/v1/approvals"))
 	}
 }
 

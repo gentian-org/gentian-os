@@ -130,16 +130,25 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	}
 	tuples := fixture.Tuples
 	// The fixture's cluster is cluster:main; these tests serve Cluster.
-	// Bind the same platform groups to it so cluster verbs can be checked.
-	for _, role := range [][2]string{{"admin", "admin"}, {"auditor", "auditor"}, {"service-admin", "service_admin"}, {"security", "security_officer"}} {
-		tuples = append(tuples, map[string]any{"user": "group:gentian/platform/" + role[0] + "#member", "relation": role[1], "object": "cluster:" + Cluster})
-	}
-	// A role holder the claim names: ines, as the account of realm
-	// tenant-demo, holds security_officer -- on this cluster, and on the
-	// fixture's, which its tenants hang off.
+	// Bind the administrators' group to it so cluster verbs can be checked.
+	tuples = append(tuples, map[string]any{"user": "group:gentian/platform/admin#member", "relation": "admin", "object": "cluster:" + Cluster})
+	// The role holders the claim names, as the accounts of the realms these
+	// tests issue tokens for -- the fixture's own name realms kernel and
+	// demo: the platform tenant's people of realm gentian, on this cluster
+	// and on the fixture's, which its tenants hang off; ines of tenant-demo
+	// as a security officer; and each tenant's perimeter approver.
 	for _, c := range []string{"cluster:" + Cluster, "cluster:main"} {
-		tuples = append(tuples, map[string]any{"user": "user:tenant-demo/ines", "relation": "security_officer", "object": c})
+		for _, h := range [][2]string{{"gentian/sam", "security_officer"}, {"gentian/audrey", "auditor"}, {"gentian/serge", "service_admin"},
+			{"gentian/shari", "shared_apps_admin"}, {"gentian/petra", "perimeter_approver"}, {"tenant-demo/ines", "security_officer"}} {
+			tuples = append(tuples, map[string]any{"user": "user:" + h[0], "relation": h[1], "object": c})
+		}
 	}
+	for _, h := range [][2]string{{"tenant-demo/tom", "demo"}, {"tenant-solo/paul", "solo"}, {"tenant-user/uma", "user"}} {
+		tuples = append(tuples, map[string]any{"user": "user:" + h[0], "relation": "perimeter_approver", "object": "tenant:" + h[1]})
+	}
+	// An administrator of demo by subject, whom the cluster's administrator
+	// may name from demo.
+	tuples = append(tuples, map[string]any{"user": "user:7d0f3c2e", "relation": "member", "object": "group:gentian/tenant/demo/admins"})
 	post("/stores/"+store.ID+"/write", map[string]any{
 		"authorization_model_id": written.ID,
 		"writes":                 map[string]any{"tuple_keys": tuples},

@@ -564,3 +564,20 @@ func TestAHostThatAsksTheInstallRightRefusesAPlainMember(t *testing.T) {
 		t.Fatalf("a member was refused the desktop: %s", dec.Reason)
 	}
 }
+
+// A role held by name is held by the account of its realm: the edge asks as
+// the account, and, refused, as user:<token realm>/<sub> (authz.CheckAs), so
+// a security officer named on the claim reaches the console host -- and the
+// same subject from another realm does not.
+func TestARoleHolderReachesTheHostAsTheAccountOfItsRealm(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:kernel/mia|can_enter|tenant:platform": true}}
+	d := decider(store)
+	if dec := d.Decide(context.Background(), Request{Host: "desktop.k.example", Authorization: "Bearer mia-token"}); !dec.Allow {
+		t.Fatalf("the role holder was refused: %s", dec.Reason)
+	}
+	store = &fakeStore{allow: map[string]bool{"user:other/mia|can_enter|tenant:platform": true}}
+	d = decider(store)
+	if dec := d.Decide(context.Background(), Request{Host: "desktop.k.example", Authorization: "Bearer mia-token"}); dec.Allow {
+		t.Fatal("another realm's holder was let in")
+	}
+}

@@ -151,20 +151,22 @@ func TestPublishingNeedsTheExposeRelation(t *testing.T) {
 	}
 }
 
-// A perimeter approver who is not an administrator may publish. pat holds
-// can_expose and nothing else, which is the model's own fixture for the role
-// existing separately from running the tenant.
+// A perimeter approver who is not an administrator of the tenant may
+// publish: petra, the cluster's perimeter approver, a person of the platform
+// tenant. She sees the tenant's registry (can_view reaches her through the
+// role) and administers nothing of it.
 func TestAnApproverNeedNotBeAnAdministrator(t *testing.T) {
 	h := start(t)
-	pat := h.token(t, "tenant-demo", "pat")
+	petra := h.token(t, "gentian", "petra")
 
-	if code, body := h.do(t, "PUT", sharesPath, pat, publishBody(time.Now().Add(24*time.Hour))); code != http.StatusAccepted {
+	if code, body := h.do(t, "PUT", sharesPath, petra, publishBody(time.Now().Add(24*time.Hour))); code != http.StatusAccepted {
 		t.Fatalf("PUT = %d %v", code, body)
 	}
-	// Reading the registry is can_view, which pat does not hold: publishing
-	// and seeing the tenant are different questions, and pat was given one.
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/exposures", pat, ""); code != http.StatusForbidden {
-		t.Fatalf("GET = %d; reading the tenant's registry is can_view", code)
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/exposures", petra, ""); code != http.StatusOK {
+		t.Fatalf("GET = %d; the perimeter approver sees what the tenant publishes", code)
+	}
+	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/apps/nextcloud", petra, ""); code != http.StatusForbidden {
+		t.Fatalf("uninstalling = %d; approving the perimeter is not administering the tenant", code)
 	}
 }
 
@@ -393,12 +395,12 @@ func TestTheMainAddressNeedsTheApproversAcknowledgement(t *testing.T) {
 	}
 }
 
-// The perimeter is read by those who answer for it. pat, who holds can_expose
-// and nothing else, sees the registry and its history; mia, a member, sees
+// The perimeter is read by those who answer for it. petra, the cluster's
+// perimeter approver, sees the registry and its history; mia, a member, sees
 // neither here.
 func TestThePerimeterIsReadByItsApprovers(t *testing.T) {
 	h := start(t)
-	pat := h.token(t, "tenant-demo", "pat")
+	pat := h.token(t, "gentian", "petra")
 	mia := h.token(t, "tenant-demo", "mia")
 
 	if code, body := h.do(t, "PUT", sharesPath, pat, publishBody(time.Now().Add(24*time.Hour))); code != http.StatusAccepted {

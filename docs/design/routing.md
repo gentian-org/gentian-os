@@ -866,13 +866,11 @@ stay controller-agnostic and do not encode implementation-specific
 annotation keys.
 
 **A perimeter entry is published only once it is approved.** Declaring it is
-a request. Whoever holds `can_expose` on the tenant approves it: a member of
-the tenant's group `gentian:tenant:<t>:perimeter`, which is created with the
-tenant and starts empty; the cluster's administrator, in a tenant its cluster
-operates (`operated_by`); and the tenant's own administrators only where the
-tenant's manifest says so (`Tenant.spec.perimeter.adminsApprove`: off by
-default and switched on by the cluster's administrator, and on from the
-start for the user tenant of a single-tenancy cluster;
+a request. Whoever holds `can_expose` on the tenant approves it: the
+tenant's perimeter approver, an administrator of the tenant the cluster's
+administrator names on the Cluster claim; the cluster's perimeter approver, a
+person of the platform tenant named the same way; and the cluster's
+administrator, in a tenant its cluster operates (`operated_by`;
 [security.md §2.14](security.md)). The director commits it to the tenant's registry in git with its owner, its
 publish date and its review date; the operator then gives it a proxy in the
 tenant's DMZ, a listener for exactly its host and a route (§2.1).

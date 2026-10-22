@@ -538,6 +538,25 @@ it; an `install.env` that still sets them is read without effect.
   more either, and the director refuses to declare a new one. Publish those
   profiles as a catalogue instead and add it for the tenant.
 
+### Upgrading a cluster whose roles were held by groups
+
+The Cluster claim's `spec.platformRoles` names a group for `admin` and
+`breakGlass` only; every other cluster role, and a tenant's perimeter
+approver, is a role holder (`spec.platformAccess.roleHolders`,
+[iam.md §1.1c](design/iam.md)). A claim that still names a group for
+`securityOfficer`, `auditor`, `serviceAdmin` or `sharedAppsAdmin`, or a
+tenant manifest with `spec.perimeter.adminsApprove`, is rewritten once at
+step 0 (`scripts/lib/carry-over-role-holders.py`), in the commit step 0
+makes: the members of those kernel-realm groups become holders of their role,
+and a tenant's administrators who were in its perimeter group, or all of them
+where the switch was on, its perimeter approvers -- each with the reason
+"carried over at upgrade". Whoever cannot be carried over (a perimeter group
+member who is no administrator of the tenant, a member of the platform
+tenant's perimeter group) is named in a warning; name them again with
+`kubectl gentian platform-roles holders add` if they should hold a role.
+Step 0 reads Keycloak for this and nothing else; when it cannot be reached
+the claim keeps its old fields until a run where it can.
+
 ### Tenancy modes, addresses, and who is in charge
 
 A cluster has one of two tenancy modes
@@ -558,9 +577,7 @@ is in both and is never counted.
 **How the user tenant of a single-tenancy cluster comes to exist.** Step 0
 scaffolds `clusters/<cluster-id>/tenants/user` beside the platform tenant's
 and commits both, signed. The manifest is the one the director writes for any
-new tenant, with one switch on: the user admin may approve the tenant's
-public addresses (`spec.perimeter.adminsApprove: true`). Nothing in it admits
-the tenant early. The cluster refuses it
+new tenant. Nothing in it admits the tenant early. The cluster refuses it
 until the platform admin has signed in once (the handover gate), so through
 the whole install the Argo CD Application `tenant-user` fails and, after ten
 retries over about a quarter of an hour, stops retrying. `E-03` ends the
@@ -604,24 +621,17 @@ the director refuses that approval for any other tenant. On a multi-tenancy
 cluster the same is had by naming a tenant in `mainAddress.tenant` on the
 claim ([routing.md §5](design/routing.md#5-redirects-and-url-control)).
 
-Who approves in the user tenant: the platform admin, a member of the group
-`gentian:tenant:user:perimeter`, which the tenant is created with, empty, and
-the user admin. The user admin approves because the install writes the user
-tenant with that switch on (`spec.perimeter.adminsApprove: true`); every
-other tenant, on a multi-tenancy cluster, starts with it off. The second
-switch a tenant can be created with, adding catalogues, is off here as
-everywhere. Both are the platform admin's to change after the handover:
+Who approves in the user tenant, its public addresses and its egress: the
+platform admin, and whoever the platform admin names its perimeter approver
+on the Cluster claim -- the user admin, or a person of the platform tenant.
+Adding catalogues is off here as everywhere. Both are the platform admin's
+to change after the handover:
 
 ```bash
-kubectl gentian tenants set user --admins-approve-public-addresses=false  # the user admin no longer approves public addresses
+kubectl gentian platform-roles holders add perimeterApprover user user-admin@<kernel-domain> --reason <why>
 kubectl gentian tenants set user --admins-add-catalogues=true             # the user admin adds catalogues
 kubectl gentian tenants show user
 ```
-
-A user tenant that an earlier install wrote keeps its manifest as it is, with
-the switch off. One created later with `kubectl gentian tenants create user`
-starts as the install's does, with the switch on, unless
-`--admins-approve-public-addresses=false` is given.
 
 The platform tenant's admin console is two labels under the cluster's domain,
 so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,
