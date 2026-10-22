@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-api-stable-svc, demo-app-app-secret-kv,
-      demo-app-app-secret-seed-secret, and 11 more'
+      demo-app-app-secret-seed-secret, and 12 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -490,6 +490,38 @@ spec:
   - Create
   - Update
   - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-sign-in-name-id-mapper
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-sign-in-name-id-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    config:
+      mapper.nameid.format: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+      user.attribute: username
+    name: name-id
+    protocol: saml
+    protocolMapper: saml-user-attribute-nameid-mapper
+    realmId: demo
+    samlClientIdRef:
+      name: demo-demo-app-sign-in-client
+      policy:
+        resolve: Always
   providerConfigRef:
     name: keycloak
 ---

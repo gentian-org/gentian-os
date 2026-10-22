@@ -2021,7 +2021,8 @@ spec:
                 clientSignatureRequired: false
                 forcePostBinding: true
                 {{- /* The person is named by e-mail address, whatever a
-                     request asks for: it is the one thing the sidecar reads. */}}
+                     request asks for: it is the one thing the sidecar reads.
+                     Which address is the mapper's below. */}}
                 forceNameIdFormat: true
                 nameIdFormat: email
                 includeAuthnStatement: true
@@ -2144,6 +2145,43 @@ spec:
                   attribute.name: Role
                   attribute.nameformat: Basic
                   single: "true"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* ── Which address names the person ───────────────────────────
+                 The workspace address, which is the username. Without a
+                 mapper the realm fills an e-mail NameID from the e-mail
+                 field, and a tenant's realm keeps a recovery address there
+                 (tenant-default.yaml, resetPasswordAllowed). The front door
+                 hands the sidecar the email claim, which reads the username,
+                 and the sidecar refuses a sign-in whose two addresses differ:
+                 so everybody whose recovery address is not their workspace
+                 address was refused.
+
+                 The realm applies a NameID mapper only when its format is
+                 the one the answer is made in, by the full name: the client
+                 above forces e-mail. Orphan, as the three above. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-name-id-mapper
+              name: {{ $tenant }}-{{ $app }}-sign-in-name-id-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                samlClientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-sign-in-client
+                  policy:
+                    resolve: Always
+                name: name-id
+                protocol: saml
+                protocolMapper: saml-user-attribute-nameid-mapper
+                config:
+                  user.attribute: username
+                  mapper.nameid.format: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
               providerConfigRef:
                 name: keycloak
             {{- end }}
