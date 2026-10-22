@@ -407,6 +407,15 @@ Binding creates no Release. Everything a person meets is still per tenant, so
 from inside the tenant a bound app and a dedicated one are indistinguishable.
 That is what makes the choice operational rather than a product difference.
 
+**A shared backend knows a person by issuer and subject.** People of several
+tenants reach one backend, each through their own realm, and only the pair of
+the realm's issuer and the person's `sub` is unique across them. The username
+is unique only within one realm: two realms may each hold `anna@gmail.com`. The
+`uid` attribute is not unique even within one, since `anna@acme.ch` and
+`anna@gmail.com` share the part before the `@`. A `shared-app` profile keys the
+app's accounts on issuer and subject, never on `uid`, the username or the
+e-mail address; those may only name the account for display.
+
 Availability decides by default, but never silently. Where the data lives is
 something a tenant may know before installing and may refuse. The director's
 read of an installable app says which fulfilment an install would get, and the
