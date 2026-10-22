@@ -195,6 +195,33 @@ func TestThePlatformsOwnComponentsAndAddonsAreNotListed(t *testing.T) {
 	}
 }
 
+// An add-on that runs as its own Component asks for privileges under its own
+// name, and is listed under the app it activates in, so that whoever watches
+// the app sees what the add-on waits for and whom to ask.
+func TestAnAddonsPendingPrivilegesAreListedUnderItsApp(t *testing.T) {
+	base := component("nextcloud-base-ce", "Ready", "", true)
+	base.Spec.Addons = []string{"nextcloud-calendar-ce", "nextcloud-deck-ce"}
+	calendar := component("nextcloud-calendar-ce", "PrivilegesPending", "waiting for egress/caldav", false)
+	calendar.Status.PendingPrivileges = []string{"egress/caldav"}
+	s := appsService(t, demoTenant(), base, calendar,
+		profile("nextcloud-base-ce", nil),
+		profile("nextcloud-calendar-ce", map[string]string{deploymentRoleAnnotation: deploymentRoleAddon}),
+	)
+	states, err := s.AppStates(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || len(states[0].Addons) != 1 {
+		t.Fatalf("states = %+v", states)
+	}
+	addon := states[0].Addons[0]
+	if addon.Name != "nextcloud-calendar-ce" || addon.Ready || addon.Phase != AppPhaseInstalling ||
+		len(addon.PendingPrivilegeApprovals) != 1 || addon.PendingPrivilegeApprovals[0].Privilege != "egress/caldav" ||
+		addon.PendingPrivilegeApprovals[0].ApprovedBy != security.PrivilegeApproverPerimeter {
+		t.Fatalf("addon = %+v", addon)
+	}
+}
+
 func TestATenantTheClusterDoesNotHaveIsAnError(t *testing.T) {
 	s := appsService(t)
 	if _, err := s.AppStates(context.Background(), "nobody"); err == nil {

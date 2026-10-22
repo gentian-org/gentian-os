@@ -90,6 +90,22 @@ type AppState struct {
 	// tenant's ceiling, not what it happens to be using. Absent for an app
 	// with no pods.
 	Reserved *AppReservation `json:"reserved,omitempty"`
+	// Addons are the add-ons the app activates (spec.addons) that the
+	// cluster holds a Component for. Each is a Component of its own, named
+	// for its profile, and its privileges are asked, approved and declined
+	// under that name, not the app's.
+	Addons []AddonState `json:"addons,omitempty"`
+}
+
+// AddonState is one add-on of an app, as its own Component has it.
+type AddonState struct {
+	Profile                   string             `json:"profile"`
+	Name                      string             `json:"name"`
+	Ready                     bool               `json:"ready"`
+	Phase                     string             `json:"phase"`
+	Message                   string             `json:"message,omitempty"`
+	PendingPrivileges         []string           `json:"pendingPrivileges,omitempty"`
+	PendingPrivilegeApprovals []PendingPrivilege `json:"pendingPrivilegeApprovals,omitempty"`
 }
 
 // PendingPrivilege is one request nobody has granted yet, and who may.
@@ -195,8 +211,8 @@ const (
 // the operator's label on the component; the profile's platform-app
 // annotation still counts, but a profile need not carry it, and one that did
 // not was listed as an app the tenant had uninstalled. So are add-ons left
-// out: an add-on is switched on inside its base, and its state is the
-// base's.
+// out as apps: an add-on is switched on inside its base, and is listed under
+// it, in the base's addons.
 func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState, error) {
 	if _, err := s.getTenant(ctx, tenantName); err != nil {
 		return nil, err
@@ -207,6 +223,8 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		return nil, fmt.Errorf("list components: %w", err)
 	}
 	out := make([]AppState, 0, len(list.Items))
+	bases := make([]*gentianov1alpha1.Component, 0, len(list.Items))
+	addons := map[string]AddonState{}
 	for i := range list.Items {
 		comp := &list.Items[i]
 		profile := comp.Spec.ProfileRef.Name
@@ -217,8 +235,11 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		found := false
 		if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err == nil {
 			found = true
-			if cp.Annotations[platformAppAnnotation] == "true" ||
-				cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
+			if cp.Annotations[platformAppAnnotation] == "true" {
+				continue
+			}
+			if cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
+				addons[comp.Name] = addonState(comp, cp)
 				continue
 			}
 		} else if !apierrors.IsNotFound(err) {
@@ -246,9 +267,28 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			}
 		}
 		out = append(out, state)
+		bases = append(bases, comp)
+	}
+	for i, comp := range bases {
+		for _, name := range comp.Spec.Addons {
+			if addon, ok := addons[name]; ok {
+				out[i].Addons = append(out[i].Addons, addon)
+			}
+		}
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Profile < out[b].Profile })
 	return out, nil
+}
+
+// addonState is an add-on Component's account of itself, with its pending
+// privileges and who answers each.
+func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile) AddonState {
+	state := componentState(comp)
+	return AddonState{
+		Profile: state.Profile, Name: state.Name, Ready: state.Ready, Phase: state.Phase, Message: state.Message,
+		PendingPrivileges:         state.PendingPrivileges,
+		PendingPrivilegeApprovals: pendingApprovals(comp, cp, time.Now()),
+	}
 }
 
 // componentState reads a Component's own account of itself.

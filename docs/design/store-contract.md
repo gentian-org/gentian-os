@@ -872,7 +872,10 @@ approved once and waits again. `declinedBy`, `declinedAt` and
 the reason at least ten characters, authorised exactly as the approval of
 that kind is): the privilege is still pending and the app still waits, but
 whoever asked is told why. A new request clears the decline, and so does an
-approval made after it. The same entries, across every tenant and of every
+approval made after it. An add-on that runs as a Component of its own is
+listed under its app in `addons: [{profile, name, ready, phase, message,
+pendingPrivileges, pendingPrivilegeApprovals}]`; its requests are asked,
+approved and declined under its own `name`, not the app's. The same entries, across every tenant and of every
 kind, each with its `approvedBy`, are the cluster's list:
 
 ```
