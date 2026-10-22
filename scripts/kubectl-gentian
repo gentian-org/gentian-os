@@ -52,6 +52,7 @@
 #   kubectl gentian platform-roles holders add <role> <tenant> <login>      a tenant's administrator holds it: one commit
 #   kubectl gentian platform-roles holders remove <role> <tenant> <login>   no longer
 #   kubectl gentian platform-roles tenant-administrators       who could hold one: every tenant's administrators
+#   kubectl gentian platform-roles members                     who holds each role through its kernel Keycloak group
 #
 #   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
 #   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
@@ -96,6 +97,7 @@
 #   kubectl gentian approvals list                             what awaits the cluster's security officer, across all
 #                                                             tenants: who asked, when, why the app wants it, and
 #                                                             what was declined
+#   kubectl gentian approvals granted                          every tenant's approved privilege exceptions
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
 #                                                               of their own Authorization header behind sign-in
@@ -1642,6 +1644,7 @@ cmd_tenants_platform_access() {
 #   platform-roles holders                        who holds which, as the claim declares
 #   platform-roles holders add <role> <tenant> <login>
 #   platform-roles holders remove <role> <tenant> <login>
+#   platform-roles members                        who holds each through its group, from the registrar
 #
 # add looks the login up in the tenant's administrators through the registrar
 # and commits the account's subject; remove takes the claim's entry by the
@@ -1652,7 +1655,8 @@ cmd_platform_roles() {
     case "${sub}" in
         tenant-administrators) cmd_platform_roles_tenant_administrators "$@" ;;
         holders) cmd_platform_roles_holders "$@" ;;
-        *) die "usage: kubectl gentian platform-roles tenant-administrators | holders [add|remove <role> <tenant> <login>]" ;;
+        members) cmd_platform_roles_members "$@" ;;
+        *) die "usage: kubectl gentian platform-roles tenant-administrators | members | holders [add|remove <role> <tenant> <login>]" ;;
     esac
 }
 
@@ -1674,6 +1678,25 @@ cmd_platform_roles_tenant_administrators() {
     if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
         echo "A realm could not be read; the list is incomplete."
     fi
+}
+
+# The members of the kernel-realm group each role is held through
+# (spec.platformRoles). Read only: they are managed in Keycloak.
+cmd_platform_roles_members() {
+    [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles members"
+    need jq
+    _discover
+    local answer
+    answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/platform-role-members")" || exit 1
+    jq -r '(["ROLE","GROUP","LOGIN","EMAIL"] | @tsv),
+        (.roles[] | . as $r | if .unavailable then [$r.role, $r.group, "(could not be read)", ""] | @tsv
+            elif (.members | length) == 0 then [$r.role, $r.group, "(nobody)", ""] | @tsv
+            else .members[] | [$r.role, $r.group, .username, (.email // "")] | @tsv end)' <<<"${answer}" |
+        column -t -s $'\t'
+    if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
+        echo "A group could not be read; the list is incomplete."
+    fi
+    echo "These groups are managed in Keycloak, in the kernel realm."
 }
 
 cmd_platform_roles_holders() {
@@ -2883,12 +2906,31 @@ cmd_approvals_list() {
     echo "Decline one with: kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason \"<why, in your words>\""
 }
 
+# Every tenant's approved privilege exceptions, as git has them, from the
+# director.
+cmd_approvals_granted() {
+    [[ $# -eq 0 ]] || die "usage: kubectl gentian approvals granted"
+    need jq
+    _discover
+    local answer
+    answer="$(_call GET "/v1/clusters/${_CLUSTER}/privileges")" || exit 1
+    if [[ "$(jq '.privileges | length' <<<"${answer}")" == "0" ]]; then
+        echo "No tenant of this cluster has an approved privilege exception."
+        return 0
+    fi
+    jq -r '(["TENANT","APP","PRIVILEGE","APPROVED BY","APPROVED","EXPIRES","REASON"] | @tsv),
+        (.privileges[] | [.tenant, .install, .privilege, .approver, (.approvedAt // "" | .[0:10]),
+            (.expiresAt // "" | if . == "" then "-" else .[0:10] end), .reason] | @tsv)' <<<"${answer}" |
+        column -t -s $'\t'
+}
+
 cmd_approvals() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
         list) cmd_approvals_list "$@" ;;
-        *) die "usage: kubectl gentian approvals list" ;;
+        granted) cmd_approvals_granted "$@" ;;
+        *) die "usage: kubectl gentian approvals list|granted" ;;
     esac
 }
 

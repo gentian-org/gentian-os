@@ -494,6 +494,17 @@ fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[]}'
 gentian approvals list
 has "an empty list says so" "${OUT}" "Nothing awaits the security officer"
 
+# What was granted, across the cluster: the director's list, as a table.
+fresh; reply GET /v1/clusters/c1/privileges 200 '{"cluster":"c1","privileges":[{"tenant":"team","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approver":"sam","approvedAt":"2026-10-21T09:12:00Z","reason":"reviewed by the officer","expiresAt":"2027-01-01T00:00:00Z"}]}'
+gentian approvals granted
+is "approvals granted asks the director for the cluster's list" "$(cat "${CALLS}")" "GET /v1/clusters/c1/privileges "
+has "... and shows the grant with its tenant" "${OUT}" "team"
+has "... and who approved it" "${OUT}" "sam"
+has "... and when it expires" "${OUT}" "2027-01-01"
+fresh; reply GET /v1/clusters/c1/privileges 200 '{"cluster":"c1","privileges":[]}'
+gentian approvals granted
+has "an empty grant list says so" "${OUT}" "No tenant of this cluster has an approved privilege exception"
+
 fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
 gentian tenants set globex --admins-approve-public-addresses=true
 is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "
@@ -1152,6 +1163,15 @@ fresh; reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 gentian platform-roles holders remove auditor acme it@acme.example
 refused "removing a role the login does not hold is refused"
 is "... and nothing is committed" "$(writes)" ""
+
+# Who holds each role through its group: the registrar's answer, read only.
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"auditor","group":"gentian:platform:auditor","members":[]},{"role":"securityOfficer","group":"gentian:platform:security","members":null,"unavailable":true}]}'
+gentian platform-roles members
+is "members asks the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/platform-role-members "
+has "... and lists a member with the group" "${OUT}" "ops@k.example"
+has "... and an empty group" "${OUT}" "(nobody)"
+has "... and a group that was not read" "${OUT}" "the list is incomplete"
+has "... and says where they are managed" "${OUT}" "managed in Keycloak"
 
 # The tenant's own switch: one PUT, on or off; a name alone reads.
 fresh; reply PUT /v1/tenants/acme/platform-access 202 '{"status":"updated","commit":"0123456789abcdef"}'

@@ -160,6 +160,9 @@ func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Chec
 		Invitations: invitations,
 		Now:         clock.Now,
 		Log:         slog.New(slog.NewTextHandler(logged, nil)),
+		PlatformRoles: func(context.Context) ([]registrar.RoleGroup, error) {
+			return []registrar.RoleGroup{{Role: "admin", Group: platformAdmins}, {Role: "securityOfficer", Group: "gentian:platform:security"}}, nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +232,7 @@ func routes() []route {
 		{"GET", c + "/tenants/demo/admin-invitation", "", "can_configure", cluster},
 		{"GET", c + "/admin-invitations", "", "can_configure", cluster},
 		{"GET", c + "/people/count", "", "can_audit", cluster},
+		{"GET", c + "/platform-role-members", "", "can_audit", cluster},
 	}
 }
 

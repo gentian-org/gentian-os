@@ -343,3 +343,15 @@ func TestActivatingTheAdministratorOfATenantThatFailedSaysSo(t *testing.T) {
 		t.Fatalf("a tenant on its way: %d %v, want 404", status, body)
 	}
 }
+
+// The same claim, read with the role beside each group.
+func TestThePlatformRolesAreReadWithTheirGroups(t *testing.T) {
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(claim("main", layout.Namespace(layout.Provisioning),
+		map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "auditor": "/acme:audit"}})).Build()
+	got, err := registrar.ClaimPlatformRoles(reader)(context.Background())
+	want := []registrar.RoleGroup{{Role: "admin", Group: "acme:operators"}, {Role: "auditor", Group: "acme:audit"},
+		{Role: "securityOfficer", Group: "gentian:platform:security"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, %v; want %v", got, err, want)
+	}
+}

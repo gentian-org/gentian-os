@@ -232,3 +232,29 @@ func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
 		}
 	}
 }
+
+// Every tenant's grants in one list, each with its tenant, for whoever may
+// audit the cluster -- and not for a tenant's administrator.
+func TestTheClustersGrantedPrivilegesAreListedAcrossTenants(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, body := h.do(t, "PUT", egressPath, tom, reason("agreed in the security review")); code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	path := "/v1/clusters/" + dt.Cluster + "/privileges"
+	code, body := h.do(t, "GET", path, h.token(t, "gentian", "alice"), "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	list, _ := body["privileges"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("privileges = %v", body["privileges"])
+	}
+	got, _ := list[0].(map[string]any)
+	if got["tenant"] != "demo" || got["install"] != "nextcloud" || got["privilege"] != "egress/smtp-relay" || got["approver"] != "tom" {
+		t.Fatalf("grant = %v", got)
+	}
+	if code, _ := h.do(t, "GET", path, tom, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant administrator listing the cluster's grants: %d, want 403", code)
+	}
+}
