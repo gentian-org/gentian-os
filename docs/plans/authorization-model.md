@@ -17,7 +17,7 @@ Zanzibar family; each rule names what it prevents.
 |---|---|---|
 | R1 | **One type per CRD kind**; object id = the CR's name, namespaced kinds as `<tenant>/<name>` (`app:demo/nextcloud`). | a second naming scheme that has to be mapped |
 | R1a | **Ids contain neither `:` nor `#`** — OpenFGA rejects them. A Keycloak group keeps its name in Keycloak (`gentian:tenant:demo:admins`) and is the object `group:gentian/tenant/demo/admins`: `:` becomes `/`, nothing else changes. Reversible because tenant and profile names are DNS labels. One function does the mapping (`internal/director/authz`, which the operator's projection imports); nothing else constructs a group id. | tuples the server refuses — found by running the tests, not by reading |
-| R2 | **Roles are nouns, assigned only through `group#member`** — one Keycloak group per role, never `[user]` directly. | tuples that name people; a role that can be held without the IdP knowing |
+| R2 | **Roles are nouns, assigned through `group#member`** — one Keycloak group per role. The one exception is a cluster role the Cluster claim gives an account of a tenant's realm by name (`spec.platformAccess.roleHolders`, AD-16): `security_officer` and `auditor` also take `user:<realm>/<sub>`, the account qualified by its realm, never a plain `user:<sub>`. | tuples that name people outside what git declares; a role that can be held without the IdP knowing; a holder tuple a token of another realm could match |
 | R3 | **Permissions are `can_<verb>`**, one per verb an enforcement point exposes, computed from roles. **PEPs check permissions, never roles.** | a PEP encoding "admin may…" in code; a new verb without a relation |
 | R4 | **One parent relation per type** (`cluster`, `tenant`); derivation is `<relation> from <parent>`, never a copied tuple. | authority granted sideways (principle 5) |
 | R5 | **`but not` only for least-privilege invariants** (`can_use: member … but not admin`). | exclusion logic scattered through permissions |
@@ -98,6 +98,7 @@ result. Rows no code writes say so.
 | Tuple | Written by | When |
 |---|---|---|
 | `cluster:<c>#<role>@group:<g>#member` | operator | from the Cluster claim's role assignments, once the claim is applied |
+| `cluster:<c>#<role>@user:<realm>/<sub>` | operator | from the Cluster claim's role holders, `security_officer` and `auditor` only, declaratively with the role assignments: an entry removed from the claim removes its tuple. `<realm>` is the holder's tenant's realm; a subject never contains `/`, so no plain `user:<sub>` matches it |
 | `tenant:<t>#cluster@cluster:<c>` | operator | tenant deploy |
 | `tenant:<t>#<role>@group:gentian/tenant/<t>/<g>#member` | operator | tenant deploy (groups are conventional per tenant) |
 | `tenant:<t>#operated_by@cluster:<c>` | operator | tenant deploy, and always for `tenant:platform`. **Consent, not structure**: it is what lets `admin from cluster` reach into the tenant — user management and secret writes included. A tenant that administers itself has it removed (`can_configure` on the cluster, at the tenant's request) and loses nothing else: `cluster` stays, so audit and cluster-scope approval still derive |
@@ -113,6 +114,12 @@ result. Rows no code writes say so.
 | `group:<g>#member@user:<sub>` | operator, from the signed statements of Keycloak's event listener | on each membership event. The reconcile on an interval and on start, with a read-only client, is not built |
 
 ## 4. What each enforcement point asks
+
+The director, the usher and the custodian ask for a verified caller as
+`user:<sub>` and, when that is refused, once more as `user:<realm>/<sub>`,
+with `<realm>` the realm whose keys verified the token (`CheckAs` in
+`internal/director/authz`). A role holder's tuple therefore answers only a
+token of the realm the claim names for it.
 
 | PEP | Object | Relations |
 |---|---|---|

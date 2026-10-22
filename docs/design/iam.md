@@ -253,7 +253,7 @@ membership, and access to each app:
 |---|---|
 | `gentian:platform:admin` | The platform administrator. The Cluster claim names the group that holds each platform role (`spec.platformRoles`); this is the default for `admin` |
 | `gentian:platform:security` | The security officers: who approves what escapes the default posture (`cluster#can_approve`). The default for `securityOfficer`; made empty by the install, never the administrators' group. The role is also held by name by accounts of a tenant's realm (§1.1c) |
-| the groups the claim names for `auditor`, `serviceAdmin`, `sharedAppsAdmin`, `breakGlass` | The other platform roles. None has a holder unless the claim names a group |
+| the groups the claim names for `auditor`, `serviceAdmin`, `sharedAppsAdmin`, `breakGlass` | The other platform roles. None has a holder unless the claim names a group, or for `auditor` an account of a tenant's realm by name (§1.1c) |
 | `gentian:tenant:<t>:members` | All workspace members |
 | `gentian:tenant:<t>:admins` | Tenant IT admins |
 | `gentian:tenant:<t>:perimeter` | Perimeter approvers (§1.3) |
