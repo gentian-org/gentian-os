@@ -100,7 +100,7 @@ func run(log *slog.Logger) error {
 	// credential that can rewrite it. Lookup is the same read-only discovery
 	// the edge authorization service uses.
 	if fgaStore == "" || fgaModel == "" {
-		lookupCtx, cancelLookup := context.WithTimeout(context.Background(), 2*time.Minute)
+		lookupCtx, cancelLookup := context.WithTimeout(context.Background(), 5*time.Minute)
 		store, model, err := authz.Lookup(lookupCtx, fgaOptions)
 		cancelLookup()
 		if err != nil {

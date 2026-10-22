@@ -73,7 +73,7 @@ func run(log *slog.Logger) error {
 	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
 	fgaOptions.StoreID, fgaOptions.ModelID = os.Getenv("OPENFGA_STORE_ID"), os.Getenv("OPENFGA_MODEL_ID")
 	if fgaOptions.StoreID == "" || fgaOptions.ModelID == "" {
-		lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		store, model, err := authz.Lookup(lookupCtx, fgaOptions)
 		cancel()
 		if err != nil {

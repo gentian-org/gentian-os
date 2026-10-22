@@ -108,7 +108,7 @@ func store() (authz.Checker, error) {
 		Logger:   slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 	}
 	if opts.StoreID == "" || opts.ModelID == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		storeID, modelID, err := authz.Lookup(ctx, opts)
 		if err != nil {
