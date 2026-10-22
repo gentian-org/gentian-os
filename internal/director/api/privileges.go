@@ -58,6 +58,34 @@ func (s *Server) tenantPrivileges(w http.ResponseWriter, r *http.Request, _ call
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "privileges": grants})
 }
 
+// clusterPrivileges answers what has been granted for every tenant of the
+// cluster, each grant with its tenant: the per-tenant read, tenant by tenant.
+// Under can_audit on the cluster, the relation every cross-tenant read of the
+// cluster's declared state carries.
+func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ call) {
+	tenants, err := s.cfg.Repo.Tenants(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	type tenantGrant struct {
+		Tenant string `json:"tenant"`
+		gitops.PrivilegeGrant
+	}
+	out := []tenantGrant{}
+	for _, t := range tenants {
+		grants, err := s.cfg.Repo.TenantPrivileges(r.Context(), t)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		for _, g := range grants {
+			out = append(out, tenantGrant{Tenant: t, PrivilegeGrant: g})
+		}
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "privileges": out})
+}
+
 // mayApprove decides whether this caller may answer a request of this kind.
 //
 // The route itself carries only can_view, because who may approve follows from

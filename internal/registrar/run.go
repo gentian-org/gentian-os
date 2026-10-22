@@ -152,6 +152,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		VouchingKeys:     vouchingKeys,
 		Invitations:      invitations,
 		InvitationExpiry: invitationExpiry(log),
+		PlatformRoles:    ClaimPlatformRoles(reader),
 	})
 	if err != nil {
 		closer()

@@ -138,6 +138,10 @@ type Config struct {
 	// tried. Zero means the defaults.
 	InvitationExpiry   time.Duration
 	InvitationInterval time.Duration
+	// PlatformRoles answers which kernel-realm group holds each platform
+	// role (ClaimPlatformRoles). Optional: without it the cluster's
+	// platform-role members are not offered.
+	PlatformRoles func(ctx context.Context) ([]RoleGroup, error)
 	// Now is the clock, for the tests. Nil means the real one.
 	Now func() time.Time
 }
@@ -459,6 +463,10 @@ func (s *Server) routes() {
 	// Who could be made a security officer: every tenant's administrators,
 	// for whoever assigns the role (tenant_administrators.go).
 	s.guarded("GET /v1/clusters/{c}/tenant-administrators", "can_configure", s.clusterObject, s.listTenantAdministrators)
+
+	// Who holds each platform role through its kernel-realm group, for
+	// whoever may audit the cluster (platform_role_members.go).
+	s.guarded("GET /v1/clusters/{c}/platform-role-members", "can_audit", s.clusterObject, s.listPlatformRoleMembers)
 
 	// A person's link to a component that vouches for people, which is that
 	// person's consent to it (vouching.go). Linking is open to whoever may

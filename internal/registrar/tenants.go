@@ -289,19 +289,50 @@ var clusterClaimList = schema.GroupVersionKind{Group: "gentianos.io", Version: "
 // name. That includes a platformRoles that is not a map of strings, which the
 // schema does not admit and which could only be read in part.
 func ClaimPlatformRoleGroups(reader client.Reader) func(ctx context.Context) ([]string, error) {
+	roles := ClaimPlatformRoles(reader)
 	return func(ctx context.Context) ([]string, error) {
+		held, err := roles(ctx)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		var out []string
+		for _, h := range held {
+			if !seen[h.Group] {
+				seen[h.Group] = true
+				out = append(out, h.Group)
+			}
+		}
+		sort.Strings(out)
+		return out, nil
+	}
+}
+
+// RoleGroup is one platform role, by its field of spec.platformRoles, and the
+// group whose members hold it.
+type RoleGroup struct {
+	Role  string `json:"role"`
+	Group string `json:"group"`
+}
+
+// ClaimPlatformRoles answers which group holds each platform role, read as
+// ClaimPlatformRoleGroups reads it (the same claim, the same defaults), with
+// the role beside each group. Sorted by role, then group; a role two claims
+// give to two groups is listed with both.
+func ClaimPlatformRoles(reader client.Reader) func(ctx context.Context) ([]RoleGroup, error) {
+	return func(ctx context.Context) ([]RoleGroup, error) {
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(clusterClaimList)
 		if err := reader.List(ctx, list, client.InNamespace(layout.Namespace(layout.Provisioning))); err != nil {
 			return nil, fmt.Errorf("reading the Cluster claim: %w", err)
 		}
-		seen := map[string]bool{}
-		var out []string
-		add := func(group string) {
-			group = strings.TrimPrefix(strings.TrimSpace(group), "/")
-			if group != "" && !seen[group] {
-				seen[group] = true
-				out = append(out, group)
+		seen := map[RoleGroup]bool{}
+		var out []RoleGroup
+		add := func(role, group string) {
+			h := RoleGroup{Role: role, Group: strings.TrimPrefix(strings.TrimSpace(group), "/")}
+			if h.Group != "" && !seen[h] {
+				seen[h] = true
+				out = append(out, h)
 			}
 		}
 		for i := range list.Items {
@@ -309,21 +340,26 @@ func ClaimPlatformRoleGroups(reader client.Reader) func(ctx context.Context) ([]
 			if err != nil {
 				return nil, fmt.Errorf("reading spec.platformRoles of the Cluster claim %s: %w", list.Items[i].GetName(), err)
 			}
-			for _, group := range roles {
-				add(group)
+			for role, group := range roles {
+				add(role, group)
 			}
 			for role, group := range roleDefaults {
 				if strings.TrimSpace(roles[role]) == "" {
-					add(group)
+					add(role, group)
 				}
 			}
 		}
 		if len(out) == 0 {
-			for _, group := range roleDefaults {
-				add(group)
+			for role, group := range roleDefaults {
+				add(role, group)
 			}
 		}
-		sort.Strings(out)
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].Role != out[j].Role {
+				return out[i].Role < out[j].Role
+			}
+			return out[i].Group < out[j].Group
+		})
 		return out, nil
 	}
 }

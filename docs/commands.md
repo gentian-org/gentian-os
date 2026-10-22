@@ -614,6 +614,15 @@ waiting, but the tenant's console and the App Store's install step show who
 declined, when and why, and offer to ask again. Asking again clears the
 decline, as does an approval made after it.
 
+What was approved, for every tenant at once, is read with `cluster#can_audit`
+from the director's `GET /v1/clusters/{c}/privileges` -- `200 {"cluster",
+"privileges": [{"tenant","install","privilege","approver","approvedAt",
+"reason","expiresAt"}]}`, each tenant's `privileges.yaml` in one list:
+
+```bash
+kubectl gentian approvals granted  # every tenant's approved exceptions: app, privilege, who approved, when, until when
+```
+
 ### What a tenant has on the internet
 
 An entry of a profile that the public reaches (`surface: perimeter`) answers
@@ -900,6 +909,7 @@ tenant's realm, and used from that tenant's console.
 ```bash
 kubectl gentian platform-roles tenant-administrators                    # who could hold one: every tenant's administrators
 kubectl gentian platform-roles holders                                  # who holds which, as the claim declares
+kubectl gentian platform-roles members                                  # who holds each through its kernel Keycloak group
 kubectl gentian platform-roles holders add securityOfficer acme it@acme.example   # one commit
 kubectl gentian platform-roles holders remove securityOfficer acme it@acme.example
 ```
@@ -917,6 +927,12 @@ The director's routes, all on the Cluster claim:
 | `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","securityOfficer"], "roleHolders": [{"role","tenant","subject","username","email"}]}` |
 | `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email"}` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `422` for a role, tenant or subject that cannot hold one |
 | `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
+
+The members of the groups themselves are the registrar's to read, from the
+kernel realm, and Keycloak's to change: `GET /v1/clusters/{c}/platform-role-members`,
+`can_audit`, answers `200 {"cluster", "complete", "roles": [{"role","group","members": [{"id","username","email",...}],
+"unavailable"}]}`; a group that could not be read has `members: null`,
+`unavailable: true` and makes `complete` false.
 
 The other way round, a tenant's administrators may let the platform's
 administrators sign in to their tenant: the switch is the tenant's own, off by

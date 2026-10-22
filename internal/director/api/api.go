@@ -543,6 +543,9 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/platform-roles/holders", "can_audit", s.clusterObject, s.roleHolders)
 		s.guarded("PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}", "can_configure", s.clusterObject, s.setRoleHolder)
 		s.guarded("DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}", "can_configure", s.clusterObject, s.removeRoleHolder)
+		// Every tenant's approved privilege exceptions in one list
+		// (privileges.go), for whoever may audit the cluster.
+		s.guarded("GET /v1/clusters/{c}/privileges", "can_audit", s.clusterObject, s.clusterPrivileges)
 		// A second address for one published surface, directly under the
 		// cluster's own domain. can_configure, and not the tenant's
 		// approver: a name under the cluster's domain is the cluster's to
