@@ -537,7 +537,6 @@ func setKeyPath(text, root string, keys []string, l leaf) (string, bool, error) 
 				}
 				lines = replaceLines(lines, pos, 0, []string{strings.Repeat(" ", indent) + key + ":"})
 				at = pos
-				end = pos + 1
 			}
 		}
 		if last {
