@@ -350,6 +350,14 @@ func (r *TenantReconciler) tenantMailMode(ctx context.Context, tenant *gentianov
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	// Every app that declares mail gets its records, mail or not: the paths
+	// below that write the real ones are the paths where the tenant has
+	// mail, and an app on any other path would wait for a record nothing
+	// writes. The empty ones never replace a record that holds values.
+	if err := r.seedPerAppEmptyMailSecrets(ctx, tenant); err != nil {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
+		return ctrl.Result{}, err
+	}
 	// Mail is a function the Cluster claim composes (system-mail and its
 	// DMZ, namespace-cleanup.md §2). A cluster that has not composed it has
 	// no relay to register a tenant in and no store to give it a mailbox in;
@@ -1589,28 +1597,9 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 	if r.Seeder == nil {
 		return nil
 	}
-
-	// Collect the set of apps that need SMTP and/or IMAP.
-	type need struct{ smtp, imap bool }
-	needs := map[string]need{}
-	for _, app := range tenant.Spec.Apps {
-		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
-		}
-		if profile.Services() == nil || profile.Services().Mail == nil {
-			continue
-		}
-		needs[app.Profile] = need{
-			smtp: profile.Services().Mail.SMTP != nil,
-			imap: profile.Services().Mail.IMAP != nil,
-		}
-	}
-	if len(needs) == 0 {
-		return nil
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil || len(needs) == 0 {
+		return err
 	}
 
 	// Pull the per-tenant SMTP secret so we can copy the same credentials into
@@ -1655,6 +1644,59 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 				Port: "993",
 			}); err != nil {
 				return fmt.Errorf("seed imap for %s: %w", appName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// appMailNeed is what an app's profile declares of mail.
+type appMailNeed struct{ smtp, imap bool }
+
+// appMailNeeds lists the tenant's apps whose profile declares mail, by the
+// name their records are kept under.
+func (r *TenantReconciler) appMailNeeds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (map[string]appMailNeed, error) {
+	needs := map[string]appMailNeed{}
+	for _, app := range tenant.Spec.Apps {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
+		}
+		if profile.Services() == nil || profile.Services().Mail == nil {
+			continue
+		}
+		needs[app.Profile] = appMailNeed{
+			smtp: profile.Services().Mail.SMTP != nil,
+			imap: profile.Services().Mail.IMAP != nil,
+		}
+	}
+	return needs, nil
+}
+
+// seedPerAppEmptyMailSecrets writes an empty SMTP and IMAP record for each
+// app that declares them and has none yet, so an app installs on a tenant
+// without mail and sends none. seedPerAppMailSecrets replaces them once the
+// tenant has mail.
+func (r *TenantReconciler) seedPerAppEmptyMailSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.Seeder == nil {
+		return nil
+	}
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	for appName, n := range needs {
+		if n.smtp {
+			if err := r.Seeder.SeedEmptySMTP(ctx, tenant.Name, appName); err != nil {
+				return fmt.Errorf("seed empty smtp for %s: %w", appName, err)
+			}
+		}
+		if n.imap {
+			if err := r.Seeder.SeedEmptyIMAP(ctx, tenant.Name, appName); err != nil {
+				return fmt.Errorf("seed empty imap for %s: %w", appName, err)
 			}
 		}
 	}

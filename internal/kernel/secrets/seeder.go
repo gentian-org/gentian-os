@@ -484,13 +484,21 @@ type SMTPCreds struct {
 // SeedSMTP writes the SMTP record. The password is *copied* from a
 // kernel-level relay secret rather than derived (the relay is shared
 // across tenants); callers pass the already-retrieved value in.
+//
+// A record that exists with every value empty is the one SeedEmptySMTP
+// leaves while the tenant has no mail, and these values replace it.
 func (s *Seeder) SeedSMTP(ctx context.Context, tenant, app string, base SMTPCreds) (SMTPCreds, error) {
-	got, err := s.seedAndRead(ctx, CategoryPath(tenant, app, "smtp"), map[string]string{
+	path := CategoryPath(tenant, app, "smtp")
+	data := map[string]string{
 		"host":     base.Host,
 		"port":     base.Port,
 		"user":     base.User,
 		"password": base.Password,
-	}, true)
+	}
+	if err := s.replaceEmptyMailRecord(ctx, path, data); err != nil {
+		return SMTPCreds{}, fmt.Errorf("seed smtp(%s/%s): %w", tenant, app, err)
+	}
+	got, err := s.seedAndRead(ctx, path, data, true)
 	if err != nil {
 		return SMTPCreds{}, fmt.Errorf("seed smtp(%s/%s): %w", tenant, app, err)
 	}
@@ -506,11 +514,72 @@ type IMAPCreds struct {
 }
 
 // SeedIMAP writes host/port only; per-user IMAP credentials come from Keycloak at runtime.
+// Like SeedSMTP, it replaces the empty record SeedEmptyIMAP leaves.
 func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCreds) error {
-	return s.w.PutOnce(ctx, CategoryPath(tenant, app, "imap"), map[string]string{
+	path := CategoryPath(tenant, app, "imap")
+	data := map[string]string{
 		"host": base.Host,
 		"port": base.Port,
+	}
+	if err := s.replaceEmptyMailRecord(ctx, path, data); err != nil {
+		return fmt.Errorf("seed imap(%s/%s): %w", tenant, app, err)
+	}
+	return s.w.PutOnce(ctx, path, data)
+}
+
+// --- Mail without a mail function --------------------------------------------
+
+// SeedEmptySMTP writes an app's SMTP record with every value empty, unless
+// the path already holds one.
+//
+// An app that declares mail reads its record through an ExternalSecret, and
+// a path nothing wrote fails that ExternalSecret and with it every value the
+// app is installed with. A tenant without mail -- a cluster that composes no
+// mail function, a relay whose credentials never arrived -- has no record to
+// write, so the app is given an empty one and installs without sending mail.
+// SeedSMTP replaces it once mail is there; a record with values is never
+// touched here.
+func (s *Seeder) SeedEmptySMTP(ctx context.Context, tenant, app string) error {
+	return s.w.PutOnce(ctx, CategoryPath(tenant, app, "smtp"), map[string]string{
+		"host": "", "port": "", "user": "", "password": "",
 	})
+}
+
+// SeedEmptyIMAP is SeedEmptySMTP for the IMAP record.
+func (s *Seeder) SeedEmptyIMAP(ctx context.Context, tenant, app string) error {
+	return s.w.PutOnce(ctx, CategoryPath(tenant, app, "imap"), map[string]string{
+		"host": "", "port": "",
+	})
+}
+
+// replaceEmptyMailRecord writes data over the record at path when that record
+// exists with every value empty and data carries a value. Anything else is
+// left to the write-once seed that follows.
+func (s *Seeder) replaceEmptyMailRecord(ctx context.Context, path string, data map[string]string) error {
+	if emptyRecord(data) {
+		return nil
+	}
+	have, err := s.w.Get(ctx, path)
+	if errors.Is(err, ErrNotFound) || (err == nil && have == nil) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if !emptyRecord(have) {
+		return nil
+	}
+	return s.w.Put(ctx, path, data)
+}
+
+// emptyRecord reports whether every value of rec is empty.
+func emptyRecord(rec map[string]string) bool {
+	for _, v := range rec {
+		if v != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // --- IMAP --------------------------------------------------------------------
