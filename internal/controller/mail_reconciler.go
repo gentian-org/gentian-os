@@ -350,14 +350,6 @@ func (r *TenantReconciler) tenantMailMode(ctx context.Context, tenant *gentianov
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	// Every app that declares mail gets its records, mail or not: the paths
-	// below that write the real ones are the paths where the tenant has
-	// mail, and an app on any other path would wait for a record nothing
-	// writes. The empty ones never replace a record that holds values.
-	if err := r.seedPerAppEmptyMailSecrets(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
-		return ctrl.Result{}, err
-	}
 	// Mail is a function the Cluster claim composes (system-mail and its
 	// DMZ, namespace-cleanup.md §2). A cluster that has not composed it has
 	// no relay to register a tenant in and no store to give it a mailbox in;
@@ -365,10 +357,6 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 	if present, err := r.mailFunctionPresent(ctx); err != nil {
 		return ctrl.Result{}, err
 	} else if !present {
-		if err := r.seedPerAppRelaySMTP(ctx, tenant); err != nil {
-			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
-			return ctrl.Result{}, err
-		}
 		tenant.Status.MailboxDomain = ""
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"NoMailFunction", "This cluster composes no mail function; nothing to register")
@@ -1678,6 +1666,32 @@ func (r *TenantReconciler) appMailNeeds(ctx context.Context, tenant *gentianov1a
 		}
 	}
 	return needs, nil
+}
+
+// seedPerAppMailRecords writes the per-app mail records that need no mail
+// stack of the tenant's own: an empty SMTP and IMAP record for every app that
+// declares them, and, on a cluster that composes no mail function, the
+// external relay's login in each SMTP record. ensureMail writes the real ones
+// where the tenant has mail, and they replace the empty ones.
+//
+// It runs before the tenant's apps are reconciled, not with the rest of the
+// mail in the shared-kernel stage: an app that declares mail installs only
+// once its records exist, and a stage that stops on any one app's failure
+// would otherwise keep every other app from installing as well.
+func (r *TenantReconciler) seedPerAppMailRecords(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	// The empty ones never replace a record that holds values.
+	err := r.seedPerAppEmptyMailSecrets(ctx, tenant)
+	if err == nil {
+		var present bool
+		if present, err = r.mailFunctionPresent(ctx); err == nil && !present {
+			err = r.seedPerAppRelaySMTP(ctx, tenant)
+		}
+	}
+	if err != nil {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
+		return fmt.Errorf("seed the apps' mail records: %w", err)
+	}
+	return nil
 }
 
 // seedPerAppEmptyMailSecrets writes an empty SMTP and IMAP record for each

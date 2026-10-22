@@ -824,8 +824,8 @@ func (r *TenantReconciler) ensureComponent(
 		existing.Spec.MovedAt, existing.Spec.MovedBy = moved.at, moved.by
 		changed = true
 	}
-	if !equality.Semantic.DeepEqual(existing.Spec.Privileges, desired.Spec.Privileges) {
-		existing.Spec.Privileges = desired.Spec.Privileges
+	if grants := keepStoredGrants(existing.Spec.Privileges, desired.Spec.Privileges); !equality.Semantic.DeepEqual(existing.Spec.Privileges, grants) {
+		existing.Spec.Privileges = grants
 		changed = true
 	}
 	if !equality.Semantic.DeepEqual(existing.Spec.Exposures, desired.Spec.Exposures) {
@@ -896,6 +896,35 @@ func tenantPrivilegeGrants(tenant *gentianov1alpha1.Tenant, install string) []ge
 		if tenant.Spec.Privileges[i].Install == install {
 			out = append(out, tenant.Spec.Privileges[i].Grant())
 		}
+	}
+	return out
+}
+
+// keepStoredGrants is the Component's grant list for the Tenant's grants
+// (desired): an approval the Component already carries for a privilege stays
+// exactly as stored, a privilege it does not carry yet is added, and one the
+// Tenant no longer grants is removed.
+//
+// An approval is never rewritten in place. The Component's API refuses a
+// change of approver or approvedAt (a new approval is a new grant), and a
+// Tenant that records the same privilege approved again -- a second press of
+// the button stamps a new approvedAt -- would otherwise fail every update of
+// the Component, and with it the tenant's whole app stage.
+func keepStoredGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []gentianov1alpha1.PrivilegeGrant {
+	if len(desired) == 0 {
+		return nil
+	}
+	have := make(map[string]gentianov1alpha1.PrivilegeGrant, len(stored))
+	for _, g := range stored {
+		have[g.Privilege] = g
+	}
+	out := make([]gentianov1alpha1.PrivilegeGrant, 0, len(desired))
+	for _, g := range desired {
+		if kept, ok := have[g.Privilege]; ok {
+			out = append(out, kept)
+			continue
+		}
+		out = append(out, g)
 	}
 	return out
 }

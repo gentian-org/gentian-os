@@ -73,7 +73,7 @@ func TestMail_ExternalRelayFillsAppSMTPRecord(t *testing.T) {
 	tenant := mailingTenant()
 	r, _, vault := relayReconciler(t, "external", mailingProfile(), tenant, relaySecret("relay@example.com", "s3cret"))
 
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantSMTP(t, vault, map[string]string{
@@ -92,7 +92,7 @@ func TestMail_ExternalRelayWithoutCredentialKeepsRecord(t *testing.T) {
 	tenant := mailingTenant()
 	r, c, vault := relayReconciler(t, "external", mailingProfile(), tenant, relaySecret("", ""))
 
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantSMTP(t, vault, emptySMTP)
@@ -101,7 +101,7 @@ func TestMail_ExternalRelayWithoutCredentialKeepsRecord(t *testing.T) {
 	if err := c.Update(ctx, sec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	filled := map[string]string{
@@ -112,7 +112,7 @@ func TestMail_ExternalRelayWithoutCredentialKeepsRecord(t *testing.T) {
 	if err := c.Update(ctx, relaySecret("", "")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantSMTP(t, vault, filled)
@@ -124,13 +124,13 @@ func TestMail_ExternalRelayChangeUpdatesRecord(t *testing.T) {
 	tenant := mailingTenant()
 	r, c, vault := relayReconciler(t, "external", mailingProfile(), tenant, relaySecret("old@example.com", "old"))
 
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Update(ctx, relaySecret("new@example.com", "new")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantSMTP(t, vault, map[string]string{
@@ -145,7 +145,7 @@ func TestMail_SystemModeDoesNotUseRelay(t *testing.T) {
 	tenant := mailingTenant()
 	r, _, vault := relayReconciler(t, mailServiceModeSystem, mailingProfile(), tenant, relaySecret("relay@example.com", "s3cret"))
 
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantSMTP(t, vault, emptySMTP)
