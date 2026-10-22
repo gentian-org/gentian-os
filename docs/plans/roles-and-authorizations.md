@@ -19,8 +19,8 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | --- | --- | --- | --- | --- |
 | kernel | **Break-glass** | `gentian:platform:break-glass` | recovery when the normal path is down (every action reaching the API server is to be recorded by API-server audit logging, which the installer does not set up yet ([open-items.md](open-items.md) §6) — a kubeconfig session raises no Keycloak event, so nothing else would see it): OpenBao unseal and root, git host administration, direct `kubectl` on `kernel-*`; time-boxed, every action logged out-of-band | kubeconfig and the recovery kit — the only role that bypasses the director |
 | kernel | **Platform administrator** | `gentian:platform:admin` | installing and upgrading the OS (`install.sh`, the Cluster claim, kernel versions); granting every role below; the cluster-level policies that bound them — which `authMode`s and surfaces tenants may enable, the `PlatformSecurityPolicy` allowlist, resource-plan ceilings | director (`/v1/clusters/{c}/…`), custodian for kernel-scoped credentials |
-| kernel | **Security officer** | `gentian:platform:security` -- held by tenants' administrators the Cluster claim names, through a linked kernel-realm account (AD-16) | approving what escapes the default posture at **cluster** scope: pod-security waivers and cluster roles, which weaken something protecting the node or reach the Kubernetes API (target-component-structure.md §4.3; egress is the tenant's to approve), the cluster exposure ceiling — modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval (target-component-structure.md §8.3) — and catalogue entries at `trustTier: platform`; reviewing the decision and change logs and the cluster-wide exposure view | director (approval endpoints, `/v1/clusters/{c}/exposure`), read access to the three audit logs |
-| kernel | **Auditor** | `gentian:platform:auditor` | reading the issuer, decision and change logs across all tenants, and the cluster-wide exposure view — every public endpoint, its owner, expiry, and the condensed proxy log; nothing else | read-only routes on the director; OpenFGA read; git read |
+| kernel | **Security officer** | `gentian:platform:security`; also held by name by accounts of a tenant's realm the Cluster claim names (AD-16) | approving what escapes the default posture at **cluster** scope: pod-security waivers and cluster roles, which weaken something protecting the node or reach the Kubernetes API (target-component-structure.md §4.3; egress is the tenant's to approve), the cluster exposure ceiling — modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval (target-component-structure.md §8.3) — and catalogue entries at `trustTier: platform`; reviewing the decision and change logs and the cluster-wide exposure view | director (approval endpoints, `/v1/clusters/{c}/exposure`), read access to the three audit logs |
+| kernel | **Auditor** | `gentian:platform:auditor`; also held by name, as the security officer | reading the issuer, decision and change logs across all tenants, and the cluster-wide exposure view — every public endpoint, its owner, expiry, and the condensed proxy log; nothing else | read-only routes on the director; OpenFGA read; git read |
 | system | **Service admin** | `gentian:platform:service-admin` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), custodian for service admin credentials |
 | shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `class: shared-app` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
 | tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (target-component-structure.md §4.3) — users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
@@ -37,16 +37,14 @@ Separations that are load-bearing, whatever one person happens to hold:
   surface that the same identity requested and approved is a policy hole
   with a signature on it. Every cluster has both from the start: the claim
   defaults `securityOfficer` to `gentian:platform:security`, a group of its
-  own that the install makes empty. Its holders are the tenants'
-  administrators the cluster's administrator names on the claim
-  (`spec.platformAccess.securityOfficers`, AD-16): each gets a linked account
-  in the kernel realm that signs in through their own tenant's realm, a
-  second factor the kernel realm asks for, and that one membership -- the
-  composition renders it from git, Keycloak's events state it, the operator
-  writes the tuple ([iam.md §1.1c](../design/iam.md)). The administrator holds
-  `realm-admin` in the kernel realm and so could still join the group by hand;
-  the realm's admin events are the record of whether that happened, not a
-  refusal.
+  own that the install makes empty. The cluster's administrator also names
+  tenants' administrators as holders on the claim
+  (`spec.platformAccess.roleHolders`, AD-16): each keeps their own account in
+  their tenant's realm, the operator writes the role for that account of that
+  realm, and they use it signed in to their own tenant
+  ([iam.md §1.1c](../design/iam.md)). The administrator holds `realm-admin`
+  in the kernel realm and so could still join the group by hand; the realm's
+  admin events are the record of whether that happened, not a refusal.
 - **Break-glass is not "platform administrator with more".** It is a
   separate group with no standing membership: added for an incident,
   removed after, each use visible in the issuer log because the group
@@ -86,11 +84,11 @@ Separations that are load-bearing, whatever one person happens to hold:
   decision log; and app OIDC clients are granted to member groups
   only, so an admin token is not accepted by any app even if presented.
   The same holds one layer up: a platform-role account (`gentian:platform:*`)
-  is a member of no tenant, `tenant-platform` included. A security officer's
-  linked kernel-realm account holds its one group and nothing else; the
-  tenant account it is linked to is that tenant's administrator's, which is
-  a different account in a different realm, and the two are joined by
-  nothing but the federated identity the claim declares.
+  is a member of no tenant, `tenant-platform` included. A role held by name
+  adds one cluster relation to a tenant administrator's account and nothing
+  else, and only `security_officer` or `auditor`: that tenant's
+  administrators can take over any account of its realm, so a role that
+  changes the cluster is never held there.
 - **A platform administrator enters a tenant only where the tenant said so.**
   The tenant's `operated_by` consent lets the cluster's administrators act on
   the tenant through the director; it does not sign them in to it. A
