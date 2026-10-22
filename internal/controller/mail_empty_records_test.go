@@ -45,6 +45,16 @@ func mailingTenant() *gentianov1alpha1.Tenant {
 	}
 }
 
+// mailPass is one reconcile's mail, in stage order: the apps' records before
+// the apps, the tenant's mail in the shared-kernel stage.
+func mailPass(ctx context.Context, r *TenantReconciler, tenant *gentianov1alpha1.Tenant) error {
+	if err := r.seedPerAppMailRecords(ctx, tenant); err != nil {
+		return err
+	}
+	_, err := r.ensureMail(ctx, tenant)
+	return err
+}
+
 // An app that declares mail installs on a cluster without mail: its records
 // are there, every value empty, so the ExternalSecret that reads them syncs.
 func TestMail_NoMailFunctionStillWritesEmptyAppRecords(t *testing.T) {
@@ -55,7 +65,7 @@ func TestMail_NoMailFunctionStillWritesEmptyAppRecords(t *testing.T) {
 	vault := memVault{}
 	r := &TenantReconciler{Client: c, Seeder: secrets.NewSeeder(vault, nil)}
 
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +99,7 @@ func TestMail_RealRecordReplacesEmptyAndIsNotEmptiedAgain(t *testing.T) {
 	vault := memVault{}
 	r := &TenantReconciler{Client: c, Seeder: secrets.NewSeeder(vault, nil), KernelDomain: "example.org"}
 
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +119,7 @@ func TestMail_RealRecordReplacesEmptyAndIsNotEmptiedAgain(t *testing.T) {
 	tenant.Spec.Mail = &gentianov1alpha1.TenantMail{
 		Mode: gentianov1alpha1.MailModeExternal, SmtpCredentialsSecret: "relay",
 	}
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,7 +142,7 @@ func TestMail_RealRecordReplacesEmptyAndIsNotEmptiedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	tenant.Spec.Mail = nil
-	if _, err := r.ensureMail(ctx, tenant); err != nil {
+	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	for k, v := range want {

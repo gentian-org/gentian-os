@@ -395,6 +395,15 @@ func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, st
 
 func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, state *tenantReconcileState) (ctrl.Result, error) {
 	tenant := state.tenant
+	// The apps' mail records come before the apps, so that one app's failure
+	// below, which ends this reconcile, does not hold back the records every
+	// other app that declares mail waits for (seedPerAppMailRecords).
+	if !r.CrossplaneOnly {
+		if err := r.seedPerAppMailRecords(ctx, tenant); err != nil {
+			r.updateBlockedStatus(ctx, tenant)
+			return ctrl.Result{}, err
+		}
+	}
 	if _, err := r.ensureMacWaivers(ctx, tenant); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure mac waivers: %w", err)
 	}
