@@ -505,6 +505,44 @@ func (s *Seeder) SeedSMTP(ctx context.Context, tenant, app string, base SMTPCred
 	return SMTPCreds{Host: got["host"], Port: got["port"], User: got["user"], Password: got["password"]}, nil
 }
 
+// SyncSMTP writes the SMTP record and keeps it equal to base: written when
+// it is absent or differs, left alone when it already holds base. For values
+// the record follows rather than keeps, such as the cluster's external relay,
+// whose login may be changed after the app was installed. An empty base is
+// never written, so a record with values is not emptied.
+func (s *Seeder) SyncSMTP(ctx context.Context, tenant, app string, base SMTPCreds) error {
+	path := CategoryPath(tenant, app, "smtp")
+	want := map[string]string{
+		"host":     base.Host,
+		"port":     base.Port,
+		"user":     base.User,
+		"password": base.Password,
+	}
+	if emptyRecord(want) {
+		return nil
+	}
+	have, err := s.w.Get(ctx, path)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("sync smtp(%s/%s): read: %w", tenant, app, err)
+	}
+	if have != nil && len(have) == len(want) {
+		same := true
+		for k, v := range want {
+			if have[k] != v {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+	if err := s.w.Put(ctx, path, want); err != nil {
+		return fmt.Errorf("sync smtp(%s/%s): %w", tenant, app, err)
+	}
+	return nil
+}
+
 // --- IMAP --------------------------------------------------------------------
 
 // IMAPCreds is the set of values written to …/imap.

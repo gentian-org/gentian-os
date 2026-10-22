@@ -365,6 +365,10 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 	if present, err := r.mailFunctionPresent(ctx); err != nil {
 		return ctrl.Result{}, err
 	} else if !present {
+		if err := r.seedPerAppRelaySMTP(ctx, tenant); err != nil {
+			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
+			return ctrl.Result{}, err
+		}
 		tenant.Status.MailboxDomain = ""
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"NoMailFunction", "This cluster composes no mail function; nothing to register")
@@ -1701,6 +1705,66 @@ func (r *TenantReconciler) seedPerAppEmptyMailSecrets(ctx context.Context, tenan
 		}
 	}
 	return nil
+}
+
+// seedPerAppRelaySMTP fills the SMTP record of each app that declares one
+// with the cluster's external relay, on a cluster that relays (mail.serviceMode
+// external) and composes no mail function, so there is no per-tenant login
+// to give the app. Every app sends as the relay's one login.
+//
+// The relay is read from keycloak-smtp-credentials, which the operator already
+// reads for the tenant realms' mail: the ExternalSecret that writes it is the
+// projection of the smtp-relay credential (gentian-os/kernel/mail/postfix,
+// relay_username and relay_password) with the claim's host, port and TLS
+// settings beside it. Until the credential is supplied, smtp_configure is not
+// true and the records stay as they are: empty, or the values they hold.
+// Once it is, the records follow it, a changed login included.
+func (r *TenantReconciler) seedPerAppRelaySMTP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.Seeder == nil || r.dovecotDeployed(ctx) {
+		return nil
+	}
+	relay, err := r.clusterRelaySMTP(ctx)
+	if err != nil || relay == nil {
+		return err
+	}
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	for appName, n := range needs {
+		if !n.smtp {
+			continue
+		}
+		if err := r.Seeder.SyncSMTP(ctx, tenant.Name, appName, *relay); err != nil {
+			return fmt.Errorf("seed relay smtp for %s: %w", appName, err)
+		}
+	}
+	return nil
+}
+
+// clusterRelaySMTP is the external relay's address and login, or nil while
+// the relay credential has not been supplied.
+func (r *TenantReconciler) clusterRelaySMTP(ctx context.Context) (*secrets.SMTPCreds, error) {
+	sec := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, sec)
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s: %w", identityNamespace, keycloakSMTPCredentialsSecret, err)
+	}
+	d := sec.Data
+	if !smtpCredentialsUsable(d) || len(d["smtp_host"]) == 0 || len(d["smtp_user"]) == 0 || len(d["smtp_password"]) == 0 {
+		return nil, nil
+	}
+	port := string(d["smtp_port"])
+	if port == "" {
+		port = "587"
+	}
+	return &secrets.SMTPCreds{
+		Host: string(d["smtp_host"]), Port: port,
+		User: string(d["smtp_user"]), Password: string(d["smtp_password"]),
+	}, nil
 }
 
 // deleteMail removes the tenant's registration from the shared mail infrastructure.
