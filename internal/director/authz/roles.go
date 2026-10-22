@@ -17,8 +17,9 @@ import (
 	"sort"
 )
 
-// ClusterRoles are the cluster's role relations, each named by the Keycloak
-// group that holds it. The names are the model's relations on type cluster;
+// ClusterRoles are the cluster's role relations: admin and break_glass, held
+// by the Keycloak group the claim names for each, and the ones a role holder
+// holds by name. The names are the model's relations on type cluster;
 // anything else is refused rather than written, because a tuple naming a
 // relation the model does not have is accepted by OpenFGA and then matches
 // nothing, which is indistinguishable from a permission that was never granted.
@@ -28,6 +29,7 @@ var ClusterRoles = []string{
 	"auditor",
 	"service_admin",
 	"shared_apps_admin",
+	"perimeter_approver",
 	"break_glass",
 }
 
@@ -41,18 +43,15 @@ func knownClusterRole(rel string) bool {
 }
 
 // ClaimRoles maps each field of the Cluster claim's spec.platformRoles, as an
-// operator writes it, to the cluster relation it grants. The claim's spelling
-// and the model's are kept apart on purpose, and this is the one place they
-// meet: the operator's projection and the director's reading of the claim
-// both translate through it, so the two cannot drift into projecting one set
-// of roles and checking another.
+// operator writes it, to the cluster relation it grants: the two roles a
+// Keycloak group of the kernel realm holds. The claim's spelling and the
+// model's are kept apart on purpose, and this is the one place they meet:
+// the operator's projection and the director's reading of the claim both
+// translate through it, so the two cannot drift into projecting one set of
+// roles and checking another.
 var ClaimRoles = map[string]string{
-	"admin":           "admin",
-	"securityOfficer": "security_officer",
-	"auditor":         "auditor",
-	"serviceAdmin":    "service_admin",
-	"sharedAppsAdmin": "shared_apps_admin",
-	"breakGlass":      "break_glass",
+	"admin":      "admin",
+	"breakGlass": "break_glass",
 }
 
 // RolesFromClaim translates spec.platformRoles of the Cluster claim into the
@@ -79,20 +78,55 @@ func RolesFromClaim(claim map[string]string) (roles map[string]string, unknown [
 	return roles, unknown
 }
 
-// HolderRoles are the cluster roles the Cluster claim gives a user of a
-// tenant's realm by name (spec.platformAccess.roleHolders), keyed by the
-// claim's spelling. Approving and reading only: a tenant's realm is
-// administered by that tenant's administrators, who can take over any
-// account in it, so a role held there is in their hands too. Never admin or
-// another role that changes the cluster, and never break_glass.
+// HolderRoles are the roles the Cluster claim gives a person by name
+// (spec.platformAccess.roleHolders), keyed by the claim's spelling, each with
+// the relation it grants. Never admin or break_glass: those stay with the
+// kernel realm's groups.
 var HolderRoles = map[string]string{
-	"securityOfficer": "security_officer",
-	"auditor":         "auditor",
+	"securityOfficer":   "security_officer",
+	"auditor":           "auditor",
+	"serviceAdmin":      "service_admin",
+	"sharedAppsAdmin":   "shared_apps_admin",
+	"perimeterApprover": "perimeter_approver",
 }
 
-// RoleHolder is one account of a realm holding a cluster relation.
+// ScopeCluster is a role holder's scope when the role is held over the
+// cluster; a perimeter approver of one tenant has "tenant:<t>" instead.
+const ScopeCluster = "cluster"
+
+// HolderScope is the scope a role holds for a person of tenant, or ok false
+// when that tenant's people may not hold the role:
+//
+//	securityOfficer, auditor           cluster, for anybody who may be named
+//	serviceAdmin, sharedAppsAdmin      cluster, for a person of the platform tenant only
+//	perimeterApprover                  cluster for a person of the platform tenant,
+//	                                   tenant:<t> for an administrator of tenant t
+//
+// The scope follows from the role and the tenant and is never chosen: the
+// claim states it so that a person reading it sees how far the role
+// reaches, and an entry stating another is refused.
+func HolderScope(role, tenant string) (scope string, ok bool) {
+	platform := tenant == PlatformTenant
+	switch role {
+	case "securityOfficer", "auditor":
+		return ScopeCluster, true
+	case "serviceAdmin", "sharedAppsAdmin":
+		return ScopeCluster, platform
+	case "perimeterApprover":
+		if platform {
+			return ScopeCluster, true
+		}
+		return "tenant:" + tenant, true
+	}
+	return "", false
+}
+
+// RoleHolder is one account of a realm holding a relation: on the cluster,
+// or, with Tenant set, on that tenant (a perimeter approver of scope
+// tenant:<t>).
 type RoleHolder struct {
 	Relation, Realm, Subject string
+	Tenant                   string
 }
 
 // holderRealm is a realm name as the director's verifier accepts it.
@@ -126,8 +160,10 @@ func CheckAs(ctx context.Context, c Checker, requestID, user, holder, relation, 
 }
 
 // ReconcileClusterRoles makes the cluster's role tuples equal to what the
-// Cluster claim assigns: for each relation, the members of one Keycloak group
-// hold it, and the role holders the claim names hold theirs.
+// Cluster claim assigns: admin and break_glass held by the members of one
+// Keycloak group each, and the role holders of scope cluster holding theirs.
+// A holder with Tenant set is not the cluster's and is left to
+// ReconcileTenants.
 //
 // Declarative, not additive. A role whose group the claim drops loses its
 // tuple, so authority over a cluster can be taken away by editing the claim
@@ -144,8 +180,8 @@ func (c *OpenFGA) ReconcileClusterRoles(ctx context.Context, cluster string, rol
 	// A key the model has no relation for is a mistake in the claim, and a
 	// silent one: OpenFGA accepts the tuple and it then matches nothing.
 	for rel := range roles {
-		if !knownClusterRole(rel) {
-			return fmt.Errorf("cluster role %q is not a relation of type cluster", rel)
+		if !groupRelation(rel) {
+			return fmt.Errorf("cluster role %q is not one a group holds", rel)
 		}
 	}
 
@@ -163,6 +199,9 @@ func (c *OpenFGA) ReconcileClusterRoles(ctx context.Context, cluster string, rol
 		want[key(t)] = t
 	}
 	for _, h := range holders {
+		if h.Tenant != "" {
+			continue
+		}
 		if !holderRelation(h.Relation) {
 			return fmt.Errorf("cluster role %q is not one a role holder may hold", h.Relation)
 		}
@@ -204,6 +243,15 @@ func (c *OpenFGA) ReconcileClusterRoles(ctx context.Context, cluster string, rol
 	c.log.InfoContext(ctx, "cluster roles reconciled",
 		"cluster", cluster, "granted", len(writes), "revoked", len(deletes))
 	return nil
+}
+
+func groupRelation(rel string) bool {
+	for _, r := range ClaimRoles {
+		if r == rel {
+			return true
+		}
+	}
+	return false
 }
 
 func holderRelation(rel string) bool {

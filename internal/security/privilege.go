@@ -52,7 +52,7 @@ func SplitPrivilegeRef(ref string) (kind, name string) {
 }
 
 // PrivilegeScope says who may answer a request of this kind: "cluster" for
-// the platform operator, "tenant" for the tenant's own approver. It is
+// the platform operator, "tenant" for the tenant's perimeter approver. It is
 // derived from the kind and never read from a field -- a profile that could
 // name its approver would name the cheaper one.
 func PrivilegeScope(kind string) string {
@@ -63,10 +63,10 @@ func PrivilegeScope(kind string) string {
 }
 
 // Who answers a request, as a console names the person: the tenant's
-// administrator (tenant#can_approve_privilege) or the cluster's security
-// officer (cluster#can_approve).
+// perimeter approver (tenant#can_approve_privilege) or the cluster's
+// security officer (cluster#can_approve).
 const (
-	PrivilegeApproverTenant          = "tenant"
+	PrivilegeApproverPerimeter       = "perimeter-approver"
 	PrivilegeApproverSecurityOfficer = "security-officer"
 )
 
@@ -78,7 +78,7 @@ const (
 // drift apart.
 func PrivilegeApprover(kind string) string {
 	if PrivilegeScope(kind) == "tenant" {
-		return PrivilegeApproverTenant
+		return PrivilegeApproverPerimeter
 	}
 	return PrivilegeApproverSecurityOfficer
 }

@@ -681,13 +681,15 @@ token:
    `pendingPrivilegeApprovals` entry, the sequence stands at **Approvals**
    and the page carries on by itself once none is left. Each entry is shown
    with what it is, the profile's `reason`, and who answers it: one with
-   `approvedBy: tenant` is approved there and then, with the person's
-   reason, through the director's approval route; one with
+   `approvedBy: perimeter-approver` is approved there and then by a person
+   who holds `can_approve_privilege` on the tenant, with their reason,
+   through the director's approval route, and otherwise waits for the
+   tenant's perimeter approver; one with
    `approvedBy: security-officer` is **requested** — `POST
    /v1/tenants/{t}/apps/{p}/actions/request-privilege` `{privilege, note}`,
    `can_install_app` — which the operator records on the Component (who
    asked, when, the note) and lists at `GET /v1/clusters/{c}/approvals`
-   (usher; `can_approve` or `can_configure`) for the platform console's
+   (usher; `can_approve`, `can_approve_perimeter` or `can_configure`) for the platform console's
    Approvals page, beside a link to that page. No mail is sent: the
    platform has no mail path of its own, only the realm's. A request
    recorded is shown as such on the step; a grant that ran out is shown as
@@ -856,7 +858,7 @@ An app that waits on a person lists each request nobody granted yet in
 `pendingPrivileges`, and again in `pendingPrivilegeApprovals` as
 `{privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt,
 declinedBy, declinedAt, declineReason}`:
-`approvedBy` is `tenant` (the tenant's administrator,
+`approvedBy` is `perimeter-approver` (the tenant's perimeter approver,
 `tenant#can_approve_privilege`) for `egress`, and `security-officer`
 (`cluster#can_approve`) for every other kind. It is the answer the director
 applies to the approval, so a console offers the button by it and the
@@ -870,14 +872,15 @@ approved once and waits again. `declinedBy`, `declinedAt` and
 the reason at least ten characters, authorised exactly as the approval of
 that kind is): the privilege is still pending and the app still waits, but
 whoever asked is told why. A new request clears the decline, and so does an
-approval made after it. The same entries, across every tenant and for the
-security officer's kinds only, are the cluster's list:
+approval made after it. The same entries, across every tenant and of every
+kind, each with its `approvedBy`, are the cluster's list:
 
 ```
 usher      GET /v1/clusters/{c}/approvals     {approvals: [{tenant, profile, install, privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt, declinedBy, declinedAt, declineReason}]}
 ```
 
-read under `can_approve` or `can_configure` on the cluster. The request and
+read under `can_approve`, `can_approve_perimeter` or `can_configure` on the
+cluster. The request and
 the decline live on the Component as an annotation the operator writes
 (`gentianos.io/privilege-requests`), not in git: neither decides anything
 the platform gives the app, and the approval that answers them is the

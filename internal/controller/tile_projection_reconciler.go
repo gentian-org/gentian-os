@@ -135,7 +135,12 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			displayName: "Headlamp",
 			description: "The cluster as Kubernetes sees it — nodes, workloads, events — with your own identity.",
 			icon:        "bulb",
-			anyOf:       []string{"can_configure", "can_operate_system", "can_audit"},
+			// Who runs the cluster, and nobody who only reads or approves:
+			// Headlamp and Argo CD take kernel-realm sign-ins alone, so a
+			// security officer or auditor named from a tenant's realm could
+			// not open them, and one of the platform tenant has no business
+			// there for the role.
+			anyOf: []string{"can_configure", "can_operate_system"},
 		},
 		{
 			route:       kernelRouteArgoCD,
@@ -149,7 +154,7 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			// skips the form and the flow completes without them typing
 			// anything.
 			path:  "/auth/login",
-			anyOf: []string{"can_configure", "can_operate_system", "can_audit"},
+			anyOf: []string{"can_configure", "can_operate_system"},
 		},
 		{
 			// The same hostname that issues the tokens: Keycloak refuses its

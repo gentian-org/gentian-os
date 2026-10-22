@@ -18,19 +18,20 @@ import (
 	"github.com/gentian-org/gentian-os/internal/registrar"
 )
 
-// Who could be made a security officer: each tenant's administrators, read
-// from each tenant's own realm, for whoever configures the cluster. The
-// platform tenant and a tenant that adopts another realm are left out; a
-// realm that cannot be read is listed as such and the answer says it is
-// incomplete.
-func TestTheTenantsAdministratorsAreListedForWhoeverConfiguresTheCluster(t *testing.T) {
-	f := newFakeIdentity("demo", "solo") // other deliberately absent
+// Who could be named a role holder: every person of the platform tenant, and
+// each other tenant's administrators, read from each tenant's own realm, for
+// whoever configures the cluster. A tenant that adopts another realm is left
+// out; a realm that cannot be read is listed as such and the answer says it
+// is incomplete.
+func TestTheRoleCandidatesAreListedForWhoeverConfiguresTheCluster(t *testing.T) {
+	f := newFakeIdentity("demo", "solo", "kernel") // other deliberately absent
 	tenants := fakeTenants{
 		"demo": ownRealm("demo"), "solo": ownRealm("solo"), "other": ownRealm("other"),
 		"platform": {Name: "platform", Realm: "kernel"},
+		"adopter":  {Name: "adopter", Realm: "demo"},
 	}
 	h := startWithTenants(t, f, nil, tenants, newFakeMailboxes())
-	path := "/v1/clusters/" + dt.Cluster + "/tenant-administrators"
+	path := "/v1/clusters/" + dt.Cluster + "/role-candidates"
 
 	status, body := h.do(t, http.MethodGet, path, h.token(t, "gentian", "alice"), "")
 	if status != http.StatusOK || body["complete"] != false {
@@ -41,15 +42,20 @@ func TestTheTenantsAdministratorsAreListedForWhoeverConfiguresTheCluster(t *test
 		entry := raw.(map[string]any)
 		byTenant[entry["tenant"].(string)] = entry
 	}
-	if _, listed := byTenant["platform"]; listed || len(byTenant) != 3 {
+	if _, listed := byTenant["adopter"]; listed || len(byTenant) != 4 {
 		t.Fatalf("tenants listed: %v", byTenant)
 	}
+	platform := byTenant["platform"]
+	if people, _ := platform["people"].([]any); platform["platform"] != true || len(people) != 1 ||
+		people[0].(map[string]any)["username"] != "ada@example.com" {
+		t.Fatalf("the platform tenant's people: %v", platform)
+	}
 	demo := byTenant["demo"]
-	admins, _ := demo["administrators"].([]any)
+	admins, _ := demo["people"].([]any)
 	if len(admins) != 1 || admins[0].(map[string]any)["username"] != "admin@demo.example" || admins[0].(map[string]any)["id"] != "a1" {
 		t.Fatalf("demo's administrators: %v", demo)
 	}
-	if other := byTenant["other"]; other["unavailable"] != true || other["administrators"] != nil {
+	if other := byTenant["other"]; other["unavailable"] != true || other["people"] != nil {
 		t.Fatalf("a realm with no credential: %v", other)
 	}
 	// Read from the admins group of each realm, and nowhere else.
@@ -57,7 +63,7 @@ func TestTheTenantsAdministratorsAreListedForWhoeverConfiguresTheCluster(t *test
 		t.Fatalf("the group read: %q", got)
 	}
 	for _, realm := range f.realmsSeen() {
-		if realm != "demo" && realm != "solo" {
+		if realm != "demo" && realm != "solo" && realm != "kernel" {
 			t.Fatalf("realm %q was reached", realm)
 		}
 	}

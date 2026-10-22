@@ -257,11 +257,8 @@ func (s *Server) sendInvitation(ctx context.Context, inv record.Invitation) *rec
 		return outcome
 	}
 	// What the route does for a caller, for the person who asked: their
-	// request id on Keycloak's event, and their standing to change who
-	// approves the tenant's public addresses, asked now that the tenant can
-	// be asked about. And nobody to show a link to.
-	actx := s.approversHeld(ctx, inv.RequestID, inv.Principal, inv.Tenant)
-	actx = identity.WithMailOnly(identity.WithRequestID(actx, inv.RequestID))
+	// request id on Keycloak's event. And nobody to show a link to.
+	actx := identity.WithMailOnly(identity.WithRequestID(ctx, inv.RequestID))
 	actx, cancel := context.WithTimeout(actx, time.Minute)
 	defer cancel()
 	handed, err := s.handOverAdmin(actx, inv.Tenant, inv.Email)
@@ -272,7 +269,7 @@ func (s *Server) sendInvitation(ctx context.Context, inv record.Invitation) *rec
 	case err == nil:
 	case errors.Is(err, ErrTenantNotFound), errors.As(err, &waiting):
 		return nil
-	case errors.Is(err, identity.ErrProtected), errors.Is(err, identity.ErrApproversOnly):
+	case errors.Is(err, identity.ErrProtected):
 		// Refused for whoever asks, and so for as often as it is asked: the
 		// account is one the registrar does not hand over.
 		outcome.Action = record.ActionInvitationRefused

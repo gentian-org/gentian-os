@@ -371,7 +371,7 @@ def convert(doc, review, bases):
         privileges.setdefault("egress", CommentedSeq()).append(CommentedMap([
             ("name", ename), ("rule", rule),
             ("reason", "REVIEW: say what this component reaches and why")]))
-        review.note(f"requires.privileges.egress/{ename}: write the reason the tenant administrator will "
+        review.note(f"requires.privileges.egress/{ename}: write the reason the perimeter approver will "
                     "read, and give it a name that says where it goes")
     if privileges:
         requires["privileges"] = privileges

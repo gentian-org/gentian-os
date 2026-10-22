@@ -136,9 +136,9 @@ func TestWhatCannotBeRequested(t *testing.T) {
 	}
 }
 
-// The cluster's list is every tenant's requests of the security officer and
-// nothing a tenant answers itself, with a grant that ran out shown as such.
-func TestTheClusterListsWhatAwaitsTheSecurityOfficer(t *testing.T) {
+// The cluster's list is every pending privilege of every tenant, each with
+// who answers it, with a grant that ran out shown as such.
+func TestTheClusterListsWhatAwaitsAnApprover(t *testing.T) {
 	crm := waitingCRM()
 	crm.Spec.Privileges = []gentianov1alpha1.PrivilegeGrant{{
 		Privilege: "podSecurity/run-as-root", Approver: "sam", Reason: "for the pilot, until March",
@@ -160,19 +160,24 @@ func TestTheClusterListsWhatAwaitsTheSecurityOfficer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 2 {
+	if len(list) != 3 {
 		t.Fatalf("approvals = %+v", list)
 	}
-	if list[0].Tenant != "demo" || list[0].Install != "crm" || list[0].Privilege != "podSecurity/run-as-root" ||
-		list[0].ApprovedBy != security.PrivilegeApproverSecurityOfficer ||
-		list[0].Reason != "the vendor image writes its cache as root" || list[0].RequestedBy != "tom@example.com" ||
-		list[0].ExpiredAt == "" {
-		t.Errorf("demo's = %+v", list[0])
+	// Egress is the perimeter approver's, and listed for them.
+	if list[0].Tenant != "demo" || list[0].Privilege != "egress/smtp-relay" ||
+		list[0].ApprovedBy != security.PrivilegeApproverPerimeter {
+		t.Errorf("demo's egress = %+v", list[0])
+	}
+	if list[1].Tenant != "demo" || list[1].Install != "crm" || list[1].Privilege != "podSecurity/run-as-root" ||
+		list[1].ApprovedBy != security.PrivilegeApproverSecurityOfficer ||
+		list[1].Reason != "the vendor image writes its cache as root" || list[1].RequestedBy != "tom@example.com" ||
+		list[1].ExpiredAt == "" {
+		t.Errorf("demo's = %+v", list[1])
 	}
 	// A profile the cluster no longer has: listed all the same, without a
 	// reason to show.
-	if list[1].Tenant != "other" || list[1].Privilege != "clusterRoles/node-reader" || list[1].Reason != "" || list[1].RequestedBy != "" {
-		t.Errorf("other's = %+v", list[1])
+	if list[2].Tenant != "other" || list[2].Privilege != "clusterRoles/node-reader" || list[2].Reason != "" || list[2].RequestedBy != "" {
+		t.Errorf("other's = %+v", list[2])
 	}
 }
 
@@ -197,7 +202,7 @@ func TestTheApprovalRoutes(t *testing.T) {
 
 	for _, token := range []string{"usher", "director"} {
 		code, out := call("GET", "/v1/approvals", token, "")
-		if list, _ := out["approvals"].([]any); code != http.StatusOK || len(list) != 1 {
+		if list, _ := out["approvals"].([]any); code != http.StatusOK || len(list) != 2 {
 			t.Fatalf("the list as %s: %d %v", token, code, out)
 		}
 	}
@@ -247,7 +252,7 @@ func TestTheApprovalRoutes(t *testing.T) {
 	if code != http.StatusConflict || out["reason"] != "not-pending" {
 		t.Fatalf("declining what is not pending: %d %v", code, out)
 	}
-	if _, listed := call("GET", "/v1/approvals", "usher", ""); listed["approvals"].([]any)[0].(map[string]any)["declinedBy"] != "tom@example.com" {
+	if _, listed := call("GET", "/v1/approvals", "usher", ""); listed["approvals"].([]any)[1].(map[string]any)["declinedBy"] != "tom@example.com" {
 		t.Fatalf("the list after the decline: %v", listed)
 	}
 }
@@ -290,7 +295,7 @@ func TestADeclineIsRecordedAndCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].DeclinedBy != "sam@example.com" || list[0].DeclineReason == "" {
+	if len(list) != 2 || list[1].DeclinedBy != "sam@example.com" || list[1].DeclineReason == "" {
 		t.Fatalf("the cluster's list: %+v", list)
 	}
 

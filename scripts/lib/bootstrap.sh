@@ -2035,6 +2035,60 @@ _claim_security_officers_to_role_holders() {
     return 0
 }
 
+# _claim_carry_over_role_holders <kernel_dir> <cluster>
+#
+# securityOfficer, auditor, serviceAdmin and sharedAppsAdmin are held by name
+# on the Cluster claim (spec.platformAccess.roleHolders), and so is a tenant's
+# perimeter approver; the claim's spec.platformRoles names a group for admin
+# and breakGlass only, and a tenant's manifest has no spec.perimeter. A
+# cluster set up before then is carried over here, once, in the commit step 0
+# makes anyway: the members of the retired kernel-realm groups, of each
+# tenant's perimeter group who administer it, and every administrator of a
+# tenant that had adminsApprove, become role holders with reason "carried
+# over at upgrade" (scripts/lib/carry-over-role-holders.py). Whoever cannot be
+# carried over is named in a warning. The one read of the cluster step 0
+# makes, and read only: a cluster with no Keycloak yet has nobody in those
+# groups, and one whose Keycloak does not answer keeps the old fields until a
+# run where it does. Returns 1 when there was nothing to carry over.
+_GENTIAN_CARRIED_PATHS=()
+_claim_carry_over_role_holders() {
+    local kernel_dir="$1" cluster="$2"
+    local claim="${kernel_dir}/claims/cluster.yaml" tenants="${GENTIAN_DEPLOYMENTS_PATH}/clusters/$2/tenants"
+    local script="${SCRIPT_DIR}/scripts/lib/carry-over-role-holders.py"
+    [[ -f "${claim}" ]] || return 1
+    python3 "${script}" check "${claim}" "${tenants}" || return 1
+    if gentian_read_only; then
+        gentian_would "carry the cluster's group-held roles and perimeter approvers over to role holders on claims/cluster.yaml"
+        return 1
+    fi
+    local ns user="" pass="" base="" line rc=0 out
+    ns="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
+    if command -v kubectl >/dev/null 2>&1; then
+        user="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+        pass="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    fi
+    if [[ -n "${user}" && -n "${pass}" ]]; then
+        if ! base="$(gentian_service_addr "${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http" "${ns}" 8080 http)"; then
+            warn "Keycloak cannot be reached from here, so the cluster's role holders were not carried over yet;"
+            warn "  claims/cluster.yaml keeps its old platformRoles until a run where it can be."
+            return 1
+        fi
+        base="${base}/auth"
+    fi
+    out="$(KC_BASE="${base}" KC_USER="${user}" KC_PASS="${pass}" KERNEL_REALM="${KERNEL_REALM:-kernel}" \
+        python3 "${script}" apply "${claim}" "${tenants}")" || rc=$?
+    while IFS= read -r line; do
+        case "${line}" in
+            info:*) info "Role holders: ${line#info: }" ;;
+            warn:*) warn "Role holders: ${line#warn: }" ;;
+            edited:*) _GENTIAN_CARRIED_PATHS+=("${line#edited: "${GENTIAN_DEPLOYMENTS_PATH}"/}") ;;
+        esac
+    done <<< "${out}"
+    (( rc == 0 )) || return 1
+    info "Rewrote ${claim}: cluster roles and perimeter approvers are role holders (spec.platformAccess.roleHolders)."
+    return 0
+}
+
 # gentian_catalogue_url
 #
 # The address a new Cluster claim names for the default catalogue, `gentian`.
@@ -2582,16 +2636,15 @@ spec:
   # the assignment is written here rather than left to the schema's default,
   # which a file reader never sees. Without it the director grants nobody a
   # cluster role and every console the person is entitled to disappears.
-  # The security officers approve what escapes the default posture: a group
-  # of their own, never the administrators', made empty by the install.
   platformRoles:
     admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
-    securityOfficer: gentian:platform:security
-  # Who on the cluster holds a cluster role by name: accounts of this
-  # cluster's tenants' realms, each with its role (securityOfficer or
-  # auditor), held only with a token of that tenant's realm. Written by the
-  # director (kubectl gentian platform-roles holders add <role> <tenant>
-  # <login>, or the platform console).
+  # Who holds every other cluster role, by name: people of the platform
+  # tenant and administrators of this cluster's other tenants, each with its
+  # role (securityOfficer, auditor, serviceAdmin, sharedAppsAdmin or
+  # perimeterApprover), a reason and, if it ends, expiresAt; held only with a
+  # token of that tenant's realm. Written by the director (kubectl gentian
+  # platform-roles holders add <role> <tenant> <login> --reason <why>, or the
+  # platform console).
   # platformAccess:
   #   roleHolders: []
 $(_claim_cluster_fields)
@@ -2609,6 +2662,7 @@ EOF
     # removed here, and the removal is committed with the rest.
     _remove_retired_suze_claim "${kernel_dir}" && generated=1
     _claim_security_officers_to_role_holders "${kernel_dir}" && generated=1
+    _claim_carry_over_role_holders "${kernel_dir}" "${cluster}" && generated=1
 
     # The deployments repository's own credential.
     #
@@ -2956,6 +3010,11 @@ _claims_this_checkout_cannot_apply() {
 # never arrive.
 _cluster_scaffold_paths() {
     printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
+    # And a tenant's manifest the role holders' carry-over rewrote.
+    local _c
+    for _c in ${_GENTIAN_CARRIED_PATHS[@]+"${_GENTIAN_CARRIED_PATHS[@]}"}; do
+        [[ "${_c}" == clusters/$1/tenants/*/tenant.yaml ]] && printf '%s\n' "${_c}"
+    done
     # And the user tenant of a single-tenancy cluster, when its manifest is
     # there. Only then: a path that does not exist fails `git add` for all of
     # them.
@@ -3093,11 +3152,8 @@ gentian_user_tenant() {
 # single-tenancy cluster. Returns 0 when it wrote something.
 #
 # The manifest is the one the director writes for a new tenant (tenantManifest
-# in internal/director/gitops/tenants.go) with one switch on, and nothing
-# more: no annotation admits it ahead of the handover. The switch is
-# spec.perimeter.adminsApprove, which lets the user admin approve what the
-# tenant puts on the internet. Every other tenant starts with it off; here
-# the cluster has one tenant for users. Under multi nothing is written. Under
+# in internal/director/gitops/tenants.go), and nothing more: no annotation
+# admits it ahead of the handover. Under multi nothing is written. Under
 # single, three cases write nothing as well, and each says why:
 #
 #   - The tenant has a manifest already. Never rewritten: a second run finds
@@ -3188,12 +3244,6 @@ spec:
     memory: 32Gi
     storage: 50Gi
     maxApps: 20
-  # Whether the user admin may approve and withdraw this tenant's public
-  # addresses. The install turns it on, because this cluster has one tenant
-  # for users; the switch is the platform admin's:
-  #   kubectl gentian tenants set ${name} --admins-approve-public-addresses=true|false
-  perimeter:
-    adminsApprove: true
   # Apps are installed through the director, which appends to this list.
   apps: []
 EOF

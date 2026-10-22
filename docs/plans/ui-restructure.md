@@ -193,8 +193,8 @@ token to the custodian rather than holding an OpenBao token
 - **The privilege queue.** An install whose profile asks for a privilege
   nobody has granted waits rather than failing, so the console shows it:
   pending requests with what is asked, the profile's stated reason, and who
-  can say yes. A tenant administrator resolves the tenant-scope ones
-  (`can_approve_privilege`); cluster-scope ones appear in the security
+  can say yes. The tenant's perimeter approver resolves the tenant-scope
+  ones (`can_approve_privilege`); cluster-scope ones appear in the security
   officer's queue on the platform desktop (`can_approve`), which is the same
   screen across tenants. Approving writes a `PrivilegeGrant` through the
   director carrying the approver, the reason in their own words and an

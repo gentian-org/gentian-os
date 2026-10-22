@@ -311,8 +311,6 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 		Catalogue: &gentianov1alpha1.TenantCatalogue{Delegated: true, Sources: []gentianov1alpha1.TenantCatalogueSource{
 			{Name: "theirs", URL: "https://elsewhere.example.com/apps", AddedBy: "tenant"},
 		}},
-		// Nor with its administrators approving its public addresses.
-		Perimeter: &gentianov1alpha1.TenantPerimeter{AdminsApprove: true},
 	}
 	res, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme", Spec: spec, Origin: "export nightly of 2026-10-01"}, tenantMeta())
 	if err != nil {
@@ -346,9 +344,6 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 	}
 	if strings.Contains(text, "catalogue") || strings.Contains(text, "delegated") {
 		t.Fatalf("the bundle's catalogues travelled with it:\n%s", text)
-	}
-	if strings.Contains(text, "perimeter") || strings.Contains(text, "adminsApprove") {
-		t.Fatalf("who approved public addresses where the bundle came from travelled with it:\n%s", text)
 	}
 	if !strings.Contains(text, "imported from a bundle") {
 		t.Fatal("the manifest does not say where it came from")
@@ -926,63 +921,3 @@ func TestATenantWhoseNamesAreAnothersIsRefused(t *testing.T) {
 const singleTenancyClaim = "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
 	"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n  tenancyMode: single\n"
 
-// The user tenant of a single-tenancy cluster starts with its administrators
-// approving its public addresses when the request does not say; a request
-// that says off is kept off. Nowhere else does a tenant start with it: not a
-// tenant of that name on a multi-tenancy cluster, and not any other tenant.
-// Adding catalogues is not touched by any of it.
-func TestTheUserTenantOfASingleTenancyClusterStartsWithItsAdministratorsApproving(t *testing.T) {
-	ctx := context.Background()
-	off, on := false, true
-	for name, c := range map[string]struct {
-		claim  string
-		tenant string
-		stated *bool
-		want   bool
-	}{
-		"single, user, nothing said": {singleTenancyClaim, "user", nil, true},
-		"single, user, said off":     {singleTenancyClaim, "user", &off, false},
-		"single, user, said on":      {singleTenancyClaim, "user", &on, true},
-		"multi, user, nothing said":  {"", "user", nil, false},
-		"multi, user, said on":       {"", "user", &on, true},
-		"multi, another tenant":      {"", "acme", nil, false},
-	} {
-		remote := dt.Remote(t)
-		if c.claim != "" {
-			dt.Commit(t, remote, map[string]string{dt.ClaimPath: c.claim})
-		}
-		g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-		req := gitops.NewTenant{Name: c.tenant}
-		if c.stated != nil {
-			req.Perimeter = &gitops.NewTenantPerimeter{AdminsApprove: c.stated}
-		}
-		if got, err := g.AdminsApproveAtCreation(ctx, req); err != nil || got != c.want {
-			t.Errorf("%s: the answer is %v (%v), want %v", name, got, err, c.want)
-		}
-		if _, err := g.CreateTenant(ctx, req, tenantMeta()); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		manifest := dt.RemoteFile(t, remote, dt.TenantPath(c.tenant)) + "\n"
-		if got := strings.Contains(manifest, "\n  perimeter:\n    adminsApprove: true\n"); got != c.want {
-			t.Errorf("%s: administrators approve = %v, want %v\n%s", name, got, c.want, manifest)
-		}
-		if !c.want && strings.Contains(manifest, "perimeter") {
-			t.Errorf("%s: a switch that is off is written:\n%s", name, manifest)
-		}
-		if strings.Contains(manifest, "catalogue:") {
-			t.Errorf("%s: adding catalogues was touched:\n%s", name, manifest)
-		}
-	}
-	// A request for the user tenant with an empty perimeter says nothing.
-	remote := dt.Remote(t)
-	dt.Commit(t, remote, map[string]string{dt.ClaimPath: singleTenancyClaim})
-	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-	if got, err := g.AdminsApproveAtCreation(ctx, gitops.NewTenant{Name: "user", Perimeter: &gitops.NewTenantPerimeter{}}); err != nil || !got {
-		t.Fatalf("an empty perimeter: %v (%v), want on", got, err)
-	}
-	// And the one other tenant such a cluster has, the platform tenant, is
-	// not created by this route at all: every other name is refused.
-	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "platform"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
-		t.Fatalf("a second tenant on a single-tenancy cluster: %v", err)
-	}
-}

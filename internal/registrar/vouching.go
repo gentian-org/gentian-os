@@ -70,7 +70,7 @@ func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.R
 			return "can_manage_users"
 		}
 		if c, ok := s.authorizeAs(w, r, pattern, relation, tenantObject); ok {
-			h(w, s.holdApprovers(r, c), c)
+			h(w, r, c)
 		}
 	})
 }

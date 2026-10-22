@@ -22,13 +22,15 @@ import (
 
 // Who holds a platform role is not the registrar's to change.
 //
-// A platform role -- administrator, security officer, auditor, service
-// administrator, shared-apps administrator, break-glass, and whatever the
-// Cluster claim's platformRoles names besides -- is held by the members of one
-// Keycloak group, named on the claim (spec.platformRoles.<role>); the operator
-// projects each into the authorization store as a relation on the cluster.
-// Whoever can change one of those groups, or take over an account in it,
-// decides who holds that role over the cluster. The registrar manages people
+// A platform role held by a group -- administrator and break-glass, and
+// whatever the Cluster claim's platformRoles names besides -- is held by the
+// members of one Keycloak group, named on the claim
+// (spec.platformRoles.<role>); the operator projects each into the
+// authorization store as a relation on the cluster. Every other cluster role
+// is held by name (spec.platformAccess.roleHolders), and a person of the
+// platform tenant named there holds it with their kernel-realm account.
+// Whoever can change one of those groups, or take over one of those
+// accounts, decides who holds that role over the cluster. The registrar manages people
 // for whoever the store allows, and that is a far wider set of callers than
 // the people who may decide that -- so it refuses to be the way it is done,
 // whoever asks.
@@ -45,7 +47,8 @@ import (
 //     creating a person already in it;
 //   - renaming or deleting the group, creating a group of that name, renaming
 //     another group to it, or creating anything beneath it;
-//   - any write to a person who is in the group: their names, address and
+//   - any write to a person who is in the group, or who is a platform-tenant
+//     role holder: their names, address and
 //     whether they may sign in, removing them, their second factor, a mailed
 //     password link, an activation link, linking them to a component that
 //     vouches for people. Changing a role holder's address and then mailing
@@ -61,47 +64,6 @@ import (
 
 // ErrProtected is a write that would change who holds a platform role.
 var ErrProtected = errors.New("the holders of the platform's roles are not managed here")
-
-// ErrApproversOnly is a write that would change who approves a tenant's
-// public addresses, asked by somebody who may not approve them.
-var ErrApproversOnly = errors.New("who approves this tenant's public addresses is changed only by somebody who may approve them")
-
-// Who approves what a tenant publishes to the internet is held by the members
-// of one more group, the tenant's own: gentian:tenant:<t>:perimeter. Unlike a
-// platform role's group it IS managed here -- but only by a caller who holds
-// the right its members hold. Whoever may add a person to that group, or take
-// over an account in it, decides who publishes; a tenant's administrator may
-// manage people (can_manage_users) without being one of them, and must not be
-// able to become one by putting themselves in the group.
-//
-// So the registrar's routes ask the store whether the caller holds can_expose
-// on the tenant, and where they do not, name the group here. guard then
-// applies to it everything it applies to a platform role's group: its
-// membership, the group itself, and every write to a person in it.
-
-// approversHeldKey is the context key the held-back groups are under.
-type approversHeldKey struct{}
-
-// WithApproversHeld marks group as one the caller of ctx may not change the
-// holders of.
-func WithApproversHeld(ctx context.Context, group string) context.Context {
-	group = strings.TrimPrefix(strings.TrimSpace(group), "/")
-	if group == "" {
-		return ctx
-	}
-	held, _ := ctx.Value(approversHeldKey{}).([]string)
-	return context.WithValue(ctx, approversHeldKey{}, append(append([]string{}, held...), group))
-}
-
-// approversHeld is the test for the groups WithApproversHeld named, or nil
-// when it named none.
-func approversHeld(ctx context.Context) func(path string) (string, bool) {
-	held, _ := ctx.Value(approversHeldKey{}).([]string)
-	if len(held) == 0 {
-		return nil
-	}
-	return beneath(held)
-}
 
 // beneath is the test for a set of group names: the one a path is, or is
 // beneath.
@@ -230,10 +192,26 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	if err := c.refuse(ctx, r, w, named, which, ErrProtected); err != nil {
 		return err
 	}
-	// The same rule, for the groups this caller in particular may not change
-	// the holders of (WithApproversHeld).
-	if held := approversHeld(ctx); held != nil {
-		return c.refuse(ctx, r, w, named, held, ErrApproversOnly)
+	return c.refuseHolder(ctx, w)
+}
+
+// refuseHolder is the same rule for a person who holds a role by name: a
+// person of the platform tenant the Cluster claim names a role holder
+// (RoleHolders). Their account is the role, as a group member's is, and the
+// people of the kernel realm are managed by the cluster's administrator, who
+// must not be able to take over the security officer's.
+func (c *Client) refuseHolder(ctx context.Context, w change) error {
+	if w.user == "" || w.membership || c.holders == nil {
+		return nil
+	}
+	subjects, err := c.holders(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrGuardUnavailable, err)
+	}
+	for _, sub := range subjects {
+		if sub == w.user {
+			return fmt.Errorf("%w: this person holds a cluster role by name", ErrProtected)
+		}
 	}
 	return nil
 }
@@ -320,11 +298,6 @@ func (c *Client) notCustom(ctx context.Context, path string) error {
 	}
 	if name, is := which(path); is {
 		return fmt.Errorf("%w: the group %q is not changed from here", ErrProtected, name)
-	}
-	if held := approversHeld(ctx); held != nil {
-		if name, is := held(path); is {
-			return fmt.Errorf("%w: the group %q is not changed from here", ErrApproversOnly, name)
-		}
 	}
 	return fmt.Errorf("%w: %q", ErrNotCustom, path)
 }

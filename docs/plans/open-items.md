@@ -130,7 +130,7 @@ and AD-14 were corrected on 2026-10-11.
 | AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licenses and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
 | AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** The design documents name the kind as the code does since 2026-10-09 |
 | AD-5 | Privileges are requests with one approval path | **Does not hold for network paths.** Egress a profile declares reaches the network policy without an approval. So do a path to the whole control namespace for a profile that names the director's, custodian's, registrar's or usher's address, and any namespace a profile's annotation names (decision 34). Holds for integrations, pod-security waivers and cluster roles since 2026-10-10 (decisions 22 and 23) |
-| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Holds as amended on 2026-10-09, not yet shown on a cluster; parts of the amendment are not the owner's (decision 2, §10.5).** Publishing works as the entry now reads: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the limit AD-1 states), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. Who approves is as the entry says since it was changed on 2026-10-09: the group `gentian:tenant:<t>:perimeter` is created with the tenant, the cluster's administrator holds `can_expose` in every tenant its cluster operates, and a tenant's admins hold it only where the cluster's administrator switched it on (§2). **Departs:** the entry says nothing is published by default, and the install publishes the page on the bare domain itself, with no approver (§7.10) |
+| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Holds as amended on 2026-10-09, not yet shown on a cluster; parts of the amendment are not the owner's (decision 2, §10.5).** Publishing works as the entry now reads: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the limit AD-1 states), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. Who approves is as the entry says: the tenant's and the cluster's perimeter approvers named on the Cluster claim (AD-16), and the cluster's administrator, who holds `can_expose` in every tenant its cluster operates (§2). **Departs:** the entry says nothing is published by default, and the install publishes the page on the bare domain itself, with no approver (§7.10) |
 | AD-7 | Namespaces named by tier | **Holds** |
 | AD-8 | Kernel trust domains are separate namespaces | **Holds** |
 | AD-9 | System services have no public route | **Holds by default; one claim setting departs from it.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. The model gateway's console has a claim setting, `llm.console.enabled`, off by default: off, `llm.<kernel domain>` has no route and the edge is not admitted to the gateway, so the cluster is in line with the decision on this point. Switching it on routes the console behind the kernel realm's session and `can_configure`, and contradicts the entry, whose text still says "without exception"; whether a switch is what the owner asked for is decision 6 ([llms.md](../design/llms.md)). TURN does not exist |
@@ -173,14 +173,10 @@ been seen working on a cluster. Until it has, it is not done.
   withdrawal on the command line and in the administration console.
 - A website on the main address of a single-tenancy cluster, with the
   approver's acknowledgement.
-- Who approves a public address: the perimeter group created with a tenant,
-  the cluster's administrator approving in a tenant its cluster operates, the
-  switch by which a tenant's administrators approve
-  (`spec.perimeter.adminsApprove`) reaching the rights store and leaving it
-  again, and the registrar refusing a change of who approves to somebody who
-  may not approve.
-- The user tenant of a single-tenancy cluster written by the install with
-  that switch on, so that the user admin approves there.
+- Who approves a public address and egress: perimeter approvers named on the
+  Cluster claim reaching the rights store and leaving it again, on removal
+  and at `expiresAt`, and the cluster's administrator approving in a tenant
+  its cluster operates.
 - The publishing proxy's limits and filters, and the limit on sign-in posts at
   the Gateway.
 - A public entry that passes its callers' credential to the app (`authMode:
@@ -480,7 +476,7 @@ was added on 2026-10-15.
 | 1 | **An app's own client and its token: closed in two parts, open in a third.** A browser page that sends the app's own token keeps it on an entry that declares `clientAuthorization: app`, once the tenant's perimeter approver approved it; without the declaration or the approval the Gateway still removes the header. A client with no browser session (sync client, mobile app, script, webhook) reaches the app through a public entry of `authMode: app` with a credential the app issued. **Still open**: a client that needs the app's cookies on a public address does not work, which is what Synapse's sign-in needs, so Element is not served yet; no bearer token is verified at the edge; and the catalogue's apps have to declare the entries before any of it helps them | [routing.md §4.1, §7](../design/routing.md) |
 | 2 | **Signing out does not reach every app.** The session ends at the Gateway when its access token runs out, and the realm now tells an app inside the cluster where the app can be told (built 2026-10-09): Nextcloud (`nextcloud-base-ce`) and XWiki through their own client, Docmost and OpenProject through the sign-in sidecar. Still open: Activepieces 0.28.0 has nothing to end a session with (an hour at most); Open WebUI needs a switch and Redis (on the roadmap, item 2.27); Element needs Synapse's switch and its own Composition to register an address; `nextcloud-base-od` declares it and has not been run; Mathesar and Odoo cannot be told at all. The realm tells once and not when a session only runs out, so an app's own session lifetime remains the bound | AD-13, [iam.md §1.12](../design/iam.md), [security.md §2.12, §2.15](../design/security.md) |
 | 3 | **One key opens the rights store.** Six programs present the same OpenFGA key, and it can write | [operator-split-plan.md §6](operator-split-plan.md) |
-| 4 | **Closed in the code on 2026-10-09, not yet shown on a cluster: nobody could publish by default.** The group `gentian:tenant:<t>:perimeter` is now created with every tenant, and the cluster's administrator approves in every tenant its cluster operates. A cluster installed before that gets both when the operator and the tenant's composition are updated; until then approving still needs a hand-made group | §1 and §2, AD-6, decision 2 |
+| 4 | **Closed in the code on 2026-10-09, not yet shown on a cluster: nobody could publish by default.** The cluster's administrator approves in every tenant its cluster operates, and names perimeter approvers on the Cluster claim (AD-16) | §1 and §2, AD-6, decision 2 |
 | 5 | **The publishing proxy checks no caller.** No entry claims otherwise any more: the modes that named a check are refused by the schema, and `authMode: app` hands the credential to the app. What stays open is the consequence AD-1 now calls accepted (§10.4): the platform does not know the caller on such a path, and a removed person's app password or token works until the app revokes it | [security.md §2.14](../design/security.md), AD-1, [roadmap.md](../roadmap.md) 1.34 |
 | 6 | **Identity headers are not signed.** An app and a sign-in sidecar believe them; network rules are what keeps another pod from sending its own | [operator-split-plan.md §6](operator-split-plan.md) |
 | 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
@@ -551,31 +547,11 @@ the code or its commit, the entry says so.
    **Decided 2026-10-09**: the install writes the user tenant of a
    single-tenancy cluster with the flag on, so the user admin approves
    there.
-   Three things were built from that answer and were not in it:
-   - *The cluster's administrator is not a member of the group.* The group
-     `gentian:tenant:<t>:perimeter` is created with every tenant. The
-     cluster's administrator holds `can_expose` through the rights model,
-     in every tenant the cluster operates
-     (`authz/model/v1/model.fga`: `can_expose: perimeter_approver or admin
-     from operated_by`, commit `eb92b6d2`, 2026-10-09). *Confirmed in code.*
-     Option A: keep the model's rule; the right follows the role and needs
-     no membership to maintain. Option B: add the administrator to the
-     group, as the answer says; then removing them from the group removes
-     the right, and the group shows every approver.
-   - *The flag is off by default on every other tenant*
-     (`spec.perimeter.adminsApprove`). AD-6 said before that the tenant's
-     admins hold the right by default (§10.5). Off means that on a
-     many-tenant cluster only the cluster's administrator approves until
-     the flag is set. On means every tenant's administrators publish
-     without the cluster's administrator.
-   - *The registrar refuses a tenant administrator who offboards, disables
-     or resets a person in the perimeter group while the flag is off*
-     (`internal/registrar/identity/guard.go`). *Confirmed in code that the
-     guard names the group; the refusal itself was not traced.* Keeping it
-     means a tenant's administrator cannot remove an approver the
-     cluster's administrator appointed. Dropping it means a tenant's
-     administrator can remove that person, and with them the approval
-     path.
+   **Superseded by gentian-org/gentian-os#395**: who approves is a role
+   holder on the Cluster claim (`perimeterApprover`, AD-6 and AD-16), and the
+   cluster's administrator approves through the model's rule
+   (`can_expose: perimeter_approver or admin from operated_by`); the
+   perimeter group, the flag and the registrar's guard for them are gone.
 
 3. **Sessions and offline tokens when a person's groups change** (AD-12).
    **Decided 2026-10-09**: AD-12 states both as an aim, not as something the

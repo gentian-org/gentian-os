@@ -101,7 +101,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		logger.Info("the Cluster claim assigns no platform roles, so nobody administers this cluster",
 			"setting", "spec.platformRoles")
 	}
-	holders, err := r.roleHolders(ctx)
+	holders, nextExpiry, err := r.roleHolders(ctx, time.Now())
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("read role holders from the Cluster claim: %w", err)
 	}
@@ -109,7 +109,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("project cluster roles: %w", err)
 	}
 
-	tenants, err := r.tenantRights(ctx)
+	tenants, err := r.tenantRights(ctx, holders)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list tenants: %w", err)
 	}
@@ -130,7 +130,15 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 
 	logger.V(1).Info("authorization structure projected",
 		"cluster", r.Cluster, "roles", len(roles), "holders", len(holders), "tenants", len(tenants))
-	return ctrl.Result{RequeueAfter: authzProjectionRequeue}, nil
+	// Again when the next role holder's entry expires, so the role goes at
+	// its time and not up to a requeue later.
+	requeue := authzProjectionRequeue
+	if !nextExpiry.IsZero() {
+		if until := time.Until(nextExpiry) + time.Second; until < requeue {
+			requeue = until
+		}
+	}
+	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
 // platformRoles is spec.platformRoles from the Cluster claim: the group that
@@ -181,31 +189,42 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 }
 
 // roleHolders is spec.platformAccess.roleHolders from the Cluster claim: the
-// cluster roles the cluster's administrator gave accounts of the tenants'
-// realms by name, each keyed by the realm of its tenant. An entry whose role
-// a holder may not hold (authz.HolderRoles), whose tenant this cluster does
-// not have, or whose subject is not an account id grants nothing: the
-// claim's schema refuses those shapes, and a claim written past it is not
-// widened by guessing.
-func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context) ([]authz.RoleHolder, error) {
+// roles the cluster's administrator gave people by name, each the account of
+// its tenant's realm. An entry grants nothing when its role is not one a
+// holder may hold, when the people of its tenant may not hold that role or
+// its stated scope is not the one the role has for them
+// (authz.HolderScope), when its tenant is not one this cluster has with a
+// realm of its own -- the platform tenant's being the kernel realm -- or
+// when its subject is not an account id: the claim's schema refuses those
+// shapes, and a claim written past it is not widened by guessing.
+//
+// An entry whose expiresAt has passed grants nothing either. next is the
+// earliest expiry still ahead, zero when none is.
+func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context, now time.Time) (out []authz.RoleHolder, next time.Time, err error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
 	})
 	if err := r.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	tenants := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, tenants); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
+	// The realm a tenant's people sign in to: its own, named after it, or
+	// for the platform tenant the kernel realm it adopts. A tenant that
+	// adopts another realm has no people of its own to name.
 	realms := map[string]string{}
 	for i := range tenants.Items {
-		if tenants.Items[i].DeletionTimestamp == nil {
-			realms[tenants.Items[i].Name] = tenantRealmName(&tenants.Items[i])
+		t := &tenants.Items[i]
+		if t.DeletionTimestamp != nil {
+			continue
+		}
+		if realm := tenantRealmName(t); realm == t.Name || t.Name == authz.PlatformTenant {
+			realms[t.Name] = realm
 		}
 	}
-	var out []authz.RoleHolder
 	for i := range list.Items {
 		entries, _, _ := unstructured.NestedSlice(list.Items[i].Object, "spec", "platformAccess", "roleHolders")
 		for _, e := range entries {
@@ -213,17 +232,35 @@ func (r *AuthzProjectionReconciler) roleHolders(ctx context.Context) ([]authz.Ro
 			role, _ := m["role"].(string)
 			tenant, _ := m["tenant"].(string)
 			subject, _ := m["subject"].(string)
+			stated, _ := m["scope"].(string)
+			expires, _ := m["expiresAt"].(string)
 			rel, ok := authz.HolderRoles[role]
+			scope, allowed := authz.HolderScope(role, tenant)
 			realm, known := realms[tenant]
-			if !ok || !known || !holderSubject.MatchString(subject) {
+			if !ok || !allowed || (stated != "" && stated != scope) || !known || !holderSubject.MatchString(subject) {
 				log.FromContext(ctx).Info("a role holder on the Cluster claim is not projected",
-					"role", role, "tenant", tenant, "subject", subject)
+					"role", role, "scope", stated, "tenant", tenant, "subject", subject)
 				continue
 			}
-			out = append(out, authz.RoleHolder{Relation: rel, Realm: realm, Subject: subject})
+			if expires != "" {
+				at, err := time.Parse(time.RFC3339, expires)
+				if err != nil || !at.After(now) {
+					log.FromContext(ctx).V(1).Info("a role holder's entry has expired or names no time; not projected",
+						"role", role, "tenant", tenant, "subject", subject, "expiresAt", expires)
+					continue
+				}
+				if next.IsZero() || at.Before(next) {
+					next = at
+				}
+			}
+			h := authz.RoleHolder{Relation: rel, Realm: realm, Subject: subject}
+			if scope != authz.ScopeCluster {
+				h.Tenant = tenant
+			}
+			out = append(out, h)
 		}
 	}
-	return out, nil
+	return out, next, nil
 }
 
 // holderSubject is what a holder's subject may look like: Keycloak's user
@@ -266,12 +303,23 @@ func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[stri
 
 // tenantRights is every tenant this cluster has, excluding those being
 // deleted: a tenant on its way out should lose its attachment before its
-// namespace goes, not after. With each, what its manifest says about who
-// approves its public addresses (spec.perimeter.adminsApprove).
-func (r *AuthzProjectionReconciler) tenantRights(ctx context.Context) ([]authz.TenantRights, error) {
+// namespace goes, not after. With each, the role holders the claim names its
+// perimeter approvers.
+func (r *AuthzProjectionReconciler) tenantRights(ctx context.Context, holders []authz.RoleHolder) ([]authz.TenantRights, error) {
 	list := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, list); err != nil {
 		return nil, err
+	}
+	approvers := map[string][]string{}
+	for _, h := range holders {
+		if h.Tenant == "" {
+			continue
+		}
+		user, err := authz.HolderUser(h.Realm, h.Subject)
+		if err != nil {
+			continue
+		}
+		approvers[h.Tenant] = append(approvers[h.Tenant], user)
 	}
 	out := make([]authz.TenantRights, 0, len(list.Items))
 	for i := range list.Items {
@@ -279,10 +327,7 @@ func (r *AuthzProjectionReconciler) tenantRights(ctx context.Context) ([]authz.T
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		out = append(out, authz.TenantRights{
-			Name:          tenant.Name,
-			AdminsApprove: tenant.Spec.Perimeter != nil && tenant.Spec.Perimeter.AdminsApprove,
-		})
+		out = append(out, authz.TenantRights{Name: tenant.Name, PerimeterApprovers: approvers[tenant.Name]})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

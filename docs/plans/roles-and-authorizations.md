@@ -19,12 +19,12 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | --- | --- | --- | --- | --- |
 | kernel | **Break-glass** | `gentian:platform:break-glass` | recovery when the normal path is down (every action reaching the API server is to be recorded by API-server audit logging, which the installer does not set up yet ([open-items.md](open-items.md) §6) — a kubeconfig session raises no Keycloak event, so nothing else would see it): OpenBao unseal and root, git host administration, direct `kubectl` on `kernel-*`; time-boxed, every action logged out-of-band | kubeconfig and the recovery kit — the only role that bypasses the director |
 | kernel | **Platform administrator** | `gentian:platform:admin` | installing and upgrading the OS (`install.sh`, the Cluster claim, kernel versions); granting every role below; the cluster-level policies that bound them — which `authMode`s and surfaces tenants may enable, the `PlatformSecurityPolicy` allowlist, resource-plan ceilings | director (`/v1/clusters/{c}/…`), custodian for kernel-scoped credentials |
-| kernel | **Security officer** | `gentian:platform:security`; also held by name by accounts of a tenant's realm the Cluster claim names (AD-16) | approving what escapes the default posture at **cluster** scope: pod-security waivers and cluster roles, which weaken something protecting the node or reach the Kubernetes API (target-component-structure.md §4.3; egress is the tenant's to approve), the cluster exposure ceiling — modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval (target-component-structure.md §8.3) — and catalogue entries at `trustTier: platform`; reviewing the decision and change logs and the cluster-wide exposure view | director (approval endpoints, `/v1/clusters/{c}/exposure`), read access to the three audit logs |
-| kernel | **Auditor** | `gentian:platform:auditor`; also held by name, as the security officer | reading the issuer, decision and change logs across all tenants, and the cluster-wide exposure view — every public endpoint, its owner, expiry, and the condensed proxy log; nothing else | read-only routes on the director; OpenFGA read; git read |
-| system | **Service admin** | `gentian:platform:service-admin` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), custodian for service admin credentials |
-| shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `class: shared-app` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
-| tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (target-component-structure.md §4.3) — users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
-| tenant-dmz | **Perimeter approver** | `gentian:tenant:<t>:perimeter` | enabling and disabling a public surface for the tenant, within cluster policy; setting its host, owner and expiry; renewing or revoking at review; the credentials the DMZ proxies hold; reading the tenant's exposure view — surfaces, condensed proxy log, public objects — and revoking an object through the `exposure-policy` contract | director (`/v1/tenants/{t}/exposure/…`) |
+| kernel | **Security officer** | none: held by name, a person of the platform tenant or an administrator of another tenant the Cluster claim names (AD-16) | approving what escapes the default posture at **cluster** scope: pod-security waivers and cluster roles, which weaken something protecting the node or reach the Kubernetes API (target-component-structure.md §4.3; egress is the perimeter approver's), the cluster exposure ceiling — modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval (target-component-structure.md §8.3) — and catalogue entries at `trustTier: platform`; reviewing the decision and change logs and the cluster-wide exposure view | director (approval endpoints, `/v1/clusters/{c}/exposure`), read access to the three audit logs |
+| kernel | **Auditor** | none: held by name, as the security officer | reading the issuer, decision and change logs across all tenants, and the cluster-wide exposure view — every public endpoint, its owner, expiry, and the condensed proxy log; nothing else | read-only routes on the director; OpenFGA read; git read |
+| system | **Service admin** | none: held by name, a person of the platform tenant (AD-16) | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), custodian for service admin credentials |
+| shared | **Shared-apps admin** | none: held by name, a person of the platform tenant (AD-16) | installing, upgrading and removing `class: shared-app` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
+| tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
+| tenant-dmz | **Perimeter approver** | none: held by name (AD-16) — an administrator of the tenant, for that tenant (`tenant:<t>#perimeter_approver`), or a person of the platform tenant, for every tenant (`cluster#perimeter_approver`) | approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (target-component-structure.md §4.3); enabling and disabling a public surface for the tenant, within cluster policy; setting its host, owner and expiry; renewing or revoking at review; the credentials the DMZ proxies hold; reading the tenant's exposure view — surfaces, condensed proxy log, public objects — and revoking an object through the `exposure-policy` contract | director (`/v1/tenants/{t}/exposure/…`) |
 | tenant, one app | **App administrator** | `gentian:tenant:<t>:app:<p>:admins` — per app, and only for a profile that declares a `privilegedRole` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
 | tenant | **Member** | `gentian:tenant:<t>:members`, `gentian:tenant:<t>:app:<profile>` | using the apps they are entitled to | tenant desktop, the apps |
 | any | **Agent** | a Keycloak client per agent, token exchanged with `act` | acting for one human within that human's rights and one task's TTL | MCP gateway, apps |
@@ -35,16 +35,17 @@ Separations that are load-bearing, whatever one person happens to hold:
 - **Platform administrator ≠ security officer.** The one who installs is not
   the one who approves exceptions. A waiver, an egress rule or a public
   surface that the same identity requested and approved is a policy hole
-  with a signature on it. Every cluster has both from the start: the claim
-  defaults `securityOfficer` to `gentian:platform:security`, a group of its
-  own that the install makes empty. The cluster's administrator also names
-  tenants' administrators as holders on the claim
-  (`spec.platformAccess.roleHolders`, AD-16): each keeps their own account in
-  their tenant's realm, the operator writes the role for that account of that
+  with a signature on it. The cluster's administrator names the security
+  officer on the claim (`spec.platformAccess.roleHolders`, AD-16), with a
+  reason and an optional expiry: a person of the platform tenant or an
+  administrator of another tenant, who keeps their own account in their
+  tenant's realm; the operator writes the role for that account of that
   realm, and they use it signed in to their own tenant
-  ([iam.md §1.1c](../design/iam.md)). The administrator holds `realm-admin`
-  in the kernel realm and so could still join the group by hand; the realm's
-  admin events are the record of whether that happened, not a refusal.
+  ([iam.md §1.1c](../design/iam.md)). The registrar refuses every write to
+  a platform-tenant holder's account, so the administrator cannot take it
+  over through it. The administrator holds `realm-admin` in the kernel realm
+  and so could still change the account by hand; the realm's admin events
+  are the record of whether that happened, not a refusal.
 - **Break-glass is not "platform administrator with more".** It is a
   separate group with no standing membership: added for an incident,
   removed after, each use visible in the issuer log because the group
@@ -52,17 +53,15 @@ Separations that are load-bearing, whatever one person happens to hold:
   default.
 - **Tenant administrator ≠ perimeter approver**, as relations. Publishing to
   the internet is the one tenant decision that changes the blast radius of
-  the platform, so it is its own grant and its own audit line. The
-  tenant's `:perimeter` group exists from the day the tenant does, and its
-  members approve; so does the cluster's administrator, in every tenant its
-  cluster operates. The tenant's administrators approve **only where the
-  cluster's administrator switched that on** for the tenant
-  (`Tenant.spec.perimeter.adminsApprove`, off by default): the operator then
-  writes the admins group into `tenant:<t>#perimeter_approver`
-  (authorization-model.md §3) and removes it when the manifest stops saying
-  so. Either way the record shows two decisions, because the relation asked
-  is `can_expose`, never `admin`. **Changed 2026-10-09** from "the default is
-  that they are the same people" (AD-6).
+  the platform, so it is its own grant and its own audit line, and egress
+  beyond the baseline is the same decision in the other direction
+  (`can_approve_privilege` is `can_expose`). The perimeter approvers the
+  cluster's administrator names on the claim approve — an administrator of
+  the tenant for that tenant, a person of the platform tenant for every
+  tenant — and so does the cluster's administrator, in every tenant its
+  cluster operates. A tenant's administrator approves only once named, and
+  the record shows two decisions, because the relation asked is
+  `can_expose`, never `admin` (AD-6).
 - **App administrator is not a platform role.** It exists so that a tenant
   can make someone an Odoo or Nextcloud admin without making them a tenant
   administrator. It confers nothing outside the app.
@@ -195,10 +194,11 @@ Three invariants, one per class, each a scripted test:
 The model is [authz/model/v1/model.fga](../../authz/model/v1/model.fga), with the rules
 behind it in [authorization-model.md](authorization-model.md). It is not
 restated here: the roles above map onto it as `cluster#admin`,
-`cluster#security_officer`, `cluster#auditor`, `cluster#service_admin`,
-`cluster#shared_apps_admin`, `cluster#break_glass`, `tenant#admin`,
-`tenant#perimeter_approver`, `tenant#member` and `app#admin`, one Keycloak
-group each; every verb a PEP exposes is a `can_*` relation computed from
+`cluster#break_glass`, `tenant#admin`, `tenant#member` and `app#admin`, one
+Keycloak group each, and `cluster#security_officer`, `cluster#auditor`,
+`cluster#service_admin`, `cluster#shared_apps_admin`,
+`cluster#perimeter_approver` and `tenant#perimeter_approver`, held by name as
+`user:<realm>/<sub>`; every verb a PEP exposes is a `can_*` relation computed from
 them. Two invariants the model carries for this document: an admin account
 reaches the desktop (`tenant#can_enter`) but launches no app
 (`app#can_use: entitled but not admin from tenant`), and a platform administrator acts

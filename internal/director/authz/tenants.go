@@ -28,19 +28,17 @@ const PlatformTenant = "platform"
 var tenantRoleGroups = []struct{ relation, suffix string }{
 	{"admin", "admins"},
 	{"member", "members"},
-	{"perimeter_approver", "perimeter"},
 }
 
 // TenantRights is one tenant as the projection is given it: its name, and
-// what its manifest says about who holds a right in it.
+// who the Cluster claim names its perimeter approvers (role holders of scope
+// tenant:<t>), each as HolderUser.
 type TenantRights struct {
-	Name string
-	// AdminsApprove is spec.perimeter.adminsApprove: the tenant's own
-	// administrators may approve its public addresses.
-	AdminsApprove bool
+	Name               string
+	PerimeterApprovers []string
 }
 
-// TenantsNamed is tenants whose manifests say nothing beyond their names.
+// TenantsNamed is tenants nobody is named perimeter approver of.
 func TenantsNamed(names ...string) []TenantRights {
 	out := make([]TenantRights, 0, len(names))
 	for _, name := range names {
@@ -49,24 +47,8 @@ func TenantsNamed(names ...string) []TenantRights {
 	return out
 }
 
-// adminsApprove is the entry that lets a tenant's own administrators approve
-// its public addresses: the admins group written into perimeter_approver.
-//
-// It is the projection's alone, like an app's `entitled`: written while the
-// tenant's manifest says so and removed when it does not, so an entry of this
-// shape that somebody wrote into the store by hand does not outlive the next
-// projection, and a backup does not carry it (StoreOnlyOf). The switch is the
-// manifest's, which only the cluster's administrator writes.
-func adminsApprove(tenant string) (Tuple, error) {
-	group, err := Group("gentian:tenant:" + tenant + ":admins")
-	if err != nil {
-		return Tuple{}, fmt.Errorf("tenant %s: %w", tenant, err)
-	}
-	return Tuple{User: group + "#member", Relation: "perimeter_approver", Object: Tenant(tenant)}, nil
-}
-
 // ReconcileTenants makes each named tenant known to the store: attached to
-// its cluster, and its three role relations held by the tenant's groups.
+// its cluster, and its two role relations held by the tenant's groups.
 //
 // Written by the operator from the Tenant objects of the cluster
 // (AuthzProjectionReconciler), which are what git lists under
@@ -78,10 +60,11 @@ func adminsApprove(tenant string) (Tuple, error) {
 // and always for the platform tenant; a tenant that later withdraws it is not
 // second-guessed here, because the missing tuple is then the tenant's answer.
 //
-// Whether the tenant's administrators approve its public addresses is the
-// manifest's (adminsApprove): that entry is written when the manifest says
-// so and deleted when it does not. Never for the platform tenant, whose
-// administrators are the cluster's and approve through operated_by.
+// perimeter_approver on a tenant is the claim's alone: the role holders of
+// scope tenant:<t> hold it, and every other entry under it is removed, so an
+// entry somebody wrote into the store by hand does not outlive the next
+// projection, and a backup does not carry it (StoreOnlyOf). The cluster's
+// perimeter approver holds it through the cluster and is not written here.
 //
 // Membership is not touched: it is a projection of Keycloak.
 func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants []TenantRights) error {
@@ -121,19 +104,23 @@ func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants 
 				writes = append(writes, t)
 			}
 		}
-		approve, err := adminsApprove(tenant)
-		if err != nil {
-			return err
+		approvers := map[string]bool{}
+		for _, user := range rights.PerimeterApprovers {
+			approvers[user] = true
 		}
-		have, err := c.Read(ctx, approve)
+		have, err := c.Read(ctx, Tuple{Relation: "perimeter_approver", Object: obj})
 		if err != nil {
-			return fmt.Errorf("read %s on %s: %w", approve.Relation, obj, err)
+			return fmt.Errorf("read perimeter_approver on %s: %w", obj, err)
 		}
-		switch want := rights.AdminsApprove && tenant != PlatformTenant; {
-		case want && len(have) == 0:
-			writes = append(writes, approve)
-		case !want && len(have) > 0:
-			deletes = append(deletes, approve)
+		for _, t := range have {
+			if approvers[t.User] {
+				delete(approvers, t.User)
+				continue
+			}
+			deletes = append(deletes, plain(t))
+		}
+		for user := range approvers {
+			writes = append(writes, Tuple{User: user, Relation: "perimeter_approver", Object: obj})
 		}
 	}
 	if len(writes) == 0 && len(deletes) == 0 {

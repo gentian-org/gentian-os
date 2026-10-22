@@ -68,7 +68,6 @@ type Repository interface {
 	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
 	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
-	AdminsApproveAtCreation(ctx context.Context, req gitops.NewTenant) (bool, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
 	DeclareTenant(ctx context.Context, imported gitops.ImportedTenant, meta gitops.Meta) (gitops.Result, error)
@@ -119,7 +118,6 @@ type Repository interface {
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
-	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
 	RoleHolders(ctx context.Context) ([]gitops.RoleHolder, error)
 	SetRoleHolder(ctx context.Context, h gitops.RoleHolder, meta gitops.Meta) (gitops.Result, error)
 	RemoveRoleHolder(ctx context.Context, role, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
@@ -573,13 +571,6 @@ func (s *Server) routes() {
 		s.action("POST /v1/clusters/{c}/tenants/{t}/catalogues/{s}/actions/rename", "can_configure", s.clusterObject, s.renameTenantCatalogue)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
-		// Whether a tenant's own administrators may approve what it
-		// publishes to the internet. The same shape as the switch above and
-		// for the same reason under /v1/clusters and nowhere else: a
-		// tenant's administrator holds no relation that reaches it, so
-		// nobody gives themselves the right to publish.
-		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/perimeter-delegation", "can_configure", s.clusterObject, s.delegatePerimeter)
-		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/perimeter-delegation", "can_configure", s.clusterObject, s.undelegatePerimeter)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -647,8 +638,9 @@ func (s *Server) routes() {
 
 	// WHO may answer follows from the KIND, so the two writes here are the
 	// one place in this API where the relation on the route is not the
-	// whole check. An egress request leaves the tenant's own namespace and
-	// tenant#can_approve_privilege answers for it. A pod-security waiver
+	// whole check. An egress request opens the tenant's perimeter outward,
+	// and tenant#can_approve_privilege -- the perimeter approver's, beside
+	// the cluster's administrator -- answers for it. A pod-security waiver
 	// or a cluster role weakens what protects the NODE, and that is
 	// cluster#can_approve -- the security officer's, who is deliberately
 	// NOT a tenant administrator and must not have to become one to do
@@ -663,11 +655,11 @@ func (s *Server) routes() {
 	// could ask for the cheaper approver.
 	// What this tenant publishes to the internet, and who said it could.
 	//
-	// can_expose, never admin (AD-6). The members of the tenant's perimeter
-	// group hold it, and the cluster's administrators while the tenant is
-	// operated by its cluster; the tenant's own administrators only where
-	// the cluster's administrator said so (perimeter-delegation above). It
-	// is asked as its own relation, so putting something on the internet is
+	// can_expose, never admin (AD-6). The tenant's perimeter approver holds
+	// it -- the administrator of the tenant, or the person of the platform
+	// tenant, the Cluster claim names -- and the cluster's administrators
+	// while the tenant is operated by its cluster. It is asked as its own
+	// relation, so putting something on the internet is
 	// always its own line in the record rather than something that happened
 	// while somebody was doing everything else.
 	//
@@ -885,7 +877,7 @@ func (s *Server) routes() {
 // type cluster in the model, and the vocabulary check keeps this list honest.
 var clusterRelations = []string{
 	"can_configure", "can_deploy_tenant", "can_operate_system", "can_install_shared",
-	"can_grant_shared", "can_approve", "can_set_admission", "can_edit_raw", "can_audit",
+	"can_grant_shared", "can_approve", "can_approve_perimeter", "can_set_admission", "can_edit_raw", "can_audit",
 }
 
 // clusterMe answers which cluster verbs the caller holds.
@@ -1770,7 +1762,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", `+
+			`"requireMFA": false, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", `+
 			`"brokeredTo": [{"name": "<name>", "redirectURI": "https://…", "jwksURL": "https://…"}]`)
 		return
 	}
@@ -1791,17 +1783,6 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	body.Country = country
-	// Whether its administrators approve its public addresses is the
-	// request's to say. Unsaid it is off, except for the user tenant of a
-	// single-tenancy cluster (gitops.AdminsApproveAtCreation). Settled here
-	// and written as settled, so that the answer states what the manifest
-	// holds.
-	adminsApprove, err := s.cfg.Repo.AdminsApproveAtCreation(r.Context(), body)
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	body.Perimeter = &gitops.NewTenantPerimeter{AdminsApprove: &adminsApprove}
 	res, err := s.cfg.Repo.CreateTenant(r.Context(), body, c.meta)
 	if errors.Is(err, gitops.ErrTenantExists) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
@@ -1815,7 +1796,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo), "country": body.Country}
+	answer := map[string]any{"status": res.Status, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo), "country": body.Country}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return

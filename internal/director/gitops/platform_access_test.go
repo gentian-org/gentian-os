@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/yaml"
 )
@@ -86,22 +87,50 @@ func TestRoleHoldersAreWrittenIntoTheClaimAndReadBack(t *testing.T) {
 
 func TestARoleHolderIsHeldToItsShape(t *testing.T) {
 	t.Parallel()
-	good := RoleHolder{Role: "securityOfficer", Tenant: "acme", Subject: "7d0f3c2e-5b1a-4e9c-9f1e-2a3b4c5d6e7f", Username: "it@acme.example", Email: "it@acme.example"}
-	if err := validHolder(good); err != nil {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	good := RoleHolder{Role: "securityOfficer", Scope: "cluster", Tenant: "acme", Subject: "7d0f3c2e-5b1a-4e9c-9f1e-2a3b4c5d6e7f",
+		Username: "it@acme.example", Email: "it@acme.example", Reason: "Tom's deputy", ExpiresAt: "2026-12-31T00:00:00Z"}
+	if err := validHolder(good, now); err != nil {
 		t.Fatal(err)
 	}
-	for name, bad := range map[string]RoleHolder{
-		"admin is no holder's":   {Role: "admin", Tenant: "acme", Subject: "1", Username: "x"},
-		"break glass neither":    {Role: "breakGlass", Tenant: "acme", Subject: "1", Username: "x"},
-		"the graph's spelling":   {Role: "security_officer", Tenant: "acme", Subject: "1", Username: "x"},
-		"tenant not a name":      {Role: "auditor", Tenant: "Acme", Subject: "1", Username: "x"},
-		"subject with space":     {Role: "auditor", Tenant: "acme", Subject: "not a subject", Username: "x"},
-		"no login":               {Role: "auditor", Tenant: "acme", Subject: "1"},
-		"login with a quote":     {Role: "auditor", Tenant: "acme", Subject: "1", Username: `it"@acme`},
-		"address with a newline": {Role: "auditor", Tenant: "acme", Subject: "1", Username: "x", Email: "a\nb"},
-		"login too long":         {Role: "auditor", Tenant: "acme", Subject: "1", Username: strings.Repeat("a", 256)},
+	for name, ok := range map[string]RoleHolder{
+		"a perimeter approver of their own tenant": {Role: "perimeterApprover", Scope: "tenant:acme", Tenant: "acme", Subject: "1", Username: "x", Reason: "r"},
+		"a perimeter approver of the platform":     {Role: "perimeterApprover", Scope: "cluster", Tenant: "platform", Subject: "1", Username: "x", Reason: "r"},
+		"a service administrator of the platform":  {Role: "serviceAdmin", Scope: "cluster", Tenant: "platform", Subject: "1", Username: "x", Reason: "r"},
 	} {
-		if err := validHolder(bad); err == nil {
+		if err := validHolder(ok, now); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	reason := func(h RoleHolder) RoleHolder {
+		if h.Reason == "" {
+			h.Reason = "r"
+		}
+		if h.Scope == "" {
+			h.Scope = "cluster"
+		}
+		return h
+	}
+	for name, bad := range map[string]RoleHolder{
+		"no reason":                     {Role: "auditor", Scope: "cluster", Tenant: "acme", Subject: "1", Username: "x", Reason: ""},
+		"expired":                       reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: "x", ExpiresAt: "2026-10-22T11:00:00Z"}),
+		"an expiry that is no time":     reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: "x", ExpiresAt: "tomorrow"}),
+		"service admin of a tenant":     reason(RoleHolder{Role: "serviceAdmin", Tenant: "acme", Subject: "1", Username: "x"}),
+		"shared apps admin of a tenant": reason(RoleHolder{Role: "sharedAppsAdmin", Tenant: "acme", Subject: "1", Username: "x"}),
+		"a tenant's approver for all":   reason(RoleHolder{Role: "perimeterApprover", Tenant: "acme", Subject: "1", Username: "x"}),
+		"another tenant's approver":     reason(RoleHolder{Role: "perimeterApprover", Scope: "tenant:globex", Tenant: "acme", Subject: "1", Username: "x"}),
+		"a reason over lines":           reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: "x", Reason: "a\nb"}),
+		"admin is no holder's":          reason(RoleHolder{Role: "admin", Tenant: "acme", Subject: "1", Username: "x"}),
+		"break glass neither":           reason(RoleHolder{Role: "breakGlass", Tenant: "acme", Subject: "1", Username: "x"}),
+		"the graph's spelling":          reason(RoleHolder{Role: "security_officer", Tenant: "acme", Subject: "1", Username: "x"}),
+		"tenant not a name":             reason(RoleHolder{Role: "auditor", Tenant: "Acme", Subject: "1", Username: "x"}),
+		"subject with space":            reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "not a subject", Username: "x"}),
+		"no login":                      reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1"}),
+		"login with a quote":            reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: `it"@acme`}),
+		"address with a newline":        reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: "x", Email: "a\nb"}),
+		"login too long":                reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: strings.Repeat("a", 256)}),
+	} {
+		if err := validHolder(bad, now); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}

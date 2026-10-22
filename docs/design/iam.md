@@ -29,7 +29,7 @@ user and group store for that organisation.
 - **The edge keeps the session**, not the app and not the desktop: on every host behind a session the Gateway runs the code flow against the zone's client (`gentian-edge-<zone>`), keeps the tokens in encrypted, host-scoped, `SameSite=Lax` cookies, renews them with the refresh token, and only then asks the bouncer whether this person may reach the host. The order, what the bouncer is shown and what it refuses are in [routing.md §4.1](routing.md).
 - **Signing out** is `/oauth2/logout` on the host the person is on: the Gateway drops that host's cookies and sends the browser to the realm's end-session endpoint with the session's ID token as the hint, so Keycloak ends the realm session without asking and returns to the host's front page, which is the realm's sign-in again. Ending the realm session is what signs the person out of the zone's other hosts, within one access-token lifetime ([routing.md §4.2](routing.md)). Ending the realm session is also what tells the apps: the realm calls each app that can be told, inside the cluster, and the app ends its own session for that person. Which apps can be told, and how long a session lasts in one that cannot, is §1.12.
 - **Tenant apps** use the same tenant realm for OIDC, so the realm session created at sign-in is reused silently by every app launch — no broker hop, no second login screen.
-- The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's administrators and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one. A tenant's administrator the cluster gives a cluster role keeps their account in their own realm (§1.1c).
+- The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's own people -- the platform tenant's, its administrators among them -- and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one. A tenant's administrator the cluster gives a cluster role keeps their account in their own realm (§1.1c).
 
 ### 1.1a The platform tenant, user tenants, and the two tenancy modes
 
@@ -158,59 +158,85 @@ every provider not set to *Hide on login page*; the platform's own (`kernel`,
 `vouch-*`) are, and so stay off it. The one brokering the platform composes
 is the platform's administrators entering a tenant, below.
 
-#### Cluster roles held by accounts of a tenant's realm
+#### Cluster roles held by name
 
-The kernel realm holds the platform's administrators (§1.1), and a platform
-role is held by a group of that realm (§1.2). Some cluster roles are meant for
-people who are not the platform's administrators -- the security officer who
-approves (`cluster#security_officer`, behind `can_approve`) and the auditor who
-reads (`cluster#auditor`, behind `can_audit`), in practice an administrator of
-one of the cluster's tenants. They keep their own account, in their tenant's
-realm: the cluster's administrator says, on the Cluster claim, which account
-holds which role.
+The kernel realm holds the platform's administrators (§1.1). Two cluster
+roles are held by a group of that realm (§1.2): `admin` and `breakGlass`
+(`spec.platformRoles`). Every other cluster role is held by a person the
+cluster's administrator names on the Cluster claim, each keeping their own
+account in their tenant's realm -- the kernel realm for the platform tenant's
+people.
 
 ```yaml
 spec:
   platformAccess:
     roleHolders:
-      - role: securityOfficer     # or auditor
+      - role: perimeterApprover
+        scope: tenant:acme        # follows from role and tenant
         tenant: acme
         subject: 5b1e...          # the account's id in the tenant's realm
         username: it@acme.example
         email: it@acme.example
+        reason: approves acme's public addresses and egress
+        expiresAt: 2027-06-30T00:00:00Z   # optional
 ```
 
-`role` is `securityOfficer` or `auditor` and nothing else. A tenant's realm is
-administered by that tenant's administrators, who can take over any account
-in it, so a role held there is in their hands too: approving and reading are
-what that is acceptable for. `admin` and the other roles that change the
-cluster, and `breakGlass`, are held only through the kernel realm's groups.
-The platform tenant is no holder's tenant: its people hold roles through those
-groups. An entry is keyed by role, tenant and subject, which outlives a changed
-address; `username` and `email` say who it is to a person reading the claim.
+| Role | Relation | Who may be named | Scope |
+|---|---|---|---|
+| `securityOfficer` | `security_officer` (`can_approve`) | a person of the platform tenant, or an administrator of another tenant | `cluster` |
+| `auditor` | `auditor` (`can_audit`) | the same | `cluster` |
+| `serviceAdmin` | `service_admin` (`can_operate_system`) | a person of the platform tenant | `cluster` |
+| `sharedAppsAdmin` | `shared_apps_admin` (`can_install_shared`, `can_grant_shared`) | a person of the platform tenant | `cluster` |
+| `perimeterApprover` | `perimeter_approver` (`can_expose`, `can_approve_privilege`) | a person of the platform tenant: every tenant | `cluster` |
+| | | an administrator of tenant `t`: that tenant | `tenant:<t>` |
+
+The scope follows from role and tenant (`authz.HolderScope`); the claim states
+it so a reader sees how far the role reaches, and an entry stating another is
+refused. A person of a tenant other than the platform's must be one of its
+administrators: a tenant's administrators can take over any account of their
+realm, so a role held there is in their hands too, and only approving and
+reading are acceptable for that. `admin` and `breakGlass` are never held by
+name. An entry is keyed by role, tenant and subject, which outlives a changed
+address; `username` and `email` say who it is to a person reading the claim,
+`reason` why they hold it. An entry whose `expiresAt` has passed grants
+nothing: the operator projects no tuple for it and requeues at the next
+expiry.
 
 The cluster's administrator writes an entry through the director
 (`can_configure`), from the command line
-(`kubectl gentian platform-roles holders add <role> <tenant> <login>`) or from
-the platform console, whose picker lists the administrators of every tenant --
-the members of each tenant's `admins` group, read by the registrar across the
-realms it holds a credential for, under `can_configure` on the cluster.
+(`kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>]`)
+or from the platform console, whose picker lists the candidates -- every
+person of the platform tenant and the members of each other tenant's `admins`
+group, read by the registrar across the realms it holds a credential for,
+under `can_configure` on the cluster
+(`GET /v1/clusters/{c}/role-candidates`). The director refuses an entry
+without a reason, one already expired, and a person of another tenant who is
+not in its `admins` group as the store holds it.
 
 **The tuple names the realm.** The operator writes each entry into the graph
 directly, with the cluster's other role tuples and declaratively like them:
-`user:<realm>/<subject> <relation> cluster:<c>`, where `<realm>` is the
-tenant's realm. Removing the entry removes the tuple. Nothing is made in
-Keycloak, in either realm.
+`user:<realm>/<subject> <relation> cluster:<c>` for scope `cluster`, and
+`user:<realm>/<subject> perimeter_approver tenant:<t>` for scope
+`tenant:<t>`, where `<realm>` is the tenant's realm. Removing the entry
+removes the tuple. Nothing is made in Keycloak, in either realm.
 
-**Only that realm's token matches it.** Every enforcement point asks for a
-caller as `user:<sub>` first and, when that is refused, as
-`user:<realm>/<sub>`, with `<realm>` the realm whose keys verified the token
-(the issuer the director, the usher and the custodian accept is
-`<base>/realms/<realm>`, §1.1). A subject never contains `/`, so no plain
-`user:<sub>` is ever a holder, and the same subject signed in by another realm
-asks as another user. The holder signs in to their own tenant as always and
-uses the role from its console: the approvals and the audit reads. Their
-realm's sign-in policy is the one that protects the role.
+**Only that realm's token matches it.** Every enforcement point -- the
+director, the usher, the custodian, the registrar and the edge bouncer --
+asks for a caller as `user:<sub>` first and, when that is refused, as
+`user:<realm>/<sub>` (`authz.CheckAs`), with `<realm>` the realm whose keys
+verified the token (the issuer they accept is `<base>/realms/<realm>`, §1.1).
+A subject never contains `/`, so no plain `user:<sub>` is ever a holder, and
+the same subject signed in by another realm asks as another user. The holder
+signs in to their own tenant as always and uses the role from its console.
+Their realm's sign-in policy is the one that protects the role.
+
+**The registrar does not touch a platform-tenant holder's account.** The
+cluster's administrator manages the kernel realm's people, so the registrar's
+guard (`ErrProtected`) refuses every write to a person of the platform tenant
+the claim names -- their names, address, whether they may sign in, removal,
+second factor, mailed password links, activation and vouching links -- as it
+does for the members of the `admin` and `breakGlass` groups. The cluster's
+administrator cannot take over the security officer's account.
 
 #### The platform's administrators entering a tenant
 
@@ -251,12 +277,10 @@ membership, and access to each app:
 
 | Group | Purpose |
 |---|---|
-| `gentian:platform:admin` | The platform administrator. The Cluster claim names the group that holds each platform role (`spec.platformRoles`); this is the default for `admin` |
-| `gentian:platform:security` | The security officers: who approves what escapes the default posture (`cluster#can_approve`). The default for `securityOfficer`; made empty by the install, never the administrators' group. The role is also held by name by accounts of a tenant's realm (§1.1c) |
-| the groups the claim names for `auditor`, `serviceAdmin`, `sharedAppsAdmin`, `breakGlass` | The other platform roles. None has a holder unless the claim names a group, or for `auditor` an account of a tenant's realm by name (§1.1c) |
+| `gentian:platform:admin` | The platform administrator. The Cluster claim names the group that holds each of the two group-held platform roles (`spec.platformRoles`); this is the default for `admin` |
+| the group the claim names for `breakGlass` | Break-glass; nobody holds it unless the claim names a group. Every other cluster role is held by name (§1.1c) |
 | `gentian:tenant:<t>:members` | All workspace members |
 | `gentian:tenant:<t>:admins` | Tenant IT admins |
-| `gentian:tenant:<t>:perimeter` | Perimeter approvers (§1.3) |
 | `gentian:tenant:<t>:app-admins` | The App Admin role: who administers the tenant's apps. One group for the whole tenant, not one per app (§1.11) |
 | `gentian:tenant:<t>:app:<profile>` | Access to one installed app (§1.6) |
 
@@ -275,7 +299,7 @@ day-to-day app user:
 |---|---|---|
 | **Member** | `members`, optional `app:*` | User app tiles only |
 | **Tenant admin** | `admins` | Admin Console (Users, Groups, Notifications) — no app tiles |
-| **Perimeter approver** | `perimeter` | Approves what the tenant publishes to the internet (`can_expose`), and nothing else. The group is created with the tenant and starts empty. The platform admin approves too, in a tenant the cluster operates; the tenant admin only where the platform admin switched that on, and only somebody who may approve changes who is in the group ([security.md §2.14](security.md)) |
+| **Perimeter approver** | `admins`, named on the Cluster claim (§1.1c) | Approves what the tenant publishes to the internet (`can_expose`) and its egress beyond the baseline (`can_approve_privilege`), and nothing else beyond the tenant admin's. A tenant administrator the cluster's administrator names `perimeterApprover`; a perimeter approver of the platform tenant approves for every tenant, and the platform admin too, in a tenant the cluster operates ([security.md §2.14](security.md)) |
 | **Platform admin** | `gentian:platform:admin` | Admin Console (cross-tenant during bootstrap) |
 
 Provisioning is via the [Gentian Admin Console](admin-console.md).

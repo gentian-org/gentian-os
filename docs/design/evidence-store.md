@@ -140,8 +140,8 @@ Two identities, both made by the operator the way app identities are made
 (`objectStorageProvisionScript`) and both kept in OpenBao under
 `gentian-os/kernel/evidence/`: `evidence-writer` (Write, List on this
 bucket; no Read) for Vector, and `evidence-reader` (Read, List; no Write),
-whose path only the policy bound to `gentian:platform:security` and
-`gentian:platform:auditor` may read.
+whose path only the cluster's security officers and auditors
+(`cluster#security_officer`, `cluster#auditor`) may read.
 
 Retention of the objects themselves is the lock's expiry plus a lifecycle
 rule of the same length: after twelve months an object is both unlocked and
@@ -328,9 +328,8 @@ sets the number; nothing shorter than six months is accepted.
 
 - `evidence-writer`: Vector only, Write and List, no Read. The lock makes
   Delete impossible for anyone.
-- `evidence-reader`: in OpenBao under a path the policies of
-  `gentian:platform:security` and `gentian:platform:auditor` may read, and
-  no other. The custodian's token-exchange write path is how a person
+- `evidence-reader`: in OpenBao under a path the cluster's security
+  officers and auditors may read, and nobody else. The custodian's token-exchange write path is how a person
   obtains it; the read is recorded like any credential read.
 - The read API (§3.8): `can_view` on a tenant for that tenant's records,
   `can_audit` on the cluster for all of them. A dedicated `can_read_evidence`

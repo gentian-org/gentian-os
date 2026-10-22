@@ -158,11 +158,11 @@ func TestScopeFollowsTheKindNotTheProfile(t *testing.T) {
 }
 
 // What a console is told about who answers is PrivilegeScope in other words,
-// never a decision of its own: the tenant's administrator for egress, the
+// never a decision of its own: the perimeter approver for egress, the
 // security officer for everything else, an unknown kind included.
 func TestTheApproverIsTheScopeInAConsolesWords(t *testing.T) {
 	for kind, want := range map[string]string{
-		security.PrivilegeEgress:       security.PrivilegeApproverTenant,
+		security.PrivilegeEgress:       security.PrivilegeApproverPerimeter,
 		security.PrivilegePodSecurity:  security.PrivilegeApproverSecurityOfficer,
 		security.PrivilegeClusterRoles: security.PrivilegeApproverSecurityOfficer,
 		"something-new":                security.PrivilegeApproverSecurityOfficer,

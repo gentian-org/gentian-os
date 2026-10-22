@@ -1936,8 +1936,8 @@ spec:
             {{- end }}
             {{- if and $kernelRealm $kcInternal }}
             {{- /* ── the tenant's entitlement groups ─────────────────────────
-                 Four fixed, one per app. The names are internal/keycloak/groups.go's
-                 contract — members, admins, app-admins, perimeter, and app:<profile> — and
+                 Three fixed, one per app. The names are internal/keycloak/groups.go's
+                 contract — members, admins, app-admins, and app:<profile> — and
                  they carry one attribute, the platform's mark, which a realm
                  import reads: such a group keeps the id it has here and is never
                  made from a bundle (internal/keycloak PlatformMarkerAttribute).
@@ -1954,16 +1954,14 @@ spec:
                  takes an additionalProfiles argument for exactly that — so the Job
                  goes only once that gap is closed.
               */}}
-            {{- /* Only the four that belong to the tenant itself. perimeter is
-                 whoever approves what the tenant publishes to the internet
-                 (tenant#perimeter_approver); it starts empty. The per-app
+            {{- /* Only the three that belong to the tenant itself. The per-app
                  group is app-default's, because its name follows the resolved
                  profile and its attributes come from that profile's
                  gentianos.io/keycloak-group-attributes annotation — nine of the
                  catalogue's profiles carry one, and the Odoo ones drive module
                  and role provisioning. This Composition cannot see a ComponentProfile;
                  app-default already fetches it. */}}
-            {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) (printf "gentian:tenant:%s:perimeter" $tenant) }}
+            {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) }}
             {{- range $g := $groupNames }}
             {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
             ---

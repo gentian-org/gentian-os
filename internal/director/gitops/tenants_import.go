@@ -101,8 +101,6 @@ type ImportedTenant struct {
 //     with it.
 //   - spec.catalogue is dropped: a bundle does not bring its own catalogues
 //     or its own delegation.
-//   - spec.perimeter is dropped: whether a tenant's own administrators
-//     approve its public addresses is not the bundle's to say either.
 //
 // A custom domain the import keeps (Pending.CustomDomain) is declared in the
 // same commit, as SetTenantDomain writes it and under the rules it is under
@@ -145,11 +143,6 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		// administrator of the cluster the bundle came from; on this one they
 		// are decided here, through the catalogue routes, after the import.
 		declared.Catalogue = nil
-		// Nor who approves its public addresses. That the tenant's own
-		// administrators did where the bundle came from was that cluster's
-		// administrator's decision; here it is off until this one's turns
-		// it on (SetTenantAdminsApprove).
-		declared.Perimeter = nil
 		// Nor whether anybody may sign up. That a realm elsewhere took
 		// registrations says nothing about this cluster's: a tenant is made
 		// with sign-up on here, deliberately, or not at all.

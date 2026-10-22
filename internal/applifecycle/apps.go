@@ -96,8 +96,8 @@ type AppState struct {
 type PendingPrivilege struct {
 	// Privilege is <kind>/<name>, as in PendingPrivileges.
 	Privilege string `json:"privilege"`
-	// ApprovedBy is who answers it: "tenant" for the tenant's administrator
-	// (tenant#can_approve_privilege), "security-officer" for the cluster's
+	// ApprovedBy is who answers it: "perimeter-approver" for the tenant's
+	// perimeter approver (tenant#can_approve_privilege), "security-officer" for the cluster's
 	// security officer (cluster#can_approve). security.PrivilegeApprover
 	// decides it from the kind, as the director does on the approval.
 	ApprovedBy string `json:"approvedBy"`
@@ -107,7 +107,7 @@ type PendingPrivilege struct {
 	Reason string `json:"reason,omitempty"`
 	// RequestedBy, RequestedAt and Note are the request a tenant
 	// administrator made of the security officer (privilege_requests.go),
-	// absent while nobody asked. A tenant-approved privilege has none.
+	// absent while nobody asked. A perimeter-approved privilege has none.
 	RequestedBy string `json:"requestedBy,omitempty"`
 	RequestedAt string `json:"requestedAt,omitempty"`
 	Note        string `json:"note,omitempty"`

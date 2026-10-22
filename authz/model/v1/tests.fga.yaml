@@ -7,68 +7,61 @@ model_file: model.fga
 tuples:
   # --- people, as the director projects them from Keycloak events
   - {user: user:alice,  relation: member, object: group:gentian/platform/admin}
-  - {user: user:sam,    relation: member, object: group:gentian/platform/security}
-  - {user: user:audrey, relation: member, object: group:gentian/platform/auditor}
-  - {user: user:serge,  relation: member, object: group:gentian/platform/service-admin}
-  - {user: user:shari,  relation: member, object: group:gentian/platform/shared-apps-admin}
   - {user: user:bea,    relation: member, object: group:gentian/platform/break-glass}
   - {user: user:tom,    relation: member, object: group:gentian/tenant/demo/admins}
   - {user: user:tom,    relation: member, object: group:gentian/tenant/demo/app/nextcloud}   # an admin account wrongly entitled
   - {user: user:mia,    relation: member, object: group:gentian/tenant/demo/members}
   - {user: user:mia,    relation: member, object: group:gentian/tenant/demo/app/nextcloud}
   - {user: user:max,    relation: member, object: group:gentian/tenant/demo/members}
-  - {user: user:pat,    relation: member, object: group:gentian/tenant/demo/perimeter}
+  - {user: user:pat,    relation: member, object: group:gentian/tenant/demo/admins}
   - {user: user:nina,   relation: member, object: group:gentian/tenant/demo/app/nextcloud/admins}
   - {user: user:tina,   relation: member, object: group:gentian/tenant/solo/admins}
   - {user: user:olaf,   relation: member, object: group:gentian/tenant/other/members}
   - {user: user:uma,    relation: member, object: group:gentian/tenant/user/admins}
   - {user: user:ulf,    relation: member, object: group:gentian/tenant/user/members}
   - {user: user:pia,    relation: member, object: group:gentian/tenant/plain/admins}
-  - {user: user:petra,  relation: member, object: group:gentian/tenant/plain/perimeter}
   - {user: user:piet,   relation: member, object: group:gentian/tenant/plain/members}
-  - {user: user:paul,   relation: member, object: group:gentian/tenant/solo/perimeter}
+  - {user: user:paul,   relation: member, object: group:gentian/tenant/solo/admins}
 
-  # --- cluster roles, from the Cluster claim
+  # --- cluster roles, from the Cluster claim: admin and break_glass by group (spec.platformRoles)
   - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
-  - {user: group:gentian/platform/security#member,          relation: security_officer,  object: cluster:main}
-  - {user: group:gentian/platform/auditor#member,           relation: auditor,           object: cluster:main}
-  - {user: group:gentian/platform/service-admin#member,     relation: service_admin,     object: cluster:main}
-  - {user: group:gentian/platform/shared-apps-admin#member, relation: shared_apps_admin, object: cluster:main}
   - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
-  # role holders the claim names (spec.platformAccess.roleHolders): accounts of a tenant's realm, by realm and subject
-  - {user: user:demo/tom,   relation: security_officer, object: cluster:main}
-  - {user: user:other/olaf, relation: auditor,          object: cluster:main}
+  # and the role holders it names (spec.platformAccess.roleHolders), each the account of its realm:
+  # people of the platform tenant (realm kernel), and administrators of a tenant
+  - {user: user:kernel/sam,    relation: security_officer,   object: cluster:main}
+  - {user: user:kernel/audrey, relation: auditor,            object: cluster:main}
+  - {user: user:kernel/serge,  relation: service_admin,      object: cluster:main}
+  - {user: user:kernel/shari,  relation: shared_apps_admin,  object: cluster:main}
+  - {user: user:kernel/petra,  relation: perimeter_approver, object: cluster:main}
+  - {user: user:demo/tom,      relation: security_officer,   object: cluster:main}
+  - {user: user:other/olaf,    relation: auditor,            object: cluster:main}
 
-  # --- tenant demo: operated by the platform. Its manifest says its own administrators approve public
-  # addresses (spec.perimeter.adminsApprove), so the admins group holds perimeter_approver beside the perimeter group
+  # --- tenant demo: operated by the platform. Its administrator pat is its perimeter approver (a role
+  # holder of scope tenant:demo)
   - {user: cluster:main, relation: cluster,     object: tenant:demo}
   - {user: cluster:main, relation: operated_by, object: tenant:demo}
   - {user: group:gentian/tenant/demo/admins#member,    relation: admin,              object: tenant:demo}
   - {user: group:gentian/tenant/demo/members#member,   relation: member,             object: tenant:demo}
-  - {user: group:gentian/tenant/demo/admins#member,    relation: perimeter_approver, object: tenant:demo}
-  - {user: group:gentian/tenant/demo/perimeter#member, relation: perimeter_approver, object: tenant:demo}
+  - {user: user:demo/pat, relation: perimeter_approver, object: tenant:demo}
 
   # --- tenant solo administers itself: cluster stays, operated_by was removed
   - {user: cluster:main, relation: cluster, object: tenant:solo}
   - {user: group:gentian/tenant/solo/admins#member, relation: admin, object: tenant:solo}
-  - {user: group:gentian/tenant/solo/perimeter#member, relation: perimeter_approver, object: tenant:solo}
+  - {user: user:solo/paul, relation: perimeter_approver, object: tenant:solo}
 
-  # --- tenant plain: operated by the platform, and as every tenant starts: its manifest says nothing about
-  # who approves, so only its perimeter group holds perimeter_approver
+  # --- tenant plain: operated by the platform, and as every tenant starts: nobody of its own approves
   - {user: cluster:main, relation: cluster,     object: tenant:plain}
   - {user: cluster:main, relation: operated_by, object: tenant:plain}
   - {user: group:gentian/tenant/plain/admins#member,    relation: admin,              object: tenant:plain}
   - {user: group:gentian/tenant/plain/members#member,   relation: member,             object: tenant:plain}
-  - {user: group:gentian/tenant/plain/perimeter#member, relation: perimeter_approver, object: tenant:plain}
 
   # --- tenant user: the name of the one user tenant of a single-tenancy cluster, operated by the platform,
-  # here with its administrators approving (switched on, as demo's are)
+  # its administrator uma its perimeter approver
   - {user: cluster:main, relation: cluster,     object: tenant:user}
   - {user: cluster:main, relation: operated_by, object: tenant:user}
   - {user: group:gentian/tenant/user/admins#member,  relation: admin,  object: tenant:user}
   - {user: group:gentian/tenant/user/members#member, relation: member, object: tenant:user}
-  - {user: group:gentian/tenant/user/admins#member,  relation: perimeter_approver, object: tenant:user}
-  - {user: group:gentian/tenant/user/perimeter#member, relation: perimeter_approver, object: tenant:user}
+  - {user: user:user/uma, relation: perimeter_approver, object: tenant:user}
 
   # --- one installed app
   - {user: tenant:demo, relation: tenant, object: app:demo/nextcloud}
@@ -87,35 +80,36 @@ tuples:
 tests:
   - name: cluster roles grant exactly their own verbs
     check:
-      - {user: user:alice,  object: cluster:main, assertions: {can_configure: true,  can_deploy_tenant: true,  can_approve: false, can_edit_raw: false, can_audit: true,  can_operate_system: false, can_install_shared: false}}
-      - {user: user:sam,    object: cluster:main, assertions: {can_approve: true,    can_configure: false,     can_audit: true,    can_set_admission: false}}
-      - {user: user:audrey, object: cluster:main, assertions: {can_audit: true,      can_approve: false,       can_configure: false}}
-      - {user: user:serge,  object: cluster:main, assertions: {can_operate_system: true, can_configure: false,  can_install_shared: false}}
-      - {user: user:shari,  object: cluster:main, assertions: {can_install_shared: true, can_grant_shared: true, can_operate_system: false}}
-      - {user: user:bea,    object: cluster:main, assertions: {can_edit_raw: true,   can_set_admission: true,  can_configure: false, can_audit: false}}
-      - {user: user:mia,    object: cluster:main, assertions: {can_configure: false, can_audit: false, can_approve: false}}
+      - {user: user:alice,         object: cluster:main, assertions: {can_configure: true,  can_deploy_tenant: true,  can_approve: false, can_edit_raw: false, can_audit: true,  can_operate_system: false, can_install_shared: false, can_approve_perimeter: false}}
+      - {user: user:kernel/sam,    object: cluster:main, assertions: {can_approve: true,    can_configure: false,     can_audit: true,    can_set_admission: false, can_approve_perimeter: false}}
+      - {user: user:kernel/audrey, object: cluster:main, assertions: {can_audit: true,      can_approve: false,       can_configure: false}}
+      - {user: user:kernel/serge,  object: cluster:main, assertions: {can_operate_system: true, can_configure: false,  can_install_shared: false}}
+      - {user: user:kernel/shari,  object: cluster:main, assertions: {can_install_shared: true, can_grant_shared: true, can_operate_system: false}}
+      - {user: user:kernel/petra,  object: cluster:main, assertions: {can_approve_perimeter: true, can_approve: false, can_audit: false, can_configure: false}}
+      - {user: user:bea,           object: cluster:main, assertions: {can_edit_raw: true,   can_set_admission: true,  can_configure: false, can_audit: false}}
+      - {user: user:mia,           object: cluster:main, assertions: {can_configure: false, can_audit: false, can_approve: false}}
 
   - name: a role holder holds the role as the account of its own realm, and as nothing else
     check:
       - {user: user:demo/tom,   object: cluster:main, assertions: {can_approve: true,  can_audit: true, can_configure: false}}
       - {user: user:tom,        object: cluster:main, assertions: {can_approve: false, can_audit: false}}
       - {user: user:solo/tom,   object: cluster:main, assertions: {can_approve: false, can_audit: false}}
+      - {user: user:sam,        object: cluster:main, assertions: {can_approve: false, can_audit: false}}
       - {user: user:other/olaf, object: cluster:main, assertions: {can_audit: true,    can_approve: false, can_configure: false}}
       - {user: user:other/olaf, object: tenant:solo,  assertions: {can_view: true,     can_install_app: false}}
 
   - name: the one who installs is not the one who approves
     check:
-      - {user: user:alice, object: cluster:main, assertions: {can_approve: false}}
-      - {user: user:sam,   object: cluster:main, assertions: {can_deploy_tenant: false}}
+      - {user: user:alice,      object: cluster:main, assertions: {can_approve: false}}
+      - {user: user:kernel/sam, object: cluster:main, assertions: {can_deploy_tenant: false}}
 
   - name: tenant admin holds the tenant verbs, members hold none
     check:
-      - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_plan: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_approve_privilege: true, can_view: true, can_enter: true, can_administer: true}}
+      - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_plan: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_view: true, can_enter: true, can_administer: true}}
       - {user: user:mia, object: tenant:demo, assertions: {can_install_app: false, can_manage_users: false, can_grant: false, can_administer: false, can_view: true, can_enter: true}}
       - {user: user:olaf, object: tenant:demo, assertions: {can_view: false, can_enter: false, can_install_app: false}}
       - {user: user:uma, object: tenant:user, assertions: {can_install_app: true, can_view: true, can_administer: true}}
       - {user: user:ulf, object: tenant:user, assertions: {can_install_app: false, can_view: true, can_expose: false}}
-      - {user: user:uma, object: tenant:user, assertions: {can_expose: true}}
       - {user: user:tom, object: tenant:user, assertions: {can_install_app: false, can_view: false}}
 
   - name: platform admin reaches a tenant only through operated_by
@@ -127,43 +121,41 @@ tests:
 
   - name: audit and approval derive through cluster, which cannot be withdrawn
     check:
-      - {user: user:audrey, object: tenant:solo, assertions: {can_view: true, can_enter: true, can_install_app: false}}
-      - {user: user:sam,    object: tenant:solo, assertions: {can_enter: true, can_view: true, can_approve_privilege: false}}
+      - {user: user:kernel/audrey, object: tenant:solo, assertions: {can_view: true, can_enter: true, can_install_app: false}}
+      - {user: user:kernel/sam,    object: tenant:solo, assertions: {can_enter: true, can_view: true, can_approve_privilege: false}}
 
-  - name: publishing is its own relation, held by the perimeter group and by the cluster's administrator
+  - name: the perimeter, both directions, is its own relation, held by the perimeter approver and the cluster's administrator
     check:
       # As a tenant starts: its own administrators do not approve, its members never do.
-      - {user: user:pia,  object: tenant:plain, assertions: {can_expose: false, can_install_app: true, can_manage_users: true}}
-      - {user: user:piet, object: tenant:plain, assertions: {can_expose: false}}
-      # A member of the perimeter group approves, and holds nothing else by it.
-      - {user: user:petra, object: tenant:plain, assertions: {can_expose: true, can_install_app: false, can_manage_users: false, can_view: false}}
-      - {user: user:pat,   object: tenant:demo,  assertions: {can_expose: true, can_install_app: false, can_view: false}}
+      - {user: user:pia,  object: tenant:plain, assertions: {can_expose: false, can_approve_privilege: false, can_install_app: true, can_manage_users: true}}
+      - {user: user:piet, object: tenant:plain, assertions: {can_expose: false, can_approve_privilege: false}}
+      - {user: user:tom,  object: tenant:demo,  assertions: {can_expose: false, can_approve_privilege: false}}
+      # The administrator named perimeter approver of their tenant approves both,
+      # as the account of their realm, and there only.
+      - {user: user:demo/pat, object: tenant:demo,  assertions: {can_expose: true, can_approve_privilege: true, can_enter: true, can_view: true, can_install_app: false}}
+      - {user: user:pat,      object: tenant:demo,  assertions: {can_expose: false, can_approve_privilege: false}}
+      - {user: user:demo/pat, object: tenant:plain, assertions: {can_expose: false, can_approve_privilege: false}}
+      - {user: user:user/uma, object: tenant:user,  assertions: {can_expose: true, can_approve_privilege: true}}
+      # The cluster's perimeter approver approves both on every tenant, the ones
+      # that administer themselves too, and holds nothing else by it.
+      - {user: user:kernel/petra, object: tenant:plain, assertions: {can_expose: true, can_approve_privilege: true, can_view: true, can_enter: true, can_install_app: false, can_manage_users: false}}
+      - {user: user:kernel/petra, object: tenant:solo,  assertions: {can_expose: true, can_approve_privilege: true}}
+      - {user: user:petra,        object: tenant:plain, assertions: {can_expose: false}}
       # The cluster's administrator approves in every tenant the cluster
       # operates; no other cluster role does.
-      - {user: user:alice,  object: tenant:plain, assertions: {can_expose: true}}
+      - {user: user:alice,  object: tenant:plain, assertions: {can_expose: true, can_approve_privilege: true}}
       - {user: user:alice,  object: tenant:demo,  assertions: {can_expose: true}}
       - {user: user:alice,  object: tenant:user,  assertions: {can_expose: true}}
-      - {user: user:sam,    object: tenant:plain, assertions: {can_expose: false}}
-      - {user: user:audrey, object: tenant:plain, assertions: {can_expose: false}}
-      - {user: user:serge,  object: tenant:plain, assertions: {can_expose: false}}
-      - {user: user:bea,    object: tenant:plain, assertions: {can_expose: false}}
-      # Another tenant's approver and administrator are nobody here.
-      - {user: user:pat, object: tenant:plain, assertions: {can_expose: false}}
-      - {user: user:tom, object: tenant:plain, assertions: {can_expose: false}}
-
-  - name: a tenant's administrators approve only where the cluster's administrator switched it on
-    check:
-      - {user: user:tom, object: tenant:demo,  assertions: {can_expose: true}}
-      - {user: user:mia, object: tenant:demo,  assertions: {can_expose: false}}
-      - {user: user:uma, object: tenant:user,  assertions: {can_expose: true}}
-      - {user: user:ulf, object: tenant:user,  assertions: {can_expose: false}}
-      - {user: user:pia, object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:kernel/sam,    object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:kernel/audrey, object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:kernel/serge,  object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:bea,           object: tenant:plain, assertions: {can_expose: false}}
 
   - name: a tenant that withdrew the operator is not approved for by the cluster's administrator
     check:
-      - {user: user:alice, object: tenant:solo, assertions: {can_expose: false}}
-      - {user: user:tina,  object: tenant:solo, assertions: {can_expose: false}}
-      - {user: user:paul,  object: tenant:solo, assertions: {can_expose: true}}
+      - {user: user:alice,     object: tenant:solo, assertions: {can_expose: false, can_approve_privilege: false}}
+      - {user: user:tina,      object: tenant:solo, assertions: {can_expose: false}}
+      - {user: user:solo/paul, object: tenant:solo, assertions: {can_expose: true}}
 
   - name: entitlement is the app's own group, not tenant membership
     check:
@@ -193,17 +185,17 @@ tests:
     check:
       # The cluster's own: its administrator writes, its auditor reads.
       - {user: user:alice,  object: cluster:main, assertions: {can_write_credential: true,  can_read_credential: true}}
-      - {user: user:audrey, object: cluster:main, assertions: {can_write_credential: false, can_read_credential: true}}
+      - {user: user:kernel/audrey, object: cluster:main, assertions: {can_write_credential: false, can_read_credential: true}}
       - {user: user:tom,    object: cluster:main, assertions: {can_write_credential: false, can_read_credential: false}}
       # A tenant's: its administrator, and the platform's through the consent
       # tuple; the cluster's auditor reads; a member does neither.
       - {user: user:tom,    object: tenant:demo, assertions: {can_write_credential: true,  can_read_credential: true}}
       - {user: user:alice,  object: tenant:demo, assertions: {can_write_credential: true,  can_read_credential: true}}
-      - {user: user:audrey, object: tenant:demo, assertions: {can_write_credential: false, can_read_credential: true}}
+      - {user: user:kernel/audrey, object: tenant:demo, assertions: {can_write_credential: false, can_read_credential: true}}
       - {user: user:mia,    object: tenant:demo, assertions: {can_write_credential: false, can_read_credential: false}}
       # A component's follow its tenant's.
       - {user: user:tom,    object: app:demo/nextcloud, assertions: {can_read_credential: true}}
-      - {user: user:audrey, object: app:demo/nextcloud, assertions: {can_read_credential: true, can_write_credential: false}}
+      - {user: user:kernel/audrey, object: app:demo/nextcloud, assertions: {can_read_credential: true, can_write_credential: false}}
       - {user: user:mia,    object: app:demo/nextcloud, assertions: {can_read_credential: false}}
 
   - name: a contract is consumed only by the apps the tenant allowed

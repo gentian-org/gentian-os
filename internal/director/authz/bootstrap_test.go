@@ -139,8 +139,8 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	cluster := "roles-test"
 
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
-		"admin":   "gentian:platform:admin",
-		"auditor": "gentian:platform:auditor",
+		"admin":       "gentian:platform:admin",
+		"break_glass": "gentian:platform:break-glass",
 	}, []RoleHolder{{Relation: "security_officer", Realm: "demo", Subject: "0b7e"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +153,9 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	}
 	if err := c.ReconcileClusterRoles(ctx, cluster, nil, []RoleHolder{{Relation: "admin", Realm: "demo", Subject: "0b7e"}}); err == nil {
 		t.Fatal("admin is not a role a holder may hold")
+	}
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"auditor": "gentian:platform:auditor"}, nil); err == nil {
+		t.Fatal("auditor is not a role a group may hold")
 	}
 	admins, err := c.Read(ctx, Tuple{Relation: "admin", Object: Cluster(cluster)})
 	if err != nil {
@@ -169,12 +172,14 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	auditors, err := c.Read(ctx, Tuple{Relation: "auditor", Object: Cluster(cluster)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(auditors) != 0 {
-		t.Fatalf("auditor tuples = %d after the claim dropped the role, want 0", len(auditors))
+	for _, rel := range []string{"break_glass", "security_officer"} {
+		left, err := c.Read(ctx, Tuple{Relation: rel, Object: Cluster(cluster)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(left) != 0 {
+			t.Fatalf("%s tuples = %d after the claim dropped the role, want 0", rel, len(left))
+		}
 	}
 
 	// Running it again writes nothing: the second call has nothing to change.
@@ -252,12 +257,13 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	}
 }
 
-// Who approves a tenant's public addresses follows the tenant's manifest and
-// nothing else: the administrators' group holds perimeter_approver while the
-// manifest says so and loses it when it stops, the cluster's administrator
-// approves wherever the tenant is operated by its cluster, and a member of
-// the perimeter group always does.
-func TestWhoApprovesPublicAddressesFollowsTheManifest(t *testing.T) {
+// Who approves a tenant's perimeter follows the Cluster claim and nothing
+// else: a role holder of scope tenant:<t> holds perimeter_approver while the
+// claim names them and loses it when it stops, the cluster's perimeter
+// approver approves on every tenant, the cluster's administrator wherever the
+// tenant is operated by its cluster, and a tenant's administrator only when
+// named.
+func TestWhoApprovesThePerimeterFollowsTheClaim(t *testing.T) {
 	o := requireOpenFGA(t)
 	ctx := context.Background()
 	store, model, err := Bootstrap(ctx, o)
@@ -270,70 +276,63 @@ func TestWhoApprovesPublicAddressesFollowsTheManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster := "perimeter-test"
-	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}, nil); err != nil {
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"},
+		[]RoleHolder{{Relation: "perimeter_approver", Realm: "kernel", Subject: "p-petra"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Write(ctx, []Tuple{
 		{User: "user:p-root", Relation: "member", Object: "group:gentian/platform/admin"},
 		{User: "user:p-tom", Relation: "member", Object: "group:gentian/tenant/p-acme/admins"},
-		{User: "user:p-pat", Relation: "member", Object: "group:gentian/tenant/p-acme/perimeter"},
 		{User: "user:p-mia", Relation: "member", Object: "group:gentian/tenant/p-acme/members"},
-		{User: "user:p-root", Relation: "member", Object: "group:gentian/tenant/platform/admins"},
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	expect := func(when string, want map[string]bool) {
 		t.Helper()
 		for user, allowed := range want {
-			ok, err := c.Check(ctx, "test", "user:"+user, "can_expose", Tenant("p-acme"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ok != allowed {
-				t.Errorf("%s: can_expose for %s = %v, want %v", when, user, ok, allowed)
+			for _, rel := range []string{"can_expose", "can_approve_privilege"} {
+				ok, err := c.Check(ctx, "test", "user:"+user, rel, Tenant("p-acme"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ok != allowed {
+					t.Errorf("%s: %s for %s = %v, want %v", when, rel, user, ok, allowed)
+				}
 			}
 		}
 	}
-	project := func(approve bool) {
+	project := func(approvers ...string) {
 		t.Helper()
 		if err := c.ReconcileTenants(ctx, cluster, []TenantRights{
-			{Name: "platform", AdminsApprove: approve}, {Name: "p-acme", AdminsApprove: approve},
+			{Name: "platform"}, {Name: "p-acme", PerimeterApprovers: approvers},
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	project(false)
-	expect("a new tenant", map[string]bool{"p-root": true, "p-pat": true, "p-tom": false, "p-mia": false})
+	project()
+	expect("a new tenant", map[string]bool{"p-root": true, "kernel/p-petra": true, "p-tom": false, "p-acme/p-tom": false, "p-mia": false})
 
-	project(true)
-	expect("switched on", map[string]bool{"p-root": true, "p-pat": true, "p-tom": true, "p-mia": false})
-	// The platform tenant's administrators are the cluster's: the switch
-	// writes nothing there.
-	approve, _ := adminsApprove(PlatformTenant)
-	if have, err := c.Read(ctx, approve); err != nil || len(have) != 0 {
-		t.Errorf("the switch wrote %v for the platform tenant (%v)", have, err)
-	}
+	project("user:p-acme/p-tom")
+	expect("named", map[string]bool{"p-root": true, "p-acme/p-tom": true, "p-tom": false, "p-mia": false})
 
-	project(false)
-	expect("switched off again", map[string]bool{"p-root": true, "p-pat": true, "p-tom": false, "p-mia": false})
+	project()
+	expect("no longer named", map[string]bool{"p-root": true, "p-acme/p-tom": false})
 
-	// An entry of that shape written by hand does not outlive a projection:
-	// the manifest is where the switch is.
-	approve, _ = adminsApprove("p-acme")
-	if err := c.Write(ctx, []Tuple{approve}, nil); err != nil {
+	// An entry written by hand does not outlive a projection: the claim is
+	// where who approves is said.
+	if err := c.Write(ctx, []Tuple{{User: "user:p-mia", Relation: "perimeter_approver", Object: Tenant("p-acme")}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	project(false)
-	expect("written by hand", map[string]bool{"p-tom": false})
+	project()
+	expect("written by hand", map[string]bool{"p-mia": false})
 
 	// A tenant that withdrew the operator is not approved for by the
-	// cluster's administrator; its own approvers still approve.
+	// cluster's administrator; its named approver and the cluster's
+	// perimeter approver still approve.
 	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("p-acme")}}); err != nil {
 		t.Fatal(err)
 	}
-	project(false)
-	expect("the operator withdrawn", map[string]bool{"p-root": false, "p-pat": true, "p-tom": false})
-	project(true)
-	expect("the operator withdrawn, switched on", map[string]bool{"p-root": false, "p-pat": true, "p-tom": true})
+	project("user:p-acme/p-tom")
+	expect("the operator withdrawn", map[string]bool{"p-root": false, "p-acme/p-tom": true, "kernel/p-petra": true})
 }

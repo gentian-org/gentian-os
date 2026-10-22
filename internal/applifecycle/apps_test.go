@@ -283,7 +283,7 @@ func TestEachPendingPrivilegeSaysWhoAnswersIt(t *testing.T) {
 		t.Fatalf("pendingPrivileges = %v", got["crm"].PendingPrivileges)
 	}
 	want := []PendingPrivilege{
-		{Privilege: "egress/smtp-relay", ApprovedBy: security.PrivilegeApproverTenant},
+		{Privilege: "egress/smtp-relay", ApprovedBy: security.PrivilegeApproverPerimeter},
 		{Privilege: "podSecurity/run-as-root", ApprovedBy: security.PrivilegeApproverSecurityOfficer},
 	}
 	approvals := got["crm"].PendingPrivilegeApprovals

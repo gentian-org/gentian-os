@@ -97,15 +97,10 @@ the sign-in side and the table of addresses):
    tenant to be Ready and issues its administrator's activation link. A run
    that ends before that sign-in is finished later with
    `./install.sh --only E-04`. The step does nothing on a `multi` cluster.
-   The install writes this tenant with `spec.perimeter.adminsApprove: true`,
-   so its administrators may approve and withdraw its public addresses
-   ([security.md §2.14](security.md)). The director's create route writes it
-   the same way: on a `single` cluster a request for the tenant `user` that
-   does not state the switch gets it on, and one that states it off gets it
-   off. A tenant of a `multi` cluster starts with that off, whatever its
-   name, and the platform tenant never has it. The cluster's
-   administrator can turn it off for the user tenant as for any other; a
-   user tenant whose manifest already exists is not rewritten.
+   Its public addresses and egress are approved as in any tenant: by the
+   cluster's administrator, and by whoever the cluster's administrator names
+   its perimeter approver on the Cluster claim, the user admin among those
+   who may be ([security.md §2.14](security.md)).
 
 **A website on the main address** is one tenant's: the tenant the Cluster
 claim names for it (`mainAddress.tenant`, under either mode), or, where it

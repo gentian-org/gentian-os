@@ -78,23 +78,20 @@ kubectl gentian tenants show demo
 kubectl get tenant demo -w
 ```
 
-Two things about a tenant are the cluster's administrator's alone to decide,
-and both are off unless switched on -- but for the first on the user tenant
-of a single-tenancy cluster, which starts with it on, created by the install
-or by `tenants create user`, unless `--admins-approve-public-addresses=false`
-says otherwise:
-whether the tenant's own administrators
-may approve what it publishes to the internet, and whether they may add
-catalogues to install from. They are stated when the tenant is created or
-changed afterwards, and `tenants list` and `tenants show` say what holds:
+One thing about a tenant is the cluster's administrator's alone to decide,
+and it is off unless switched on: whether the tenant's own administrators may
+add catalogues to install from. It is stated when the tenant is created or
+changed afterwards, and `tenants list` and `tenants show` say what holds. Who
+approves what the tenant publishes to the internet and its egress is a role
+holder on the Cluster claim (`perimeterApprover`, see *Cluster roles held by
+name* below):
 
 ```bash
-kubectl gentian tenants create demo --admins-approve-public-addresses --admins-add-catalogues
-kubectl gentian tenants set demo --admins-approve-public-addresses=true
-kubectl gentian tenants set demo --admins-approve-public-addresses=false --admins-add-catalogues=true
+kubectl gentian tenants create demo --admins-add-catalogues
+kubectl gentian tenants set demo --admins-add-catalogues=true
 ```
 
-A third switch is chosen when the tenant is made and not changed afterwards:
+A second switch is chosen when the tenant is made and not changed afterwards:
 whether anybody may make an account in its realm themselves
 (`--self-sign-up`, `spec.signUp.enabled`). The command says what that opens
 before it asks the director: a registration page at the cluster's identity
@@ -142,15 +139,12 @@ kubectl gentian tenants organizations customers add acme --display-name "ACME AG
 kubectl gentian tenants organizations customers remove acme
 ```
 
-Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,
-`spec.catalogue.delegated`), committed by the director as you
-(`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/perimeter-delegation` and
-`.../catalogue-delegation`, both `can_configure` on the cluster). The first
-takes effect once Argo CD has synced the commit and the operator has written
-it to the rights store, and is withdrawn the same way; switching it off
-withdraws nothing that is published. A tenant's own administrator can set
-neither. An imported tenant starts with both off, whatever held where its
-bundle came from.
+The catalogue switch is a line in the tenant's manifest in git
+(`spec.catalogue.delegated`), committed by the director as you
+(`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/catalogue-delegation`,
+`can_configure` on the cluster). A tenant's own administrator cannot set it.
+An imported tenant starts with it off, whatever held where its bundle came
+from.
 
 The director commits `clusters/<cluster>/tenants/demo/` as you; Argo CD syncs
 it and the operator provisions the realm, namespaces, database and desktop.
@@ -577,7 +571,8 @@ way out to an address (`egress`), a relaxed pod security (`podSecurity`),
 cluster roles (`clusterRoles`) -- waits until a person answers each request;
 its component reads `waiting for approval of <kind>/<name>`. The answer is a
 commit through the director, with you as the approver and your reason in it.
-An `egress` request is the tenant administrator's to answer; the other two
+An `egress` request is the tenant's perimeter approver's to answer (and the
+cluster's administrator's, in a tenant the cluster operates); the other two
 are the cluster's security officer's. The Admin Console's Apps page offers
 the same as a button, to whoever holds the right the request needs.
 
@@ -594,14 +589,18 @@ A `podSecurity` or `clusterRoles` request is the security officer's to
 answer, so the App Store's install step asks them for it (the director's
 `POST /v1/tenants/{t}/apps/{p}/actions/request-privilege`, recorded on the
 app's Component) and the platform console's Approvals page lists what was
-asked. The same list, from the command line:
+asked. The same list, from the command line, carries every tenant's
+pending privileges, each with who answers it (APPROVER: `security-officer`,
+or `perimeter-approver` for egress):
 
 ```bash
-kubectl gentian approvals list     # every tenant's waiting podSecurity and clusterRoles requests: who asked, when, why, and what was declined
+kubectl gentian approvals list     # every tenant's waiting privileges: who answers, who asked, when, why, and what was declined
 ```
 
-It is read with `cluster#can_approve` or `can_configure`; the answer is
-`apps approve` as above, with the request's tenant -- or a no:
+It is read with `cluster#can_approve`, `can_approve_perimeter` or
+`can_configure` (the usher's `GET /v1/clusters/{c}/approvals`, each entry
+with `approvedBy`); the answer is `apps approve` as above, with the
+request's tenant -- or a no:
 
 ```bash
 kubectl gentian apps decline aluvian-commerce podSecurity/run-as-root --tenant team \
@@ -662,17 +661,15 @@ words.
 
 `approve` is for whoever may publish in the tenant (`can_expose`):
 
-- a member of the tenant's group `gentian:tenant:<tenant>:perimeter`. The
-  group is made with the tenant and starts empty;
+- the tenant's perimeter approver: an administrator of the tenant the
+  cluster's administrator named (`platform-roles holders add perimeterApprover
+  <tenant> <login> --reason <why>`);
+- the cluster's perimeter approver, a person of the platform tenant named the
+  same way, in every tenant;
 - the cluster's administrator, in every tenant the cluster operates — not in
-  a tenant that withdrew the operator;
-- the tenant's own administrators, only where the cluster's administrator
-  switched that on (`tenants set <tenant> --admins-approve-public-addresses=true`).
+  a tenant that withdrew the operator.
 
-Anybody else is answered 403. Who is in the perimeter group is changed in the
-admin console, by somebody who may approve: the registrar refuses a tenant's
-administrator who may not approve any change to that group or to an account
-in it. It reads the entry from
+Anybody else is answered 403. It reads the entry from
 the director and prints its kind, the address, the paths, who can reach it
 and the limit per client address, then
 asks you to type `<app instance>/<entry>` (or pass `--yes`). Without
@@ -890,45 +887,57 @@ kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
 ```
 
 The first asks the registrar, which changes nothing about a member of a
-group that holds a platform role and answers 403 for the platform admin's
+group that holds a platform role or a person of the platform tenant who
+holds one by name, and answers 403 for the platform admin's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
-### Cluster roles held by tenant accounts
+### Cluster roles held by name
 
-Approving what escapes the default posture — a pod-security waiver, a cluster
-role, `trustTier: platform` — is the security officers' (`cluster#can_approve`),
-never the administrators'; reading across the cluster is the auditors'
-(`cluster#can_audit`). Besides the kernel realm's groups
-(`spec.platformRoles`), the cluster's administrator can give either role to an
-administrator of one of the cluster's tenants, who keeps their own account:
-an entry of `spec.platformAccess.roleHolders` on the Cluster claim
-([iam.md §1.1c](design/iam.md)). The role is held only with a token of that
-tenant's realm, and used from that tenant's console.
+`admin` and `breakGlass` are held through a group of the kernel realm
+(`spec.platformRoles`). Every other cluster role is held by a person the
+cluster's administrator names on the Cluster claim, who keeps their own
+account: an entry of `spec.platformAccess.roleHolders`, with a reason and an
+optional expiry ([iam.md §1.1c](design/iam.md)). The role is held only with a
+token of that person's realm, and used from their tenant's console.
+
+| Role | Who may be named | Scope |
+|---|---|---|
+| `securityOfficer` -- approving what escapes the default posture: a pod-security waiver, a cluster role, `trustTier: platform` (`cluster#can_approve`) | a person of the platform tenant, or an administrator of another tenant | `cluster` |
+| `auditor` -- reading across the cluster (`cluster#can_audit`) | the same | `cluster` |
+| `serviceAdmin` -- the claim's system section (`can_operate_system`) | a person of the platform tenant | `cluster` |
+| `sharedAppsAdmin` -- shared apps (`can_install_shared`, `can_grant_shared`) | a person of the platform tenant | `cluster` |
+| `perimeterApprover` -- public addresses and egress beyond the baseline (`can_expose`, `can_approve_privilege`) | a person of the platform tenant, for every tenant; an administrator of a tenant, for that tenant | `cluster`; `tenant:<t>` |
 
 ```bash
-kubectl gentian platform-roles tenant-administrators                    # who could hold one: every tenant's administrators
-kubectl gentian platform-roles holders                                  # who holds which, as the claim declares
-kubectl gentian platform-roles members                                  # who holds each through its kernel Keycloak group
-kubectl gentian platform-roles holders add securityOfficer acme it@acme.example   # one commit
+kubectl gentian platform-roles candidates                               # who could hold one: the platform tenant's people, every other tenant's administrators
+kubectl gentian platform-roles holders                                  # ROLE SCOPE TENANT LOGIN EMAIL EXPIRES REASON, as the claim declares
+kubectl gentian platform-roles members                                  # who holds admin and breakGlass through their kernel Keycloak group
+kubectl gentian platform-roles holders add securityOfficer acme it@acme.example --reason "acme's CISO approves waivers"   # one commit
+kubectl gentian platform-roles holders add perimeterApprover acme it@acme.example --reason "acme publishes its shop" --expires 2027-06-30T00:00:00Z
 kubectl gentian platform-roles holders remove securityOfficer acme it@acme.example
 ```
 
-The role is `securityOfficer` or `auditor`. `add` looks the login up among the
-tenant's administrators through the registrar and commits the account's
-subject; once Argo CD has synced, the operator writes the role into OpenFGA
-for that account of that realm. `remove` takes the entry away, and the role
-with it.
+`add` looks the login up among the candidates through the registrar and
+commits the account's subject, with the scope that follows from role and
+tenant; `--reason` is required. Once Argo CD has synced, the operator writes
+the role into OpenFGA for that account of that realm. An entry whose
+`--expires` has passed grants nothing: the operator drops its tuple at that
+moment, and the director refuses to add one already expired. `remove` takes
+the entry away, and the role with it.
 
 The director's routes, all on the Cluster claim:
 
 | Route | Relation | Body | Answer |
 |---|---|---|---|
-| `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","securityOfficer"], "roleHolders": [{"role","tenant","subject","username","email"}]}` |
-| `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email"}` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `422` for a role, tenant or subject that cannot hold one |
+| `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin"], "roleHolders": [{"role","scope","tenant","subject","username","email","reason","expiresAt"}]}` |
+| `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email", "reason", "expiresAt"?}` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `400` without a reason, `422` for a role, tenant or subject that cannot hold one -- a person of another tenant who is not its administrator, or an entry already expired |
 | `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
 
-The members of the groups themselves are the registrar's to read, from the
+The candidates are the registrar's: `GET /v1/clusters/{c}/role-candidates`,
+`can_configure`, answers `200 {"cluster", "complete", "tenants": [{"tenant","displayName","realm","platform","people": [...],"unavailable"}]}`.
+
+The members of the `admin` and `breakGlass` groups are the registrar's to read, from the
 kernel realm, and Keycloak's to change: `GET /v1/clusters/{c}/platform-role-members`,
 `can_audit`, answers `200 {"cluster", "complete", "roles": [{"role","group","members": [{"id","username","email",...}],
 "unavailable"}]}`; a group that could not be read has `members: null`,

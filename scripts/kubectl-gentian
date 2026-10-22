@@ -17,15 +17,12 @@
 #
 #   kubectl gentian tenants list
 #   kubectl gentian tenants show <name>
-#   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
-#                                  [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]
+#   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues]
 #                                  [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]
 #                                  [--country <ISO 3166-1 alpha-2, e.g. CH>]
-#                                  (unstated, approving is off -- and on for the user tenant
-#                                  of a single-tenancy cluster; sign-up is off, and is said
-#                                  out loud when it is on: anybody may make an account)
-#   kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false]
-#                                      [--admins-add-catalogues=true|false]
+#                                  (sign-up is off, and is said out loud when it is on:
+#                                  anybody may make an account)
+#   kubectl gentian tenants set <name> [--admins-add-catalogues=true|false]
 #                                      [--country <alpha-2> | --country ""]   "" names none
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
@@ -49,10 +46,13 @@
 #                                                             to the tenant as its administrators (the tenant's switch)
 #
 #   kubectl gentian platform-roles holders                     who holds which cluster role by name, as the claim declares
-#   kubectl gentian platform-roles holders add <role> <tenant> <login>      a tenant's administrator holds it: one commit
+#   kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>]
+#                                                             a person of the platform tenant, or an administrator
+#                                                             of another, holds it: one commit
 #   kubectl gentian platform-roles holders remove <role> <tenant> <login>   no longer
-#   kubectl gentian platform-roles tenant-administrators       who could hold one: every tenant's administrators
-#   kubectl gentian platform-roles members                     who holds each role through its kernel Keycloak group
+#   kubectl gentian platform-roles candidates                  who could hold one: the platform tenant's people,
+#                                                             every other tenant's administrators
+#   kubectl gentian platform-roles members                     who holds admin and breakGlass through their group
 #
 #   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
 #   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
@@ -90,13 +90,13 @@
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
-#                                                             approve one request: egress (the tenant's administrator),
+#                                                             approve one request: egress (the tenant's perimeter approver),
 #                                                             podSecurity or clusterRoles (the cluster's security officer)
 #   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
 #                                                             decline one, with the same right; the app keeps waiting
-#   kubectl gentian approvals list                             what awaits the cluster's security officer, across all
-#                                                             tenants: who asked, when, why the app wants it, and
-#                                                             what was declined
+#   kubectl gentian approvals list                             what awaits the security officer and the perimeter
+#                                                             approver, across all tenants: who answers, who asked,
+#                                                             when, why the app wants it, and what was declined
 #   kubectl gentian approvals granted                          every tenant's approved privilege exceptions
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
@@ -571,12 +571,12 @@ cmd_whoami() {
 cmd_tenants_list() {
     _discover
     _call GET "/v1/clusters/${_CLUSTER}/tenants" |
-        jq -r '(["TENANT","NAME","APPS","STATE","ADMINS-APPROVE","ADMINS-ADD-CATALOGUES"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" else "-" end), (if .adminsApprove then "yes" else "no" end), (if .cataloguesDelegated then "yes" else "no" end)] | @tsv)' |
+        jq -r '(["TENANT","NAME","APPS","STATE","ADMINS-ADD-CATALOGUES"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" else "-" end), (if .cataloguesDelegated then "yes" else "no" end)] | @tsv)' |
         column -t -s $'\t'
 }
 
-# tenants show: one tenant as git declares it, with the two things only the
-# cluster's administrator decides about it.
+# tenants show: one tenant as git declares it, with what only the cluster's
+# administrator decides about it.
 cmd_tenants_show() {
     local name="${1:-}" entry
     [[ -n "${name}" && $# -eq 1 ]] || die "usage: kubectl gentian tenants show <name>"
@@ -595,26 +595,21 @@ cmd_tenants_show() {
         "Country:         \(.country // "none")",
         "State:           \(if .purging then "purging" elif .protected then "protected" else "-" end)",
         "",
-        "Its administrators may approve public addresses:  \(if .adminsApprove then "yes" else "no" end)",
         "Its administrators may add catalogues:            \(if .cataloguesDelegated then "yes" else "no" end)",
         "Anybody may sign up (chosen when it was made):    \(if .signUp then "yes" else "no" end)"'
     echo ""
-    echo "A public address is always approved by a member of the tenant's group"
-    echo "gentian:tenant:${name}:perimeter, and by the cluster's administrator while the"
-    echo "tenant is operated by its cluster. Change either line with:"
-    echo "  kubectl gentian tenants set ${name} --admins-approve-public-addresses=true|false --admins-add-catalogues=true|false"
+    echo "Its public addresses and egress are approved by its perimeter approver and by the"
+    echo "cluster's administrator while the tenant is operated by its cluster:"
+    echo "  kubectl gentian platform-roles holders add perimeterApprover ${name} <login> --reason <why>"
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" approve="" catalogues="false" signup="false" country="" answer brokered="[]" spec kv bname bredirect bjwks
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...] [--country <alpha-2>]"
+    local name="" display="" mfa="true" catalogues="false" signup="false" country="" answer brokered="[]" spec kv bname bredirect bjwks
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...] [--country <alpha-2>]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
             --no-mfa) mfa="false"; shift ;;
-            --admins-approve-public-addresses|--admins-approve-public-addresses=true) approve="true"; shift ;;
-            --admins-approve-public-addresses=false) approve="false"; shift ;;
-            --admins-approve-public-addresses=*) die "--admins-approve-public-addresses is given alone, or as =true or =false" ;;
             --admins-add-catalogues) catalogues="true"; shift ;;
             --self-sign-up) signup="true"; shift ;;
             # The country the tenant is in, ISO 3166-1 alpha-2 (CH, DE).
@@ -656,30 +651,14 @@ cmd_tenants_create() {
         echo "  the page carries a proof-of-work check; the tenant's mail is transport-only so the" >&2
         echo "  realm can send. For a tenant whose apps serve the public; not for a workspace." >&2
     fi
-    # A switch is named in the request only when it is stated here. Left out,
-    # the director decides: neither is on, which is how every tenant starts --
-    # but for the user tenant of a single-tenancy cluster, whose administrators
-    # approve its public addresses unless =false says they do not.
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" --arg k "${country}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" --arg k "${country}" \
             '{name:$n, displayName:$d, requireMFA:$m}
-             + (if $a != "" then {perimeter:{adminsApprove:($a == "true")}} else {} end)
              + (if $c then {catalogue:{delegated:true}} else {} end)
              + (if $s then {signUp:true} else {} end)
              + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)
              + (if $k != "" then {country:$k} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
-    # What the director wrote, where it says; what was asked for otherwise.
-    case "$(printf '%s' "${answer}" | jq -r '.adminsApprove | if . == null then "" else tostring end' 2>/dev/null)" in
-        true) approve="true" ;;
-        false) approve="false" ;;
-    esac
-    if [[ "${approve}" == "true" ]]; then
-        echo "Its administrators may approve its public addresses."
-    else
-        echo "Its public addresses are approved by the members of gentian:tenant:${name}:perimeter and by the"
-        echo "cluster's administrator, not by its own administrators (tenants set ${name} --admins-approve-public-addresses=true)."
-    fi
     if [[ "${catalogues}" == "true" ]]; then
         echo "Its administrators may add catalogues for their tenant."
     fi
@@ -1636,51 +1615,56 @@ cmd_tenants_platform_access() {
 }
 
 # platform-roles: who on the cluster holds which cluster role by name. The
-# cluster's administrator gives an administrator of one of the cluster's
-# tenants a role (securityOfficer or auditor) on the Cluster claim; it is
-# held with a token of that tenant's realm and no other.
+# cluster's administrator gives a person of the platform tenant, or an
+# administrator of another tenant, a role (securityOfficer, auditor,
+# serviceAdmin, sharedAppsAdmin, perimeterApprover) on the Cluster claim, with
+# a reason and, if it ends, an expiry; it is held with a token of that
+# tenant's realm and no other. serviceAdmin and sharedAppsAdmin are the
+# platform tenant's people's alone; a perimeterApprover of the platform tenant
+# approves for every tenant, one of another tenant for that tenant.
 #
-#   platform-roles tenant-administrators          who could hold one, from the registrar
+#   platform-roles candidates                     who could hold one, from the registrar
 #   platform-roles holders                        who holds which, as the claim declares
-#   platform-roles holders add <role> <tenant> <login>
+#   platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>]
 #   platform-roles holders remove <role> <tenant> <login>
-#   platform-roles members                        who holds each through its group, from the registrar
+#   platform-roles members                        who holds admin and breakGlass through their group
 #
-# add looks the login up in the tenant's administrators through the registrar
-# and commits the account's subject; remove takes the claim's entry by the
-# login, or by the subject.
+# add looks the login up in the candidates through the registrar and commits
+# the account's subject; remove takes the claim's entry by the login, or by
+# the subject.
 cmd_platform_roles() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
-        tenant-administrators) cmd_platform_roles_tenant_administrators "$@" ;;
+        candidates) cmd_platform_roles_candidates "$@" ;;
         holders) cmd_platform_roles_holders "$@" ;;
         members) cmd_platform_roles_members "$@" ;;
-        *) die "usage: kubectl gentian platform-roles tenant-administrators | members | holders [add|remove <role> <tenant> <login>]" ;;
+        *) die "usage: kubectl gentian platform-roles candidates | members | holders [add|remove <role> <tenant> <login>]" ;;
     esac
 }
 
-cmd_platform_roles_tenant_administrators() {
-    [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles tenant-administrators"
+cmd_platform_roles_candidates() {
+    [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles candidates"
     need jq
     _discover
     local answer
-    answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/tenant-administrators")" || exit 1
+    answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/role-candidates")" || exit 1
     if [[ "$(jq '.tenants | length' <<<"${answer}")" == "0" ]]; then
-        echo "This cluster has no tenant with a realm of its own, and so nobody to give a cluster role."
+        echo "This cluster has nobody who could be given a cluster role yet."
         return 0
     fi
-    jq -r '(["TENANT","LOGIN","EMAIL","NAME","SUBJECT"] | @tsv),
-        (.tenants[] | . as $t | if .unavailable then [$t.tenant, "(its realm could not be read)", "", "", ""] | @tsv
-            elif ((.administrators // []) | length) == 0 then [$t.tenant, "(no administrator)", "", "", ""] | @tsv
-            else .administrators[] | [$t.tenant, .username, (.email // ""), (.name // ""), .id] | @tsv end)' <<<"${answer}" |
+    jq -r '(["TENANT","AS","LOGIN","EMAIL","NAME","SUBJECT"] | @tsv),
+        (.tenants[] | . as $t | (if .platform then "person" else "administrator" end) as $as |
+            if .unavailable then [$t.tenant, $as, "(its realm could not be read)", "", "", ""] | @tsv
+            elif ((.people // []) | length) == 0 then [$t.tenant, $as, "(nobody)", "", "", ""] | @tsv
+            else .people[] | [$t.tenant, $as, .username, (.email // ""), (.name // ""), .id] | @tsv end)' <<<"${answer}" |
         column -t -s $'\t'
     if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
         echo "A realm could not be read; the list is incomplete."
     fi
 }
 
-# The members of the kernel-realm group each role is held through
+# The members of the kernel-realm group admin and breakGlass are held through
 # (spec.platformRoles). Read only: they are managed in Keycloak.
 cmd_platform_roles_members() {
     [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles members"
@@ -1700,37 +1684,52 @@ cmd_platform_roles_members() {
 }
 
 cmd_platform_roles_holders() {
-    local action="${1:-list}" role="${2:-}" tenant="${3:-}" login="${4:-}" answer
-    local usage="usage: kubectl gentian platform-roles holders [list | add <role> <tenant> <login> | remove <role> <tenant> <login>]"
+    local action="${1:-list}" answer
+    local usage="usage: kubectl gentian platform-roles holders [list | add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] | remove <role> <tenant> <login>]"
     need jq
+    shift || true
     case "${action}" in
         list)
-            [[ $# -le 1 ]] || die "${usage}"
+            [[ $# -eq 0 ]] || die "${usage}"
             _discover
             answer="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
             if [[ "$(jq '.roleHolders | length' <<<"${answer}")" == "0" ]]; then
                 echo "The claim gives nobody a cluster role by name. Roles: $(jq -r '.roles | join(", ")' <<<"${answer}")."
-                echo "  kubectl gentian platform-roles holders add <role> <tenant> <login>"
+                echo "  kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why>"
                 return 0
             fi
-            jq -r '(["ROLE","TENANT","LOGIN","EMAIL","SUBJECT"] | @tsv),
-                (.roleHolders[] | [.role, .tenant, .username, (.email // ""), .subject] | @tsv)' <<<"${answer}" |
+            jq -r '(["ROLE","SCOPE","TENANT","LOGIN","EMAIL","EXPIRES","REASON"] | @tsv),
+                (.roleHolders[] | [.role, (.scope // "cluster"), .tenant, .username, (.email // ""), (.expiresAt // "-"), (.reason // "")] | @tsv)' <<<"${answer}" |
                 column -t -s $'\t'
             ;;
         add)
-            [[ -n "${role}" && -n "${tenant}" && -n "${login}" && $# -eq 4 ]] || die "${usage}"
+            local role="" tenant="" login="" reason="" expires=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --reason) [[ $# -ge 2 ]] || die "${usage}"; reason="$2"; shift 2 ;;
+                    --expires) [[ $# -ge 2 ]] || die "${usage}"; expires="$2"; shift 2 ;;
+                    -*) die "unknown option $1" ;;
+                    *)
+                        if [[ -z "${role}" ]]; then role="$1"
+                        elif [[ -z "${tenant}" ]]; then tenant="$1"
+                        elif [[ -z "${login}" ]]; then login="$1"
+                        else die "${usage}"; fi
+                        shift ;;
+                esac
+            done
+            [[ -n "${role}" && -n "${tenant}" && -n "${login}" && -n "${reason}" ]] || die "${usage}"
             _label "The tenant" "${tenant}"
             _discover
             local people person
-            people="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/tenant-administrators")" || exit 1
+            people="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/role-candidates")" || exit 1
             if [[ "$(jq -c --arg t "${tenant}" '.tenants[] | select(.tenant == $t)' <<<"${people}")" == "" ]]; then
-                die "this cluster has no tenant ${tenant} with a realm of its own; see kubectl gentian platform-roles tenant-administrators"
+                die "this cluster has no tenant ${tenant} whose people could be named; see kubectl gentian platform-roles candidates"
             fi
-            person="$(jq -c --arg t "${tenant}" --arg l "${login}" '[.tenants[] | select(.tenant == $t) | (.administrators // [])[] |
+            person="$(jq -c --arg t "${tenant}" --arg l "${login}" '[.tenants[] | select(.tenant == $t) | (.people // [])[] |
                 select((.username | ascii_downcase) == ($l | ascii_downcase) or ((.email // "") | ascii_downcase) == ($l | ascii_downcase) or .id == $l)] | first // empty' <<<"${people}")"
             if [[ -z "${person}" ]]; then
-                echo "No administrator of ${tenant} is ${login}. Its administrators are:" >&2
-                jq -r --arg t "${tenant}" '.tenants[] | select(.tenant == $t) | (.administrators // [])[] | "  \(.username)"' <<<"${people}" >&2
+                echo "Nobody of ${tenant} who could be named is ${login}. Those who could:" >&2
+                jq -r --arg t "${tenant}" '.tenants[] | select(.tenant == $t) | (.people // [])[] | "  \(.username)"' <<<"${people}" >&2
                 exit 1
             fi
             local subject username email
@@ -1738,17 +1737,19 @@ cmd_platform_roles_holders() {
             username="$(jq -r '.username' <<<"${person}")"
             email="$(jq -r '.email // ""' <<<"${person}")"
             answer="$(_call PUT "/v1/clusters/${_CLUSTER}/platform-roles/holders/${role}/${tenant}/${subject}" \
-                "$(jq -n --arg u "${username}" --arg e "${email}" '{username: $u, email: $e}')")" || exit 1
+                "$(jq -n --arg u "${username}" --arg e "${email}" --arg r "${reason}" --arg x "${expires}" \
+                    '{username: $u, email: $e, reason: $r} + (if $x != "" then {expiresAt: $x} else {} end)')")" || exit 1
             if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
-                echo "${username} of ${tenant} holds ${role} already; nothing was committed."
+                echo "${username} of ${tenant} holds ${role} already, as stated; nothing was committed."
                 return 0
             fi
-            echo "${username} of ${tenant} holds ${role}: committed ($(_committed "${answer}"))."
+            echo "${username} of ${tenant} holds ${role}${expires:+ until ${expires}}: committed ($(_committed "${answer}"))."
             echo "Once Argo CD has synced, the operator writes the role for their ${tenant} account; they use it"
             echo "signed in to ${tenant}, from its admin console."
             ;;
         remove)
-            [[ -n "${role}" && -n "${tenant}" && -n "${login}" && $# -eq 4 ]] || die "${usage}"
+            local role="${1:-}" tenant="${2:-}" login="${3:-}"
+            [[ -n "${role}" && -n "${tenant}" && -n "${login}" && $# -eq 3 ]] || die "${usage}"
             _label "The tenant" "${tenant}"
             _discover
             local holders subject
@@ -1767,22 +1768,19 @@ cmd_platform_roles_holders() {
     esac
 }
 
-# tenants set: the two things about a tenant that only the cluster's
-# administrator decides -- whether its own administrators may approve what it
-# publishes to the internet, and whether they may add catalogues. Each is a
-# switch on the tenant's manifest in git, off unless turned on; each option
-# given is one request to the director (PUT turns it on, DELETE off), which
-# decides who may. --country sets the tenant's country (spec.country), which
+# tenants set: what about a tenant only the cluster's administrator decides --
+# whether its own administrators may add catalogues, a switch on the tenant's
+# manifest in git, off unless turned on: one request to the director (PUT
+# turns it on, DELETE off), which decides who may. --country sets the tenant's country (spec.country), which
 # its own administrators may set too. Everything is read before anything is asked, so a mistyped
 # option changes nothing.
 cmd_tenants_set() {
-    local name="" approve="" catalogues="" country="" country_set="" usage_text
-    usage_text="usage: kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false] [--admins-add-catalogues=true|false] [--country <alpha-2> | --country \"\"]"
+    local name="" catalogues="" country="" country_set="" usage_text
+    usage_text="usage: kubectl gentian tenants set <name> [--admins-add-catalogues=true|false] [--country <alpha-2> | --country \"\"]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --admins-approve-public-addresses=true|--admins-approve-public-addresses=false) approve="${1#*=}"; shift ;;
             --admins-add-catalogues=true|--admins-add-catalogues=false) catalogues="${1#*=}"; shift ;;
-            --admins-approve-public-addresses*|--admins-add-catalogues*) die "${1%%=*} is given as ${1%%=*}=true or ${1%%=*}=false" ;;
+            --admins-add-catalogues*) die "${1%%=*} is given as ${1%%=*}=true or ${1%%=*}=false" ;;
             --country) [[ $# -ge 2 ]] || die "${usage_text}"; country="$2"; country_set=1; shift 2 ;;
             --country=*) country="${1#*=}"; country_set=1; shift ;;
             -*) die "unknown option $1" ;;
@@ -1790,19 +1788,12 @@ cmd_tenants_set() {
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
-    [[ -n "${approve}${catalogues}${country_set}" ]] || die "nothing to set. ${usage_text}"
+    [[ -n "${catalogues}${country_set}" ]] || die "nothing to set. ${usage_text}"
     _label "The tenant" "${name}"
     if [[ -n "${country_set}" ]]; then
         country="$(_country "${country}")" || exit 1
     fi
     _discover
-    if [[ "${approve}" == "true" ]]; then
-        _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/perimeter-delegation" >/dev/null
-        echo "The administrators of ${name} may now approve its public addresses: committed. It holds once the cluster has taken the commit in."
-    elif [[ "${approve}" == "false" ]]; then
-        _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/perimeter-delegation" >/dev/null
-        echo "The administrators of ${name} may no longer approve its public addresses: committed. What is published stays until it is withdrawn."
-    fi
     if [[ "${catalogues}" == "true" ]]; then
         _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
         echo "The administrators of ${name} may now add catalogues for their tenant: committed."
@@ -2871,25 +2862,26 @@ usage() {
 
 # kubectl gentian approvals list
 #
-# What waits for the cluster's security officer: every tenant's request of a
-# podSecurity waiver or a cluster role, as the cluster has it. The usher's
-# list, read by whoever holds cluster#can_approve or can_configure. Each line
-# says who asked, when, and what the app's profile gives as its reason, and
-# whether it was declined and by whom; the answer is `apps approve` or `apps
-# decline`, both the security officer's by the kind.
+# What waits for an approver: every tenant's pending privilege, as the cluster
+# has it, with who answers it -- the security officer for a podSecurity
+# waiver or a cluster role, the perimeter approver for egress. The usher's
+# list, read by whoever holds cluster#can_approve, can_approve_perimeter or
+# can_configure. Each line says who asked, when, and what the app's profile
+# gives as its reason, and whether it was declined and by whom; the answer is
+# `apps approve` or `apps decline`, whose by the kind.
 cmd_approvals_list() {
     local answer
     need jq
     _discover
     answer="$(_call_usher GET "/v1/clusters/${_CLUSTER}/approvals")" || exit 1
     if [[ "$(printf '%s' "${answer}" | jq -r '.approvals | length')" == "0" ]]; then
-        echo "Nothing awaits the security officer: no app of any tenant waits for a podSecurity or clusterRoles approval."
+        echo "Nothing awaits an approver: no app of any tenant waits for a privilege."
         return 0
     fi
     printf '%s' "${answer}" | jq -r '
-        (["TENANT","APP","PRIVILEGE","REQUESTED BY","REQUESTED","EXPIRED","DECLINED BY"] | @tsv),
+        (["TENANT","APP","PRIVILEGE","APPROVER","REQUESTED BY","REQUESTED","EXPIRED","DECLINED BY"] | @tsv),
         (.approvals[] | [
-            .tenant, .install, .privilege,
+            .tenant, .install, .privilege, (.approvedBy // "-"),
             (.requestedBy // "-"),
             (.requestedAt // "" | if . == "" then "-" else .[0:16] end),
             (.expiredAt // "" | if . == "" then "-" else .[0:10] end),

@@ -91,9 +91,9 @@ const declineReasonMinimum = 10
 // ErrNotPending says the privilege named is not one the app waits for.
 var ErrNotPending = errors.New("the app is not waiting for that privilege")
 
-// ErrTenantAnswers says the privilege is the tenant administrator's own to
-// approve, so there is nobody to ask.
-var ErrTenantAnswers = errors.New("the tenant's administrator approves that privilege; there is nobody to ask")
+// ErrTenantAnswers says the privilege is the tenant's perimeter approver's to
+// approve, who sees it waiting, so there is nobody to ask.
+var ErrTenantAnswers = errors.New("the tenant's perimeter approver approves that privilege; there is nobody to ask")
 
 // RequestOutcome is what a request came to.
 type RequestOutcome struct {
@@ -306,8 +306,9 @@ func orNone(refs []string) string {
 	return strings.Join(refs, ", ")
 }
 
-// Approval is one privilege awaiting the security officer, across the
-// cluster: what a console or the CLI lists for them.
+// Approval is one privilege awaiting an approver, across the cluster: what a
+// console or the CLI lists for the security officer and the cluster's
+// perimeter approver, each answering the ones ApprovedBy names them for.
 type Approval struct {
 	Tenant  string `json:"tenant"`
 	Profile string `json:"profile"`
@@ -317,7 +318,7 @@ type Approval struct {
 }
 
 // PendingApprovals lists every privilege of every tenant's apps that waits
-// for the security officer, in tenant, app and privilege order.
+// for an approver, in tenant, app and privilege order.
 func (s *Service) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	var tenants gentianov1alpha1.TenantList
 	if err := s.client.List(ctx, &tenants); err != nil {
@@ -344,9 +345,6 @@ func (s *Service) PendingApprovals(ctx context.Context) ([]Approval, error) {
 				profile = nil
 			}
 			for _, p := range pendingApprovals(comp, profile, now) {
-				if p.ApprovedBy != security.PrivilegeApproverSecurityOfficer {
-					continue
-				}
 				out = append(out, Approval{Tenant: tenant, Profile: comp.Spec.ProfileRef.Name, Install: comp.Name, PendingPrivilege: p})
 			}
 		}

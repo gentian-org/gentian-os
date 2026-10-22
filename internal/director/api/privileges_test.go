@@ -24,11 +24,16 @@ const waiverPath = "/v1/tenants/demo/privileges/nextcloud/podSecurity/run-as-roo
 
 func reason(text string) string { return `{"reason":"` + text + `"}` }
 
-// A tenant administrator answers for egress: the traffic leaves the tenant's
-// own namespace, and can_approve_privilege is model v1's verb for it.
-func TestTheTenantAdministratorApprovesEgress(t *testing.T) {
+// The tenant's perimeter approver answers for egress: the traffic leaves
+// through the tenant's perimeter, and can_approve_privilege is model v1's
+// verb for it. tom is demo's, as the account of its realm; mia, who is not,
+// is refused.
+func TestThePerimeterApproverApprovesEgress(t *testing.T) {
 	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
+	if code, _ := h.do(t, "PUT", egressPath, h.token(t, "tenant-demo", "mia"), reason("a member asking")); code != http.StatusForbidden {
+		t.Fatalf("a member approved egress: %d", code)
+	}
 
 	code, body := h.do(t, "PUT", egressPath, tom, reason("agreed in the security review on the 14th"))
 	if code != http.StatusAccepted {
@@ -207,7 +212,7 @@ func TestApprovingNeedsToSeeTheTenantAtAll(t *testing.T) {
 
 // What the operator tells a console about each pending request
 // (security.PrivilegeApprover) is what this API then allows, kind by kind:
-// the tenant's administrator for one, the security officer for the others,
+// the perimeter approver for one, the security officer for the others,
 // and never both. A console that offers the button by that answer offers it
 // to exactly whom the director would let through.
 func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
@@ -217,7 +222,7 @@ func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
 		for _, who := range []struct {
 			name, realm, user, approver string
 		}{
-			{"tenant administrator", "tenant-demo", "tom", security.PrivilegeApproverTenant},
+			{"perimeter approver", "tenant-demo", "tom", security.PrivilegeApproverPerimeter},
 			{"security officer", "gentian", "sam", security.PrivilegeApproverSecurityOfficer},
 		} {
 			token := h.token(t, who.realm, who.user)
