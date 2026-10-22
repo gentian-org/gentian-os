@@ -35,6 +35,8 @@
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
 #                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
+#   kubectl gentian tenants mail-mode <name> [<mode>]          what the operator provisions for its mail:
+#                                                             selfhosted, external, transport-only, disabled
 #   kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
 #   kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
 #                                                             people of another tenant of this cluster signing in here
@@ -1559,6 +1561,42 @@ cmd_settings() {
     esac
 }
 
+# tenants mail-mode: what the operator provisions for a tenant's mail
+# (docs/design/mail.md §2). A name alone shows what git declares; with a mode
+# it is one commit. The decision that matters most is disabled for a tenant on
+# a domain of its own whose mail is elsewhere: on a cluster with its own mail
+# the operator otherwise publishes MX records for that domain, over the ones
+# that are there.
+cmd_tenants_mail_mode() {
+    local name="${1:-}" mode="${2:-}" tenants current answer
+    [[ -n "${name}" && $# -le 2 ]] || die "usage: kubectl gentian tenants mail-mode <name> [selfhosted|external|transport-only|disabled]"
+    need jq
+    _discover
+    tenants="$(_call GET "/v1/clusters/${_CLUSTER}/tenants")" || exit 1
+    printf '%s' "${tenants}" | jq -e --arg n "${name}" '.tenants[]? | select(.name == $n)' >/dev/null ||
+        die "no tenant named ${name} in git (kubectl gentian tenants list)"
+    current="$(printf '%s' "${tenants}" | jq -r --arg n "${name}" '.tenants[] | select(.name == $n) | .mailMode // ""')"
+    if [[ -z "${mode}" ]]; then
+        if [[ -n "${current}" ]]; then
+            echo "Tenant ${name}: mail mode ${current}."
+        else
+            echo "Tenant ${name} names no mail mode: the cluster's default applies -- selfhosted where the cluster"
+            echo "runs its own mail, transport-only where it relays."
+        fi
+        return 0
+    fi
+    case "${mode}" in
+        selfhosted|external|transport-only|disabled) ;;
+        *) die "not a mail mode: ${mode} (selfhosted, external, transport-only or disabled)" ;;
+    esac
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/mail-mode" "$(jq -n --arg m "${mode}" '{mode: $m}')")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "Tenant ${name} already has mail mode ${mode}; nothing was committed."
+        return 0
+    fi
+    echo "Tenant ${name}: mail mode ${mode}, committed ($(_committed "${answer}")). The operator provisions accordingly."
+}
+
 # tenants delegate-catalogues: whether a tenant's own administrators may add
 # catalogues for their tenant. The cluster administrator's to say.
 cmd_tenants_delegate_catalogues() {
@@ -2101,8 +2139,12 @@ cmd_tenants_domain() {
     echo "the addresses it has now stop being its own."
     echo
     echo "What has to be true first. The director checks none of it, and neither does this command:"
-    echo "  - DNS: *.${domain} resolves to this cluster. The platform publishes records only in the DNS zone that"
-    echo "    holds the cluster's own domain; if ${domain} lies in another zone, the wildcard record is yours to make."
+    echo "  - DNS: *.${domain} resolves to this cluster. The platform publishes records in the DNS zone that holds"
+    echo "    the cluster's own domain and in the zones its settings list under certificates.dnsZones; list the zone"
+    echo "    of ${domain} there (kubectl gentian settings set), or make the wildcard record yourself."
+    echo "  - Mail: where ${domain}'s mail is elsewhere and this cluster runs its own, set the tenant's mail mode to"
+    echo "    disabled first (kubectl gentian tenants mail-mode ${name} disabled), or the operator publishes MX records"
+    echo "    for ${domain} over the ones that are there."
     echo "  - Certificate: the cluster's DNS-01 certificate issuer can write _acme-challenge records in the zone of"
     echo "    ${domain} -- its DNS token covers that zone. The tenant gets one wildcard certificate, *.${domain};"
     echo "    until it is issued its addresses have none."
@@ -2947,11 +2989,12 @@ main() {
                 import) cmd_tenants_import "$@" ;;
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
+                mail-mode) cmd_tenants_mail_mode "$@" ;;
                 organizations) cmd_tenants_organizations "$@" ;;
                 groups) cmd_tenants_groups "$@" ;;
                 sign-in) cmd_tenants_sign_in "$@" ;;
                 platform-access) cmd_tenants_platform_access "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|organizations|groups|sign-in|platform-access" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|mail-mode|organizations|groups|sign-in|platform-access" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;

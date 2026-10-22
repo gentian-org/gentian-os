@@ -472,6 +472,41 @@ func TestUnderMultiATenantNamedUserIsOrdinary(t *testing.T) {
 	}
 }
 
+// A tenant's mail mode is one line of its manifest, written in place or
+// under a mail block the manifest did not have; the same mode again commits
+// nothing, and a word the Tenant kind does not know is refused before git.
+func TestATenantsMailModeIsOneLineOfItsManifest(t *testing.T) {
+	remote := dt.Remote(t, "acme")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	path := "clusters/" + dt.Cluster + "/tenants/acme/tenant.yaml"
+
+	res, err := g.SetTenantMailMode(ctx, "acme", " Disabled ", tenantMeta())
+	if err != nil || !res.Changed {
+		t.Fatalf("set: %+v, %v", res, err)
+	}
+	doc := dt.RemoteFile(t, remote, path)
+	if !strings.HasSuffix(doc, "  mail:\n    mode: disabled") && !strings.Contains(doc, "  mail:\n    mode: disabled\n") {
+		t.Fatalf("tenant.yaml:\n%s", doc)
+	}
+	if res, err := g.SetTenantMailMode(ctx, "acme", "disabled", tenantMeta()); err != nil || res.Changed {
+		t.Fatalf("the same mode again must not commit: %+v, %v", res, err)
+	}
+	if res, err := g.SetTenantMailMode(ctx, "acme", "transport-only", tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("change: %+v, %v", res, err)
+	}
+	if doc := dt.RemoteFile(t, remote, path); !strings.Contains(doc, "    mode: transport-only") || strings.Contains(doc, "disabled") {
+		t.Fatalf("the mode was not replaced in place:\n%s", doc)
+	}
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+	if _, err := g.SetTenantMailMode(ctx, "acme", "carrier-pigeon", tenantMeta()); !errors.Is(err, gitops.ErrInvalidMailMode) {
+		t.Fatalf("an unknown mode was not refused: %v", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused mode was committed")
+	}
+}
+
 // A custom domain is one commit of the TenantDomain and its kustomization
 // entry, and removing it is one more. A name that is not a hostname, one on
 // the kernel domain and one another tenant holds are refused before git.

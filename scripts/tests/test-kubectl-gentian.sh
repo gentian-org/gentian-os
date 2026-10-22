@@ -231,6 +231,45 @@ reply PUT "${DOMAIN_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"
 gentian tenants domain globex Globex.EXAMPLE --yes
 has "a domain typed in capitals is shown in the spelling that is recorded" "${OUT}" "desktop.globex.example"
 has "... and sent in it" "$(writes)" '"domain": "globex.example"'
+has "... and the bind names the zone setting and the mail mode to decide first" "${OUT}" "certificates.dnsZones"
+has "... including the command for the mail mode" "${OUT}" "tenants mail-mode globex disabled"
+
+echo ""
+echo "kubectl gentian tenants mail-mode"
+echo ""
+
+MAIL_TENANTS='{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false},{"name":"acme","apps":[],"protected":false,"mailMode":"disabled"}]}'
+MAIL_ROUTE="/v1/clusters/c1/tenants/globex/mail-mode"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${MAIL_TENANTS}"
+gentian tenants mail-mode
+refused "no tenant named is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${MAIL_TENANTS}"
+gentian tenants mail-mode acme
+has "a name alone shows the mode git declares" "${OUT}" "mail mode disabled"
+is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenants "
+gentian tenants mail-mode globex
+has "a tenant that names none is said to take the cluster's default" "${OUT}" "names no mail mode"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${MAIL_TENANTS}"
+gentian tenants mail-mode globex carrier-pigeon
+refused "a word that is not a mode is refused"
+is "... before the director is asked to write" "$(writes)" ""
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${MAIL_TENANTS}"
+reply PUT "${MAIL_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants mail-mode globex disabled
+is "setting a mode is one PUT to the director's route" "$(writes)" "PUT ${MAIL_ROUTE} {
+  \"mode\": \"disabled\"
+}"
+has "... and names the commit" "${OUT}" "committed (01234567)"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${MAIL_TENANTS}"
+reply PUT "${MAIL_ROUTE}" 200 '{"status":"unchanged"}'
+gentian tenants mail-mode globex disabled
+has "a tenant that has the mode already commits nothing" "${OUT}" "nothing was committed"
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT "${DOMAIN_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"}'

@@ -222,6 +222,20 @@ The operator reports the outcome on the Tenant:
 kubectl get tenant demo -o jsonpath='{.status.conditions[?(@.type=="DomainBound")].message}'
 ```
 
+What the operator provisions for a tenant's mail is `spec.mail.mode`
+([mail.md §2](design/mail.md)), the cluster administrator's to set as the
+domain is (`PUT /v1/clusters/<c>/tenants/<t>/mail-mode`, `can_configure`):
+
+```bash
+kubectl gentian tenants mail-mode demo              # what git declares, or the cluster's default
+kubectl gentian tenants mail-mode demo disabled     # one commit: selfhosted, external, transport-only or disabled
+```
+
+Decide it before binding a domain whose mail lives elsewhere: on a cluster
+with its own mail the operator otherwise publishes MX, SPF, DKIM and DMARC
+records for that domain, over the ones that are there. `disabled` publishes
+nothing.
+
 The user tenant of a single-tenancy cluster needs none of this: it is served
 on the cluster's own domain (`desktop.<kernel-domain>`, `admin.<kernel-domain>`,
 `<label>.<kernel-domain>`), and binding it to another domain is refused, as
