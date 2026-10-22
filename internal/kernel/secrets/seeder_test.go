@@ -327,3 +327,107 @@ func TestSeederSeedModelAccessIsStablePerTenantAndApp(t *testing.T) {
 		t.Errorf("random key: %q then %q, %v", a.APIKey, b.APIKey, err)
 	}
 }
+
+// The empty SMTP record a tenant without mail gets is replaced by real values,
+// and real values are never replaced by empty ones.
+func TestSeedSMTPReplacesOnlyTheEmptyRecord(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "smtp")
+
+	if err := s.SeedEmptySMTP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"host", "port", "user", "password"} {
+		if v, ok := got[k]; !ok || v != "" {
+			t.Fatalf("empty record %s = %q (present %v), want present and empty", k, v, ok)
+		}
+	}
+
+	real := secrets.SMTPCreds{Host: "smtp.example.com", Port: "587", User: "u", Password: "p"}
+	creds, err := s.SeedSMTP(ctx, "t", "app", real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds != real {
+		t.Fatalf("SeedSMTP over the empty record = %+v, want %+v", creds, real)
+	}
+
+	if err := s.SeedEmptySMTP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	creds, err = s.SeedSMTP(ctx, "t", "app", secrets.SMTPCreds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds != real {
+		t.Fatalf("real record became %+v after empty seeds, want %+v", creds, real)
+	}
+}
+
+// Same for IMAP.
+func TestSeedIMAPReplacesOnlyTheEmptyRecord(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "imap")
+
+	if err := s.SeedEmptyIMAP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedIMAP(ctx, "t", "app", secrets.IMAPCreds{Host: "imap.example.org", Port: "993"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedEmptyIMAP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["host"] != "imap.example.org" || got["port"] != "993" {
+		t.Fatalf("imap record = %v, want the real one", got)
+	}
+}
+
+// SyncSMTP replaces an empty record, follows changed values and never
+// writes an empty one.
+func TestSyncSMTPFollowsValues(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "smtp")
+
+	if err := s.SeedEmptySMTP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []secrets.SMTPCreds{
+		{Host: "smtp.example.com", Port: "587", User: "a", Password: "1"},
+		{Host: "smtp.example.com", Port: "587", User: "b", Password: "2"},
+	} {
+		if err := s.SyncSMTP(ctx, "t", "app", want); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Read(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["host"] != want.Host || got["port"] != want.Port || got["user"] != want.User || got["password"] != want.Password {
+			t.Fatalf("record = %v, want %+v", got, want)
+		}
+	}
+	if err := s.SyncSMTP(ctx, "t", "app", secrets.SMTPCreds{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Read(ctx, path); got["user"] != "b" {
+		t.Fatalf("empty sync changed the record to %v", got)
+	}
+}
