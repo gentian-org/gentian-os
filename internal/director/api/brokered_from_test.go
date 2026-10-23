@@ -147,3 +147,24 @@ func TestAnEntryThatLinksExistingAccountsNamesNoDomain(t *testing.T) {
 		t.Fatalf("a link naming a domain: %d %v", code, body)
 	}
 }
+
+// An entry that links existing accounts may also make one where none has the
+// person's address (the store's registration); an organization may not.
+func TestAnEntryThatLinksExistingAccountsMayCreateThem(t *testing.T) {
+	h := startWith(t, nil, withCommissioner("demo"))
+	create := `{"displayName": "abc.example (1a2b3c4d)", "issuer": "https://id.abc.example/auth/realms/main",
+		"clientID": "broker-to-store", "linkExisting": true, "createAccounts": true}`
+	name := "1a2b3c4d-5e6f-4789-8abc-def012345678"
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/brokered-from/"+name, shopKey, create); code != http.StatusAccepted {
+		t.Fatalf("the entry: %d %v", code, body)
+	}
+	patch := dt.RemoteFile(t, h.remote, strings.TrimSuffix(dt.TenantPath("demo"), "tenant.yaml")+"brokered-from.yaml")
+	if !strings.Contains(patch, "      linkExisting: true\n      createAccounts: true") {
+		t.Fatalf("the patch:\n%s", patch)
+	}
+	org := `{"displayName": "ABC", "issuer": "https://id.abc.example/auth/realms/main",
+		"clientID": "broker-to-aluvian", "domain": "abc.example", "createAccounts": true}`
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/brokered-from/abc", shopKey, org); code != http.StatusUnprocessableEntity {
+		t.Fatalf("an organization that creates accounts: %d %v", code, body)
+	}
+}

@@ -146,6 +146,19 @@ spec:
 
                         Unset means this cluster belongs to no store, which is
                         supported: its own catalogues are then all there is.
+                    extraServices:
+                      type: boolean
+                      default: true
+                      description: >
+                        Whether the installer places the store's extra
+                        services from its catalogue: the Operations Console
+                        (platform tenant), the App Store app and the
+                        Subscription Center (every other tenant, while the
+                        cluster offers a store). false is what
+                        --no-extra-services records, so that a later run
+                        without the flag keeps them out. Read by the
+                        installer; the operator places whatever profiles the
+                        cluster's catalogue holds.
                     updates:
                       type: object
                       description: >

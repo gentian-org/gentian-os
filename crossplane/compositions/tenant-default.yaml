@@ -2362,6 +2362,126 @@ spec:
                 name: keycloak
             {{- end }}
             {{- end }}
+            {{- /* An entry with linkExisting and createAccounts (the store's
+                 registration through a customer tenant's own realm) makes
+                 the account at the first sign-in through it when no account
+                 here has the person's address: gentian-create-account below,
+                 idp-create-user-if-unique, with no page, so it is made also
+                 under prompt=none. An address that is an account already is
+                 linked as gentian-link-existing links it: the person signs in
+                 to that account once, with its second factor. Nothing is
+                 linked by address alone. */}}
+            {{- $createAccounts := false }}
+            {{- range $b := (dig "brokeredFrom" list $spec) }}
+            {{- if and $b.linkExisting $b.createAccounts }}{{- $createAccounts = true }}{{- end }}
+            {{- end }}
+            {{- if $createAccounts }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-flow
+              name: {{ $tenant }}-create-account-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-create-account
+                description: First sign-in through a provider makes the account, or links an existing one
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-create
+              name: {{ $tenant }}-create-account-create
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-create-account
+                authenticator: idp-create-user-if-unique
+                requirement: ALTERNATIVE
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-link
+              name: {{ $tenant }}-create-account-link
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-create-account-link
+                parentFlowAlias: gentian-create-account
+                providerId: basic-flow
+                requirement: ALTERNATIVE
+                priority: 20
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-password
+              name: {{ $tenant }}-create-account-password
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-create-account-link
+                authenticator: auth-username-password-form
+                requirement: REQUIRED
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-otp
+              name: {{ $tenant }}-create-account-otp
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-create-account-otp
+                parentFlowAlias: gentian-create-account-link
+                providerId: basic-flow
+                requirement: CONDITIONAL
+                priority: 20
+              providerConfigRef:
+                name: keycloak
+            {{- range $i, $auth := (list "conditional-user-configured" "auth-otp-form") }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-exec-{{ $auth }}
+              name: {{ $tenant }}-create-account-exec-{{ $auth }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-create-account-otp
+                authenticator: {{ $auth }}
+                requirement: REQUIRED
+                priority: {{ add 10 (mul $i 10) }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- range $b := (dig "brokeredFrom" list $spec) }}
             {{- if regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name) }}
             {{- $issuer := trimSuffix "/" (toString $b.issuer) }}
@@ -2443,7 +2563,10 @@ spec:
                 jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $issuer | quote }}
                 userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $issuer | quote }}
                 logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $issuer | quote }}
-                {{- if $b.linkExisting }}
+                {{- if and $b.linkExisting $b.createAccounts }}
+                firstBrokerLoginFlowAlias: gentian-create-account
+                acceptsPromptNoneForwardFromClient: true
+                {{- else if $b.linkExisting }}
                 firstBrokerLoginFlowAlias: gentian-link-existing
                 acceptsPromptNoneForwardFromClient: true
                 {{- else }}

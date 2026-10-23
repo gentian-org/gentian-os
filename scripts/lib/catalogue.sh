@@ -87,7 +87,7 @@ _PROFILE_BUNDLE_MAX_BYTES=184320
 
 # The profiles the platform's own chart ships. A catalogue entry of one of
 # these names is refused by the director (gitops.PlatformProfile), and here.
-_PLATFORM_PROFILE_NAMES="admin-console app-store concierge desktop"
+_PLATFORM_PROFILE_NAMES="admin-console concierge desktop"
 
 # _yaml_docs_json <file> -- every YAML document of the file as one line of
 # JSON, with either flavor of yq.
@@ -343,10 +343,95 @@ _default_profile_origin() {
     printf 'cluster/%s' "${name}"
 }
 
-# _default_profiles_configured -- the list, as GENTIAN_DEFAULT_PROFILES gives
-# it or, unset, the Operations Console at the store's catalogue.
+# The store's extra services: the profiles an installation places from the
+# store's catalogue unless --no-extra-services says otherwise. Where each runs
+# is the profile's own to say: the Operations Console in the platform tenant
+# (defaultForPlatform), the App Store app and the Subscription Center in every
+# other tenant while the cluster offers a store (defaultWhereStoreOffered),
+# tenants made later included.
+_EXTRA_SERVICE_PROFILES="operations-console app-store subscription-center"
+
+# _default_profiles_configured [cluster] -- the list, as GENTIAN_DEFAULT_PROFILES
+# gives it or, unset, the extra services at the store's catalogue. Without the
+# extra services (gentian_extra_services_enabled) none of the three is in it,
+# whichever way the list was given.
 _default_profiles_configured() {
-    printf '%s' "${GENTIAN_DEFAULT_PROFILES-${GENTIAN_STORE_CATALOGUE_URL:-https://catalogue.aluvian.io}/profiles/operations-console.yaml}"
+    local cluster="${1:-}" base list name entry out="" claim=""
+    base="${GENTIAN_STORE_CATALOGUE_URL:-https://catalogue.aluvian.io}"
+    base="${base%/}"
+    list="${GENTIAN_DEFAULT_PROFILES-}"
+    if [[ -z "${GENTIAN_DEFAULT_PROFILES+set}" ]]; then
+        for name in ${_EXTRA_SERVICE_PROFILES}; do
+            list="${list:+${list},}${base}/profiles/${name}.yaml"
+        done
+    fi
+    [[ -n "${cluster}" ]] && claim="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml"
+    if [[ "$(gentian_extra_services_enabled "${claim}")" == "true" ]]; then
+        printf '%s' "${list}"
+        return 0
+    fi
+    local -a entries=()
+    IFS=',' read -r -a entries <<< "${list}"
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        _default_profile_is_extra_service "${entry}" && continue
+        out="${out:+${out},}${entry}"
+    done
+    printf '%s' "${out}"
+}
+
+# _default_profile_is_extra_service <entry> -- whether the entry names one of
+# the extra services' profiles (<catalogue>/profiles/<name>.yaml[@pin]).
+_default_profile_is_extra_service() {
+    local item name extra
+    item="$(printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    item="${item%@*}"
+    name="${item##*/}"
+    name="${name%.yaml}"
+    for extra in ${_EXTRA_SERVICE_PROFILES}; do
+        [[ "${name}" == "${extra}" ]] && return 0
+    done
+    return 1
+}
+
+# _default_extra_services_remove <catalogue dir> -- without the extra services,
+# the profiles an earlier run placed for them leave the cluster's catalogue:
+# the profile, its bundle patch and their lines in the kustomization. The
+# ProfileBuilds stay: a tenant that runs a build keeps it. A Component the
+# operator placed in a tenant is not removed by this, as for any profile.
+_default_extra_services_remove() {
+    local dir="$1" name kust tmp removed=""
+    kust="${dir}/kustomization.yaml"
+    for name in ${_EXTRA_SERVICE_PROFILES}; do
+        [[ -f "${dir}/${name}.yaml" ]] || continue
+        rm -f "${dir}/${name}.yaml" "${dir}/${name}.bundle.yaml"
+        if [[ -f "${kust}" ]]; then
+            tmp="$(mktemp)"
+            awk -v a="- ${name}.yaml" -v b="- path: ${name}.bundle.yaml" '
+                function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+                trim($0) == a || trim($0) == b { next }
+                { print }
+            ' "${kust}" > "${tmp}" && cat "${tmp}" > "${kust}"
+            rm -f "${tmp}"
+        fi
+        removed="${removed:+${removed} }${name}"
+    done
+    [[ -n "${removed}" ]] || return 0
+    # A list left with no entry is written as an empty one.
+    if [[ -f "${kust}" ]]; then
+        tmp="$(mktemp)"
+        awk '
+            { lines[++n] = $0 }
+            END {
+                for (i = 1; i <= n; i++) {
+                    t = lines[i]; gsub(/[ \t\r]+$/, "", t)
+                    if ((t == "resources:" || t == "patches:") && (i == n || lines[i + 1] !~ /^[ \t]*-/)) lines[i] = t " []"
+                    print lines[i]
+                }
+            }
+        ' "${kust}" > "${tmp}" && cat "${tmp}" > "${kust}"
+        rm -f "${tmp}"
+    fi
+    info "Extra services off (--no-extra-services): removed ${removed} from the cluster's catalogue."
 }
 
 # _default_profile_parse <entry> -- reads one entry of the list into
@@ -375,8 +460,8 @@ _default_profile_parse() {
         error "  A default profile is fetched from a catalogue and held to a digest; a local file"
         error "  or an http address has neither a catalogue to record nor an index to state one."
         error "  What to do, one of:"
-        error "    - remove the line from install.env: unset, step 0 places the Operations Console"
-        error "      from the catalogue, at the digest the catalogue's index lists;"
+        error "    - remove the line from install.env: unset, step 0 places the extra services"
+        error "      from the store's catalogue, at the digests the catalogue's index lists;"
         error "    - publish the file in a catalogue (https, profiles/<name>.yaml beside index.yaml)"
         error "      and name that address, with @sha256:<digest> to pin the build;"
         error "    - set GENTIAN_DEFAULT_PROFILES= (empty) and install the profile through the"
@@ -444,6 +529,16 @@ _default_profile_place() {
         fi
     elif [[ -n "${listed}" ]]; then
         want="${listed}"; how="listed by the index of ${base}"
+    elif [[ "${rc}" == "0" && -z "${GENTIAN_DEFAULT_PROFILES+set}" ]] && _default_profile_is_extra_service "${entry}"; then
+        # One of the extra services the store's catalogue does not list (yet):
+        # the default list names what a store offers, and a store that offers
+        # less is not a reason to stop an install.
+        if [[ -f "${dir}/${name}.yaml" ]]; then
+            warn "The index of ${base} lists no ${name}; default profile ${name} stays as the cluster's definition has it."
+        else
+            warn "The index of ${base} lists no ${name}; that extra service is not placed. The install goes on."
+        fi
+        return 0
     else
         error "Default profile ${name}: there is no digest to hold it to."
         if [[ "${rc}" == "0" ]]; then
@@ -571,8 +666,11 @@ preview_default_profiles() {
         info "Default profiles: none would be placed (--disable-api-extensions)."
         return 0
     fi
-    list="$(_default_profiles_configured)"
-    [[ -n "${list}" ]] || { info "Default profiles: none would be placed (GENTIAN_DEFAULT_PROFILES is empty)."; return 0; }
+    if [[ "$(gentian_extra_services_enabled "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml")" != "true" ]]; then
+        info "Default profiles: the extra services (${_EXTRA_SERVICE_PROFILES// /, }) would not be placed (--no-extra-services)."
+    fi
+    list="$(_default_profiles_configured "${cluster}")"
+    [[ -n "${list}" ]] || { info "Default profiles: none would be placed."; return 0; }
     IFS=',' read -r -a entries <<< "${list}"
     for entry in ${entries[@]+"${entries[@]}"}; do
         entry="$(printf '%s' "${entry}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"

@@ -23,6 +23,14 @@ spec:
       issuer: https://id.abc.example/auth/realms/test
       clientID: broker-to-store
       linkExisting: true
+    # The store's registration through a customer tenant's realm: the
+    # create-account first-login flow, prompt=none forwarded.
+    - name: 1a2b3c4d-5e6f-4789-8abc-def012345678
+      displayName: other.abc.example (1a2b3c4d)
+      issuer: https://id.abc.example/auth/realms/other
+      clientID: broker-to-store
+      linkExisting: true
+      createAccounts: true
     - name: Not_A_Label
       displayName: Evil
       issuer: https://id.evil.example/auth/realms/x

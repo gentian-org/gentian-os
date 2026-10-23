@@ -1348,6 +1348,9 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 			}
 			if b.LinkExisting {
 				entry["linkExisting"] = true
+				if b.CreateAccounts {
+					entry["createAccounts"] = true
+				}
 			} else {
 				entry["domain"] = b.Domain
 			}

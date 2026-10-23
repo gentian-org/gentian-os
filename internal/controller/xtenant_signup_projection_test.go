@@ -151,6 +151,9 @@ func TestBrokeredFromReachesTheXTenantOnlyWhereATenantHasOne(t *testing.T) {
 	named.Spec.BrokeredFrom = []gentianov1alpha1.TenantBrokeredFrom{{
 		Name: "abc", DisplayName: "ABC AG", Issuer: "https://id.abc.example/auth/realms/main",
 		ClientID: "broker-to-aluvian", Domain: "abc.example",
+	}, {
+		Name: "1a2b3c4d", DisplayName: "store", Issuer: "https://id.abc.example/auth/realms/x",
+		ClientID: "broker-to-store", LinkExisting: true, CreateAccounts: true,
 	}}
 	xr, err = r.buildXTenant(context.Background(), named)
 	if err != nil {
@@ -158,9 +161,12 @@ func TestBrokeredFromReachesTheXTenantOnlyWhereATenantHasOne(t *testing.T) {
 	}
 	spec, _ = xr.Object["spec"].(map[string]interface{})
 	list, _ := spec["brokeredFrom"].([]interface{})
-	if len(list) != 1 || list[0].(map[string]interface{})["domain"] != "abc.example" ||
+	if len(list) != 2 || list[0].(map[string]interface{})["domain"] != "abc.example" ||
 		list[0].(map[string]interface{})["clientID"] != "broker-to-aluvian" {
 		t.Fatalf("brokeredFrom is not projected: %v", spec["brokeredFrom"])
+	}
+	if e := list[1].(map[string]interface{}); e["linkExisting"] != true || e["createAccounts"] != true || e["domain"] != nil {
+		t.Fatalf("an entry that creates accounts is projected as %v", e)
 	}
 	composition, err := os.ReadFile("../../crossplane/compositions/tenant-default.yaml")
 	if err != nil {

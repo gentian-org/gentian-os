@@ -497,7 +497,7 @@ gentian-os/              # The OS itself
 └── docs/
 
 gentian-apps/            # A catalogue: profiles, charts, app sources
-gentian-ui/              # The desktop, the consoles, the App Store app, the sign-in page
+gentian-ui/              # The desktop, the consoles, the sign-in page
 
 <deployments repository> # Per-cluster state; the only repository specific to a cluster
 ├── profiles/            # Values shared by the clusters of a stage

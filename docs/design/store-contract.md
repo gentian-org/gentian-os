@@ -338,6 +338,8 @@ their tenant.
 | `GET /v1/apps/{catalogue}/{app}/reports` | open | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask one of an app's support offers for support, with an optional message; the store answers that it received it, and what follows is the store's |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant in the token; if not, the reason; notices to show (§6.2); and the account's role for the tenant |
+| `GET`, `PUT /v1/tenant-sign-ins/{tenantUid}` | open | Whether the sign-in through the tenant's own realm is ready and the tenant registered; asking the store to prepare it (1.10, §6.1) |
+| `GET`, `PUT /v1/account/registration` | signed in | The person's one-time registration: terms accepted, optional company details (1.10, §6.1) |
 | `GET /v1/tenant/access`, `POST …/{subject}/approve` and `…/decline` | signed in | Who manages the tenant; the account that holds it lets another manage it, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired |
 | `POST /v1/acquisitions` | signed in, managing the tenant | Acquire an app. `201` with a confirmation; or `202` while it waits for a checkout at the store, for an approval, or for the store's own confirmation; or `200` with the acquisition the tenant already has |
@@ -457,10 +459,12 @@ either direction.
 ### 6.1 Signing in to the store
 
 Needed only to acquire and to see the tenant's acquisitions; never to
-browse. The tenant's administrator signs in at the store's issuer, once,
-with an account at the store — not the account they are signed in to the
-cluster with. The result is a **store token**, which the App Store app uses
-for what concerns the tenant: its standing and its acquisitions.
+browse. The tenant's administrator has an account at the store — not the
+account they are signed in to the cluster with — and a store with the
+feature `registration` makes it through the tenant's own realm at their
+one-time registration (below), so it has no password of the store's. The
+result of a sign-in is a **store token**, which the App Store app uses for
+what concerns the tenant: its standing and its acquisitions.
 
 **Who acts for a tenant at the store.** A tenant is an organisation in the
 store's records, and an account is a person; the two are separate things.
@@ -508,22 +512,37 @@ The sign-in is held to three conditions:
    `store.acquire`; the store now decides it from its own records rather
    than from the token.
 
-**After the first, the sign-in is silent.** The first sign-in of a
-tenant's administrator at the store is visible, and is what associates the
-tenant with their store account. From then on the store's realm signs the
-person in through the tenant's own realm, which already has their session:
+**Registration, and the silent sign-in.** A store with `registration`
+(1.10) asks a tenant's administrator to register once. The App Store app
+shows the registration for a tenant whose
+`GET /v1/tenant-sign-ins/{tenantUid}` says `registered: false`: the store's
+terms and privacy notice are linked, not shown, and the company's name,
+size, country, address and industry are each optional. On submit the app
+turns `spec.store.signIn` on through the director (`can_administer`),
+`PUT`s `/v1/tenant-sign-ins/{tenantUid}`, waits until it is `ready`, signs
+in silently (`kc_idp_hint=org-<uid>`, `prompt=none`) — the first sign-in
+through the provider makes the store account from the person's identity in
+the tenant's realm, with no page — and then `PUT`s
+`/v1/account/registration`. That first account holds the tenant. An
+account that existed before, with the person's address, is linked once
+instead, by signing in to it. From then on every sign-in is silent: the
+store's realm signs the person in through the tenant's own realm, which
+already has their session:
 
 1. The usage statistics report names each tenant by its unique id,
    `metadata.uid` (`tenants[].uid`, [operations.md](operations.md) §6.2): random,
    never reused, never derived from the name, so a tenant deleted and made
    again under the same name is another tenant to the store. Several ids may
    belong to one store account.
-2. Once the store has associated the tenant with the account, it makes, in
-   its realm, an identity provider `org-<uid>` for the tenant's realm
+2. When asked (`PUT /v1/tenant-sign-ins/{uid}`), or once the store has
+   associated the tenant with an account, it makes, in its realm, an
+   identity provider `org-<uid>` for the tenant's realm
    (`https://id.<cluster domain>/auth/realms/<tenant>`, from the reported
    tenant URL and cluster URL). It authenticates by a JWT the store's realm
-   signs; it makes no account, and links one only after the person has
-   signed in to their store account once through it.
+   signs. It makes the store account at a person's first sign-in through
+   it when no account has their address, and otherwise links the one that
+   has it after the person signed in to it once (on a Gentian cluster:
+   `spec.brokeredFrom[]` with `linkExisting` and `createAccounts`).
 3. The store answers that association in `GET /v1/tenant` (`signIn.tenantUid`,
    1.7) and offers the feature `tenant-sign-in` in `GET /v1/meta`. The App
    Store app then asks the director to turn on `spec.store.signIn` with the

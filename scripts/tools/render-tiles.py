@@ -44,7 +44,6 @@ SVG_DATA_URI = re.compile(r"data:image/svg\+xml;base64,([A-Za-z0-9+/]+=*)")
 # The chart's components whose tile is a catalogue glyph, and which glyph.
 CHART_TILES = {
     "componentprofile-admin-console.yaml": "settings",
-    "componentprofile-app-store.yaml": "store",
 }
 
 # A tile's logo line in a profile: the key, then the data URI, on one line.

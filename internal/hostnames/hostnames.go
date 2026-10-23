@@ -38,6 +38,12 @@ type Reserved struct {
 	// Owner is the ComponentProfile the platform ships that answers there,
 	// or "" for a name nothing may take.
 	Owner string
+	// FromClusterCatalogue admits the owner from a catalogue of the cluster
+	// itself (origin cluster/<source>: the installer's default profiles, or
+	// one the cluster's administrators added), never from a tenant's own
+	// catalogue. For an owner the platform no longer ships: the App Store
+	// app comes from the store's catalogue.
+	FromClusterCatalogue bool
 	// Why is the one-line reason, as the documents state it.
 	Why string
 }
@@ -46,8 +52,9 @@ type Reserved struct {
 // tenant's domain whatever that is: <tenant>.<cluster>, the cluster's own
 // domain for the user tenant of a single-tenancy cluster, or a custom domain.
 //
-// Three are held by a component the platform ships and may be taken by that
-// component alone. The others are kept free: nothing answers on them, so
+// Three are held by a component and may be taken by that component alone:
+// the desktop and the admin console, which the platform ships, and the App
+// Store app, from the cluster's own catalogue. The others are kept free: nothing answers on them, so
 // that no app can stand where people expect the platform -- its former
 // address, or a name a sign-in or account page would have.
 //
@@ -60,7 +67,7 @@ type Reserved struct {
 var platformLabels = []Reserved{
 	{Label: "desktop", Owner: "desktop", Why: "the tenant's desktop"},
 	{Label: "admin", Owner: "admin-console", Why: "the tenant's administration console"},
-	{Label: "store", Owner: "app-store", Why: "the App Store app"},
+	{Label: "store", Owner: "app-store", FromClusterCatalogue: true, Why: "the App Store app"},
 	{Label: "console", Why: "the desktop's former address, which people may still type"},
 	{Label: gentianov1alpha1.PlatformTenantName, Why: "reads as the platform administrator's desktop, platform.<cluster>"},
 	{Label: "id", Why: "reads as the identity provider, id.<cluster>"},
@@ -171,6 +178,15 @@ func PlatformShipped(profile *gentianov1alpha1.ComponentProfile) bool {
 		strings.TrimSpace(profile.Annotations[profilebundle.Annotation]) == ""
 }
 
+// fromClusterCatalogue reports a profile materialised from a catalogue of the
+// cluster itself, as its recorded origin says: cluster/<source>. A tenant's
+// catalogue (tenant/<tenant>/<source>) is not one.
+func fromClusterCatalogue(profile *gentianov1alpha1.ComponentProfile) bool {
+	origin := strings.TrimSpace(profile.Annotations[profilebundle.OriginAnnotation])
+	return strings.HasPrefix(origin, profilebundle.ClusterOrigin("")) &&
+		strings.TrimSpace(profile.Annotations[profilebundle.Annotation]) != ""
+}
+
 // Zone is what the check has to know about where a component is published.
 type Zone struct {
 	// OnClusterDomain says the tenant's hosts are directly under the
@@ -229,7 +245,9 @@ func (r *Refusal) Message() string {
 // by its base on the base's host), which is that component's to answer for.
 //
 // A reserved platform name is admitted for one claimant: the profile the
-// platform ships for it, installed under its own name. The desktop may be at
+// platform ships for it, installed under its own name -- or, for a name whose
+// owner comes from the cluster's own catalogue (FromClusterCatalogue), that
+// profile from there. The desktop may be at
 // desktop and not at admin; and a profile called desktop that came from a
 // catalogue is not the desktop.
 func Check(component string, profile *gentianov1alpha1.ComponentProfile, zone Zone) *Refusal {
@@ -255,7 +273,8 @@ func Check(component string, profile *gentianov1alpha1.ComponentProfile, zone Zo
 			}
 		}
 		if reserved := match(platformLabels, label); reserved != nil {
-			own := shipped && reserved.Owner != "" && profile.Name == reserved.Owner && label == reserved.Label
+			admitted := shipped || (reserved.FromClusterCatalogue && fromClusterCatalogue(profile))
+			own := admitted && reserved.Owner != "" && profile.Name == reserved.Owner && label == reserved.Label
 			if !own {
 				return &Refusal{Exposure: e.Name, Label: label, Reserved: *reserved, domain: zone.Domain}
 			}

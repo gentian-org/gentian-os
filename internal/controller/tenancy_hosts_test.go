@@ -436,7 +436,8 @@ func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 			"desktop.enabled=true", "desktop.chart.version=0.1.0"),
 		"admin-console": renderShippedProfile(t, "componentprofile-admin-console.yaml",
 			"adminConsole.enabled=true", "adminConsole.chart.version=0.1.0"),
-		"app-store": shippedAppStoreProfile(t),
+		// From the cluster's own catalogue, as the installer places it.
+		"app-store": fromClusterCatalogue(shippedAppStoreProfile(t)),
 		"concierge": renderShippedProfile(t, "componentprofile-concierge.yaml",
 			"concierge.enabled=true", "concierge.chart.version=0.1.0"),
 	}
@@ -445,7 +446,7 @@ func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 		if r.Owner != "" {
 			held[r.Owner] = r.Label
 			if shipped[r.Owner] == nil {
-				t.Errorf("%s is held by %s, which the chart does not ship", r.Label, r.Owner)
+				t.Errorf("%s is held by %s, which is not among the platform's components", r.Label, r.Owner)
 			}
 		}
 	}
@@ -453,7 +454,7 @@ func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 		if profile.Name != name {
 			t.Fatalf("the chart's %s is named %s", name, profile.Name)
 		}
-		if !hostnames.PlatformShipped(profile) {
+		if name != "app-store" && !hostnames.PlatformShipped(profile) {
 			t.Errorf("the chart renders %s with a catalogue's annotations: %v", name, profile.Annotations)
 		}
 		// Every label it asks for is the one the list gives it.
@@ -755,4 +756,15 @@ func TestTheReconcilerHoldsATenantTheModeRefusesAndRemovesNothing(t *testing.T) 
 	if _, err := multi.reconcileTenantStagePreflight(ctx, state); err != nil || state.blocked {
 		t.Fatalf("multi held a tenant: blocked=%v err=%v", state.blocked, err)
 	}
+}
+
+// fromClusterCatalogue is a profile as the installer or the director
+// materialises it from a catalogue of the cluster: its origin and its bundle.
+func fromClusterCatalogue(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ComponentProfile {
+	p = p.DeepCopy()
+	p.Annotations = map[string]string{
+		profilebundle.OriginAnnotation: "cluster/aluvian",
+		profilebundle.Annotation:       "bundle",
+	}
+	return p
 }

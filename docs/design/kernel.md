@@ -79,7 +79,7 @@ apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Redis / Memcached** | Page cache, `tmpfs` | `cache` requirement |
 | Edge routing | **Gateway API** (Envoy Gateway) | Network stack + firewall | TLS termination, HTTPRoute, tenant wildcards |
-| Window manager | The **desktop** and the **administration console**, components installed for every tenant, and the **App Store app** where a store is offered ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell, Start menu, Settings | Tiles (`spec.expose[].tile`) |
+| Window manager | The **desktop** and the **administration console**, components installed for every tenant, ([gentian-ui](https://github.com/gentian-org/gentian-ui)), and the **App Store app** where a store is offered (from the store's catalogue, implementing [store-contract.md](store-contract.md)) | Desktop shell, Start menu, Settings | Tiles (`spec.expose[].tile`) |
 | Secret store | **OpenBao** | Keychain | Underlying store for ESO-backed Secrets |
 
 **Not kernel** — installed from a catalogue; what a tenant has installed
