@@ -595,12 +595,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// the feature on, from the addon list the tenant carries. This
 		// component exists so the addon is a first-class thing that can be
 		// named, granted privileges, and given a tile.
-		ready, message, err := r.addonBaseReady(ctx, comp, profile)
+		ready, reason, message, err := r.addonBaseReady(ctx, comp, profile)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if !ready {
-			return r.status(ctx, comp, metav1.ConditionFalse, "AddonBaseNotReady", message, componentRequeue)
+			return r.status(ctx, comp, metav1.ConditionFalse, reason, message, componentRequeue)
 		}
 		releaseMessage = message
 
@@ -758,26 +758,36 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // looking outside the namespace is what makes that true rather than intended.
 func (r *ComponentReconciler) addonBaseReady(
 	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
-) (bool, string, error) {
+) (bool, string, string, error) {
 	base := profile.Spec.Package.Addon.Of
 	if base == "" {
-		return false, "package.addon names no base to activate into", nil
+		return false, "AddonBaseNotReady", "package.addon names no base to activate into", nil
 	}
 	installed := &gentianov1alpha1.Component{}
 	err := r.Get(ctx, types.NamespacedName{Name: base, Namespace: comp.Namespace}, installed)
 	if errors.IsNotFound(err) {
-		return false, fmt.Sprintf("%s is not installed in this tenant, and this activates inside it", base), nil
+		return false, "AddonBaseNotReady", fmt.Sprintf("%s is not installed in this tenant, and this activates inside it", base), nil
 	}
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
+	}
+	// What activates an addon is the base's chart, from the addons the base
+	// lists. One the base does not list -- installed as an app of its own --
+	// is switched on by nothing, and saying "activated" for it hid exactly
+	// that: Nextcloud Office reported Ready while Nextcloud never enabled it
+	// and Collabora never started.
+	if !slices.Contains(installed.Spec.Addons, comp.Name) {
+		return false, "AddonNotSelected", fmt.Sprintf(
+			"%s does not list this addon, so nothing switches it on: it is installed as an app of its own. "+
+				"Switch it on among %s's addons and remove this app", base, base), nil
 	}
 	for i := range installed.Status.Conditions {
 		c := &installed.Status.Conditions[i]
 		if c.Type == conditionComponentReady && c.Status == metav1.ConditionTrue {
-			return true, "activated inside " + base, nil
+			return true, "", "activated inside " + base, nil
 		}
 	}
-	return false, fmt.Sprintf("%s is installed but not ready yet", base), nil
+	return false, "AddonBaseNotReady", fmt.Sprintf("%s is installed but not ready yet", base), nil
 }
 
 // unverifiedAddon answers the first addon this component activates at a
