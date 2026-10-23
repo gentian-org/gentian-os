@@ -999,9 +999,12 @@ paths:
       operationId: prepareTenantSignIn
       summary: Prepare the sign-in through a tenant's own realm
       description: |
-        Open, and with no body (1.10, feature `registration`). The store
-        makes, in its realm, the identity provider `org-<tenantUid>` for the
-        realm of the tenant its usage statistics reports name by that id.
+        Open (1.10, feature `registration`). The body names the tenant's
+        address, the one its usage statistics reports give it. The store
+        checks that the latest report naming that address names it by this
+        id, and makes, in its realm, the identity provider `org-<tenantUid>`
+        for the tenant's realm. When no report names the tenant so, the
+        state becomes `refused`.
         The provider makes the store account at a person's first sign-in
         through it when no account has their address, with no page and no
         password of the store's, and links an account that has it once the
@@ -1012,6 +1015,20 @@ paths:
         Idempotent: asking again changes nothing. `202` with the state; the
         client asks `GET` until it is `ready`.
       security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantUrl]
+              properties:
+                tenantUrl:
+                  type: string
+                  description: The tenant's address, https://<host>, as the usage statistics report names it.
+                  pattern: "^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$"
+                  maxLength: 300
       responses:
         "202":
           description: Asked for; how it stands.
@@ -1025,8 +1042,8 @@ paths:
               examples:
                 pending:
                   value: {tenantUid: 0f8e7d6c-5b4a-4321-9876-0123456789ab, state: pending, registered: false}
-        "404":
-          $ref: "#/components/responses/UnknownTenant"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
         "429":
           $ref: "#/components/responses/RateLimited"
         "503":
@@ -1915,20 +1932,6 @@ components:
                 title: Not found
                 status: 404
                 detail: The store lists no app gentian/nextcloud-base-xx.
-    UnknownTenant:
-      description: No usage statistics report names a tenant of this id (1.10).
-      content:
-        application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-          examples:
-            unknown:
-              value:
-                type: urn:gentian:store:problem:unknown-tenant
-                code: unknown-tenant
-                title: The store knows no tenant of this id
-                status: 404
-                detail: The store has received no usage statistics report that names it. A cluster reports once a day.
     CompanyMissing:
       description: The account has said no company yet (`PUT /v1/account/company`).
       content:
@@ -3217,6 +3220,10 @@ components:
           type: string
           format: date-time
           description: When the status last changed.
+        seats:
+          type: integer
+          minimum: 1
+          description: How many seats it is for, where the acquisition named them (1.10).
         waitingFor:
           type: [string, "null"]
           description: |

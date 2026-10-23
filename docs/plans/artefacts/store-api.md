@@ -335,7 +335,7 @@ present. A type written `string \| null` is present and may be `null`.
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask a partner for support with an app: `202 received` |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant in the token, the reason if not, notices to show, and the account's role |
 | `GET /v1/tenant-sign-ins/{tenantUid}` | **open** | Whether the sign-in through the tenant's realm is ready (`none`, `pending`, `ready`, `refused`), and whether the tenant is registered (1.10) |
-| `PUT /v1/tenant-sign-ins/{tenantUid}` | **open** | Ask the store to prepare that sign-in: `202` with the same answer, `404 unknown-tenant` when no report names the id (1.10) |
+| `PUT /v1/tenant-sign-ins/{tenantUid}` | **open** | Ask the store to prepare that sign-in, naming the tenant's address (`tenantUrl`): `202` with the same answer; `refused` when no report names the tenant at that address by the id (1.10) |
 | `GET /v1/account/registration`, `PUT …` | signed in | The person's one-time registration: the terms accepted, optional company details (1.10) |
 | `GET /v1/tenant/access` | signed in | Who manages the tenant; for the holder, everybody else who does or asks to |
 | `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |

@@ -519,7 +519,7 @@ shows the registration for a tenant whose
 terms and privacy notice are linked, not shown, and the company's name,
 size, country, address and industry are each optional. On submit the app
 turns `spec.store.signIn` on through the director (`can_administer`),
-`PUT`s `/v1/tenant-sign-ins/{tenantUid}`, waits until it is `ready`, signs
+`PUT`s `/v1/tenant-sign-ins/{tenantUid}` with the tenant's address, waits until it is `ready`, signs
 in silently (`kc_idp_hint=org-<uid>`, `prompt=none`) — the first sign-in
 through the provider makes the store account from the person's identity in
 the tenant's realm, with no page — and then `PUT`s
