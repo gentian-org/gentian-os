@@ -149,23 +149,9 @@ apply() {
     info "Administration console chart: ${admin_console_chart_version}"
     concierge_chart_version="$(_d02_component_chart_version gentian-org/charts/concierge "0.1.0-$(gentian_ui_chart_branch)")" || return 1
     info "Concierge chart: ${concierge_chart_version}"
-    # The App Store app's chart, resolved the same way and pinned by the same
-    # render. Unlike the three above it is not something an install fails
-    # for: a tenant has the app only where the cluster offers an App Store,
-    # and a cluster that does not is a complete one. Unresolved, the profile
-    # keeps the version it has (_v5_keep_chart_version), or the branch's
-    # moving one on a cluster that never had it.
-    local app_store_chart_version=""
-    if app_store_chart_version="$(_d02_component_chart_version gentian-org/charts/app-store "0.1.0-$(gentian_ui_chart_branch)" 2>/dev/null)"; then
-        info "App Store chart: ${app_store_chart_version}"
-    else
-        app_store_chart_version=""
-        warn "App Store chart 0.1.0-$(gentian_ui_chart_branch) names no immutable version on ghcr.io; its profile keeps the version it has. The install continues."
-    fi
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
         ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
         CONCIERGE_CHART_VERSION="${concierge_chart_version}" \
-        APP_STORE_CHART_VERSION="${app_store_chart_version}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 
@@ -221,7 +207,9 @@ apply() {
     _d03_report_app_store
 }
 
-# _d03_report_app_store — one line on whether tenants get the App Store app.
+# _d03_report_app_store — one line on whether tenants get the App Store app,
+# which comes from the store's catalogue (GENTIAN_DEFAULT_PROFILES) and is
+# placed while the cluster offers an App Store.
 #
 # The verdict is the operator's, read where it writes it for the usher: beside
 # the tiles (appStore in the gentian-tiles ConfigMap). The operator places the
@@ -236,7 +224,7 @@ _d03_report_app_store() {
         -o jsonpath='{.data.tiles\.yaml}' 2>/dev/null | grep -A 2 '^appStore:' || true)"
     case "${verdict}" in
         *"offered: true"*)
-            info "App Store app: placed on every tenant but the platform's, at store.<the tenant's domain>, for the people who may install apps." ;;
+            info "App Store app: offered -- every tenant but the platform's gets it from the catalogue's app-store profile, at store.<the tenant's domain>, for the people who may install apps." ;;
         *"reason: usage-statistics-disabled"*)
             info "App Store app: not placed -- usage statistics are off on this cluster." ;;
         *"reason: no-store-configured"*)

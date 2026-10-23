@@ -27,6 +27,18 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-23** (1.10, additive: a 1.9 client is answered as before)
+
+1. **`features` may include `registration`**: a tenant's administrator
+   registers once with the store, and their first sign-in makes the store
+   account through the tenant's own realm (§3, *Registration*).
+2. **`GET` and `PUT /v1/tenant-sign-ins/{tenantUid}`**, open: whether the
+   sign-in through that tenant's realm is ready and whether the tenant is
+   registered, and asking the store to prepare it.
+3. **`GET` and `PUT /v1/account/registration`**, signed in: the person's
+   registration, accepting the terms and privacy notice (`links.terms`,
+   `links.privacy` of `GET /v1/meta`), with optional company details.
+
 **2026-10-23** (1.9, additive: a 1.8 client is answered as before)
 
 1. **`POST /v1/acquisitions` may carry `seats`**: how many people the app
@@ -322,6 +334,9 @@ present. A type written `string \| null` is present and may be `null`.
 | `GET /v1/apps/{catalogue}/{app}/reports` | **open** | Evaluations and reports about the app |
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask a partner for support with an app: `202 received` |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant in the token, the reason if not, notices to show, and the account's role |
+| `GET /v1/tenant-sign-ins/{tenantUid}` | **open** | Whether the sign-in through the tenant's realm is ready (`none`, `pending`, `ready`, `refused`), and whether the tenant is registered (1.10) |
+| `PUT /v1/tenant-sign-ins/{tenantUid}` | **open** | Ask the store to prepare that sign-in: `202` with the same answer, `404 unknown-tenant` when no report names the id (1.10) |
+| `GET /v1/account/registration`, `PUT …` | signed in | The person's one-time registration: the terms accepted, optional company details (1.10) |
 | `GET /v1/tenant/access` | signed in | Who manages the tenant; for the holder, everybody else who does or asks to |
 | `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired; filter `status` |
@@ -436,6 +451,31 @@ store's to decide from its own records, and `GET /v1/tenant/access` says
 what it decided. A scope in a token would only restate a decision taken
 elsewhere, and could not follow it when the holder approves another account
 an hour after that account signed in.
+
+### Registration (1.10)
+
+A store with the feature `registration` asks a tenant's administrator to
+register once, and makes their store account through the tenant's own realm,
+so they never have a password of the store's. The App Store app, for a
+tenant whose `GET /v1/tenant-sign-ins/{tenantUid}` says `registered: false`:
+
+1. shows the registration: the store's terms and privacy notice **linked**
+   (`links.terms`, `links.privacy` of `GET /v1/meta`), and the company's
+   name, size, country, address and industry, every one optional;
+2. on submit asks the director to turn the tenant's side on
+   (`spec.store.signIn`, the tenant's administrators may), and
+   `PUT /v1/tenant-sign-ins/{tenantUid}`;
+3. asks `GET` until `state` is `ready`;
+4. signs in silently: `kc_idp_hint=org-<tenantUid>` and `prompt=none`. The
+   first sign-in through the provider makes the store account from the
+   person's identity in the tenant's realm, with no page; an account that
+   already has their address is linked once, by signing in to it;
+5. `PUT /v1/account/registration` with what the person gave.
+
+From then on every sign-in is silent. The tenant id names nobody, and the
+store learns no more than the person's identity in the tenant's realm.
+An app that only needs to know whether the tenant registered asks
+`GET /v1/tenant-sign-ins/{tenantUid}`, without signing in.
 
 ### GET /v1/meta
 

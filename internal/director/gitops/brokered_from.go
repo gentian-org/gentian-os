@@ -49,6 +49,10 @@ type BrokeredFrom struct {
 	// provider links an account that exists and makes none (Tenant
 	// spec.brokeredFrom[].linkExisting).
 	LinkExisting bool `json:"linkExisting,omitempty"`
+	// CreateAccounts, with LinkExisting: the provider makes the account when
+	// none has the person's address (Tenant
+	// spec.brokeredFrom[].createAccounts).
+	CreateAccounts bool `json:"createAccounts,omitempty"`
 }
 
 // ErrInvalidBrokeredFrom is an entry that cannot be one.
@@ -91,6 +95,9 @@ func ValidBrokeredFrom(b BrokeredFrom) error {
 	cluster, ok := strings.CutPrefix(host, "id.")
 	if !ok || cluster == "" {
 		return fmt.Errorf("%w: issuer %q is not at id.<the cluster's domain>", ErrInvalidBrokeredFrom, b.Issuer)
+	}
+	if b.CreateAccounts && !b.LinkExisting {
+		return fmt.Errorf("%w: createAccounts is for an entry that links existing accounts", ErrInvalidBrokeredFrom)
 	}
 	if b.LinkExisting {
 		// No organization, so no domain whose addresses it would claim.
@@ -235,7 +242,8 @@ func renderBrokeredFrom(tenant string, list []BrokeredFrom) string {
 	b.WriteString("# the organization and an identity provider, org-<name>, that authenticates\n")
 	b.WriteString("# by a JWT this realm signs and gives nobody a group or a role. An entry\n")
 	b.WriteString("# with linkExisting is no organization: its provider links an account\n")
-	b.WriteString("# that exists here, once, and makes none.\n")
+	b.WriteString("# that exists here, once, and makes none -- or, with createAccounts, makes\n")
+	b.WriteString("# one when none has the person's address.\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: Tenant\n")
 	b.WriteString("metadata:\n")
@@ -249,6 +257,9 @@ func renderBrokeredFrom(tenant string, list []BrokeredFrom) string {
 		b.WriteString("      clientID: " + strconv.Quote(e.ClientID) + "\n")
 		if e.LinkExisting {
 			b.WriteString("      linkExisting: true\n")
+			if e.CreateAccounts {
+				b.WriteString("      createAccounts: true\n")
+			}
 		} else {
 			b.WriteString("      domain: " + e.Domain + "\n")
 		}

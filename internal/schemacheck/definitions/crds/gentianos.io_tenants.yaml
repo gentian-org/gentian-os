@@ -338,6 +338,14 @@ spec:
                       minLength: 1
                       pattern: ^[A-Za-z0-9._-]+$
                       type: string
+                    createAccounts:
+                      description: |-
+                        CreateAccounts, with LinkExisting, makes the account here at a
+                        person's first sign-in through the entry when no account has their
+                        address: no page, no password of this realm. One that has it is
+                        linked as LinkExisting says, by signing in to it once. The store's
+                        registration through a tenant's own realm (store-contract.md §6.1).
+                      type: boolean
                     displayName:
                       description: DisplayName is the organization's name as people
                         read it.
@@ -389,6 +397,9 @@ spec:
                       existing accounts makes no organization and names none
                     rule: 'has(self.linkExisting) && self.linkExisting ? !has(self.domain)
                       : has(self.domain)'
+                  - message: createAccounts is for an entry that links existing accounts
+                    rule: '!has(self.createAccounts) || !self.createAccounts || (has(self.linkExisting)
+                      && self.linkExisting)'
                 maxItems: 1000
                 type: array
                 x-kubernetes-list-map-keys:

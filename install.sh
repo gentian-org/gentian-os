@@ -219,6 +219,14 @@ Other options:
                         is sent and the App Store is not offered. The same as
                         GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
                         where to put it so a later run does not turn it back on
+  --no-extra-services   leave out the store's extra services, which a cluster
+                        otherwise gets from the store's catalogue: the
+                        Operations Console (platform tenant), the App Store app
+                        and the Subscription Center (every other tenant, new
+                        ones included, while the cluster offers a store).
+                        Recorded on the Cluster claim (spec.catalogue.
+                        extraServices: false), so a later run keeps them out;
+                        GENTIAN_NO_EXTRA_SERVICES=0 brings them back
   --no-cluster-infra    do not issue the kernel wildcard certificate (C-03).
                         That is all it leaves out: cert-manager, CNPG and
                         Reloader are installed as always. The same as
@@ -300,6 +308,7 @@ parse_driver_args() {
             --rotate-break-glass-key) GENTIAN_ROTATE_BREAK_GLASS="rotate" ;;
             --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
             --no-usage-statistics) export GENTIAN_NO_USAGE_STATISTICS="1" ;;
+            --no-extra-services) export GENTIAN_NO_EXTRA_SERVICES="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1"; GENTIAN_PURGE_CLUSTER_INFRA=1 ;;
             --config-file)

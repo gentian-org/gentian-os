@@ -126,6 +126,7 @@ type TenantStoreSignIn struct {
 // The outside realm is a Keycloak realm, such as a Gentian tenant's:
 // its endpoints are read from the issuer by Keycloak's own layout.
 // +kubebuilder:validation:XValidation:rule="has(self.linkExisting) && self.linkExisting ? !has(self.domain) : has(self.domain)",message="an organization names its domain; an entry that links existing accounts makes no organization and names none"
+// +kubebuilder:validation:XValidation:rule="!has(self.createAccounts) || !self.createAccounts || (has(self.linkExisting) && self.linkExisting)",message="createAccounts is for an entry that links existing accounts"
 type TenantBrokeredFrom struct {
 	// Name says whose realm it is; the organization's alias, and the identity
 	// provider is org-<name>.
@@ -174,6 +175,14 @@ type TenantBrokeredFrom struct {
 	// tenant's own realm (store-contract.md §6.1).
 	// +optional
 	LinkExisting bool `json:"linkExisting,omitempty"`
+
+	// CreateAccounts, with LinkExisting, makes the account here at a
+	// person's first sign-in through the entry when no account has their
+	// address: no page, no password of this realm. One that has it is
+	// linked as LinkExisting says, by signing in to it once. The store's
+	// registration through a tenant's own realm (store-contract.md §6.1).
+	// +optional
+	CreateAccounts bool `json:"createAccounts,omitempty"`
 }
 
 // TenantComponentRef names a component of a tenant by the profile it runs.

@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.9"
+  version: "1.10"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -957,6 +957,142 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+  /v1/tenant-sign-ins/{tenantUid}:
+    parameters:
+      - $ref: "#/components/parameters/TenantUid"
+    get:
+      tags: [tenant]
+      operationId: getTenantSignIn
+      summary: Whether the sign-in through a tenant's own realm is ready, and whether the tenant is registered
+      description: |
+        An open read (1.10, feature `registration`): it takes no token and
+        ignores one, and is never cached. `state` is `none` until the
+        sign-in was asked for, `pending` while the store prepares it,
+        `ready` once the identity provider `org-<tenantUid>` exists, and
+        `refused` when it could not be made. `registered` says whether an
+        account that manages the tenant has registered
+        (`PUT /v1/account/registration`); an app that needs a registered
+        tenant asks this without a sign-in.
+
+        The tenant id is the report's `tenants[].uid`: random, never derived
+        from a name, and known only to the tenant's cluster and the store.
+      security: []
+      responses:
+        "200":
+          description: How the tenant's sign-in stands.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantSignIn"
+              examples:
+                ready:
+                  value: {tenantUid: 0f8e7d6c-5b4a-4321-9876-0123456789ab, state: ready, registered: true}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      tags: [tenant]
+      operationId: prepareTenantSignIn
+      summary: Prepare the sign-in through a tenant's own realm
+      description: |
+        Open, and with no body (1.10, feature `registration`). The store
+        makes, in its realm, the identity provider `org-<tenantUid>` for the
+        realm of the tenant its usage statistics reports name by that id.
+        The provider makes the store account at a person's first sign-in
+        through it when no account has their address, with no page and no
+        password of the store's, and links an account that has it once the
+        person signs in to it. It trusts the tenant's realm only, and only
+        once the tenant's administrator turned on the tenant's side
+        (`spec.store.signIn`): until then nobody can sign in through it.
+
+        Idempotent: asking again changes nothing. `202` with the state; the
+        client asks `GET` until it is `ready`.
+      security: []
+      responses:
+        "202":
+          description: Asked for; how it stands.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantSignIn"
+              examples:
+                pending:
+                  value: {tenantUid: 0f8e7d6c-5b4a-4321-9876-0123456789ab, state: pending, registered: false}
+        "404":
+          $ref: "#/components/responses/UnknownTenant"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/account/registration:
+    get:
+      tags: [account]
+      operationId: getRegistration
+      summary: Whether the signed-in person has registered
+      description: |
+        1.10, feature `registration`. `registered: false` until the person
+        accepted the terms (`PUT`). The company details are what they gave,
+        every one optional.
+      security:
+        - storeToken: []
+      responses:
+        "200":
+          description: The registration.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registration"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    put:
+      tags: [account]
+      operationId: putRegistration
+      summary: Register, once
+      description: |
+        The one-time registration of the signed-in person with the store:
+        they accept the store's terms and privacy notice (`links.terms`,
+        `links.privacy` of `GET /v1/meta`, which the client links and does
+        not show), and may say which company they are with. Every company
+        field is optional. Asking again updates the details and keeps the
+        first `registeredAt`. The tenant in the token is registered with
+        the account where the account manages it.
+      security:
+        - storeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationRequest"
+            examples:
+              minimal:
+                value: {acceptTerms: true}
+              company:
+                value: {acceptTerms: true, company: {name: Acme AG, size: 10-49, country: CH, industry: information-communication}}
+      responses:
+        "200":
+          description: Registered.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registration"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
   /v1/apps/{catalogue}/{app}/reports:
     parameters:
       - $ref: "#/components/parameters/Catalogue"
@@ -1589,6 +1725,14 @@ components:
       schema:
         type: string
         pattern: "^[A-Za-z0-9._:@-]{1,256}$"
+    TenantUid:
+      name: tenantUid
+      in: path
+      required: true
+      description: A tenant's unique id, as the usage statistics report names it (`tenants[].uid`).
+      schema:
+        type: string
+        pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
     AcceptLanguage:
       name: Accept-Language
       in: header
@@ -1771,6 +1915,20 @@ components:
                 title: Not found
                 status: 404
                 detail: The store lists no app gentian/nextcloud-base-xx.
+    UnknownTenant:
+      description: No usage statistics report names a tenant of this id (1.10).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            unknown:
+              value:
+                type: urn:gentian:store:problem:unknown-tenant
+                code: unknown-tenant
+                title: The store knows no tenant of this id
+                status: 404
+                detail: The store has received no usage statistics report that names it. A cluster reports once a day.
     CompanyMissing:
       description: The account has said no company yet (`PUT /v1/account/company`).
       content:
@@ -2011,6 +2169,12 @@ components:
             account, the store's realm signs the person in through the
             tenant's own realm (`signIn` on `GET /v1/tenant`); the client
             may ask with `kc_idp_hint=org-<tenant uid>` and `prompt=none`.
+            `registration` (1.10): a tenant's administrator registers once
+            (`/v1/account/registration`), and the store prepares the
+            sign-in through a tenant's own realm when asked
+            (`PUT /v1/tenant-sign-ins/{tenantUid}`), which makes the store
+            account at the first sign-in. The registration links
+            `links.terms` and `links.privacy`.
           items:
             type: string
         catalogues:
@@ -2704,6 +2868,59 @@ components:
           $ref: "#/components/schemas/CompanySize"
         industry:
           $ref: "#/components/schemas/Industry"
+    TenantSignIn:
+      type: object
+      required: [tenantUid, state, registered]
+      properties:
+        tenantUid:
+          type: string
+        state:
+          type: string
+          enum: [none, pending, ready, refused]
+        registered:
+          type: boolean
+    RegistrationCompany:
+      type: object
+      description: What a person registering says of their company. Every field optional.
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: Plain text.
+          minLength: 1
+          maxLength: 120
+        size:
+          $ref: "#/components/schemas/CompanySize"
+        country:
+          $ref: "#/components/schemas/CountryCode"
+        address:
+          type: string
+          description: The postal address, as one plain text.
+          maxLength: 300
+        industry:
+          $ref: "#/components/schemas/Industry"
+    RegistrationRequest:
+      type: object
+      required: [acceptTerms]
+      additionalProperties: false
+      properties:
+        acceptTerms:
+          type: boolean
+          const: true
+          description: The person accepts the store's terms and privacy notice.
+        company:
+          $ref: "#/components/schemas/RegistrationCompany"
+    Registration:
+      type: object
+      required: [registered]
+      properties:
+        registered:
+          type: boolean
+        registeredAt:
+          type: string
+          format: date-time
+        company:
+          $ref: "#/components/schemas/RegistrationCompany"
     ReviewScores:
       type: object
       description: |

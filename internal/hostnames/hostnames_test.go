@@ -321,3 +321,31 @@ func TestTheDocumentsCarryTheList(t *testing.T) {
 		}
 	}
 }
+
+// The App Store app's name is held for it as it comes from the cluster's own
+// catalogue, and from no tenant's; the desktop's and the console's only as
+// the platform ships them.
+func TestTheStoreNameIsAdmittedFromTheClustersCatalogueOnly(t *testing.T) {
+	from := func(name, label, origin string) *gentianov1alpha1.ComponentProfile {
+		p := shipped(name, label)
+		p.Annotations = map[string]string{profilebundle.OriginAnnotation: origin, profilebundle.Annotation: "bundle"}
+		return p
+	}
+	for _, zone := range []Zone{ownDomain, custom, onCluster} {
+		if r := Check("app-store", from("app-store", "store", "cluster/aluvian"), zone); r != nil {
+			t.Errorf("the App Store app from the cluster's catalogue was refused: %s", r.Message())
+		}
+		if Check("app-store", from("app-store", "store", "tenant/acme/ours"), zone) == nil {
+			t.Error("an app-store from a tenant's catalogue was admitted to store")
+		}
+		if Check("app-store", app("app-store", "store"), zone) == nil {
+			t.Error("an app-store with an origin and no bundle was admitted to store")
+		}
+		if Check("desktop", from("desktop", "desktop", "cluster/aluvian"), zone) == nil {
+			t.Error("a desktop from a catalogue was admitted to desktop")
+		}
+		if Check("app-store", from("app-store", "admin", "cluster/aluvian"), zone) == nil {
+			t.Error("the App Store app was admitted to admin")
+		}
+	}
+}

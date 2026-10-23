@@ -483,8 +483,15 @@ GENTIAN_USAGE_STATISTICS_URL="${GENTIAN_USAGE_STATISTICS_URL:-}"
 # The profiles a vanilla installation materialises for every tenant: https
 # addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
 # comma separated, each optionally pinned with @sha256:<digest>. Unset means
-# the Operations Console from the store's catalogue, at the digest that
+# the store's extra services from its catalogue -- the Operations Console,
+# the App Store app and the Subscription Center -- at the digests that
 # catalogue's index lists; empty means none.
+#
+# --no-extra-services (GENTIAN_NO_EXTRA_SERVICES=1) leaves those three out,
+# and the Cluster claim records it (spec.catalogue.extraServices: false), so a
+# later run without the flag keeps them out; 0 turns them back on. Unset says
+# nothing either way (gentian_extra_services_enabled).
+GENTIAN_NO_EXTRA_SERVICES="${GENTIAN_NO_EXTRA_SERVICES:-}"
 # Operator-managed env files (config + secrets). These are optional, but when
 # present they are sourced automatically before prompting so installs can be
 # fully declarative and non-interactive.
@@ -2527,6 +2534,29 @@ gentian_usage_statistics_enabled() {
     before="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
         -o jsonpath='{.spec.sources[0].helm.valuesObject.licenceReport.enabled}' 2>/dev/null || true)"
     if [[ "${have}" == "false" || ( -z "${have}" && "${before}" == "false" ) ]]; then
+        echo false
+    else
+        echo true
+    fi
+}
+
+# =============================================================================
+# gentian_extra_services_enabled [claim file] — "true" or "false": does this
+# cluster get the store's extra services (the Operations Console, the App
+# Store app, the Subscription Center) by default?
+#
+# --no-extra-services (GENTIAN_NO_EXTRA_SERVICES=1) says no and
+# GENTIAN_NO_EXTRA_SERVICES=0 says yes. A run that says neither keeps what
+# the Cluster claim records: spec.catalogue.extraServices: false is a
+# decision somebody made, and a later run without the flag must not undo it.
+# =============================================================================
+gentian_extra_services_enabled() {
+    local claim="${1:-}"
+    case "${GENTIAN_NO_EXTRA_SERVICES:-}" in
+        1) echo false; return 0 ;;
+        0) echo true; return 0 ;;
+    esac
+    if [[ -n "${claim}" && -f "${claim}" ]] && grep -qE '^    extraServices: *false *(#.*)?$' "${claim}"; then
         echo false
     else
         echo true

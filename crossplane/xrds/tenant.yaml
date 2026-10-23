@@ -167,6 +167,12 @@ spec:
                           No organization and no domain: the provider links a
                           person to an account that exists here, once, and
                           makes none; it forwards prompt=none.
+                      createAccounts:
+                        type: boolean
+                        description: >
+                          With linkExisting: the provider makes the account
+                          when none has the person's address, with no page,
+                          and links one that has it as linkExisting does.
                       name:
                         type: string
                       displayName:

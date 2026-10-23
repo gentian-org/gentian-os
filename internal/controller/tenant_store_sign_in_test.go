@@ -70,7 +70,8 @@ func TestStoreSignInProjectsOneIdentityOnlyClientKeyedByTheUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(xrd), "identityOnly:") || !strings.Contains(string(xrd), "linkExisting:") {
-		t.Error("crossplane/xrds/tenant.yaml does not declare identityOnly and linkExisting")
+	if !strings.Contains(string(xrd), "identityOnly:") || !strings.Contains(string(xrd), "linkExisting:") ||
+		!strings.Contains(string(xrd), "createAccounts:") {
+		t.Error("crossplane/xrds/tenant.yaml does not declare identityOnly, linkExisting and createAccounts")
 	}
 }
