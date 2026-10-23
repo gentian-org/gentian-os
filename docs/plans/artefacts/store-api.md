@@ -27,6 +27,16 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-23** (1.6, additive: a 1.5 client reads every answer as before)
+
+1. **An app summary may carry a `maturityScore`**, an integer from 0 to 10
+   or `null`, and **an `installations` count**: how many tenants the store
+   counts as having the entry. What each point of the score means, and
+   what is counted, is the store's to define and publish.
+2. **A detail may carry `customization`**: the grade and the supported
+   rungs of the customization ladder, as the entry's profile declares them.
+3. **A link may be `rel: video`**: a tutorial or demonstration video.
+
 **2026-10-21** (1.5, additive: a 1.4 client reads every answer as before)
 
 1. **`GET /v1/meta` may list `catalogues`**: the catalogue sources the
@@ -573,7 +583,7 @@ fails them, and ends a `manager`'s management.
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `rel` | string | no | Open: `homepage`, `documentation`, `source`, `support`, `license`, `privacy`, `terms`, `subscription` |
+| `rel` | string | no | Open: `homepage`, `documentation`, `source`, `support`, `license`, `privacy`, `terms`, `subscription`, `donate`, `video` (1.6: a tutorial or demonstration video) |
 | `label` | string ≤ 80 \| null | no | What to call it |
 | `url` | URL | yes | Opened in a separate window |
 
@@ -640,7 +650,9 @@ pages of one listing.
       "acquired": false,                     // ONLY with a token: for the tenant in it. Absent from an anonymous answer
       "rating": {"count": 2, "average": 4.5,
                  "distribution": {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}},
-      "addonCount": 1                        // optional, 1.4: how many add-ons the detail names
+      "addonCount": 1,                       // optional, 1.4: how many add-ons the detail names
+      "maturityScore": 7,                    // optional, 1.6: 0-10 as the store defines it, or null
+      "installations": 120                   // optional, 1.6: how many tenants the store counts
     }
   ],
   "nextCursor": null
@@ -666,6 +678,8 @@ pages of one listing.
 | `acquired` | boolean | no | Whether the tenant in the token has a `confirmed` acquisition of this coordinate. Present only on an answer to a request that carried a valid token of a tenant the store serves; absent from every anonymous answer. The app never depends on it: `GET /v1/acquisitions` says the same |
 | `rating` | Review summary \| null | no | `null` when the store carries no reviews |
 | `addonCount` | integer ≥ 0 | no | How many add-ons the entry's detail names in `addons`. A client that needs them reads the detail. Added in 1.4 |
+| `maturityScore` | integer 0–10 \| null | no | How mature the store judges the entry. What each point means is the store's to define and publish; a client shows the number and does not interpret it. `null` or absent: not scored. Added in 1.6 |
+| `installations` | integer ≥ 0 | no | How many tenants the store counts as having the entry; what it counts is the store's to say. Added in 1.6 |
 
 **Price** — the **list price**: what the store asks of anybody, the same with a
 token and without. Shown, never computed with. What a tenant is charged — a
@@ -724,7 +738,8 @@ Everything in the summary, and:
      "priceHint": "On request",
      "contactUrl": "https://integrations.example/contact",
      "requestable": true}
-  ]
+  ],
+  "customization": {"grade": "A", "rungs": ["L0", "L1", "L3", "L4"]}   // optional, 1.6
 }
 ```
 
@@ -738,6 +753,7 @@ Everything in the summary, and:
 | `links` | Link[] | yes | |
 | `license` | `{spdx, name, url}` \| null | yes | The license the app is distributed under. `spdx` and `url` may be `null` |
 | `support` | SupportOffer[] | no | The partners that offer support, in the order to show them, in the language of the request. Absent or empty when none. Added in 1.3 |
+| `customization` | `{grade, rungs}` | no | How far the entry can be customized, as its profile declares it: `grade` `A`–`D` or `unknown`, `rungs` the supported rungs of the customization ladder (`L0`–`L6`), lowest first. Added in 1.6 |
 
 `?country=` (ISO 3166-1 alpha-2, 1.3) narrows `support` to the offers that
 cover that country, worldwide ones among them. Without it, an anonymous
