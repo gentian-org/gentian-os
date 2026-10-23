@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.5"
+  version: "1.6"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -613,6 +613,8 @@ paths:
                           average: 4.5
                           distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
                         addonCount: 1
+                        maturityScore: 7
+                        installations: 120
                       - coordinate: gentian/xwiki-ce
                         family: xwiki
                         name: XWiki
@@ -2216,7 +2218,8 @@ components:
             address, for a value it does not know. Values: `homepage`,
             `documentation`, `source`, `support`, `license`, `privacy`,
             `terms`, `subscription`, `donate` -- where to give money to
-            the people who build the app, on an entry that is not sold.
+            the people who build the app, on an entry that is not sold --
+            and `video` (1.6), a tutorial or demonstration video.
         label:
           type: [string, "null"]
           description: What to call it. Plain text.
@@ -2366,6 +2369,24 @@ components:
           type: integer
           minimum: 0
           description: How many add-ons the entry's detail names in `addons`. Optional; a client that needs them reads the detail. Added in 1.4.
+        maturityScore:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 10
+          description: |
+            How mature the store judges the entry, 0 (least) to 10 (most).
+            What each point means is the store's to define and to publish
+            beside its listings; a client shows the number and does not
+            interpret it. `null` or absent: the store has not scored the
+            entry. Optional; added in 1.6.
+        installations:
+          type: integer
+          minimum: 0
+          description: |
+            How many tenants the store counts as having the entry. What it
+            counts -- confirmed acquisitions, installs it is told of -- is
+            the store's to say. Absent when the store does not say. Optional;
+            added in 1.6.
     AppDetail:
       allOf:
         - $ref: "#/components/schemas/AppSummary"
@@ -2420,6 +2441,28 @@ components:
                 none. Added in 1.3, with the feature `support`.
               items:
                 $ref: "#/components/schemas/SupportOffer"
+            customization:
+              $ref: "#/components/schemas/CustomizationSummary"
+    CustomizationSummary:
+      type: object
+      description: |
+        How far the entry can be customized, as its profile declares it
+        (`spec.customization` of the ComponentProfile): the grade and the
+        rungs of the customization ladder it supports. A description, read
+        from the profile as published; the cluster reads the profile
+        itself. Optional; added in 1.6.
+      required: [grade, rungs]
+      properties:
+        grade:
+          type: string
+          enum: [A, B, C, D, unknown]
+          description: The profile's customization grade; `unknown` when the profile states none.
+        rungs:
+          type: array
+          description: The rungs the profile lists as supported, lowest first. Empty when it lists none.
+          items:
+            type: string
+            enum: [L0, L1, L2, L3, L4, L5, L6]
     Screenshot:
       type: object
       required: [url, contentType]
@@ -3298,6 +3341,8 @@ components:
           average: 4.5
           distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
         addonCount: 1
+        maturityScore: 7
+        installations: 120
         description: |
           Nextcloud keeps a team's files, calendars and contacts in one place.
 
@@ -3348,6 +3393,8 @@ components:
         links:
           - {rel: homepage, label: null, url: "https://publisher.example"}
           - {rel: documentation, label: Administration manual, url: "https://publisher.example/docs"}
+          - {rel: source, label: null, url: "https://git.publisher.example/nextcloud"}
+          - {rel: video, label: Getting started, url: "https://www.youtube.com/watch?v=example"}
         license:
           spdx: null
           name: Example Publisher Enterprise License
@@ -3370,6 +3417,9 @@ components:
             priceHint: On request
             contactUrl: https://integrations.example/contact
             requestable: true
+        customization:
+          grade: A
+          rungs: [L0, L1, L3, L4]
     Confirmation:
       value:
         coordinate: gentian/nextcloud-base-ee
