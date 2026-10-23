@@ -181,7 +181,7 @@ bundle that needs it is published ([install-reference.md §4](install-reference.
 entries:
 - name: acme-notes          # the profile's metadata.name, and the file name
   version: 1.0.0            # optional; shown in listings
-  edition: pe               # ce, pe, me or ee; absent means ce
+  edition: ie               # ce, me, ie, pe or ee; absent means ce
   digest: sha256:75b75bc45c9d3266a4ffd4eb78d286662bd3bfd870d50d9a9636c0f6b09d74be
   trustTier: experimental   # optional; repeats the profile's spec.trustTier
 ```
@@ -189,8 +189,8 @@ entries:
 - **`digest` is the sha256 of the bytes of `profiles/<name>.yaml` exactly as served** — the whole
   bundle, the profile and its companions — written `sha256:<64 lower-case hex characters>`.
   `sha256sum profiles/acme-notes.yaml` gives the number.
-- A cluster lists the **`ce`** and **`pe`** entries. `pe` (private edition) is the one for your own
-  apps; `me` and `ee` entries are counted and left to the App Store.
+- A cluster lists the **`ce`**, **`me`** and **`ie`** entries. `ie` (internal edition) is the one
+  for your own apps; `pe` and `ee` (proprietary) entries are counted and left to the App Store.
 - An entry without a valid digest is listed and cannot be installed from the listing: there is
   nothing to pin the install to.
 - The index is at most 1 MiB. The director keeps a fetched index for five minutes.
@@ -236,8 +236,8 @@ How a catalogue is produced, with gentian-apps as the example:
    holding the listed files — ordered by kind and then by name. The same tree therefore always
    gives the same bytes. A profile with no companions is published byte for byte as its
    `profile.yaml`. The script then takes the sha256 of the assembled file and writes
-   `dist/catalogue/index.yaml`. The edition is the `edition:` of `listing.yaml`, else the suffix of
-   the name (`-ce`, `-pe`, `-me`, `-ee`), else `ce`.
+   `dist/catalogue/index.yaml`. The edition is the profile's `gentianos.io/profile-edition` label,
+   else the suffix of the name (`-ce`, `-me`, `-ie`, `-pe`, `-ee`), else `ce`.
    It holds every bundle to the rules of §2 and exits non-zero when one breaks them: a profile
    without a name, two profiles with the same name, a kind other than `ComponentProfile`, a
    companion of a kind that is not allowed or not named after its profile, a pack or an object
@@ -275,6 +275,7 @@ metadata:
   name: acme-notes
   labels:
     gentianos.io/profile-name: acme-notes
+    gentianos.io/profile-edition: ie   # your own: an internal edition
 spec:
   classes: [app]
   launch: tile
@@ -296,12 +297,6 @@ spec:
         logo: data:image/png;base64,iVBORw0KGgo…   # a 128x128 PNG; see app-customization.md
         path: /
         relation: can_launch
-```
-
-`profiles/acme-notes/listing.yaml`, which marks it as your own edition:
-
-```yaml
-edition: pe
 ```
 
 **Name your profiles `<tenant>-<name>` or `<organisation>-<name>`.** ComponentProfiles are
@@ -588,7 +583,7 @@ python3 scripts/build-catalogue-source.py --out dist/catalogue
 ```
 
 ```
-Catalogue source at dist/catalogue: 1 entries (1 pe)
+Catalogue source at dist/catalogue: 1 entries (1 ie)
   a cluster browsing this source lists 1; the other 0 are the App Store's to present.
 ```
 

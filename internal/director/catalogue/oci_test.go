@@ -49,7 +49,7 @@ func ociCatalogue(t *testing.T, reg *dt.Registry, registries catalogue.Registrie
 
 func catalogueFiles() map[string]string {
 	return map[string]string{
-		"index.yaml": "entries:\n  - name: nextcloud-base-ce\n    version: \"1.0.0\"\n    edition: pe\n    digest: " +
+		"index.yaml": "entries:\n  - name: nextcloud-base-ce\n    version: \"1.0.0\"\n    edition: ie\n    digest: " +
 			digestOf(nextcloudProfile) + "\n",
 		"profiles/nextcloud-base-ce.yaml": nextcloudProfile,
 	}

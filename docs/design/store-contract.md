@@ -1109,8 +1109,8 @@ beside them: name, version, edition, trust tier, digest, and nothing else.
 The director fetches a bundle from the source named by a coordinate's
 catalogue and checks it against the digest (§4). It still answers a source's
 index — `GET /v1/tenants/{t}/catalogues` and
-`GET /v1/tenants/{t}/catalogues/{source}/entries`, under `can_view`, `ce` and
-`pe` entries only — so that the digest of an entry can be looked up without
+`GET /v1/tenants/{t}/catalogues/{source}/entries`, under `can_view`, `ce`,
+`me` and `ie` entries only — so that the digest of an entry can be looked up without
 a store; no screen lists it.
 
 **The default source.** A new claim names one source, `gentian`: the public

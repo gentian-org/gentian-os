@@ -91,56 +91,64 @@ const (
 // Edition identifies which edition of an app a profile packages, and with it
 // who stands behind the entry:
 //
-//	ce — community edition, as published by the upstream organisation
-//	pe — private edition: somebody's own profile, in their own catalogue
-//	me — maintained edition: ce plus active maintenance by Gentian
-//	ee — enterprise edition: commercially licensed, supported by its supplier
+//	ce — community edition: open source, as published by the upstream organisation
+//	me — maintained edition: the community edition's code, curated and
+//	     maintained by the catalogue's maintainer, who runs it itself
+//	ie — internal edition: somebody's own profile, in their own catalogue
+//	pe — proprietary edition: proprietary, free of charge
+//	ee — enterprise edition: proprietary and paid for
 //
-// An edition describes who maintains and supports an entry. The four are
+// An edition describes who maintains and supports an entry. The five are
 // technically interchangeable and the platform gates none of them: whether a
 // paid entry arrives is decided at the repository it is pulled from, by the
 // credential the tenant holds for it. Addon/base compatibility is managed by
 // version. See gentian-os/docs/app-customization.md §4.2.
 //
-// The split that matters operationally is not free against paid but WHERE the
-// entry comes from. ce and pe are entries a cluster can hold and install on
-// its own: ce because it is public, pe because it is the operator's own. me
-// and ee exist because somebody maintains or licenses them, which is the App
-// Store's business, and a cluster browsing its own catalogue does not list
-// them (AD-14) — there is nothing useful it could say about an entry whose
-// whole value is a relationship with a supplier.
+// An me entry packages the community edition's code and is named -ce like
+// it: the edition is what the profile's gentianos.io/profile-edition label
+// says, never a name's suffix.
 //
-// +kubebuilder:validation:Enum=ce;pe;me;ee
+// The split that matters operationally is not free against paid but WHERE the
+// entry comes from. ce, me and ie are entries a cluster can hold and install
+// on its own: ce and me because their code is public, ie because it is the
+// operator's own. pe and ee are somebody's proprietary product, offered
+// through the App Store, and a cluster browsing its own catalogue does not
+// list them (AD-14) -- there is nothing useful it could say about an entry
+// whose whole value is a relationship with a supplier.
+//
+// +kubebuilder:validation:Enum=ce;me;ie;pe;ee
 type Edition string
 
 const (
 	// EditionCE is the community edition as published by the upstream organisation.
 	EditionCE Edition = "ce"
-	// EditionPE is a private edition: a profile its own operator wrote and
+	// EditionME is the community edition's code, curated and maintained by
+	// the catalogue's maintainer, who runs it itself and so stands behind it.
+	EditionME Edition = "me"
+	// EditionIE is an internal edition: a profile its own operator wrote and
 	// publishes in their own catalogue source, for their own tenants. Nobody
 	// sells it and nobody else lists it, so nothing outside the cluster needs
 	// to be reachable for it to be installed -- which is exactly why the
 	// cluster's own catalogue view exists.
+	EditionIE Edition = "ie"
+	// EditionPE is the proprietary edition: a supplier's proprietary product,
+	// free of charge. spec.author names the supplier.
 	EditionPE Edition = "pe"
-	// EditionME is the community edition plus active maintenance: an edition
-	// its maintainer itself runs and keeps current.
-	EditionME Edition = "me"
-	// EditionEE is the enterprise edition: commercially licensed, and
-	// maintained and supported by its supplier. It says the entry is
-	// paid-for, not who publishes it -- spec.author names the supplier, which
-	// may be the upstream organisation or a third party packaging it. Nothing
-	// in the platform gates it; its supply is controlled at the repository
-	// it is pulled from.
+	// EditionEE is the enterprise edition: proprietary and paid for, and
+	// maintained and supported by its supplier. spec.author names the
+	// supplier, which may be the upstream organisation or a third party
+	// packaging it. Nothing in the platform gates it; its supply is
+	// controlled at the repository it is pulled from.
 	EditionEE Edition = "ee"
 )
 
 // LocalEditions are the editions a cluster lists from its own catalogue
 // sources. See Edition.
-var LocalEditions = []Edition{EditionCE, EditionPE}
+var LocalEditions = []Edition{EditionCE, EditionME, EditionIE}
 
 // Local reports whether an edition is one a cluster lists for itself.
 func (e Edition) Local() bool {
-	return e == EditionCE || e == EditionPE
+	return e == EditionCE || e == EditionME || e == EditionIE
 }
 
 // TrustTier describes platform certification / review level for a catalogue entry.
@@ -169,7 +177,7 @@ type ProfileIdentity struct {
 	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
 	CatalogueVersion string `json:"catalogueVersion"`
 
-	// Edition selects the edition (ce, pe, me, ee).
+	// Edition selects the edition (ce, me, ie, pe, ee).
 	// +optional
 	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`
