@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.9"
+  version: "1.10"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -1898,11 +1898,13 @@ components:
       description: |
         The edition of an entry, with the values a profile carries on the
         cluster. `ce`: the community edition as its upstream publishes it.
-        `pe`: a private edition, an operator's own profile. `me`: the
-        community edition with active maintenance. `ee`: an enterprise
-        edition, commercially licensed. Closed: a client refuses an entry
+        `me`: the community edition's code, curated and maintained by the
+        catalogue's maintainer. `ie`: an internal edition, an operator's own
+        profile (1.10). `pe`: a proprietary edition, free of charge -- until
+        1.10 `pe` was the private edition `ie` now is. `ee`: an enterprise
+        edition, proprietary and paid for. Closed: a client refuses an entry
         with any other value.
-      enum: [ce, pe, me, ee]
+      enum: [ce, me, ie, pe, ee]
     TrustTier:
       type: string
       description: The review level the entry's profile states, with the values a profile carries on the cluster. Closed.
@@ -2291,11 +2293,14 @@ components:
           description: |
             `free`: nothing is charged and no checkout follows. `one-time`:
             charged once. `subscription`: charged every `period`. `quote`:
-            the store names no amount; `note` says how to obtain one. Closed.
-          enum: [free, one-time, subscription, quote]
+            the store names no amount; `note` says how to obtain one.
+            `freemium` (1.10): free to acquire, and no checkout follows;
+            `note` says what is free, and `amount`, `per` and `period`, where
+            they are stated, what is charged beyond it. Closed.
+          enum: [free, one-time, subscription, quote, freemium]
         amount:
           type: [string, "null"]
-          description: A decimal number as a string, with a point and no grouping (`"4.50"`). `null` for `free` and `quote`.
+          description: A decimal number as a string, with a point and no grouping (`"4.50"`). `null` for `free` and `quote`, and for `freemium` when what is charged beyond the free use is not stated.
           pattern: "^[0-9]+(\\.[0-9]{1,4})?$"
         currency:
           type: [string, "null"]
