@@ -76,6 +76,9 @@ spec:
         # The tenant's country (spec.country), "" while it names none: the
         # app asks the store for the support offered there.
         countryKey: api.env.TENANT_COUNTRY
+        # The tenant's unique id (metadata.uid): the store's identity provider
+        # for the tenant is org-<it>, which the app names with kc_idp_hint.
+        tenantUIDKey: api.env.TENANT_UID
     extraValues:
       # The name every object of the release derives from, pinned so the
       # Services the exposures below route to are known before the release

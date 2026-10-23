@@ -20,7 +20,9 @@ SPDX-License-Identifier: MPL-2.0
 // cluster's id and address, each tenant's address and how many accounts its
 // realm holds, and for each app installed through the App Store its
 // coordinate, the digest it is pinned to, and how many people are entitled to
-// it, and the same three for each addon of it that is pinned. No name, e-mail address, user id, group name, tenant display name or
+// it, and the same three for each addon of it that is pinned. Each tenant is
+// also named by its unique id (metadata.uid), a random value that says
+// nothing about it. No name, e-mail address, user id, group name, tenant display name or
 // administrator's address is in it, and the types below have nowhere to put
 // one.
 //
@@ -112,6 +114,13 @@ type Cluster struct {
 // Tenant is one tenant, by its address.
 type Tenant struct {
 	URL string `json:"url"`
+	// UID is the tenant's unique id, its metadata.uid: random, never reused,
+	// and never derived from its name, so a tenant deleted and made again
+	// under the same name is another tenant to the receiver. The store keys
+	// its sign-in through the tenant's realm by it (store-contract.md §6.1).
+	// Left out where the tenant has none yet; a receiver of an earlier
+	// report format ignores it.
+	UID string `json:"uid,omitempty"`
 	// Users is how many accounts the tenant's realm holds. Null when they
 	// could not be counted, which is not the same as none.
 	Users *int  `json:"users"`
@@ -203,7 +212,7 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 			// its name is not sent in the address's place.
 			continue
 		}
-		entry := Tenant{URL: "https://" + host, Apps: []App{}}
+		entry := Tenant{URL: "https://" + host, UID: string(tenant.UID), Apps: []App{}}
 		if n, err := counter.TenantUsers(ctx, tenant); err != nil {
 			uncounted("the accounts of a tenant", err)
 		} else {

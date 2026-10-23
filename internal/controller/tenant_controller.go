@@ -1290,10 +1290,20 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	if err != nil {
 		return nil, fmt.Errorf("read the tenants a sign-in pairs %s with: %w", tenant.Name, err)
 	}
-	if len(tenant.Spec.BrokeredTo) > 0 || len(signInClients) > 0 {
-		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo)+len(signInClients))
+	store := storeSignInClient(tenant)
+	if len(tenant.Spec.BrokeredTo) > 0 || len(signInClients) > 0 || store != nil {
+		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo)+len(signInClients)+1)
 		declared := map[string]bool{}
+		// The store's client first, and its name is its own: a declared
+		// entry of the same name is not composed beside it.
+		if store != nil {
+			declared[storeClientName] = true
+			brokered = append(brokered, store)
+		}
 		for _, b := range tenant.Spec.BrokeredTo {
+			if declared[b.Name] {
+				continue
+			}
 			declared[b.Name] = true
 			brokered = append(brokered, map[string]interface{}{
 				"name": b.Name, "redirectURI": b.RedirectURI, "jwksURL": b.JWKSURL,
@@ -1332,10 +1342,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	if len(tenant.Spec.BrokeredFrom) > 0 {
 		from := make([]interface{}, 0, len(tenant.Spec.BrokeredFrom))
 		for _, b := range tenant.Spec.BrokeredFrom {
-			from = append(from, map[string]interface{}{
+			entry := map[string]interface{}{
 				"name": b.Name, "displayName": b.DisplayName, "issuer": b.Issuer,
-				"clientID": b.ClientID, "domain": b.Domain,
-			})
+				"clientID": b.ClientID,
+			}
+			if b.LinkExisting {
+				entry["linkExisting"] = true
+			} else {
+				entry["domain"] = b.Domain
+			}
+			from = append(from, entry)
 		}
 		spec["brokeredFrom"] = from
 	}

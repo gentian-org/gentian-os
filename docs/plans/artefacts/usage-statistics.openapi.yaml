@@ -213,6 +213,12 @@ components:
         url:
           type: string
           description: "`https://` and the tenant's host. No path, no trailing slash. The tenant's name is never sent in its place."
+        uid:
+          type: string
+          description: |
+            The tenant's unique id, its `metadata.uid`: random, never reused,
+            not derived from its name. Optional: absent where the tenant has
+            none. Added without raising `version`.
         users:
           type: [integer, "null"]
           minimum: 0

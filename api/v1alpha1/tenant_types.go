@@ -80,6 +80,37 @@ type TenantBrokeredTo struct {
 	JWKSURL string `json:"jwksURL"`
 }
 
+// TenantStore is the tenant's side of the store the cluster names
+// (spec.catalogue.storeUrl on the Cluster claim).
+type TenantStore struct {
+	// SignIn lets the store's realm sign this tenant's people in to the store
+	// through this realm; see TenantStoreSignIn. Unset: it does not.
+	// +optional
+	SignIn *TenantStoreSignIn `json:"signIn,omitempty"`
+}
+
+// TenantStoreSignIn is the store's realm brokering this tenant's realm, so a
+// person signed in here is signed in to their store account without being
+// asked. Written by the director, as the patch store-sign-in.yaml beside the
+// tenant, at the request of the tenant's administrator -- in practice the App
+// Store app's, once the store has associated the tenant with its account.
+//
+// The platform makes, in this tenant's realm, the client broker-to-store: it
+// sends a person back only to the store realm's broker endpoint for this
+// tenant, <issuer>/broker/org-<metadata.uid>/endpoint, authenticates the
+// store's realm by a JWT that realm signs (checked against the keys it
+// publishes: no secret), and gives it the person's identity only -- subject,
+// name and e-mail address -- with no group and no role. Taking the line away
+// removes the client.
+type TenantStoreSignIn struct {
+	// Issuer is the store's realm, as the store's GET /v1/meta names it:
+	// https://<host>/<path to the realm>.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=500
+	// +kubebuilder:validation:Pattern=`^https://[^/:\s]+/[^\s?#]*[^/\s?#]$`
+	Issuer string `json:"issuer"`
+}
+
 // TenantBrokeredFrom is the other half of TenantBrokeredTo: a realm outside
 // this tenant -- a customer's cluster -- whose people sign in here with their
 // account there. The platform makes, in this tenant's realm, an organization
@@ -94,6 +125,7 @@ type TenantBrokeredTo struct {
 //
 // The outside realm is a Keycloak realm, such as a Gentian tenant's:
 // its endpoints are read from the issuer by Keycloak's own layout.
+// +kubebuilder:validation:XValidation:rule="has(self.linkExisting) && self.linkExisting ? !has(self.domain) : has(self.domain)",message="an organization names its domain; an entry that links existing accounts makes no organization and names none"
 type TenantBrokeredFrom struct {
 	// Name says whose realm it is; the organization's alias, and the identity
 	// provider is org-<name>.
@@ -126,11 +158,22 @@ type TenantBrokeredFrom struct {
 	// addresses, which Keycloak sends to this identity provider when one of
 	// them gives their address. One organization per domain. The director
 	// takes only the issuer's cluster domain (the issuer is at
-	// id.<cluster domain>) or one below it.
-	// +kubebuilder:validation:Required
+	// id.<cluster domain>) or one below it. Empty only with LinkExisting.
+	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
-	Domain string `json:"domain"`
+	Domain string `json:"domain,omitempty"`
+
+	// LinkExisting makes the entry a sign-in to accounts that already exist
+	// here, and nothing else: no organization and no domain, and no account
+	// is ever made through it. The first time a person arrives through it
+	// they sign in to their account of this realm, once, and the two are
+	// linked; from then on they are signed in without being asked, also
+	// when a client asks for that with prompt=none, which this provider
+	// forwards to the outside realm. The store's sign-in through a
+	// tenant's own realm (store-contract.md §6.1).
+	// +optional
+	LinkExisting bool `json:"linkExisting,omitempty"`
 }
 
 // TenantComponentRef names a component of a tenant by the profile it runs.
@@ -296,6 +339,11 @@ type TenantSpec struct {
 	// +listType=map
 	// +listMapKey=tenant
 	SignInFrom []TenantSignInFrom `json:"signInFrom,omitempty"`
+
+	// Store is this tenant's side of the store the cluster names; see
+	// TenantStore.
+	// +optional
+	Store *TenantStore `json:"store,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional

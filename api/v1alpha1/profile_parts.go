@@ -1123,6 +1123,12 @@ type PlatformValueMapping struct {
 	// +optional
 	CountryKey string `json:"countryKey,omitempty"`
 
+	// TenantUIDKey receives the tenant's unique id, its metadata.uid: the id
+	// the usage statistics report names it by, and the one the store keys
+	// its sign-in through the tenant's realm by. It never changes.
+	// +optional
+	TenantUIDKey string `json:"tenantUIDKey,omitempty"`
+
 	// HostKey receives the host this component answers on in its zone: the
 	// host of its first gateway entry, as the operator routes it. A component
 	// that has to spell its own address -- a redirect address it states to a

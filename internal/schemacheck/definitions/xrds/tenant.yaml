@@ -81,6 +81,12 @@ spec:
                         type: string
                       jwksURL:
                         type: string
+                      identityOnly:
+                        type: boolean
+                        description: >
+                          The client gives the outside realm the person's
+                          identity only (basic, profile and email scopes), no
+                          group: the store's sign-in (spec.store.signIn).
                 groups:
                   type: array
                   maxItems: 50
@@ -153,8 +159,14 @@ spec:
                     secret.
                   items:
                     type: object
-                    required: [name, displayName, issuer, clientID, domain]
+                    required: [name, displayName, issuer, clientID]
                     properties:
+                      linkExisting:
+                        type: boolean
+                        description: >
+                          No organization and no domain: the provider links a
+                          person to an account that exists here, once, and
+                          makes none; it forwards prompt=none.
                       name:
                         type: string
                       displayName:

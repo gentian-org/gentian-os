@@ -2744,6 +2744,12 @@ spec:
                                 description: TenantKey receives the name of the tenant
                                   the component runs in.
                                 type: string
+                              tenantUIDKey:
+                                description: |-
+                                  TenantUIDKey receives the tenant's unique id, its metadata.uid: the id
+                                  the usage statistics report names it by, and the one the store keys
+                                  its sign-in through the tenant's realm by. It never changes.
+                                type: string
                               usherUrlKey:
                                 description: |-
                                   UsherURLKey receives the usher's in-cluster URL: where a desktop asks,
