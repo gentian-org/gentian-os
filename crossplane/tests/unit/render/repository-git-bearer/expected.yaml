@@ -127,7 +127,7 @@ spec:
       metadata:
         labels:
           gentianos.io/credential-requirement: deployments-q7xw2
-        name: credreq-repository-deployments-q7xw2
+        name: credreq-repository-deployments
         namespace: kernel-control
       spec:
         data:
@@ -159,7 +159,7 @@ metadata:
     crossplane.io/composite: deployments-q7xw2
     gentianos.io/credential-phase: bootstrap
     gentianos.io/credential-scope: cluster
-  name: repository-deployments-q7xw2
+  name: repository-deployments
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true

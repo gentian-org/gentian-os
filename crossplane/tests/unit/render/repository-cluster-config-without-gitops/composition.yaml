@@ -75,11 +75,13 @@ spec:
             {{- $spec := .observed.composite.resource.spec }}
             {{- $name := .observed.composite.resource.metadata.name }}
             {{- /* The claim's name, which unlike $name carries no generated suffix.
-                 Used only for the Secret a consumer references by name: a chart value
-                 cannot be written against "deployments-m288c", and that suffix changes
-                 if the claim is recreated. Everything else stays keyed to the
-                 composite, so composed resources remain unambiguous when two claims
-                 share a name in different namespaces. */}}
+                 Used for every name something outside this composition addresses: the
+                 Secret a chart value names, and the credential requirement the
+                 custodian, the director and the App Store call repository-<claim> -- a
+                 caller cannot know "deployments-m288c", and that suffix changes if the
+                 claim is recreated. Everything else stays keyed to the composite.
+                 Claims are read from one namespace only, so a claim's name is
+                 unique. */}}
             {{- $claimName := dig "labels" "crossplane.io/claim-name" $name .observed.composite.resource.metadata }}
             {{- $cred := $spec.credential | default dict }}
             {{- /* A repository need not have a credential: a public chart registry or a
@@ -165,7 +167,7 @@ spec:
             apiVersion: gentianos.io/v1alpha1
             kind: CredentialRequirement
             metadata:
-              name: repository-{{ $name }}
+              name: repository-{{ $claimName }}
               labels:
                 gentianos.io/credential-phase: {{ $cred.phase | default "runtime" }}
                 gentianos.io/credential-scope: {{ $credScope }}
@@ -239,7 +241,7 @@ spec:
                   apiVersion: external-secrets.io/v1
                   kind: ExternalSecret
                   metadata:
-                    name: credreq-repository-{{ $name }}
+                    name: credreq-repository-{{ $claimName }}
                     namespace: {{ $kernelNs }}
                     labels:
                       gentianos.io/credential-requirement: {{ $name }}
@@ -287,7 +289,7 @@ spec:
                 - appproject-source-{{ $name }}
               {{- else }}
               credentialMessage: >-
-                requirement {{ $name }} is unsatisfied: no value at
+                requirement repository-{{ $claimName }} is unsatisfied: no value at
                 {{ $cred.vaultPath }}. Supply it through the custodian,
                 or with the installer for phase: bootstrap.
               artefacts:

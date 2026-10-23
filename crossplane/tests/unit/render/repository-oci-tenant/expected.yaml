@@ -133,7 +133,7 @@ spec:
       metadata:
         labels:
           gentianos.io/credential-requirement: vendor-apps-x7k2p
-        name: credreq-repository-vendor-apps-x7k2p
+        name: credreq-repository-vendor-apps
         namespace: kernel-control
       spec:
         data:
@@ -166,7 +166,7 @@ metadata:
     gentianos.io/credential-phase: runtime
     gentianos.io/credential-scope: tenant
     gentianos.io/tenant: acme
-  name: repository-vendor-apps-x7k2p
+  name: repository-vendor-apps
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
