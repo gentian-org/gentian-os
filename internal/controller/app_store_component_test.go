@@ -206,13 +206,13 @@ func TestTheAppStoreRoutesAskTheInstallRight(t *testing.T) {
 	profile := shippedAppStoreProfile(t)
 	for i := range profile.Spec.Expose {
 		e := &profile.Spec.Expose[i]
-		got := exposureAuthz(tenant, comp, profile, e.ForwardToken)
+		got := exposureAuthz(tenant, comp, profile, "c1", e.ForwardToken)
 		if got.relation != "can_install_app" || got.object != "tenant:acme" {
 			t.Fatalf("%s asks %s on %s", e.Name, got.relation, got.object)
 		}
 	}
 	console := renderShippedProfile(t, "componentprofile-admin-console.yaml", "adminConsole.enabled=true")
-	if got := exposureAuthz(tenant, comp, console, false); got.relation != "can_enter" || got.object != "tenant:acme" {
+	if got := exposureAuthz(tenant, comp, console, "c1", false); got.relation != "can_enter" || got.object != "tenant:acme" {
 		t.Fatalf("the administration console asks %s on %s", got.relation, got.object)
 	}
 
@@ -224,7 +224,7 @@ func TestTheAppStoreRoutesAskTheInstallRight(t *testing.T) {
 	for i := range profile.Spec.Expose {
 		e := &profile.Spec.Expose[i]
 		routes = append(routes, buildExposureRoute(comp, comp.Name+"-"+e.Name, exposureHost(zone, comp, e), zone, e,
-			exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain, nil))
+			exposureAuthz(tenant, comp, profile, "c1", e.ForwardToken), r.KernelDomain, nil))
 	}
 	c := fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(routes...).Build()
 	table, err := componentRouteTableEntries(context.Background(), c)

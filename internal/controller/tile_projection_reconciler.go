@@ -335,7 +335,7 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 		// An entry that runs nothing: its tile is a link, and leads where the
 		// profile says. No route is looked for because none exists -- the
 		// service is somebody else's and the cluster puts nothing in front.
-		if link := linkTile(profile, tenant, comp.Name, domains[tenant]); link != nil {
+		if link := linkTile(profile, tenant, comp.Name, domains[tenant], r.Cluster); link != nil {
 			out = append(out, *link)
 		}
 		for j := range profile.Spec.Expose {
@@ -388,7 +388,7 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				// app:<tenant>/<profile>, where an installed app's own
 				// permissions hang off (authorization-model.md §4), or the
 				// tenant itself, where administering it is decided.
-				Object: tileObject(e.Tile, tenant, comp.Spec.ProfileRef.Name),
+				Object: tileObject(e.Tile, tenant, comp.Spec.ProfileRef.Name, r.Cluster),
 				AnyOf:  []string{e.Tile.Relation},
 			})
 		}
@@ -404,7 +404,7 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 // Only for runtime redirect. A proxied entry is reached through a host of the
 // cluster's, and a tile that named the service behind it would walk a person
 // around the proxy that was put there to hold the credential.
-func linkTile(profile *gentianov1alpha1.ComponentProfile, tenant, component, domain string) *tilecatalogue.Tile {
+func linkTile(profile *gentianov1alpha1.ComponentProfile, tenant, component, domain, cluster string) *tilecatalogue.Tile {
 	if !profile.IsAPI() || profile.Spec.Package.API.Tile == nil {
 		return nil
 	}
@@ -431,15 +431,18 @@ func linkTile(profile *gentianov1alpha1.ComponentProfile, tenant, component, dom
 		Description:  api.Tile.Description,
 		Icon:         api.Tile.Logo,
 		URL:          target.String(),
-		Object:       tileObject(api.Tile, tenant, profile.Name),
+		Object:       tileObject(api.Tile, tenant, profile.Name, cluster),
 		AnyOf:        []string{api.Tile.Relation},
 	}
 }
 
 // tileObject is the graph object a tile's relation is checked against.
-func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) string {
-	if tile.Object == gentianov1alpha1.TileObjectTenant {
+func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile, cluster string) string {
+	switch tile.Object {
+	case gentianov1alpha1.TileObjectTenant:
 		return "tenant:" + tenant
+	case gentianov1alpha1.TileObjectCluster:
+		return "cluster:" + cluster
 	}
 	return "app:" + tenant + "/" + profile
 }

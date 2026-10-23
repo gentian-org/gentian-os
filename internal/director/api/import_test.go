@@ -66,7 +66,10 @@ func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (i
 		if o.apps != "" {
 			return http.StatusOK, []byte(o.apps), nil
 		}
-		return http.StatusOK, []byte(`{"apps":[{"profile":"element","ready":true,"phase":"Ready"}]}`), nil
+		// A component the platform places itself is listed too, and is not
+		// what an import waits for: it was not in the bundle.
+		return http.StatusOK, []byte(`{"apps":[{"profile":"element","origin":"install","ready":true,"phase":"Ready"},`+
+			`{"profile":"desktop","origin":"default","ready":false,"phase":"Installing"}]}`), nil
 	case strings.Contains(path, "/restores/"):
 		name := path[strings.LastIndex(path, "/")+1:]
 		if _, started := o.restores[name]; !started {

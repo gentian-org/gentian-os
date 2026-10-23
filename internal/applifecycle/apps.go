@@ -63,6 +63,12 @@ type AppState struct {
 	// Profile is the catalogue entry; Name is the Component made from it.
 	Profile string `json:"profile"`
 	Name    string `json:"name"`
+	// Origin is who put the component in the tenant: "default" for one the
+	// platform places itself (the desktop, the consoles), "install" for one
+	// the tenant installed. A default component is listed so that a screen
+	// can tell it is running; it is not the tenant's to install, remove or
+	// grant access to.
+	Origin string `json:"origin"`
 	Ready   bool   `json:"ready"`
 	Phase   string `json:"phase"`
 	// Message is why it is in that phase, in the reconciler's own words.
@@ -201,18 +207,26 @@ var waitingReasons = map[string]bool{
 const (
 	componentOriginLabel   = "gentianos.io/component-origin"
 	componentOriginDefault = "default"
+	componentOriginInstall = "install"
 )
+
+// componentOrigin is the origin a state reports: the operator's label, and
+// "install" for anything it did not mark as its own default.
+func componentOrigin(comp *gentianov1alpha1.Component) string {
+	if comp.Labels[componentOriginLabel] == componentOriginDefault {
+		return componentOriginDefault
+	}
+	return componentOriginInstall
+}
 
 // AppStates reports every app of a tenant as the cluster has it.
 //
-// The platform's own components are left out -- the desktop, the consoles,
-// the App Store app -- because they are not something a tenant administrator
-// installed and the store offers nothing to do about them. They are known by
-// the operator's label on the component; the profile's platform-app
-// annotation still counts, but a profile need not carry it, and one that did
-// not was listed as an app the tenant had uninstalled. So are add-ons left
-// out as apps: an add-on is switched on inside its base, and is listed under
-// it, in the base's addons.
+// The components the platform places itself -- the desktop, the consoles,
+// the App Store app -- are listed with origin "default", by the operator's
+// label on the component: a screen shows that they run and offers nothing to
+// do about them. A profile with the platform-app annotation is left out.
+// Add-ons are left out as apps: an add-on is switched on inside its base, and
+// is listed under it, in the base's addons.
 func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState, error) {
 	if _, err := s.getTenant(ctx, tenantName); err != nil {
 		return nil, err
@@ -228,7 +242,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 	for i := range list.Items {
 		comp := &list.Items[i]
 		profile := comp.Spec.ProfileRef.Name
-		if profile == "" || comp.Labels[componentOriginLabel] == componentOriginDefault {
+		if profile == "" {
 			continue
 		}
 		cp := &gentianov1alpha1.ComponentProfile{}
@@ -246,6 +260,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			return nil, fmt.Errorf("get componentprofile %q: %w", profile, err)
 		}
 		state := componentState(comp)
+		state.Origin = componentOrigin(comp)
 		if found {
 			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, time.Now())
 		}

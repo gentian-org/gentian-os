@@ -1149,6 +1149,8 @@ spec:
                             "cluster" is the third, for a service's own console: a service has no
                             app object and runs in no tenant, and the relations that govern it --
                             can_operate_system, can_configure, can_audit -- are all on cluster.
+                            An app whose tile is held there is the cluster's, wherever it runs:
+                            its routes ask the same relation on the cluster, not on the tenant.
 
                             Not called "on": YAML 1.1 reads a bare on as the boolean true, so a
                             profile written by hand would carry a key named true and be refused by
@@ -2282,6 +2284,8 @@ spec:
                               "cluster" is the third, for a service's own console: a service has no
                               app object and runs in no tenant, and the relations that govern it --
                               can_operate_system, can_configure, can_audit -- are all on cluster.
+                              An app whose tile is held there is the cluster's, wherever it runs:
+                              its routes ask the same relation on the cluster, not on the tenant.
 
                               Not called "on": YAML 1.1 reads a bare on as the boolean true, so a
                               profile written by hand would carry a key named true and be refused by
