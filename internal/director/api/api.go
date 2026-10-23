@@ -76,6 +76,7 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	SetTenantMailMode(ctx context.Context, tenant, mode string, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
 	TenantGroups(ctx context.Context, tenant string) ([]string, error)
@@ -525,6 +526,7 @@ func (s *Server) routes() {
 		// <tenant>.<kernel>, or none. can_configure, like creating the
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/mail-mode", "can_configure", s.clusterObject, s.setTenantMailMode)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
 		// A tenant's own groups, and who signs in to it from another tenant
 		// (tenant_sign_in.go).
@@ -1846,6 +1848,28 @@ func (s *Server) setTenantDomain(w http.ResponseWriter, r *http.Request, c call)
 		return
 	}
 	s.writeTenantDomain(w, r, c, body.Domain)
+}
+
+// setTenantMailMode writes the tenant's spec.mail.mode: what the operator
+// provisions for its mail, from a full mailbox on the cluster's own mail
+// (selfhosted) to nothing at all (disabled). The cluster's administrator's
+// decision, like the domain: a tenant on a domain of its own whose mail is
+// elsewhere needs disabled, or the cluster's own mail publishes MX records
+// for that domain over the ones that are there.
+func (s *Server) setTenantMailMode(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Mode) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"mode": "selfhosted|external|transport-only|disabled"}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantMailMode(r.Context(), r.PathValue("t"), body.Mode, c.meta)
+	if errors.Is(err, gitops.ErrInvalidMailMode) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
 }
 
 // clearTenantDomain puts the tenant back on its default address. It is

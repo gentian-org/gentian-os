@@ -87,7 +87,9 @@ Selected via `Tenant.spec.mail.mode`:
 
 A tenant that names no mode gets `selfhosted` on a cluster whose
 `mail.serviceMode` is `system`, and `transport-only` on one that relays
-(`external`), which has no Dovecot to hold a mailbox.
+(`external`), which has no Dovecot to hold a mailbox. The mode is set with
+`kubectl gentian tenants mail-mode <name> <mode>`, one commit of the tenant's
+manifest through the director ([commands.md §3](../commands.md)).
 
 If `MAIL_SERVICE_MODE=external` at install time, Dovecot and LMTP are
 absent; tenants in `selfhosted` mode still get operator-managed

@@ -151,6 +151,9 @@ type Tenant struct {
 	LoginDomain string `json:"loginDomain,omitempty"`
 	// CustomDomain is the domain a TenantDomain binds it to, if any.
 	CustomDomain string `json:"customDomain,omitempty"`
+	// MailMode is spec.mail.mode as the manifest states it; empty where it
+	// names none and the cluster's default applies.
+	MailMode string `json:"mailMode,omitempty"`
 	// Protected is true for a tenant the director refuses to retire.
 	Protected bool `json:"protected"`
 	// Purging is true once a purge was asked for: the manifest says
@@ -310,6 +313,9 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						PlatformAccess struct {
 							AdminsEnter bool `json:"adminsEnter"`
 						} `json:"platformAccess"`
+						Mail struct {
+							Mode string `json:"mode"`
+						} `json:"mail"`
 					} `json:"spec"`
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
@@ -318,6 +324,7 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 					t.SignUp = doc.Spec.SignUp.Enabled
 					t.Country = doc.Spec.Country
 					t.DisplayName = doc.Spec.DisplayName
+					t.MailMode = doc.Spec.Mail.Mode
 					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
 					for _, a := range doc.Spec.Apps {

@@ -525,14 +525,18 @@ func setKeyPath(text, root string, keys []string, l leaf) (string, bool, error) 
 				lines[c] = fmt.Sprintf("%s%s:", strings.Repeat(" ", indent), key)
 				at = c
 			} else {
-				var inserted []string
-				if last {
-					inserted = replaceLines(lines, end, 0, l.render(indent, key))
-					return strings.Join(inserted, "\n"), true, nil
+				// At the end of the file, before its trailing newline -- the
+				// empty last element of the split -- so the file keeps ending
+				// in one and the key is not written after it.
+				pos := end
+				for pos == len(lines) && pos > 0 && strings.TrimSpace(lines[pos-1]) == "" {
+					pos--
 				}
-				inserted = replaceLines(lines, end, 0, []string{strings.Repeat(" ", indent) + key + ":"})
-				lines = inserted
-				at = end
+				if last {
+					return strings.Join(replaceLines(lines, pos, 0, l.render(indent, key)), "\n"), true, nil
+				}
+				lines = replaceLines(lines, pos, 0, []string{strings.Repeat(" ", indent) + key + ":"})
+				at = pos
 			}
 		}
 		if last {
