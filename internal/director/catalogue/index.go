@@ -54,7 +54,7 @@ type IndexEntry struct {
 	Name string `json:"name"`
 	// Version is the catalogue version of this entry.
 	Version string `json:"version,omitempty"`
-	// Edition is ce, pe, me or ee. An entry that does not say is taken to be
+	// Edition is ce, me, ie, pe or ee. An entry that does not say is taken to be
 	// ce, which is what an unmarked public profile has always been.
 	Edition gentianov1alpha1.Edition `json:"edition,omitempty"`
 	// TrustTier is the profile's own trustTier, repeated here so the index
@@ -79,7 +79,7 @@ type cachedIndex struct {
 	at      time.Time
 	entries []IndexEntry
 	// storeOnly holds the entries this cluster does not list for itself --
-	// me and ee. A screen says how many are in the App Store without
+	// pe and ee. A screen says how many are in the App Store without
 	// listing them, which is the whole shape of AD-14: the store is the
 	// route, this is what remains when it is not. They are kept all the
 	// same, for the one reader that is not a screen: the update report,
@@ -90,10 +90,10 @@ type cachedIndex struct {
 
 // Listing is a source's index as the director serves it.
 type Listing struct {
-	// Entries are the ce and pe entries, sorted by name: what a tenant may
+	// Entries are the ce, me and ie entries, sorted by name: what a tenant may
 	// install from here by naming it.
 	Entries []IndexEntry
-	// StoreOnly are the me and ee entries, sorted by name. They are not
+	// StoreOnly are the pe and ee entries, sorted by name. They are not
 	// listed and not installed from a listing; the store is the route to
 	// them. An app that was acquired and installed that way is already the
 	// tenant's, and these say what its newest build is.

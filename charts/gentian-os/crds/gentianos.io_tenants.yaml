@@ -266,12 +266,13 @@ spec:
                               type: string
                             edition:
                               default: ce
-                              description: Edition selects the edition (ce, pe, me,
-                                ee).
+                              description: Edition selects the edition (ce, me, ie,
+                                pe, ee).
                               enum:
                               - ce
-                              - pe
                               - me
+                              - ie
+                              - pe
                               - ee
                               type: string
                             family:

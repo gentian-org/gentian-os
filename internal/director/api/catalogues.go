@@ -36,9 +36,9 @@ import (
 // else lists.
 //
 // So it lists coordinates, versions, editions and digests, and nothing that
-// would pretend to be a shop. Only ce and pe are listed: me and ee exist
-// because somebody maintains or licenses them, and an entry whose whole value
-// is a relationship with a supplier is not something a cluster can describe
+// would pretend to be a shop. Only ce, me and ie are listed: pe and ee are a
+// supplier's proprietary products, and an entry whose whole value is a
+// relationship with a supplier is not something a cluster can describe
 // usefully, so it is counted and named to the store instead.
 //
 // None of this is a license check. A source named on the Cluster claim is

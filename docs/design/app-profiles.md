@@ -29,11 +29,12 @@ A profile has no `family`, `catalogueVersion`, `edition` or `license` field.
 Descriptions, pictures, prices and license terms are a store's listing, outside
 the cluster ([store-contract.md](store-contract.md) §5).
 
-**Editions.** `ce` is the upstream community edition; `pe` a private edition,
-published by its own operator for their own tenants; `me` a maintained edition;
-`ee` a commercially licensed one. The cluster gates none of them. It lists the
-`ce` and `pe` entries of its catalogues to the command line; `me` and `ee`
-entries are a store's to show. Whether something is paid for is decided where
+**Editions.** `ce` is the upstream community edition; `me` the community
+edition's code, curated and maintained by the catalogue's maintainer; `ie` an
+internal edition, published by its own operator for their own tenants; `pe` a
+proprietary one, free of charge; `ee` a proprietary, paid one. The cluster
+gates none of them. It lists the `ce`, `me` and `ie` entries of its catalogues
+to the command line; `pe` and `ee` entries are a store's to show. Whether something is paid for is decided where
 it is handed over: a private chart or image arrives only where the tenant holds
 a credential for its repository ([custom-catalogues.md §8](../custom-catalogues.md)).
 

@@ -459,7 +459,7 @@ $ kubectl gentian apps list --tenant demo --available
 SOURCE    APP                VERSION  EDITION  DIGEST               INSTALLED
 gentian   nextcloud-base-ce  31.0.4   ce       sha256:2f1c0d9a77b3  yes
 gentian   xwiki-ce           16.4.0   ce       sha256:9b41e6c05d12  -
-in-house  xwiki-ce           16.5.0   pe       sha256:c07a1be4403f  -
+in-house  xwiki-ce           16.5.0   ie       sha256:c07a1be4403f  -
 
 $ kubectl gentian apps install xwiki-ce --tenant demo --from in-house
 Pinned in-house/xwiki-ce  version 16.5.0  sha256:c07a1be4403f
@@ -469,7 +469,7 @@ Installing xwiki-ce into demo: committed (4e1f9a2c); the platform installs it.
 `INSTALLED` says `yes` for the build the tenant has, `other build` when the
 tenant has the app at another digest, and `unpinned` when it was installed
 with none. The listing is the director's reading of each source's index, the
-`ce` and `pe` entries only.
+`ce`, `me` and `ie` entries only.
 
 | | |
 |---|---|

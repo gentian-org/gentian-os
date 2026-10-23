@@ -1182,18 +1182,21 @@ addon is activated only from a
 profile shown to be that build, and its base is held as it runs until it is.
 See [design/store-contract.md](design/store-contract.md) §3 and §4.
 
-**Editions** are `ce · pe · me · ee`, and say *who maintains and supports the
-entry*, not who publishes it:
+**Editions** are `ce · me · ie · pe · ee`, and say *who maintains and supports
+the entry*, not who publishes it:
 
 | | |
 | --- | --- |
-| `ce` | community edition, as the upstream organisation publishes it |
-| `pe` | private edition: somebody's own profile, in their own catalogue source, for their own tenants |
-| `me` | maintained edition — `ce` plus active Gentian maintenance |
-| `ee` | enterprise edition — commercially licensed and supported by its supplier |
+| `ce` | community edition: open source, as the upstream organisation publishes it |
+| `me` | maintained edition: the community edition's code, curated and maintained by the catalogue's maintainer, who runs it itself |
+| `ie` | internal edition: somebody's own profile, in their own catalogue source, for their own tenants |
+| `pe` | proprietary edition: a supplier's proprietary product, free of charge |
+| `ee` | enterprise edition: proprietary and paid for, supported by its supplier |
 
-`ee` is deliberately not "the upstream's enterprise build" — a third party's
-proprietary distribution is equally an `ee`. A supplier's name is never an edition. Editions are technically
+An `me` profile packages the community edition's code and is named `-ce` like
+it; the edition is the profile's `gentianos.io/profile-edition` label, never
+the name. `ee` is deliberately not "the upstream's enterprise build" — a third
+party's paid proprietary distribution is equally an `ee`. A supplier's name is never an edition. Editions are technically
 compatible with one another, and the OS gates none of them: an `ee` app or
 addon is installed and activated exactly like a `ce` one. Supply is controlled
 at the source — its chart and images arrive only where the tenant holds a
@@ -1203,13 +1206,13 @@ addon↔base compatibility is **version**. There is therefore one addon set per
 family and no per-edition compatibility matrix.
 
 The split that matters operationally is not free against paid but **where the
-entry comes from**. `ce` and `pe` are entries a cluster can hold and install on
-its own — `ce` because it is public, `pe` because it is the operator's own — so
-a cluster browsing its own catalogue sources lists exactly those two. `me` and
-`ee` exist because somebody maintains or licenses them, which is the App
-Store's business: a cluster counts them and sends the person to the store,
-because an entry whose whole value is a relationship with a supplier is not
-something a cluster can describe usefully.
+entry comes from**. `ce`, `me` and `ie` are entries a cluster can hold and
+install on its own — `ce` and `me` because their code is public, `ie` because
+it is the operator's own — so a cluster browsing its own catalogue sources
+lists exactly those three. `pe` and `ee` are a supplier's proprietary
+products, which is the App Store's business: a cluster counts them and sends
+the person to the store, because an entry whose whole value is a relationship
+with a supplier is not something a cluster can describe usefully.
 
 An **edition shares a family name and nothing else** — `nextcloud-base-ee` may
 deploy a supplier's all-in-one chart from a credentialed registry where

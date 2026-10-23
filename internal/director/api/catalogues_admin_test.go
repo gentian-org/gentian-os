@@ -65,7 +65,7 @@ func catalogues(t *testing.T, content served) *httptest.Server {
 		if parts[1] == "index.yaml" {
 			index := "entries:\n"
 			for name, body := range profiles {
-				edition := "pe"
+				edition := "ie"
 				if m := editionLine.FindStringSubmatch(body); m != nil {
 					edition = m[1]
 				}

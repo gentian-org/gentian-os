@@ -30,7 +30,7 @@ func inRepository(dir string, profiles map[string]string) map[string]string {
 	index := "entries:\n"
 	for name, body := range profiles {
 		files[dir+"/profiles/"+name+".yaml"] = body
-		index += "  - name: " + name + "\n    version: \"1.0.0\"\n    edition: pe\n    digest: " + sha(body) + "\n"
+		index += "  - name: " + name + "\n    version: \"1.0.0\"\n    edition: ie\n    digest: " + sha(body) + "\n"
 	}
 	files[dir+"/index.yaml"] = index
 	return files
