@@ -208,7 +208,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		SubDomain: "desktop", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "desktop.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), e.ForwardToken), "k.example", []string{"platform.k.example"})
+	route := buildExposureRoute(comp, "desktop-api", "desktop.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", e.ForwardToken), "k.example", []string{"platform.k.example"})
 	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
 		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -226,7 +226,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	web := buildExposureRoute(comp, "desktop-web", "desktop.k.example", zone,
 		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "desktop",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
-		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example", []string{"platform.k.example"})
+		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", false), "k.example", []string{"platform.k.example"})
 
 	// Every rule admits embedding by the framers it was given and nothing
 	// else: the zone's desktop opens components in frames, and nobody else
@@ -275,7 +275,7 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 			Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 80},
 		}
 		return buildExposureRoute(comp, "odoo-"+name, sub+".k.example", zone, e,
-			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example", nil)
+			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", false), "k.example", nil)
 	}
 	web := build("web", "shop", []string{"/web/database"})
 	api := build("api", "shop", []string{"/admin"})
@@ -417,7 +417,7 @@ func TestAnAppsRouteAsksWhatItsTileAsks(t *testing.T) {
 	app := &gentianov1alpha1.ComponentProfile{}
 	app.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
 	app.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Tile: &gentianov1alpha1.ExposureTile{Relation: "can_launch"}}}
-	if got := exposureAuthz(tenant, comp, app, false); got.relation != "can_use" || got.object != "app:acme/xwiki-ce" {
+	if got := exposureAuthz(tenant, comp, app, "c1", false); got.relation != "can_use" || got.object != "app:acme/xwiki-ce" {
 		t.Fatalf("an app's route asks %s on %s", got.relation, got.object)
 	}
 
@@ -426,9 +426,36 @@ func TestAnAppsRouteAsksWhatItsTileAsks(t *testing.T) {
 	console.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Tile: &gentianov1alpha1.ExposureTile{
 		Relation: "can_administer", Object: gentianov1alpha1.TileObjectTenant}}}
 	for name, profile := range map[string]*gentianov1alpha1.ComponentProfile{"the launcher": launcherProfile(), "a console": console} {
-		if got := exposureAuthz(tenant, comp, profile, true); got.relation != "can_enter" || got.object != "tenant:acme" || !got.forwardToken {
+		if got := exposureAuthz(tenant, comp, profile, "c1", true); got.relation != "can_enter" || got.object != "tenant:acme" || !got.forwardToken {
 			t.Fatalf("%s asks %s on %s", name, got.relation, got.object)
 		}
+	}
+}
+
+// A component whose tile is held on the cluster -- the cluster's one
+// operations console -- is for whoever holds that relation on the cluster:
+// its routes ask the tile's relation on cluster:<cluster>, so neither a member
+// nor an administrator of the tenant it runs in gets past the edge, and its
+// tile is asked on the same object.
+func TestAClusterHeldTileIsAskedOnTheClusterAtTheRouteToo(t *testing.T) {
+	tenant := platformTenantFixture()
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "operations-console", "tenant-platform"
+	comp.Spec.ProfileRef.Name = "operations-console"
+
+	console := &gentianov1alpha1.ComponentProfile{}
+	console.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	console.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		{Name: "api"},
+		{Name: "web", Tile: &gentianov1alpha1.ExposureTile{
+			Relation: "can_configure", Object: gentianov1alpha1.TileObjectCluster}},
+	}
+	got := exposureAuthz(tenant, comp, console, "c1", true)
+	if got.relation != "can_configure" || got.object != "cluster:c1" || !got.forwardToken {
+		t.Fatalf("a cluster-held console's route asks %s on %s", got.relation, got.object)
+	}
+	if obj := tileObject(console.Spec.Expose[1].Tile, "platform", "operations-console", "c1"); obj != "cluster:c1" {
+		t.Fatalf("a cluster-held tile is asked on %s", obj)
 	}
 }
 

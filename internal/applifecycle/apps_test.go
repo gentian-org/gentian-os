@@ -69,24 +69,30 @@ func byProfile(t *testing.T, states []AppState) map[string]AppState {
 	return out
 }
 
-// What the platform places in every tenant is not one of the tenant's apps,
-// whatever its profile says of itself: the operator's label is what tells.
-func TestThePlatformsOwnComponentsAreNotTheTenantsApps(t *testing.T) {
+// What the platform places in a tenant is listed with origin "default", so
+// a screen can show that it runs and offer nothing to do about it; what the
+// tenant installed is "install", and so is a component the operator did not
+// label at all.
+func TestThePlatformsOwnComponentsAreListedWithTheirOrigin(t *testing.T) {
 	desktop := component("desktop", "Ready", "release deployed", true)
 	desktop.Labels = map[string]string{componentOriginLabel: componentOriginDefault}
 	installed := component("wiki", "Ready", "release deployed", true)
 	installed.Labels = map[string]string{componentOriginLabel: "install"}
-	s := appsService(t, demoTenant(), desktop, installed)
+	unlabelled := component("notes", "Ready", "release deployed", true)
+	s := appsService(t, demoTenant(), desktop, installed, unlabelled)
 	states, err := s.AppStates(context.Background(), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := byProfile(t, states)
-	if _, listed := got["desktop"]; listed {
-		t.Fatalf("a component the platform placed was listed as the tenant's app: %+v", states)
+	for name, want := range map[string]string{"desktop": "default", "wiki": "install", "notes": "install"} {
+		state, listed := got[name]
+		if !listed || state.Origin != want {
+			t.Errorf("%s: listed=%v origin=%q, want %q (%+v)", name, listed, state.Origin, want, states)
+		}
 	}
-	if _, listed := got["wiki"]; !listed {
-		t.Fatalf("an installed app is missing: %+v", states)
+	if !got["desktop"].Ready {
+		t.Errorf("the default component's state is not reported: %+v", got["desktop"])
 	}
 }
 

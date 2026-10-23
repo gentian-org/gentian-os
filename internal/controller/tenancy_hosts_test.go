@@ -663,7 +663,7 @@ func TestAComponentIsFramedByItsOwnTenantsDesktopAndNobodyElses(t *testing.T) {
 			continue
 		}
 		route := buildExposureRoute(comp, c.component+"-"+e.Name, host, zone, e,
-			exposureAuthz(c.tenant, comp, c.profile, false), kd, componentFramers(zone, comp, c.profile, host))
+			exposureAuthz(c.tenant, comp, c.profile, "c1", false), kd, componentFramers(zone, comp, c.profile, host))
 		for _, rule := range route.Spec.Rules {
 			if len(rule.Filters) != 1 || rule.Filters[0].ResponseHeaderModifier == nil {
 				t.Fatalf("%s: rule %v carries no frame policy", c.what, rule.Matches)

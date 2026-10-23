@@ -667,7 +667,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		var oidcRoutes []string
 		forward := false
 		for _, e := range routable {
-			authz := exposureAuthz(tenant, comp, profile, e.ForwardToken)
+			authz := exposureAuthz(tenant, comp, profile, r.Cluster, e.ForwardToken)
 			// Where any entry keeps its header, the component's one policy
 			// proves the session by its ID token on every route; the routes
 			// that keep nothing still have the header removed.
@@ -691,7 +691,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// therefore the component's, held if any of its entries holds it,
 		// and so is leaving the Authorization header to the app.
 		if len(oidcRoutes) > 0 {
-			authz := exposureAuthz(tenant, comp, profile, forward)
+			authz := exposureAuthz(tenant, comp, profile, r.Cluster, forward)
 			authz.idTokenSession = len(kept) > 0
 			if err := r.ensureZonePolicy(ctx, comp, zone, oidcRoutes, authz); err != nil {
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
@@ -1505,6 +1505,11 @@ func exposureHostIn(zone zoneNames, component string, e *gentianov1alpha1.Exposu
 // (app:<tenant>/<profile>, can_use), so the route cannot be more open than
 // the tile: knowing an app's hostname is not a way in.
 //
+// A tile held on the cluster is asked on the cluster by its route too: such
+// a component is for the people who hold that relation on the cluster (the
+// operations console's can_configure), wherever it runs, so the route asks
+// exactly what the tile asks and nobody else gets past the edge.
+//
 // One tenant-held tile is not entered by entering the tenant. A component
 // whose tile asks can_install_app -- the App Store app -- is for the people
 // who may install apps in the tenant and for nobody else, so its route asks
@@ -1513,7 +1518,10 @@ func exposureHostIn(zone zoneNames, component string, e *gentianov1alpha1.Exposu
 // tenant-held route asks; every other tenant-held tile (the consoles'
 // can_administer) still shows to fewer people than its route admits, as
 // before.
-func exposureAuthz(tenant *gentianov1alpha1.Tenant, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, forwardToken bool) routeAuthz {
+func exposureAuthz(tenant *gentianov1alpha1.Tenant, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, cluster string, forwardToken bool) routeAuthz {
+	if relation := clusterTileRelation(profile); relation != "" {
+		return routeAuthz{relation: relation, object: "cluster:" + cluster, forwardToken: forwardToken}
+	}
 	if tenantScoped(profile) {
 		relation := "can_enter"
 		if tenantTileAsks(profile, relationInstallApp) {
@@ -1536,6 +1544,19 @@ func tenantScoped(profile *gentianov1alpha1.ComponentProfile) bool {
 		}
 	}
 	return false
+}
+
+// clusterTileRelation is the relation a profile's tile asks on the cluster,
+// or "" when none of its tiles is held there. A profile whose tiles disagree
+// on it is held to the first: the admission of profiles is where two
+// questions on one host would be refused, not here.
+func clusterTileRelation(profile *gentianov1alpha1.ComponentProfile) string {
+	for i := range profile.Spec.Expose {
+		if t := profile.Spec.Expose[i].Tile; t != nil && t.Object == gentianov1alpha1.TileObjectCluster {
+			return t.Relation
+		}
+	}
+	return ""
 }
 
 // relationInstallApp is tenant#can_install_app: who may install apps in a

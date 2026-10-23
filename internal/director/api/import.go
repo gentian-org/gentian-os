@@ -850,6 +850,7 @@ func (s *Server) tenantProvisioned(ctx context.Context, name, customDomain strin
 	var apps struct {
 		Apps []struct {
 			Profile           string   `json:"profile"`
+			Origin            string   `json:"origin"`
 			Ready             bool     `json:"ready"`
 			Phase             string   `json:"phase"`
 			Failure           string   `json:"failure"`
@@ -868,7 +869,8 @@ func (s *Server) tenantProvisioned(ctx context.Context, name, customDomain strin
 	}
 	var waiting []string
 	for _, a := range apps.Apps {
-		if a.Ready {
+		// What the platform places itself is not what the bundle brought.
+		if a.Ready || a.Origin == "default" {
 			continue
 		}
 		why := a.Phase
