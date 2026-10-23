@@ -5,14 +5,14 @@ metadata:
   name: borrowed-q4m9z
 status:
   artefacts:
-  - credreq-borrowed-q4m9z
-  - credprobe-borrowed-q4m9z
+  - credreq-borrowed
+  - credprobe-borrowed
   - argocd-repo-borrowed-q4m9z
   - appproject-source-borrowed-q4m9z
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: appproject-source-borrowed-q4m9z, argocd-repo-borrowed-q4m9z,
-      and credprobe-borrowed-q4m9z'
+      and credprobe-borrowed'
     reason: Creating
     status: "False"
     type: Ready
@@ -112,7 +112,7 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credprobe-borrowed-q4m9z
+    crossplane.io/composition-resource-name: credprobe-borrowed
   generateName: borrowed-q4m9z-
   labels:
     crossplane.io/claim-name: borrowed
@@ -158,7 +158,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: CredentialRequirement
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credreq-borrowed-q4m9z
+    crossplane.io/composition-resource-name: credreq-borrowed
   labels:
     crossplane.io/claim-name: borrowed
     crossplane.io/claim-namespace: kernel-provisioning

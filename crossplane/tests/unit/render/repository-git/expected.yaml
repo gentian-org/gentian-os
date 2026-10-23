@@ -5,14 +5,14 @@ metadata:
   name: deployments-m288c
 status:
   artefacts:
-  - credreq-deployments-m288c
-  - credprobe-deployments-m288c
+  - credreq-deployments
+  - credprobe-deployments
   - argocd-repo-deployments-m288c
   - appproject-source-deployments-m288c
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: appproject-source-deployments-m288c, argocd-repo-deployments-m288c,
-      credprobe-deployments-m288c, and 1 more'
+      credprobe-deployments, and 1 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -111,7 +111,7 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credprobe-deployments-m288c
+    crossplane.io/composition-resource-name: credprobe-deployments
   generateName: deployments-m288c-
   labels:
     crossplane.io/claim-name: deployments
@@ -157,7 +157,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: CredentialRequirement
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credreq-deployments-m288c
+    crossplane.io/composition-resource-name: credreq-deployments
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: kernel-provisioning

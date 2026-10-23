@@ -5,14 +5,14 @@ metadata:
   name: vendor-apps-x7k2p
 status:
   artefacts:
-  - credreq-vendor-apps-x7k2p
-  - credprobe-vendor-apps-x7k2p
+  - credreq-vendor-apps
+  - credprobe-vendor-apps
   - argocd-repo-vendor-apps-x7k2p
   - appproject-source-vendor-apps-x7k2p
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: appproject-source-vendor-apps-x7k2p, argocd-repo-vendor-apps-x7k2p,
-      credprobe-vendor-apps-x7k2p, and 1 more'
+      credprobe-vendor-apps, and 1 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -112,7 +112,7 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credprobe-vendor-apps-x7k2p
+    crossplane.io/composition-resource-name: credprobe-vendor-apps
   generateName: vendor-apps-x7k2p-
   labels:
     crossplane.io/claim-name: vendor-apps
@@ -158,7 +158,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: CredentialRequirement
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credreq-vendor-apps-x7k2p
+    crossplane.io/composition-resource-name: credreq-vendor-apps
   labels:
     crossplane.io/claim-name: vendor-apps
     crossplane.io/claim-namespace: kernel-provisioning
