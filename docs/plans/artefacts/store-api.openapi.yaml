@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.8"
+  version: "1.9"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -2958,6 +2958,15 @@ components:
         version:
           type: string
           description: The version to confirm. Absent means the latest the store lists.
+        seats:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: |
+            Added in 1.9. How many people the app is for: the people the
+            tenant's administrator chose, or the tenant's users when it is
+            for everybody. A priced app's checkout is for that many seats,
+            at the price per seat. Absent: the store decides, as before.
     AcquisitionStatus:
       type: string
       description: |

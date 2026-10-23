@@ -305,9 +305,10 @@ func TestTheAppStoreIsToldEveryFactItsChartReads(t *testing.T) {
 			// The tenant's unique id; the fixture has none.
 			"TENANT_UID": "",
 		}},
-		"director": map[string]interface{}{"url": "http://gentian-os-director.kernel-control.svc.cluster.local:8080", "cluster": "c1"},
-		"custodian":     map[string]interface{}{"url": "http://gentian-os-custodian.kernel-control.svc.cluster.local:9444"},
-		"usher":         map[string]interface{}{"url": "http://gentian-os-usher.kernel-control.svc.cluster.local:8080"},
+		"director":  map[string]interface{}{"url": "http://gentian-os-director.kernel-control.svc.cluster.local:8080", "cluster": "c1"},
+		"custodian": map[string]interface{}{"url": "http://gentian-os-custodian.kernel-control.svc.cluster.local:9444"},
+		"usher":     map[string]interface{}{"url": "http://gentian-os-usher.kernel-control.svc.cluster.local:8080"},
+		"registrar": map[string]interface{}{"url": "http://gentian-os-registrar.kernel-control.svc.cluster.local:9445"},
 		"platform": map[string]interface{}{
 			"tenant": "acme", "kernelDomain": "k.example", "realm": "acme", "zoneKind": "tenant",
 		},

@@ -27,6 +27,12 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-23** (1.9, additive: a 1.8 client is answered as before)
+
+1. **`POST /v1/acquisitions` may carry `seats`**: how many people the app
+   is for. A priced app's checkout is for that many seats at the price per
+   seat.
+
 **2026-10-23** (1.8, additive: a 1.7 client reads every answer as before)
 
 1. **A version's `requirements` may carry `offers` and `canUse`**: the

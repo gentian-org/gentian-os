@@ -54,6 +54,9 @@ spec:
         # Asked what the cluster has made of the tenant's apps, and whether
         # the cluster offers an App Store at all.
         usherUrlKey: usher.url
+        # Asked for the tenant's people when an app is installed for selected
+        # users, and to give each of them the app.
+        registrarUrlKey: registrar.url
         clusterKey: director.cluster
         tenantKey: platform.tenant
         kernelDomainKey: platform.kernelDomain
