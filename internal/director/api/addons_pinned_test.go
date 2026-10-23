@@ -326,3 +326,42 @@ func TestAPinnedAddonIsRefusedInsideAnAppThatIsNotPinned(t *testing.T) {
 		t.Fatalf("apps = %+v", apps)
 	}
 }
+
+// An add-on asked for as an app of its own is refused, with where it goes,
+// and nothing is committed: installed beside its base it is an entry nothing
+// switches on. Nextcloud Office installed that way never started Collabora.
+func TestAnAddonFetchedAsAnAppIsRefused(t *testing.T) {
+	talk := addonProfile("element-talk")
+	src := addonSource(t, map[string]string{"element-talk": talk})
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	before := dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main")
+
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element-talk", tom,
+		fmt.Sprintf(`{"coordinate":"main/element-talk","digest":%q}`, sha(talk)))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("install = %d %v, want 422", code, out)
+	}
+	if msg := fmt.Sprint(out["error"]); !strings.Contains(msg, "add-on of element") || !strings.Contains(msg, "/v1/tenants/demo/apps/element/addons") {
+		t.Fatalf("the refusal does not say where the add-on goes: %q", msg)
+	}
+	if after := dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main"); after != before {
+		t.Fatalf("a refused install committed something")
+	}
+}
+
+// The same for an add-on the cluster already holds, named without a build.
+func TestAnAddonOnTheClusterAskedForAsAnAppIsRefused(t *testing.T) {
+	h := start(t)
+	dt.Commit(t, h.remote, map[string]string{dt.CataloguePath("element-talk.yaml"): addonProfile("element-talk")})
+	tom := h.token(t, "tenant-demo", "tom")
+	before := dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main")
+
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element-talk", tom, "")
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("install = %d %v, want 422", code, out)
+	}
+	if after := dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main"); after != before {
+		t.Fatalf("a refused install committed something")
+	}
+}

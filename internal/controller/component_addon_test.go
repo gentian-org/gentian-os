@@ -99,6 +99,7 @@ func TestAnAddonRoutesNothingAndInstallsNothing(t *testing.T) {
 	ns := tenantNamespaceName(tenant)
 
 	base := componentFor("nextcloud-base-ce", ns)
+	base.Spec.Addons = []string{"nextcloud-calendar-ce"}
 	base.Status.Conditions = []metav1.Condition{{
 		Type: conditionComponentReady, Status: metav1.ConditionTrue,
 		Reason: "Ready", LastTransitionTime: metav1.Now(),
@@ -164,6 +165,48 @@ func TestAnAddonWaitsForItsBase(t *testing.T) {
 	ready := componentReadyCondition(got)
 	if ready == nil || ready.Reason != "AddonBaseNotReady" {
 		t.Fatalf("condition = %+v, want AddonBaseNotReady", ready)
+	}
+}
+
+// An addon installed as an app of its own, beside a base that does not list
+// it, is not Ready: nothing switches it on. It used to say "activated inside"
+// its base whenever the base was Ready, and Nextcloud Office installed that
+// way reported Ready while Nextcloud never enabled it.
+func TestAnAddonItsBaseDoesNotListIsNotReady(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+	tenant := acmeTenantFixture()
+	ns := tenantNamespaceName(tenant)
+
+	base := componentFor("nextcloud-base-ce", ns)
+	base.Status.Conditions = []metav1.Condition{{
+		Type: conditionComponentReady, Status: metav1.ConditionTrue,
+		Reason: "Ready", LastTransitionTime: metav1.Now(),
+	}}
+	addon := componentFor("nextcloud-calendar-ce", ns)
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(tenant.DeepCopy(), nextcloudBaseProfile(), calendarAddonProfile(), base, addon).
+		WithStatusSubresource(&gentianov1alpha1.Component{}).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: client.ObjectKeyFromObject(addon)}); err != nil {
+		t.Fatal(err)
+	}
+	got := &gentianov1alpha1.Component{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(addon), got); err != nil {
+		t.Fatal(err)
+	}
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "AddonNotSelected" {
+		t.Fatalf("condition = %+v, want AddonNotSelected", ready)
+	}
+	if !strings.Contains(ready.Message, "nextcloud-base-ce does not list this addon") {
+		t.Fatalf("message %q does not say the base does not list it", ready.Message)
 	}
 }
 

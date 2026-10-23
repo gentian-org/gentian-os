@@ -220,7 +220,10 @@ derivation through `cluster`.
   credentials.
 - **Shared** — the shared-apps admin runs the instance and decides which
   tenants may use it; the instance's own code is the only isolation between
-  those tenants, which is why the profile needed `trustTier: platform`.
+  those tenants, which is why the profile needed `trustTier: platform`. That
+  code tells people apart by issuer and subject, never by `uid` or username,
+  which collide across tenants ([target-component-structure.md
+  §7](target-component-structure.md)).
 - **Tenant** — the tenant administrator decides what runs and who uses it,
   inside a ceiling the platform set and a namespace the platform enforces.
 - **Perimeter** — the perimeter approver decides what the internet may

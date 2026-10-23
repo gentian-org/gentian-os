@@ -1119,6 +1119,9 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		if s.refusedByFloor(w, r, fetched, "app "+body.Coordinate) {
 			return
 		}
+		if s.refusedAsAddon(w, r, tenant, profile, fetched.Definition) {
+			return
+		}
 		if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
 			s.refuseReservedAddress(w, r, tenant, "app "+profile, why)
 			return
@@ -1133,6 +1136,14 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	} else {
 		if !s.onClusterFor(w, r, tenant, profile, "") {
+			return
+		}
+		definition, err := s.cfg.Repo.ProfileDefinition(ctx, profile)
+		if err != nil && !errors.Is(err, gitops.ErrProfileUnreadable) {
+			s.repoError(w, r, err)
+			return
+		}
+		if s.refusedAsAddon(w, r, tenant, profile, definition) {
 			return
 		}
 		why, err := s.onClusterTakesReservedAddress(ctx, profile, zone)
@@ -1152,6 +1163,27 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	s.retryMove(w, r, c, tenant, profile, body.Digest, retry)
+}
+
+// refusedAsAddon answers an add-on asked for as an app of its own, and
+// reports that it did.
+//
+// An add-on is switched on inside its base, from the add-ons the base's entry
+// lists (PUT .../apps/{base}/addons); the base's chart is what activates it.
+// Installed beside the base instead, it is an entry nothing switches on, and
+// it said nothing about that: Nextcloud Office installed this way showed as
+// installed while Nextcloud never enabled it and Collabora never started.
+// Refused before anything is committed, with where it goes instead.
+func (s *Server) refusedAsAddon(w http.ResponseWriter, r *http.Request, tenant, profile string, definition *gentianov1alpha1.ComponentProfile) bool {
+	if definition == nil || definition.Spec.Package.Addon == nil {
+		return false
+	}
+	base := definition.Spec.Package.Addon.Of
+	s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+		"%s is an add-on of %s: it is switched on inside %s (PUT /v1/tenants/%s/apps/%s/addons), "+
+			"not installed as an app of its own, where nothing would switch it on. Nothing was installed",
+		profile, base, base, tenant, base))
+	return true
 }
 
 // refusedInPlatformTenant answers an app or an add-on asked for in the
