@@ -132,7 +132,7 @@ spec:
       metadata:
         labels:
           gentianos.io/credential-requirement: deployments-m288c
-        name: credreq-repository-deployments-m288c
+        name: credreq-repository-deployments
         namespace: kernel-control
       spec:
         data:
@@ -164,7 +164,7 @@ metadata:
     crossplane.io/composite: deployments-m288c
     gentianos.io/credential-phase: bootstrap
     gentianos.io/credential-scope: cluster
-  name: repository-deployments-m288c
+  name: repository-deployments
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true

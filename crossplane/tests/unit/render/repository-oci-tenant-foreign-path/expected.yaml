@@ -133,7 +133,7 @@ spec:
       metadata:
         labels:
           gentianos.io/credential-requirement: borrowed-q4m9z
-        name: credreq-repository-borrowed-q4m9z
+        name: credreq-repository-borrowed
         namespace: kernel-control
       spec:
         data:
@@ -166,7 +166,7 @@ metadata:
     gentianos.io/credential-phase: runtime
     gentianos.io/credential-scope: tenant
     gentianos.io/tenant: acme
-  name: repository-borrowed-q4m9z
+  name: repository-borrowed
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
