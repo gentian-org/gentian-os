@@ -121,15 +121,17 @@ func (s *Server) setTenantBrokeredFrom(w http.ResponseWriter, r *http.Request, c
 		Issuer      string `json:"issuer"`
 		ClientID    string `json:"clientID"`
 		Domain      string `json:"domain"`
+		// LinkExisting: no organization and no domain; see gitops.BrokeredFrom.
+		LinkExisting bool `json:"linkExisting"`
 	}
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"displayName": "...", "issuer": "https://id.<cluster>/auth/realms/<realm>", "clientID": "...", "domain": "<domain>"}`)
+			`body must be {"displayName": "...", "issuer": "https://id.<cluster>/auth/realms/<realm>", "clientID": "...", "domain": "<domain>"}, or with "linkExisting": true and no domain`)
 		return
 	}
 	res, err := s.cfg.Repo.SetTenantBrokeredFrom(r.Context(), r.PathValue("t"), gitops.BrokeredFrom{
 		Name: r.PathValue("name"), DisplayName: body.DisplayName, Issuer: body.Issuer,
-		ClientID: body.ClientID, Domain: body.Domain,
+		ClientID: body.ClientID, Domain: body.Domain, LinkExisting: body.LinkExisting,
 	}, c.meta)
 	switch {
 	case errors.Is(err, gitops.ErrInvalidBrokeredFrom):

@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.6"
+  version: "1.7"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -2007,6 +2007,10 @@ components:
             `support`: apps may carry support offers (`support` on an app)
             and a signed-in person may request one
             (`POST /v1/apps/{catalogue}/{app}/support-requests`).
+            `tenant-sign-in` (1.7): once a tenant is associated with an
+            account, the store's realm signs the person in through the
+            tenant's own realm (`signIn` on `GET /v1/tenant`); the client
+            may ask with `kc_idp_hint=org-<tenant uid>` and `prompt=none`.
           items:
             type: string
         catalogues:
@@ -2091,6 +2095,20 @@ components:
           properties:
             role:
               $ref: "#/components/schemas/TenantRole"
+        signIn:
+          type: object
+          description: |
+            Added in 1.7, with the feature `tenant-sign-in`: the tenant id
+            (the report's `tenants[].uid`) the store has associated with an
+            account for this tenant URL, and whose realm it signs people in
+            through, with the identity provider `org-<tenantUid>`. Absent
+            while there is none. A client turns its side on only when the id
+            is its own tenant's.
+          required: [tenantUid]
+          properties:
+            tenantUid:
+              type: string
+              examples: [0f8e7d6c-5b4a-4321-9876-0123456789ab]
     TenantRole:
       type: string
       description: |

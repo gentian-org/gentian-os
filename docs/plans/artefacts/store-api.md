@@ -27,6 +27,16 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-23** (1.7, additive: a 1.6 client reads every answer as before)
+
+1. **`features` may include `tenant-sign-in`**, and **`GET /v1/tenant` may
+   carry `signIn: {tenantUid}`**: the tenant id (the report's
+   `tenants[].uid`) the store associated with an account for the tenant
+   URL. The store's realm then signs people in through that tenant's own
+   realm, with the identity provider `org-<tenantUid>`; a client may ask
+   with `kc_idp_hint=org-<tenantUid>` and `prompt=none`, and falls back to
+   the visible sign-in on any error ([store-contract.md](../../design/store-contract.md) §6.1).
+
 **2026-10-23** (1.6, additive: a 1.5 client reads every answer as before)
 
 1. **An app summary may carry a `maturityScore`**, an integer from 0 to 10
@@ -450,7 +460,7 @@ cacheable for the `max-age` it states.
 | `languages` | BCP 47[] | yes | The languages the store has translations in |
 | `mediaOrigins` | origin[] | yes | Where image URLs may point. The app fixes its content security policy from it |
 | `checkoutOrigins` | origin[] | yes | Where a `checkoutUrl` may point |
-| `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3). Unknown values are ignored |
+| `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3), `tenant-sign-in` (the sign-in goes through the tenant's own realm once associated; 1.7). Unknown values are ignored |
 | `catalogues` | `{name, url, displayName?}[]` | no | The catalogue sources the store's entries come from. `name` is the first half of the coordinates from that source; `url` its https address (`index.yaml` and `profiles/` beneath it); `displayName` plain text ≤ 80. A cluster's installer adds each one the cluster has no source of that name for, and changes or removes none ([store-contract.md](../../design/store-contract.md) §9). Added in 1.5 |
 | `links` | object | no | `terms`, `privacy`, `support`, `account`: pages of the store's, each a URL |
 

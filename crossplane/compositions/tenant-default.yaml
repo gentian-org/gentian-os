@@ -2216,6 +2216,35 @@ spec:
                   gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
+            {{- /* identityOnly (the store's sign-in, spec.store.signIn): the
+                 client's default scopes are the person's identity -- basic
+                 (the subject), profile and email -- and not the realm's
+                 groups or roles. Optional scopes are given only to a caller
+                 that asks, and the store realm's provider asks for openid
+                 profile email. */}}
+            {{- if $b.identityOnly }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-broker-to-{{ $b.name }}-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-to-{{ $b.name }}-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-broker-to-{{ $b.name }}-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - basic
+                  - email
+                  - profile
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
 
@@ -2243,7 +2272,96 @@ spec:
                  kc_idp_hint.
 
                  Delete and not Orphan: an entry taken away must stop the
-                 sign-in, not leave it in the realm. */}}
+                 sign-in, not leave it in the realm.
+
+                 An entry with linkExisting (the store's sign-in through a
+                 customer tenant's own realm) has no organization and no
+                 domain. Its provider makes no account: its first-login flow,
+                 gentian-link-existing below, asks the person to sign in to
+                 their account here, once, and links the two; from then on the
+                 sign-in asks nothing, and the provider forwards a client's
+                 prompt=none to the outside realm, so a person with a session
+                 there is signed in here without a page. Under prompt=none
+                 the flow's form is a challenge, which Keycloak answers
+                 interaction_required: nothing is made silently. */}}
+            {{- $linkExisting := false }}
+            {{- range $b := (dig "brokeredFrom" list $spec) }}
+            {{- if $b.linkExisting }}{{- $linkExisting = true }}{{- end }}
+            {{- end }}
+            {{- if $linkExisting }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-link-existing-flow
+              name: {{ $tenant }}-link-existing-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-link-existing
+                description: First sign-in through a provider links an existing account, and makes none
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-link-existing-password
+              name: {{ $tenant }}-link-existing-password
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-link-existing
+                authenticator: auth-username-password-form
+                requirement: REQUIRED
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            {{- /* The account's second factor, where it has one: linking is
+                 a sign-in to it, and never a way round its OTP. */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Subflow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-link-existing-otp
+              name: {{ $tenant }}-link-existing-otp
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-link-existing-otp
+                parentFlowAlias: gentian-link-existing
+                providerId: basic-flow
+                requirement: CONDITIONAL
+                priority: 20
+              providerConfigRef:
+                name: keycloak
+            {{- range $i, $auth := (list "conditional-user-configured" "auth-otp-form") }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-link-existing-exec-{{ $auth }}
+              name: {{ $tenant }}-link-existing-exec-{{ $auth }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-link-existing-otp
+                authenticator: {{ $auth }}
+                requirement: REQUIRED
+                priority: {{ add 10 (mul $i 10) }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- range $b := (dig "brokeredFrom" list $spec) }}
             {{- if regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name) }}
             {{- $issuer := trimSuffix "/" (toString $b.issuer) }}
@@ -2271,6 +2389,7 @@ spec:
                     client_secret: private-key-jwt
               providerConfigRef:
                 name: kubernetes
+            {{- if not $b.linkExisting }}
             ---
             apiVersion: organization.keycloak.crossplane.io/v1alpha1
             kind: Organization
@@ -2291,6 +2410,7 @@ spec:
                     verified: false
               providerConfigRef:
                 name: keycloak
+            {{- end }}
             ---
             apiVersion: oidc.keycloak.crossplane.io/v1alpha1
             kind: IdentityProvider
@@ -2323,10 +2443,15 @@ spec:
                 jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $issuer | quote }}
                 userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $issuer | quote }}
                 logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $issuer | quote }}
+                {{- if $b.linkExisting }}
+                firstBrokerLoginFlowAlias: gentian-link-existing
+                acceptsPromptNoneForwardFromClient: true
+                {{- else }}
                 organizationIdRef:
                   name: {{ $tenant }}-org-{{ $b.name }}
                 orgDomain: {{ $b.domain | quote }}
                 orgRedirectModeEmailMatches: true
+                {{- end }}
                 extraConfig:
                   clientAuthMethod: private_key_jwt
                 clientIdSecretRef:
@@ -2643,8 +2768,13 @@ spec:
                 {{- /* Organizations, only in a realm that has outside realms
                      signing in as one (spec.brokeredFrom): every other realm
                      is composed as it was, and does not grow the identity-first
-                     login step organizations add. */}}
-                {{- if (dig "brokeredFrom" list $spec) }}
+                     login step organizations add. An entry that links
+                     existing accounts (linkExisting) is no organization. */}}
+                {{- $orgs := false }}
+                {{- range $b := (dig "brokeredFrom" list $spec) }}
+                {{- if not $b.linkExisting }}{{- $orgs = true }}{{- end }}
+                {{- end }}
+                {{- if $orgs }}
                 organizationsEnabled: true
                 {{- end }}
                 {{- /* ── Languages (AD-15) ────────────────────────────────

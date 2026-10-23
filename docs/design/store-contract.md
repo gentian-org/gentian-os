@@ -508,6 +508,41 @@ The sign-in is held to three conditions:
    `store.acquire`; the store now decides it from its own records rather
    than from the token.
 
+**After the first, the sign-in is silent.** The first sign-in of a
+tenant's administrator at the store is visible, and is what associates the
+tenant with their store account. From then on the store's realm signs the
+person in through the tenant's own realm, which already has their session:
+
+1. The usage statistics report names each tenant by its unique id,
+   `metadata.uid` (`tenants[].uid`, [operations.md](operations.md) §6.2): random,
+   never reused, never derived from the name, so a tenant deleted and made
+   again under the same name is another tenant to the store. Several ids may
+   belong to one store account.
+2. Once the store has associated the tenant with the account, it makes, in
+   its realm, an identity provider `org-<uid>` for the tenant's realm
+   (`https://id.<cluster domain>/auth/realms/<tenant>`, from the reported
+   tenant URL and cluster URL). It authenticates by a JWT the store's realm
+   signs; it makes no account, and links one only after the person has
+   signed in to their store account once through it.
+3. The store answers that association in `GET /v1/tenant` (`signIn.tenantUid`,
+   1.7) and offers the feature `tenant-sign-in` in `GET /v1/meta`. The App
+   Store app then asks the director to turn on `spec.store.signIn` with the
+   store's issuer — the tenant's administrators may (`can_administer`); for
+   anybody else it asks nothing. The platform makes, in the tenant's realm,
+   the client `broker-to-store`: its one redirect address is the store
+   realm's broker endpoint for `org-<uid>`, it checks the store realm's
+   published keys, and it gives the subject, name and e-mail address and no
+   group or role. Turning the switch off removes it.
+4. The App Store app's sign-in then carries `kc_idp_hint=org-<uid>` and
+   `prompt=none`. A person with a session in the tenant's realm and a linked
+   account is signed in with no page; any error sends the app to the
+   visible sign-in, still with the hint, where an unlinked person signs in to
+   their store account once and is linked.
+
+The three conditions below hold for both. The store learns no more than
+before: the person's identity in the tenant's realm, which they sign in to the
+store with.
+
 This is a sign-in flow run by a component behind the edge, which AD-13
 rules out. It is the one exception AD-13 states, and the three conditions
 are what make it acceptable: it is against an issuer outside the cluster,

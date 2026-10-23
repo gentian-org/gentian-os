@@ -124,6 +124,8 @@ type Repository interface {
 	RemoveRoleHolder(ctx context.Context, role, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlatformAccess(ctx context.Context, tenant string) (bool, error)
 	SetTenantPlatformAccess(ctx context.Context, tenant string, on bool, meta gitops.Meta) (gitops.Result, error)
+	TenantStoreSignIn(ctx context.Context, tenant string) (string, error)
+	SetTenantStoreSignIn(ctx context.Context, tenant, issuer string, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -633,6 +635,10 @@ func (s *Server) routes() {
 	s.commissioned("GET /v1/tenants/{t}/brokered-from", "can_view", tenantObject, s.tenantBrokeredFrom)
 	s.commissioned("PUT /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.setTenantBrokeredFrom)
 	s.commissioned("DELETE /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.removeTenantBrokeredFrom)
+	// The store's sign-in through the tenant's own realm (store_sign_in.go).
+	s.guarded("GET /v1/tenants/{t}/store-sign-in", "can_view", tenantObject, s.tenantStoreSignIn)
+	s.guarded("PUT /v1/tenants/{t}/store-sign-in", "can_administer", tenantObject, s.setTenantStoreSignIn)
+	s.guarded("DELETE /v1/tenants/{t}/store-sign-in", "can_administer", tenantObject, s.removeTenantStoreSignIn)
 
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)

@@ -16,6 +16,13 @@ spec:
       issuer: https://id.abc.example/auth/realms/main/
       clientID: broker-to-aluvian
       domain: abc.example
+    # The store's sign-in through a customer tenant's realm: no
+    # organization, the link-existing first-login flow, prompt=none forwarded.
+    - name: 0f8e7d6c-5b4a-4321-9876-0123456789ab
+      displayName: test.abc.example (0f8e7d6c)
+      issuer: https://id.abc.example/auth/realms/test
+      clientID: broker-to-store
+      linkExisting: true
     - name: Not_A_Label
       displayName: Evil
       issuer: https://id.evil.example/auth/realms/x

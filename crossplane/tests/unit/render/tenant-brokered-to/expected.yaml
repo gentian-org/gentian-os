@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-broker-to-aluvian-client,
-      keycloak-dovecot-oidc-client, and 39 more'
+      keycloak-broker-to-store-client, and 41 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -345,6 +345,81 @@ spec:
   - Create
   - Update
   - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-broker-to-store-client
+    crossplane.io/external-name: broker-to-store
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-broker-to-store-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientAuthenticatorType: client-jwt
+    clientId: broker-to-store
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+      jwks.url: https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
+      token.endpoint.auth.signing.alg: RS256
+      use.jwks.url: "true"
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Sign-in at store
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validRedirectUris:
+    - https://id.aluvian.example/auth/realms/customers/broker/org-0f8e7d6c-5b4a-4321-9876-0123456789ab/endpoint
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-broker-to-store-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-broker-to-store-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-broker-to-store-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    - email
+    - profile
+    realmId: render-fixture
   providerConfigRef:
     name: keycloak
 ---

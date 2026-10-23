@@ -44,7 +44,11 @@ type BrokeredFrom struct {
 	DisplayName string `json:"displayName"`
 	Issuer      string `json:"issuer"`
 	ClientID    string `json:"clientID"`
-	Domain      string `json:"domain"`
+	Domain      string `json:"domain,omitempty"`
+	// LinkExisting is an entry with no organization and no domain, whose
+	// provider links an account that exists and makes none (Tenant
+	// spec.brokeredFrom[].linkExisting).
+	LinkExisting bool `json:"linkExisting,omitempty"`
 }
 
 // ErrInvalidBrokeredFrom is an entry that cannot be one.
@@ -83,13 +87,20 @@ func ValidBrokeredFrom(b BrokeredFrom) error {
 		!strings.HasPrefix(u.Path, "/") || strings.HasSuffix(b.Issuer, "/") {
 		return fmt.Errorf("%w: issuer %q is not https://<host>/<path to the realm>", ErrInvalidBrokeredFrom, b.Issuer)
 	}
-	if len(b.Domain) > 253 || !hostnamePattern.MatchString(b.Domain) {
-		return fmt.Errorf("%w: domain %q is not a domain", ErrInvalidBrokeredFrom, b.Domain)
-	}
 	host := strings.ToLower(u.Hostname())
 	cluster, ok := strings.CutPrefix(host, "id.")
 	if !ok || cluster == "" {
 		return fmt.Errorf("%w: issuer %q is not at id.<the cluster's domain>", ErrInvalidBrokeredFrom, b.Issuer)
+	}
+	if b.LinkExisting {
+		// No organization, so no domain whose addresses it would claim.
+		if b.Domain != "" {
+			return fmt.Errorf("%w: an entry that links existing accounts makes no organization and names no domain", ErrInvalidBrokeredFrom)
+		}
+		return nil
+	}
+	if len(b.Domain) > 253 || !hostnamePattern.MatchString(b.Domain) {
+		return fmt.Errorf("%w: domain %q is not a domain", ErrInvalidBrokeredFrom, b.Domain)
 	}
 	if b.Domain != cluster && !strings.HasSuffix(b.Domain, "."+cluster) {
 		return fmt.Errorf("%w: domain %s is not the issuer's cluster's: the issuer is published by %s, and the "+
@@ -151,7 +162,7 @@ func (g *GitOps) SetTenantBrokeredFrom(ctx context.Context, tenant string, entry
 	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
 		return Result{}, err
 	}
-	if kernel != "" && (entry.Domain == kernel || strings.HasSuffix(entry.Domain, "."+kernel) ||
+	if kernel != "" && entry.Domain != "" && (entry.Domain == kernel || strings.HasSuffix(entry.Domain, "."+kernel) ||
 		strings.HasSuffix(kernel, "."+entry.Domain)) {
 		return Result{}, fmt.Errorf("%w: %s is this cluster's domain or shares it, and its addresses are this cluster's people's",
 			ErrInvalidBrokeredFrom, entry.Domain)
@@ -167,7 +178,7 @@ func (g *GitOps) SetTenantBrokeredFrom(ctx context.Context, tenant string, entry
 		if e.Name == entry.Name {
 			continue
 		}
-		if e.Domain == entry.Domain {
+		if e.Domain != "" && e.Domain == entry.Domain {
 			return Result{}, fmt.Errorf("%w: the domain %s is %s's", ErrBrokeredFromHeld, entry.Domain, e.Name)
 		}
 		if strings.EqualFold(e.DisplayName, entry.DisplayName) {
@@ -177,7 +188,7 @@ func (g *GitOps) SetTenantBrokeredFrom(ctx context.Context, tenant string, entry
 	}
 	out = append(out, entry)
 	return g.writeTenantFileLocked(ctx, tenant, BrokeredFromFile, renderBrokeredFrom(tenant, out), listPatch,
-		fmt.Sprintf("Tenant %s: people of %s (%s) sign in as an organization", tenant, entry.Name, entry.Domain), meta)
+		brokeredFromSubject(tenant, entry), meta)
 }
 
 // RemoveTenantBrokeredFrom takes an outside realm away: its people stop
@@ -222,7 +233,9 @@ func renderBrokeredFrom(tenant string, list []BrokeredFrom) string {
 	b.WriteString("# Managed by the director: realms outside this tenant whose people sign in\n")
 	b.WriteString("# here, each as an organization of the tenant's realm. The composition makes\n")
 	b.WriteString("# the organization and an identity provider, org-<name>, that authenticates\n")
-	b.WriteString("# by a JWT this realm signs and gives nobody a group or a role.\n")
+	b.WriteString("# by a JWT this realm signs and gives nobody a group or a role. An entry\n")
+	b.WriteString("# with linkExisting is no organization: its provider links an account\n")
+	b.WriteString("# that exists here, once, and makes none.\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: Tenant\n")
 	b.WriteString("metadata:\n")
@@ -234,7 +247,18 @@ func renderBrokeredFrom(tenant string, list []BrokeredFrom) string {
 		b.WriteString("      displayName: " + strconv.Quote(e.DisplayName) + "\n")
 		b.WriteString("      issuer: " + strconv.Quote(e.Issuer) + "\n")
 		b.WriteString("      clientID: " + strconv.Quote(e.ClientID) + "\n")
-		b.WriteString("      domain: " + e.Domain + "\n")
+		if e.LinkExisting {
+			b.WriteString("      linkExisting: true\n")
+		} else {
+			b.WriteString("      domain: " + e.Domain + "\n")
+		}
 	}
 	return b.String()
+}
+
+func brokeredFromSubject(tenant string, entry BrokeredFrom) string {
+	if entry.LinkExisting {
+		return fmt.Sprintf("Tenant %s: people of %s sign in to their accounts here", tenant, entry.Name)
+	}
+	return fmt.Sprintf("Tenant %s: people of %s (%s) sign in as an organization", tenant, entry.Name, entry.Domain)
 }

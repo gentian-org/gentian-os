@@ -350,7 +350,7 @@ spec:
                         addresses, which Keycloak sends to this identity provider when one of
                         them gives their address. One organization per domain. The director
                         takes only the issuer's cluster domain (the issuer is at
-                        id.<cluster domain>) or one below it.
+                        id.<cluster domain>) or one below it. Empty only with LinkExisting.
                       maxLength: 253
                       pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
                       type: string
@@ -359,6 +359,17 @@ spec:
                         domain>/auth/realms/<realm>.
                       pattern: ^https://[^/\s]+/[^\s]*[^/\s]$
                       type: string
+                    linkExisting:
+                      description: |-
+                        LinkExisting makes the entry a sign-in to accounts that already exist
+                        here, and nothing else: no organization and no domain, and no account
+                        is ever made through it. The first time a person arrives through it
+                        they sign in to their account of this realm, once, and the two are
+                        linked; from then on they are signed in without being asked, also
+                        when a client asks for that with prompt=none, which this provider
+                        forwards to the outside realm. The store's sign-in through a
+                        tenant's own realm (store-contract.md §6.1).
+                      type: boolean
                     name:
                       description: |-
                         Name says whose realm it is; the organization's alias, and the identity
@@ -370,10 +381,14 @@ spec:
                   required:
                   - clientID
                   - displayName
-                  - domain
                   - issuer
                   - name
                   type: object
+                  x-kubernetes-validations:
+                  - message: an organization names its domain; an entry that links
+                      existing accounts makes no organization and names none
+                    rule: 'has(self.linkExisting) && self.linkExisting ? !has(self.domain)
+                      : has(self.domain)'
                 maxItems: 1000
                 type: array
                 x-kubernetes-list-map-keys:
@@ -1261,6 +1276,27 @@ spec:
                       customers with accounts -- and not for a workspace, whose people are
                       invited. Off by default; off, every account is made by an invitation.
                     type: boolean
+                type: object
+              store:
+                description: |-
+                  Store is this tenant's side of the store the cluster names; see
+                  TenantStore.
+                properties:
+                  signIn:
+                    description: |-
+                      SignIn lets the store's realm sign this tenant's people in to the store
+                      through this realm; see TenantStoreSignIn. Unset: it does not.
+                    properties:
+                      issuer:
+                        description: |-
+                          Issuer is the store's realm, as the store's GET /v1/meta names it:
+                          https://<host>/<path to the realm>.
+                        maxLength: 500
+                        pattern: ^https://[^/:\s]+/[^\s?#]*[^/\s?#]$
+                        type: string
+                    required:
+                    - issuer
+                    type: object
                 type: object
             required:
             - displayName

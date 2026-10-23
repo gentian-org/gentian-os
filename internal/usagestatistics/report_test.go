@@ -113,7 +113,7 @@ func tenants() []client.Object {
 	deleting := metav1.NewTime(time.Unix(1, 0))
 	return []client.Object{
 		&gentianov1alpha1.Tenant{
-			ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+			ObjectMeta: metav1.ObjectMeta{Name: "acme", UID: "0f8e7d6c-5b4a-4321-9876-0123456789ab"},
 			Spec: gentianov1alpha1.TenantSpec{
 				DisplayName: "Acme Widgets of Zurich",
 				Apps: []gentianov1alpha1.TenantApp{
@@ -246,7 +246,7 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 	want := []string{
 		"version", "sequence", "sentAt", "publicKey",
 		"cluster", "cluster.id", "cluster.url",
-		"tenants", "tenants.url", "tenants.users",
+		"tenants", "tenants.url", "tenants.uid", "tenants.users",
 		"tenants.apps", "tenants.apps.coordinate", "tenants.apps.digest", "tenants.apps.users",
 		"tenants.apps.addons", "tenants.apps.addons.coordinate", "tenants.apps.addons.digest",
 		"tenants.apps.addons.users",
@@ -283,6 +283,10 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 	// address: its own domain where it has one.
 	if len(report.Tenants) != 2 || report.Tenants[0].URL != "https://acme.k.example" || report.Tenants[1].URL != "https://beta.example" {
 		t.Fatalf("tenants = %+v", report.Tenants)
+	}
+	// Each by its unique id too, where it has one.
+	if report.Tenants[0].UID != "0f8e7d6c-5b4a-4321-9876-0123456789ab" || report.Tenants[1].UID != "" {
+		t.Errorf("uids = %q, %q", report.Tenants[0].UID, report.Tenants[1].UID)
 	}
 	if *report.Tenants[0].Users != 40 || *report.Tenants[1].Users != 3 {
 		t.Errorf("accounts = %d, %d", *report.Tenants[0].Users, *report.Tenants[1].Users)
@@ -389,7 +393,7 @@ func TestACountThatCannotBeHadIsNull(t *testing.T) {
 		t.Fatal("the report did not go")
 	}
 	body := string(e.bodies[0])
-	if !strings.Contains(body, `{"url":"https://acme.k.example","users":null,`) {
+	if !strings.Contains(body, `{"url":"https://acme.k.example","uid":"0f8e7d6c-5b4a-4321-9876-0123456789ab","users":null,`) {
 		t.Errorf("uncounted accounts are not null:\n%s", body)
 	}
 	if !strings.Contains(body, `"digest":"`+unsourced+`","users":null,"addons":[]}`) {

@@ -123,3 +123,27 @@ func TestAnOutsideRealmDoesNotClaimTheClustersDomain(t *testing.T) {
 		t.Fatal("a refused request committed")
 	}
 }
+
+// An entry that links existing accounts (the store's sign-in through a
+// customer tenant's realm) has no organization: it names no domain, takes
+// none, and stands beside an organization of the issuer's domain.
+func TestAnEntryThatLinksExistingAccountsNamesNoDomain(t *testing.T) {
+	h := startWith(t, nil, withCommissioner("demo"))
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/brokered-from/abc", shopKey, abcLink); code != http.StatusAccepted {
+		t.Fatalf("the organization: %d %v", code, body)
+	}
+	link := `{"displayName": "abc.example (0f8e7d6c)", "issuer": "https://id.abc.example/auth/realms/main",
+		"clientID": "broker-to-store", "linkExisting": true}`
+	name := "0f8e7d6c-5b4a-4321-9876-0123456789ab"
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/brokered-from/"+name, shopKey, link); code != http.StatusAccepted {
+		t.Fatalf("the link: %d %v", code, body)
+	}
+	patch := dt.RemoteFile(t, h.remote, strings.TrimSuffix(dt.TenantPath("demo"), "tenant.yaml")+"brokered-from.yaml")
+	if !strings.Contains(patch, "    - name: "+name+"\n") || !strings.Contains(patch, "      linkExisting: true\n") {
+		t.Fatalf("the patch:\n%s", patch)
+	}
+	withDomain := strings.Replace(link, `"linkExisting": true`, `"linkExisting": true, "domain": "abc.example"`, 1)
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/brokered-from/"+name, shopKey, withDomain); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a link naming a domain: %d %v", code, body)
+	}
+}

@@ -106,6 +106,8 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		m.DefaultLanguageKey: locales.Normalise(tenant.Spec.Locales)[0],
 		// The tenant's country, or "" while it names none.
 		m.CountryKey: tenant.Spec.Country,
+		// The tenant's unique id, which never changes.
+		m.TenantUIDKey: string(tenant.UID),
 	} {
 		if key != "" {
 			setPath(out, key, value)
