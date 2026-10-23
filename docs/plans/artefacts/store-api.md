@@ -27,6 +27,14 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-23** (1.8, additive: a 1.7 client reads every answer as before)
+
+1. **A version's `requirements` may carry `offers` and `canUse`**: the
+   integration contracts the app provides (`spec.provides`) and those it
+   can consume optionally (`spec.integrations`), each `{contract, name}`
+   with `name` the contract's name as people read it where the store has
+   one.
+
 **2026-10-23** (1.7, additive: a 1.6 client reads every answer as before)
 
 1. **`features` may include `tenant-sign-in`**, and **`GET /v1/tenant` may

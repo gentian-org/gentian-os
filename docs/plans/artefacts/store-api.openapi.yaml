@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.7"
+  version: "1.8"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -2550,6 +2550,36 @@ components:
           items:
             type: string
             maxLength: 300
+        offers:
+          type: array
+          description: |
+            Added in 1.8. The integration contracts the app provides to other
+            apps of the tenant (the profile's `spec.provides`). Absent or
+            empty: none stated.
+          items:
+            $ref: "#/components/schemas/ContractMention"
+        canUse:
+          type: array
+          description: |
+            Added in 1.8. The integration contracts the app can consume when
+            another app of the tenant provides one (the profile's
+            `spec.integrations`); all of them optional. Absent or empty: none
+            stated.
+          items:
+            $ref: "#/components/schemas/ContractMention"
+    ContractMention:
+      type: object
+      required: [contract]
+      properties:
+        contract:
+          type: string
+          description: The contract's name, as profiles name it.
+          pattern: "^[a-z0-9-]{1,63}$"
+          examples: [file-store]
+        name:
+          type: [string, "null"]
+          description: The contract's name as people read it, where the store has one; a client shows `contract` otherwise.
+          maxLength: 80
     AddonRef:
       type: object
       required: [coordinate, name, summary]
