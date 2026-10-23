@@ -5,14 +5,14 @@ metadata:
   name: deployments-q7xw2
 status:
   artefacts:
-  - credreq-deployments-q7xw2
-  - credprobe-deployments-q7xw2
+  - credreq-deployments
+  - credprobe-deployments
   - argocd-repo-deployments-q7xw2
   - appproject-source-deployments-q7xw2
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: appproject-source-deployments-q7xw2, argocd-repo-deployments-q7xw2,
-      credprobe-deployments-q7xw2, and 1 more'
+      credprobe-deployments, and 1 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -106,7 +106,7 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credprobe-deployments-q7xw2
+    crossplane.io/composition-resource-name: credprobe-deployments
   generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
@@ -152,7 +152,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: CredentialRequirement
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credreq-deployments-q7xw2
+    crossplane.io/composition-resource-name: credreq-deployments
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: kernel-provisioning

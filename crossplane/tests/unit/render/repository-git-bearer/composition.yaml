@@ -175,7 +175,10 @@ spec:
                 gentianos.io/tenant: {{ $tenant | quote }}
                 {{- end }}
               annotations:
-                {{ setResourceNameAnnotation (printf "credreq-%s" $name) }}
+                {{- /* Keyed by the claim, as its name is: Crossplane keeps the name a
+                     composed resource was first created with for as long as its key
+                     stays the same, so a renamed requirement needs a new key. */}}
+                {{ setResourceNameAnnotation (printf "credreq-%s" $claimName) }}
                 # CredentialRequirement is a declaration, not a controller's
                 # object: its CRD has no status subresource and nothing ever
                 # writes conditions to it. function-auto-ready reads readiness
@@ -234,7 +237,7 @@ spec:
             kind: Object
             metadata:
               annotations:
-                {{ setResourceNameAnnotation (printf "credprobe-%s" $name) }}
+                {{ setResourceNameAnnotation (printf "credprobe-%s" $claimName) }}
             spec:
               forProvider:
                 manifest:
@@ -283,8 +286,8 @@ spec:
               {{- else if $satisfied }}
               credentialMessage: "credential present at {{ $cred.vaultPath }}"
               artefacts:
-                - credreq-{{ $name }}
-                - credprobe-{{ $name }}
+                - credreq-{{ $claimName }}
+                - credprobe-{{ $claimName }}
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
               {{- else }}
@@ -293,8 +296,8 @@ spec:
                 {{ $cred.vaultPath }}. Supply it through the custodian,
                 or with the installer for phase: bootstrap.
               artefacts:
-                - credreq-{{ $name }}
-                - credprobe-{{ $name }}
+                - credreq-{{ $claimName }}
+                - credprobe-{{ $claimName }}
               {{- end }}
 
             {{- if $satisfied }}
