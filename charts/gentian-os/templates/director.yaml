@@ -301,10 +301,10 @@ spec:
               value: "true"
             {{- end }}
             {{- end }}
-            {{- /* The components that may commission organizations
-                 (requires.services.organizations), each with the hash of
-                 the key the operator gave it and the tenants that name it
-                 (spec.organizationCommissioners). The keys themselves are
+            {{- /* The components that may commission partners
+                 (requires.services.partners.commission), each with the hash
+                 of the key the operator gave it and the tenants that name it
+                 (spec.partnerCommissioners). The keys themselves are
                  in the components' Secrets and never here. */}}
             - name: DIRECTOR_COMMISSION_KEYS
               value: /etc/gentian/commission/keys.json
@@ -418,7 +418,7 @@ spec:
           emptyDir: {}
         {{- include "gentian-os.operatorTokenVolume" . | nindent 8 }}
         # The operator's list of the components that commission
-        # organizations. Optional and followed rather than read once: before
+        # partners. Optional and followed rather than read once: before
         # the operator writes it, and where nothing commissions, no component
         # is recognised by its key and everything else works as it did.
         - name: commission-keys

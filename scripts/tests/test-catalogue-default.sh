@@ -120,7 +120,9 @@ if command -v yq >/dev/null 2>&1; then
     said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
     is "a claim naming a catalogue that serves is not warned about" \
         "$(grep -c 'never served' <<<"${said}")" "0"
-    printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  catalogue:\n    storeUrl: https://gentian.org/apps\n    sources:\n      - name: gentian\n        url: https://store.gentian.org/catalogue\n' > "${CLAIM}"
+    # It says its partners (partners: {}), so the store's vendor is not added
+    # as one (_claim_record_partners) and the file is the claim as written.
+    printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  partners: {}\n  catalogue:\n    storeUrl: https://gentian.org/apps\n    sources:\n      - name: gentian\n        url: https://store.gentian.org/catalogue\n' > "${CLAIM}"
     before="$(cat "${CLAIM}")"
     said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
     is "a claim naming the retired store and catalogue is warned about, once each" \

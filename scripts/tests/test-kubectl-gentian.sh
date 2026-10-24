@@ -386,17 +386,6 @@ fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"012
 gentian tenants create globex
 has "... and a tenant made without it is not warned" "$(grep -c 'self-sign-up' <<<"${OUT}" || true)" "0"
 
-# An outside realm its people sign in at: named, sent as brokeredTo, said.
-fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","brokeredTo":1}'
-gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.example/auth/realms/customers/broker/acme/endpoint,jwks=https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
-is "create with an outside realm sends it as brokeredTo" "$(writes | tr -d ' \n')" \
-    'POST/v1/clusters/c1/tenants{"name":"acme","displayName":"","requireMFA":true,"brokeredTo":[{"name":"aluvian","redirectURI":"https://id.aluvian.example/auth/realms/customers/broker/acme/endpoint","jwksURL":"https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs"}]}'
-has "... and says where its people may sign in" "${OUT}" "Its people may sign in at: aluvian"
-fresh
-gentian tenants create acme --brokered-to name=aluvian,redirect=https://x.example/e
-refused "an outside realm without its keys' address is a usage error"
-is "... and asks the director nothing" "$(cat "${CALLS}")" ""
-
 # A country: sent upper case, refused when it is not two letters.
 fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","country":"CH"}'
 gentian tenants create acme --country ch
@@ -408,23 +397,29 @@ gentian tenants create acme --country Schweiz
 refused "a country that is not an alpha-2 code is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
-# The other half: a realm of another cluster whose people sign in here, as an
-# organization.
-fresh; reply PUT /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://id.gentian.example/auth/realms/abc --client-id broker-to-aluvian --domain ABC.gentian.example
-is "organizations add sends one PUT" "$(writes | tr -d ' \n')" \
-    'PUT/v1/tenants/customers/brokered-from/abc{"displayName":"ABCAG","issuer":"https://id.gentian.example/auth/realms/abc","clientID":"broker-to-aluvian","domain":"abc.gentian.example"}'
-has "... and says who signs in" "${OUT}" "People of abc.gentian.example sign in to tenant customers as the organization ABC AG"
+# A tenant's partners: one request each, as the director takes them.
+fresh; reply PUT /v1/tenants/customers/partners/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants partners customers add abc --issuer https://id.gentian.example/auth/realms/abc --accept organization --domain ABC.gentian.example --display-name "ABC AG"
+is "partners add sends one PUT" "$(writes | tr -d ' \n')" \
+    'PUT/v1/tenants/customers/partners/abc{"issuer":"https://id.gentian.example/auth/realms/abc","accept":{"accounts":"organization","domain":"abc.gentian.example","displayName":"ABCAG"}}'
+has "... and says it is committed" "${OUT}" "Tenant customers has the partner abc"
+fresh; reply PUT /v1/tenants/acme/partners/shop 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants partners acme add shop --issuer https://id.shop.example/auth/realms/customers --issue
+is "partners add --issue sends issue" "$(writes | tr -d ' \n')" \
+    'PUT/v1/tenants/acme/partners/shop{"issuer":"https://id.shop.example/auth/realms/customers","issue":true}'
 fresh
-gentian tenants organizations customers add abc --display-name "ABC AG" --issuer https://id.gentian.example/auth/realms/abc --client-id broker-to-aluvian
+gentian tenants partners customers add abc --issuer https://id.gentian.example/auth/realms/abc --accept organization
 refused "an organization without its domain is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
-fresh; reply DELETE /v1/tenants/customers/brokered-from/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants organizations customers remove abc
-is "organizations remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/tenants/customers/brokered-from/abc "
-fresh; reply GET /v1/tenants/customers/brokered-from 200 '{"brokeredFrom":[{"name":"abc","displayName":"ABC AG","issuer":"https://id.abc.example/auth/realms/main","clientID":"broker-to-aluvian","domain":"abc.example"}]}'
-gentian tenants organizations customers
-has "organizations lists the sign-in alias" "${OUT}" "sign-in alias org-abc"
+fresh
+gentian tenants partners customers add abc --issuer https://id.gentian.example/auth/realms/abc
+refused "a partner that neither issues nor accepts is a usage error"
+fresh; reply DELETE /v1/tenants/customers/partners/abc 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian tenants partners customers remove abc
+is "partners remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/tenants/customers/partners/abc "
+fresh; reply GET /v1/tenants/customers/partners 200 '{"partners":[{"name":"abc","issuer":"https://id.abc.example/auth/realms/main","accept":{"accounts":"create"}}]}'
+gentian tenants partners customers
+has "partners lists the identity provider" "${OUT}" "identity provider / scope partner-abc"
 
 # A tenant's own groups, and another tenant's people signing in: one request
 # each, as the director takes them.

@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.10"
+  version: "1.11"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -52,20 +52,23 @@ info:
 
     **Signed-in calls** need a token: `GET /v1/tenant`, every
     `/v1/acquisitions` operation, and a request for support
-    (`POST /v1/apps/{catalogue}/{app}/support-requests`). The tenant's administrator signs in to
-    the store, with an account at the store, by OAuth 2.0 authorization
-    code with PKCE (see `GET /v1/meta` and the security scheme
-    `storeToken`). The app is a public client and holds no client secret.
-    Its backend on the cluster exchanges the code and keeps the token; the
-    browser is never handed it. The app asks for the sign-in only when the
-    person acquires something or opens what the tenant has acquired.
+    (`POST /v1/apps/{catalogue}/{app}/support-requests`). The token is a
+    **partner assertion** (1.11, the security scheme `partnerAssertion`):
+    the App Store app exchanges the person's own token, at the tenant's own
+    realm, for an assertion towards the store's realm, and sends it. There
+    is no sign-in flow, no page and no client secret. The store turns the
+    assertion into its own account of the person by the JWT bearer grant at
+    its realm; the tenant a call is about is the issuer of the assertion,
+    not a parameter.
 
     ## Accounts and tenants
 
     A tenant is an organisation in the store's records; an account is a
-    person. They are separate things. The tenant's administrator creates an
-    account at the store's issuer, and the store associates that account
-    with the tenant. By default exactly that one account acts for the
+    person. They are separate things. A person registers with the store
+    once, at its registration page (`registrationUrl` of `GET /v1/meta`):
+    the linking sign-in through the tenant's own realm, which makes the
+    account at the store, and the store associates that account with the
+    tenant. By default exactly that one account acts for the
     tenant. Whether a store lets more accounts act for a tenant, and how,
     is outside this definition for now. An account that is not associated
     with the tenant URL in its token is refused on the signed-in calls with
@@ -73,8 +76,8 @@ info:
 
     Whether a store serves a tenant (`tenant-refused`) is a question of the
     signed-in calls only. An anonymous visitor sees the catalogue whatever
-    the standing of their tenant, and learns at sign-in whether the store
-    serves it.
+    the standing of their tenant, and learns at its first signed-in call
+    whether the store serves it.
 
     ## What is sent
 
@@ -88,13 +91,12 @@ info:
     request came from.
 
     *On a signed-in call, and on an open read that carries a token:* in
-    addition the bearer token, and thereby the store account and the tenant
-    URL bound into it at sign-in.
+    addition the assertion: the issuer of the tenant's realm and a pairwise
+    subject, random to the store and stable for the person, which the store
+    has linked to its own account of them.
 
-    Never: a user of the tenant, a list of what is installed, cluster
-    configuration. The only personal data the store receives through this
-    API is the store account the person signed in with, which the store
-    already holds.
+    Never: a user of the tenant, their name or address, a list of what is
+    installed, cluster configuration.
 
     ## Store content is data
 
@@ -156,7 +158,7 @@ info:
     | Status | `code` | Meaning |
     | --- | --- | --- |
     | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields |
-    | 401 | `unauthenticated` | Signed-in calls only. No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer` |
+    | 401 | `unauthenticated` | Signed-in calls only. No assertion, one the store refuses, or a person not linked yet: `WWW-Authenticate: Partner link=…` |
     | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
     | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
     | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why |
@@ -222,7 +224,7 @@ servers:
         description: An `https` address with no trailing slash. Every path below is appended to it.
 tags:
   - name: meta
-    description: Open. What a client needs to know of a store, and to sign a person in.
+    description: Open. What a client needs to know of a store, and where a person registers.
   - name: catalogue
     description: Open. The apps a store lists, and what it says about each. No token is needed.
   - name: tenant
@@ -230,7 +232,7 @@ tags:
   - name: acquisitions
     description: Signed in. What a tenant has acquired, and acquiring.
 security:
-  - storeToken: []
+  - partnerAssertion: []
 paths:
   /v1/meta:
     get:
@@ -238,8 +240,8 @@ paths:
       operationId: getMeta
       summary: Discovery
       description: |
-        Names the store, the version of this API it serves, and what a
-        client needs to sign a person in. An open read: it takes no token
+        Names the store, the version of this API it serves, its partner
+        realm and its registration page. An open read: it takes no token
         and ignores one. A client reads it before anything else and may
         cache it for the `max-age` the answer states.
       security: []
@@ -279,15 +281,14 @@ paths:
       operationId: getTenant
       summary: The standing of the tenant in the token
       description: |
-        Answers for the tenant URL bound into the token. It is the one
+        Answers for the tenant the assertion's issuer is. It is the one
         signed-in call that never answers `tenant-refused`: a refusal is
         stated in the body, with `served: false`, so that a client can show
         the reason. Every `/v1/acquisitions` operation answers `403` with
         code `tenant-refused` and the same `reason` while `served` is false.
         The open reads are not affected: the catalogue stays readable.
 
-        A client asks this once after each sign-in, before the signed-in
-        call the person wanted.
+        A client may ask this before the signed-in call the person wanted.
 
         `known` says whether the store holds usage statistics reports that list this
         tenant URL (see `usage-statistics.openapi.yaml`). `notices` are shown
@@ -442,7 +443,7 @@ paths:
       operationId: listCategories
       security:
         - {}
-        - storeToken: []
+        - partnerAssertion: []
       summary: The categories apps are filed under
       description: The whole list, unpaged; a store has tens of categories, not thousands.
       parameters:
@@ -490,7 +491,7 @@ paths:
       operationId: listApps
       security:
         - {}
-        - storeToken: []
+        - partnerAssertion: []
       summary: List apps
       description: |
         The store's entries, one per coordinate. Filters combine with AND.
@@ -657,7 +658,7 @@ paths:
       operationId: getApp
       security:
         - {}
-        - storeToken: []
+        - partnerAssertion: []
       summary: One app in full
       description: |
         `country` narrows `support` to the offers that cover that country,
@@ -714,7 +715,7 @@ paths:
       operationId: listReviews
       security:
         - {}
-        - storeToken: []
+        - partnerAssertion: []
       summary: Reviews of an app
       description: |
         Newest first. `summary` is over every review of the entry, not over
@@ -816,7 +817,7 @@ paths:
       description: |
         One review per person and entry. `404` when they have written none.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       responses:
         "200":
           description: Their review.
@@ -854,7 +855,7 @@ paths:
         `scores.support` and `scores.value` are for an entry of edition
         `ee` and are refused (`400`) on any other.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       requestBody:
         required: true
         content:
@@ -894,7 +895,7 @@ paths:
       operationId: deleteMyReview
       summary: Withdraw the signed-in person's review
       security:
-        - storeToken: []
+        - partnerAssertion: []
       responses:
         "204":
           description: Withdrawn, or there was none.
@@ -906,10 +907,9 @@ paths:
       operationId: getCompany
       summary: The company the signed-in person is with
       description: |
-        `404` until they have said. The App Store app asks for it once, at
-        the first sign-in that finds none.
+        `404` until they have said.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       responses:
         "200":
           description: Their company.
@@ -933,7 +933,7 @@ paths:
         for. Its size and industry are shown with their reviews and filter
         them; its name is not shown with a review.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       requestBody:
         required: true
         content:
@@ -957,159 +957,6 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthenticated"
-  /v1/tenant-sign-ins/{tenantUid}:
-    parameters:
-      - $ref: "#/components/parameters/TenantUid"
-    get:
-      tags: [tenant]
-      operationId: getTenantSignIn
-      summary: Whether the sign-in through a tenant's own realm is ready, and whether the tenant is registered
-      description: |
-        An open read (1.10, feature `registration`): it takes no token and
-        ignores one, and is never cached. `state` is `none` until the
-        sign-in was asked for, `pending` while the store prepares it,
-        `ready` once the identity provider `org-<tenantUid>` exists, and
-        `refused` when it could not be made. `registered` says whether an
-        account that manages the tenant has registered
-        (`PUT /v1/account/registration`); an app that needs a registered
-        tenant asks this without a sign-in.
-
-        The tenant id is the report's `tenants[].uid`: random, never derived
-        from a name, and known only to the tenant's cluster and the store.
-      security: []
-      responses:
-        "200":
-          description: How the tenant's sign-in stands.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantSignIn"
-              examples:
-                ready:
-                  value: {tenantUid: 0f8e7d6c-5b4a-4321-9876-0123456789ab, state: ready, registered: true}
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-    put:
-      tags: [tenant]
-      operationId: prepareTenantSignIn
-      summary: Prepare the sign-in through a tenant's own realm
-      description: |
-        Open (1.10, feature `registration`). The body names the tenant's
-        address, the one its usage statistics reports give it. The store
-        checks that the latest report naming that address names it by this
-        id, and makes, in its realm, the identity provider `org-<tenantUid>`
-        for the tenant's realm. When no report names the tenant so, the
-        state becomes `refused`.
-        The provider makes the store account at a person's first sign-in
-        through it when no account has their address, with no page and no
-        password of the store's, and links an account that has it once the
-        person signs in to it. It trusts the tenant's realm only, and only
-        once the tenant's administrator turned on the tenant's side
-        (`spec.store.signIn`): until then nobody can sign in through it.
-
-        Idempotent: asking again changes nothing. `202` with the state; the
-        client asks `GET` until it is `ready`.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [tenantUrl]
-              properties:
-                tenantUrl:
-                  type: string
-                  description: The tenant's address, https://<host>, as the usage statistics report names it.
-                  pattern: "^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$"
-                  maxLength: 300
-      responses:
-        "202":
-          description: Asked for; how it stands.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantSignIn"
-              examples:
-                pending:
-                  value: {tenantUid: 0f8e7d6c-5b4a-4321-9876-0123456789ab, state: pending, registered: false}
-        "400":
-          $ref: "#/components/responses/InvalidRequest"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/account/registration:
-    get:
-      tags: [account]
-      operationId: getRegistration
-      summary: Whether the signed-in person has registered
-      description: |
-        1.10, feature `registration`. `registered: false` until the person
-        accepted the terms (`PUT`). The company details are what they gave,
-        every one optional.
-      security:
-        - storeToken: []
-      responses:
-        "200":
-          description: The registration.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Registration"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-    put:
-      tags: [account]
-      operationId: putRegistration
-      summary: Register, once
-      description: |
-        The one-time registration of the signed-in person with the store:
-        they accept the store's terms and privacy notice (`links.terms`,
-        `links.privacy` of `GET /v1/meta`, which the client links and does
-        not show), and may say which company they are with. Every company
-        field is optional. Asking again updates the details and keeps the
-        first `registeredAt`. The tenant in the token is registered with
-        the account where the account manages it.
-      security:
-        - storeToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegistrationRequest"
-            examples:
-              minimal:
-                value: {acceptTerms: true}
-              company:
-                value: {acceptTerms: true, company: {name: Acme AG, size: 10-49, country: CH, industry: information-communication}}
-      responses:
-        "200":
-          description: Registered.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Registration"
-        "400":
-          $ref: "#/components/responses/InvalidRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
   /v1/apps/{catalogue}/{app}/reports:
     parameters:
       - $ref: "#/components/parameters/Catalogue"
@@ -1119,7 +966,7 @@ paths:
       operationId: listReports
       security:
         - {}
-        - storeToken: []
+        - partnerAssertion: []
       summary: Evaluations and reports about an app
       description: |
         Documents somebody wrote about the app: a security assessment, a
@@ -1192,7 +1039,7 @@ paths:
         `not-requestable`, and its `contactUrl` is the way to it. Added in
         1.3, with the feature `support`.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
       requestBody:
@@ -1341,7 +1188,7 @@ paths:
         mints the credential that repository checks. What the cluster does
         with the confirmation is described on the `Confirmation` schema.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
         - name: Idempotency-Key
@@ -1572,7 +1419,7 @@ paths:
         The confirmation is for the version the acquisition was last
         confirmed for; `version` in the query names another.
       security:
-        - storeToken: []
+        - partnerAssertion: []
       parameters:
         - name: version
           in: query
@@ -1622,117 +1469,49 @@ paths:
           $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
-    storeToken:
+    partnerAssertion:
       type: http
       scheme: bearer
       description: |
-        The **store token**: an access token issued by the store's own
-        issuer to the tenant's administrator, signed in to the store through
-        the App Store app. It is sent as `Authorization: Bearer <token>`. To
-        the cluster's side it is opaque: the app reads nothing from it and
-        only the store validates it.
+        A **partner assertion** (1.11): an access token the tenant's own
+        realm issues for the person, whose only audience is the store's
+        realm (`partner.issuer` of `GET /v1/meta`). It is sent as
+        `Authorization: Bearer <assertion>`. It replaces the store token of
+        1.10 and earlier: there is no sign-in flow at the store.
 
-        It is required on the signed-in calls — `GET /v1/tenant` and every
-        `/v1/acquisitions` operation — and optional on the open reads,
-        where it only lets the store personalise an answer.
-
-        ## What it is, and what it is not
-
-        It authenticates the administrator to the store, for what concerns
-        the tenant: its standing and its acquisitions. It is valid at the
-        store and nowhere on the cluster.
-
-        It is **not** what pulls anything. Charts and images are pulled
-        with the tenant's registry credential — the `credential` a
-        confirmation carries (see `Credential`) — which the App Store app
-        hands to the cluster's custodian once and does not keep. The
-        registry never sees the store token, and the store token pulls
-        nothing.
+        It is required on the signed-in calls and optional on the open
+        reads, where it only lets the store personalise an answer.
 
         ## Obtaining one
 
-        OAuth 2.0 authorization code with PKCE (RFC 6749, RFC 7636), public
-        client, no client secret: a secret shipped to every cluster is not
-        one. The administrator signs in once; the result is the store token.
+        The App Store app makes one request to its own realm's token
+        endpoint, OAuth 2.0 Token Exchange (RFC 8693): the person's token
+        the edge forwarded as `subject_token`, `scope=partner-<name>`
+        (the name the tenant gives the store's realm as a partner), and the
+        app's Kubernetes service account token as its client assertion. No
+        secret is held. The answer's `access_token` is the assertion: its
+        `aud` is the store's issuer, its `sub` a pairwise subject, its life
+        a few minutes. A client uses each assertion for one call.
 
-        1. The App Store app's backend reads `issuer`, `clientId` and
-           `scopes` (empty from 1.2 on) from `GET /v1/meta`, and the issuer's endpoints from
-           `{issuer}/.well-known/oauth-authorization-server` (RFC 8414). It
-           makes `state` and the PKCE verifier and keeps both, with the
-           administrator's cluster session.
-        2. It sends the person's browser to the authorization endpoint with
-           `response_type=code`, `client_id`, `redirect_uri`, `scope`,
-           `state`, `code_challenge`, `code_challenge_method=S256`, and
-           `tenant_url`: the URL of the tenant the app is installed in,
-           `https://<host>`, lower case, no path and no trailing slash —
-           the same spelling the cluster's usage statistics report uses for the
-           tenant.
-        3. The person signs in at the store, with their account there.
-        4. The issuer redirects the browser to `redirect_uri` with `code`
-           and `state`. That address is the backend's own callback.
-        5. **The backend** exchanges the code at the token endpoint with
-           `grant_type=authorization_code`, `code`, `redirect_uri`,
-           `client_id` and `code_verifier`. The exchange is made from the
-           cluster, server to server, never from the browser.
+        ## What the store does with it
 
-        ## Where the token is kept
+        It posts the assertion to its own realm, the JWT bearer grant
+        (RFC 7523), and acts as the account the answer names. The issuer of
+        the assertion says which tenant the call is about.
 
-        In the App Store app's backend on the cluster, bound to the
-        administrator's cluster session, for as long as that session lasts
-        and nowhere durable. It is never handed to the browser: not in a
-        page, not in a cookie, not in an answer of the backend's. The
-        browser carries the code through the redirect and nothing else. The
-        same holds for a refresh token.
+        A person whose realm the store's realm has no partner entry for, or
+        who has not linked their account yet, is answered `401` with
+        `WWW-Authenticate: Partner link="<address>"`: the registration page,
+        with `?tenant=<tenant uid>` where the store knows the tenant. The
+        client shows the address to the person, who opens it in a new
+        window; nothing else happens.
 
-        ## The redirect address
+        ## What it is not
 
-        There is exactly one per tenant: the App Store app's own callback,
-
-        `https://store.<the tenant's base domain>/oauth/callback`
-
-        The App Store app is component `app-store` of a tenant, and its
-        host label is `store`. The tenant's base domain is
-        `<tenant>.<cluster domain>` on a multi-tenant cluster, the cluster
-        domain itself for the one user tenant of a single-tenant cluster,
-        or the tenant's custom domain. It is the host of `tenant_url`, so
-        an issuer computes the one address from the request alone —
-        `https://store.<host of tenant_url>/oauth/callback` — and no
-        address is registered per cluster.
-
-        ## What the issuer must do
-
-        * Accept `clientId` as a public client: no secret, `S256` required,
-          a request without a challenge refused.
-        * Accept a `redirect_uri` only when it is, character for character,
-          the one address above computed from the request's `tenant_url`:
-          scheme `https`, the host `store.<host of tenant_url>`, no port,
-          the path `/oauth/callback`, no query and no fragment. Any other address under the tenant's
-          host is refused, as is any other path on the right host. The
-          effect is that a code for a tenant is delivered only to the App
-          Store app's backend of that tenant.
-        * Refuse a request with no `tenant_url`, or one that is not in the
-          spelling above (`error=invalid_request`).
-        * Bind the tenant into the token: whatever form the token takes, the
-          store's API must be able to read from it the account (`sub`), the
-          tenant URL (`tenant_url`) and the expiry, and
-          must act for that tenant URL and no other. A token is for one
-          tenant. A person in charge of two signs in from each.
-        * Not refuse the sign-in because the store does not serve the
-          tenant, or because the account is not associated with it. It
-          issues the token, and `GET /v1/tenant` states the refusal and
-          its reason, so that the app can show it.
-
-        A refresh token may be issued; if it is, it rotates on use and is
-        bound to the same tenant URL. Lifetimes are the store's to set.
-
-        ## What the token does not say
-
-        What the account may do for the tenant. From 1.2 on the token
-        carries no scopes the store reads: it says who signed in, for which
-        tenant, and until when. Whether that account manages the tenant —
-        may acquire for it — is the store's to decide, from its own
-        records, and `GET /v1/tenant/access` says what it decided (see
-        `TenantAccess`).
+        It is **not** what pulls anything. Charts and images are pulled
+        with the tenant's registry credential (see `Credential`), which the
+        App Store app hands to the cluster's custodian once and does not
+        keep.
   parameters:
     Subject:
       name: subject
@@ -1742,14 +1521,6 @@ components:
       schema:
         type: string
         pattern: "^[A-Za-z0-9._:@-]{1,256}$"
-    TenantUid:
-      name: tenantUid
-      in: path
-      required: true
-      description: A tenant's unique id, as the usage statistics report names it (`tenants[].uid`).
-      schema:
-        type: string
-        pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
     AcceptLanguage:
       name: Accept-Language
       in: header
@@ -1875,11 +1646,15 @@ components:
                     detail: must be <catalogue>/<app>
     Unauthenticated:
       description: |
-        No token, or one that is expired or was not issued by this store.
-        Signed-in calls only: an open read never answers this.
+        No assertion, one the store's realm refuses, or one of a person not
+        linked yet. Signed-in calls only: an open read never answers this.
       headers:
         WWW-Authenticate:
-          description: "`Bearer`, with `error=\"invalid_token\"` when a token was sent (RFC 6750)."
+          description: |
+            `Partner link="<address>"` when an assertion was sent: the
+            registration page, with `?tenant=<tenant uid>` where the store
+            knows the tenant; the client shows it to the person. `Bearer`
+            when none was sent.
           schema:
             type: string
       content:
@@ -1891,9 +1666,9 @@ components:
               value:
                 type: urn:gentian:store:problem:unauthenticated
                 code: unauthenticated
-                title: Sign in to the store
+                title: Register with the store
                 status: 401
-                detail: The token has expired.
+                detail: This account is not linked with the store yet.
     Forbidden:
       description: |
         Either the store does not serve the tenant in the token
@@ -2078,7 +1853,7 @@ components:
       pattern: "^https://"
     Meta:
       type: object
-      required: [apiVersion, name, issuer, clientId, scopes, defaultLanguage, languages, mediaOrigins, checkoutOrigins, features]
+      required: [apiVersion, name, partner, registrationUrl, defaultLanguage, languages, mediaOrigins, checkoutOrigins, features]
       properties:
         apiVersion:
           type: string
@@ -2086,25 +1861,25 @@ components:
           pattern: "^1\\.[0-9]+$"
         name:
           type: string
-          description: What the store calls itself. Plain text, shown as the title of the App Store app's sign-in.
+          description: What the store calls itself. Plain text.
           maxLength: 80
-        issuer:
-          $ref: "#/components/schemas/Url"
-          description: The OAuth 2.0 issuer a person signs in at. Its metadata is at `{issuer}/.well-known/oauth-authorization-server`.
-        clientId:
-          type: string
-          description: The public client id every App Store app uses at that issuer.
-        scopes:
-          type: array
+        partner:
+          type: object
           description: |
-            The scopes a client asks for at sign-in. Empty from 1.2 on: the
-            token says who signed in and for which tenant, and the store
-            decides what that account may do for the tenant (see
-            `TenantAccess`). A client asks for exactly the scopes listed,
-            and none when the list is empty.
-          items:
-            type: string
-          examples: [[]]
+            The store's realm as a partner (1.11): an assertion for a
+            signed-in call names its `issuer` as its only audience.
+          required: [issuer]
+          properties:
+            issuer:
+              $ref: "#/components/schemas/Url"
+        registrationUrl:
+          $ref: "#/components/schemas/Url"
+          description: |
+            The store's registration page (1.11): the linking sign-in
+            through the tenant's own realm, once, with the store's terms and
+            privacy notice. A client opens it in a new window, with
+            `?tenant=<tenant uid>`, when a signed-in call answers `401`
+            with a `Partner` challenge.
         defaultLanguage:
           type: string
           description: The language the store answers in when none asked for matches. BCP 47.
@@ -2168,16 +1943,6 @@ components:
             `support`: apps may carry support offers (`support` on an app)
             and a signed-in person may request one
             (`POST /v1/apps/{catalogue}/{app}/support-requests`).
-            `tenant-sign-in` (1.7): once a tenant is associated with an
-            account, the store's realm signs the person in through the
-            tenant's own realm (`signIn` on `GET /v1/tenant`); the client
-            may ask with `kc_idp_hint=org-<tenant uid>` and `prompt=none`.
-            `registration` (1.10): a tenant's administrator registers once
-            (`/v1/account/registration`), and the store prepares the
-            sign-in through a tenant's own realm when asked
-            (`PUT /v1/tenant-sign-ins/{tenantUid}`), which makes the store
-            account at the first sign-in. The registration links
-            `links.terms` and `links.privacy`.
           items:
             type: string
         catalogues:
@@ -2262,20 +2027,6 @@ components:
           properties:
             role:
               $ref: "#/components/schemas/TenantRole"
-        signIn:
-          type: object
-          description: |
-            Added in 1.7, with the feature `tenant-sign-in`: the tenant id
-            (the report's `tenants[].uid`) the store has associated with an
-            account for this tenant URL, and whose realm it signs people in
-            through, with the identity provider `org-<tenantUid>`. Absent
-            while there is none. A client turns its side on only when the id
-            is its own tenant's.
-          required: [tenantUid]
-          properties:
-            tenantUid:
-              type: string
-              examples: [0f8e7d6c-5b4a-4321-9876-0123456789ab]
     TenantRole:
       type: string
       description: |
@@ -2335,8 +2086,8 @@ components:
         for a value it does not know.
 
         * `no-reports-for-tenant` — no usage statistics report lists this tenant URL.
-          Either the cluster does not report, or the URL stated at sign-in
-          is not the tenant's.
+          Either the cluster does not report, or the tenant's realm is not
+          the one the report names.
         * `tenant-not-claimed` — reports exist, and the account signed in
           is not associated with this tenant: it is not the account of the
           tenant's administrator (or another the store lets act for the
@@ -2871,59 +2622,6 @@ components:
           $ref: "#/components/schemas/CompanySize"
         industry:
           $ref: "#/components/schemas/Industry"
-    TenantSignIn:
-      type: object
-      required: [tenantUid, state, registered]
-      properties:
-        tenantUid:
-          type: string
-        state:
-          type: string
-          enum: [none, pending, ready, refused]
-        registered:
-          type: boolean
-    RegistrationCompany:
-      type: object
-      description: What a person registering says of their company. Every field optional.
-      additionalProperties: false
-      properties:
-        name:
-          type: string
-          description: Plain text.
-          minLength: 1
-          maxLength: 120
-        size:
-          $ref: "#/components/schemas/CompanySize"
-        country:
-          $ref: "#/components/schemas/CountryCode"
-        address:
-          type: string
-          description: The postal address, as one plain text.
-          maxLength: 300
-        industry:
-          $ref: "#/components/schemas/Industry"
-    RegistrationRequest:
-      type: object
-      required: [acceptTerms]
-      additionalProperties: false
-      properties:
-        acceptTerms:
-          type: boolean
-          const: true
-          description: The person accepts the store's terms and privacy notice.
-        company:
-          $ref: "#/components/schemas/RegistrationCompany"
-    Registration:
-      type: object
-      required: [registered]
-      properties:
-        registered:
-          type: boolean
-        registeredAt:
-          type: string
-          format: date-time
-        company:
-          $ref: "#/components/schemas/RegistrationCompany"
     ReviewScores:
       type: object
       description: |
@@ -3428,8 +3126,8 @@ components:
         custodian once, the cluster stores them in its vault, hands them to
         what pulls, and never interprets, logs or returns them.
 
-        It is not the store token (see the security scheme `storeToken`):
-        that one authenticates a person to the store, this one pulls.
+        It is not the assertion (see the security scheme
+        `partnerAssertion`): that one says who is asking, this one pulls.
 
         **One per tenant and repository.** The cluster keeps one credential
         for each repository address a tenant has declared. Every
@@ -3529,9 +3227,9 @@ components:
       value:
         apiVersion: "1.0"
         name: Example Store
-        issuer: https://accounts.store.example
-        clientId: gentian-app-store
-        scopes: []
+        partner:
+          issuer: https://id.store.example/auth/realms/customers
+        registrationUrl: https://store.example/register
         defaultLanguage: en
         languages: [en, de, fr, it]
         mediaOrigins: ["https://media.store.example"]

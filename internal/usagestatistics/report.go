@@ -116,11 +116,15 @@ type Tenant struct {
 	URL string `json:"url"`
 	// UID is the tenant's unique id, its metadata.uid: random, never reused,
 	// and never derived from its name, so a tenant deleted and made again
-	// under the same name is another tenant to the receiver. The store keys
-	// its sign-in through the tenant's realm by it (store-contract.md §6.1).
+	// under the same name is another tenant to the receiver. The store names
+	// its partner entry for the tenant's realm by it (store-contract.md §6.1).
 	// Left out where the tenant has none yet; a receiver of an earlier
 	// report format ignores it.
 	UID string `json:"uid,omitempty"`
+	// Issuer is the tenant's realm, https://id.<cluster domain>/auth/realms/
+	// <realm>: the issuer its people's assertions name towards a partner
+	// such as a store (AD-17).
+	Issuer string `json:"issuer,omitempty"`
 	// Users is how many accounts the tenant's realm holds. Null when they
 	// could not be counted, which is not the same as none.
 	Users *int  `json:"users"`
@@ -213,6 +217,13 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 			continue
 		}
 		entry := Tenant{URL: "https://" + host, UID: string(tenant.UID), Apps: []App{}}
+		if id.KernelDomain != "" {
+			realm := tenant.Name
+			if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm != "" {
+				realm = tenant.Spec.Isolation.KeycloakRealm
+			}
+			entry.Issuer = "https://id." + id.KernelDomain + "/auth/realms/" + realm
+		}
 		if n, err := counter.TenantUsers(ctx, tenant); err != nil {
 			uncounted("the accounts of a tenant", err)
 		} else {

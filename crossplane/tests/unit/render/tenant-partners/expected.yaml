@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-create-account-create,
-      keycloak-create-account-exec-auth-otp-form, and 57 more'
+      keycloak-create-account-exec-auth-otp-form, and 75 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -786,6 +786,38 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes-partner-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-scope-notes-partner-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000e0001
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: partner-notes
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: partner-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: ClientScope
 metadata:
@@ -1098,6 +1130,41 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-partner-notes-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-zone-partner-notes-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-edge-zone-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: partner-notes
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: partner-notes-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
 apiVersion: group.keycloak.crossplane.io/v1alpha1
 kind: Group
 metadata:
@@ -1196,6 +1263,39 @@ spec:
     realmId: render-fixture
   managementPolicies:
   - Observe
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+kind: KubernetesIdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kubernetes-idp
+    crossplane.io/external-name: kubernetes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-kubernetes-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    alias: kubernetes
+    displayName: Kubernetes service accounts
+    enabled: true
+    hideOnLoginPage: true
+    issuer: https://kubernetes.default.svc.cluster.local
+    realm: render-fixture
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
   providerConfigRef:
     name: keycloak
 ---
@@ -1387,14 +1487,78 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp
+    crossplane.io/external-name: partner-1a2b3c4d-5e6f-4789-8abc-def012345678
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    addReadTokenRoleOnCreate: false
+    alias: partner-1a2b3c4d-5e6f-4789-8abc-def012345678
+    authenticateByDefault: false
+    authorizationUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/auth
+    clientIdSecretRef:
+      key: client_id
+      name: render-fixture-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp-client
+      namespace: kernel-authentication
+    clientSecretSecretRef:
+      key: client_secret
+      name: render-fixture-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp-client
+      namespace: kernel-authentication
+    defaultScopes: openid
+    displayName: 1a2b3c4d-5e6f-4789-8abc-def012345678
+    enabled: true
+    extraConfig:
+      clientAuthMethod: private_key_jwt
+      jwtAuthorizationGrantAllowedClockSkew: "10"
+      jwtAuthorizationGrantAssertionReuseAllowed: "false"
+      jwtAuthorizationGrantAssertionSignatureAlg: RS256
+      jwtAuthorizationGrantEnabled: "true"
+      jwtAuthorizationGrantLimitAccessTokenExp: "true"
+      jwtAuthorizationGrantMaxAllowedAssertionExpiration: "120"
+    firstBrokerLoginFlowAlias: gentian-create-account
+    hideOnLoginPage: true
+    issuer: https://id.abc.example/auth/realms/other
+    jwksUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/certs
+    linkOnly: false
+    logoutUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/logout
+    providerId: oidc
+    realm: render-fixture
+    storeToken: false
+    syncMode: IMPORT
+    tokenUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/token
+    trustEmail: false
+    userInfoUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/userinfo
+    validateSignature: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: keycloak-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-client
+    crossplane.io/composition-resource-name: keycloak-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp-client
   labels:
     crossplane.io/composite: render-fixture
-  name: render-fixture-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-client
+  name: render-fixture-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp-client
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -1410,23 +1574,22 @@ spec:
       metadata:
         labels:
           app.kubernetes.io/managed-by: crossplane
-        name: render-fixture-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-client
+        name: render-fixture-partner-1a2b3c4d-5e6f-4789-8abc-def012345678-idp-client
         namespace: kernel-authentication
       stringData:
-        client_id: broker-to-store
+        client_id: https://id.platform.example.test/auth/realms/render-fixture
         client_secret: private-key-jwt
   providerConfigRef:
     name: kubernetes
 ---
-apiVersion: oidc.keycloak.crossplane.io/v1alpha1
-kind: IdentityProvider
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: keycloak-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-idp
-    crossplane.io/external-name: org-0f8e7d6c-5b4a-4321-9876-0123456789ab
+    crossplane.io/composition-resource-name: keycloak-partner-abc-audience
   labels:
     crossplane.io/composite: render-fixture
-  name: render-fixture-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-idp
+  name: render-fixture-partner-abc-audience
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -1437,24 +1600,658 @@ metadata:
 spec:
   deletionPolicy: Delete
   forProvider:
-    acceptsPromptNoneForwardFromClient: true
+    clientScopeId: 00000000-0000-4000-8000-0000000f0002
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: https://id.abc.example/auth/realms/main
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: partner-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-client
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientAuthenticatorType: client-jwt
+    clientId: https://id.abc.example/auth/realms/main
+    consentRequired: true
+    directAccessGrantsEnabled: false
+    displayOnConsentScreen: true
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+      jwks.url: https://id.abc.example/auth/realms/main/protocol/openid-connect/certs
+      token.endpoint.auth.signing.alg: RS256
+      use.jwks.url: "true"
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Partner abc
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validRedirectUris:
+    - https://id.abc.example/auth/realms/main/broker/partner-render-fixture/endpoint
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-partner-abc-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - partner-abc
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-idp
+    crossplane.io/external-name: partner-abc
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
     addReadTokenRoleOnCreate: false
-    alias: org-0f8e7d6c-5b4a-4321-9876-0123456789ab
+    alias: partner-abc
+    authenticateByDefault: false
+    authorizationUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/auth
+    clientIdSecretRef:
+      key: client_id
+      name: render-fixture-partner-abc-idp-client
+      namespace: kernel-authentication
+    clientSecretSecretRef:
+      key: client_secret
+      name: render-fixture-partner-abc-idp-client
+      namespace: kernel-authentication
+    defaultScopes: openid
+    displayName: ABC Customer AG
+    enabled: true
+    extraConfig:
+      clientAuthMethod: private_key_jwt
+      jwtAuthorizationGrantAllowedClockSkew: "10"
+      jwtAuthorizationGrantAssertionReuseAllowed: "false"
+      jwtAuthorizationGrantAssertionSignatureAlg: RS256
+      jwtAuthorizationGrantEnabled: "true"
+      jwtAuthorizationGrantLimitAccessTokenExp: "true"
+      jwtAuthorizationGrantMaxAllowedAssertionExpiration: "120"
+    hideOnLoginPage: true
+    issuer: https://id.abc.example/auth/realms/main
+    jwksUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/certs
+    linkOnly: false
+    logoutUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/logout
+    orgDomain: abc.example
+    orgRedirectModeEmailMatches: true
+    organizationIdRef:
+      name: render-fixture-partner-abc-org
+    providerId: oidc
+    realm: render-fixture
+    storeToken: false
+    syncMode: IMPORT
+    tokenUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/token
+    trustEmail: false
+    userInfoUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/userinfo
+    validateSignature: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-idp-client
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-idp-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: render-fixture-partner-abc-idp-client
+        namespace: kernel-authentication
+      stringData:
+        client_id: https://id.platform.example.test/auth/realms/render-fixture
+        client_secret: private-key-jwt
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: organization.keycloak.crossplane.io/v1alpha1
+kind: Organization
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-org
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-org
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    alias: abc
+    domain:
+    - name: abc.example
+      verified: false
+    enabled: true
+    name: ABC Customer AG
+    realm: render-fixture
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-pairwise
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-pairwise
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0002
+    config:
+      pairwiseSubAlgorithmSalt: 5a1f00000000000000000000000000dd
+      sectorIdentifierUri: https://id.abc.example/auth/realms/main
+    name: pairwise-subject
+    protocol: openid-connect
+    protocolMapper: oidc-sha256-pairwise-sub-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-scope
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-scope
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    consentScreenText: An identifier of you that only abc knows you by
+    description: The person's pairwise subject, for https://id.abc.example/auth/realms/main
+      and nothing else
+    includeInTokenScope: true
+    name: partner-abc
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0001
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: https://id.aluvian.example/auth/realms/customers
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: partner-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-client
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientAuthenticatorType: client-jwt
+    clientId: https://id.aluvian.example/auth/realms/customers
+    consentRequired: true
+    directAccessGrantsEnabled: false
+    displayOnConsentScreen: true
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+      jwks.url: https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
+      token.endpoint.auth.signing.alg: RS256
+      use.jwks.url: "true"
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Partner aluvian
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validRedirectUris:
+    - https://id.aluvian.example/auth/realms/customers/broker/partner-0f8e7d6c-5b4a-4321-9876-0123456789ab/endpoint
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-partner-aluvian-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - partner-aluvian
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-pairwise
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-pairwise
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0001
+    config:
+      pairwiseSubAlgorithmSalt: 5a1f00000000000000000000000000aa
+      sectorIdentifierUri: https://id.aluvian.example/auth/realms/customers
+    name: pairwise-subject
+    protocol: openid-connect
+    protocolMapper: oidc-sha256-pairwise-sub-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-scope
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-scope
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    consentScreenText: An identifier of you that only aluvian knows you by
+    description: The person's pairwise subject, for https://id.aluvian.example/auth/realms/customers
+      and nothing else
+    includeInTokenScope: true
+    name: partner-aluvian
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-app-notes-client
+    crossplane.io/external-name: partner-notes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-notes-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientAuthenticatorType: federated-jwt
+    clientId: partner-notes
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+      jwt.credential.issuer: kubernetes
+      jwt.credential.sub: system:serviceaccount:tenant-render-fixture:notes-sa
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Acme Cloud partner calls (notes)
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+    standardTokenExchangeEnabled: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-app-notes-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-notes-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-partner-app-notes-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-app-notes-optional-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-notes-optional-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-partner-app-notes-client
+      policy:
+        resolve: Always
+    optionalScopes:
+    - partner-aluvian
+    - partner-abc
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-app-shop-client
+    crossplane.io/external-name: partner-shop
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-shop-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientAuthenticatorType: federated-jwt
+    clientId: partner-shop
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+      jwt.credential.issuer: kubernetes
+      jwt.credential.sub: system:serviceaccount:tenant-render-fixture:shop
+      oauth2.jwt.authorization.grant.enabled: "true"
+      oauth2.jwt.authorization.grant.idp: partner-1a2b3c4d-5e6f-4789-8abc-def012345678##partner-linked##partner-abc
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Acme Cloud partner calls (shop)
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+    standardTokenExchangeEnabled: false
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-app-shop-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-shop-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-partner-app-shop-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-linked-idp
+    crossplane.io/external-name: partner-linked
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-linked-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    addReadTokenRoleOnCreate: false
+    alias: partner-linked
     authenticateByDefault: false
     authorizationUrl: https://id.abc.example/auth/realms/test/protocol/openid-connect/auth
     clientIdSecretRef:
       key: client_id
-      name: render-fixture-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-client
+      name: render-fixture-partner-linked-idp-client
       namespace: kernel-authentication
     clientSecretSecretRef:
       key: client_secret
-      name: render-fixture-org-0f8e7d6c-5b4a-4321-9876-0123456789ab-client
+      name: render-fixture-partner-linked-idp-client
       namespace: kernel-authentication
-    defaultScopes: openid profile email
-    displayName: test.abc.example (0f8e7d6c)
+    defaultScopes: openid
+    displayName: linked
     enabled: true
     extraConfig:
       clientAuthMethod: private_key_jwt
+      jwtAuthorizationGrantAllowedClockSkew: "10"
+      jwtAuthorizationGrantAssertionReuseAllowed: "false"
+      jwtAuthorizationGrantAssertionSignatureAlg: RS256
+      jwtAuthorizationGrantEnabled: "true"
+      jwtAuthorizationGrantLimitAccessTokenExp: "true"
+      jwtAuthorizationGrantMaxAllowedAssertionExpiration: "120"
     firstBrokerLoginFlowAlias: gentian-link-existing
     hideOnLoginPage: true
     issuer: https://id.abc.example/auth/realms/test
@@ -1481,10 +2278,10 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: keycloak-org-1a2b3c4d-5e6f-4789-8abc-def012345678-client
+    crossplane.io/composition-resource-name: keycloak-partner-linked-idp-client
   labels:
     crossplane.io/composite: render-fixture
-  name: render-fixture-org-1a2b3c4d-5e6f-4789-8abc-def012345678-client
+  name: render-fixture-partner-linked-idp-client
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -1500,197 +2297,13 @@ spec:
       metadata:
         labels:
           app.kubernetes.io/managed-by: crossplane
-        name: render-fixture-org-1a2b3c4d-5e6f-4789-8abc-def012345678-client
+        name: render-fixture-partner-linked-idp-client
         namespace: kernel-authentication
       stringData:
-        client_id: broker-to-store
+        client_id: https://id.platform.example.test/auth/realms/render-fixture
         client_secret: private-key-jwt
   providerConfigRef:
     name: kubernetes
----
-apiVersion: oidc.keycloak.crossplane.io/v1alpha1
-kind: IdentityProvider
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-org-1a2b3c4d-5e6f-4789-8abc-def012345678-idp
-    crossplane.io/external-name: org-1a2b3c4d-5e6f-4789-8abc-def012345678
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-org-1a2b3c4d-5e6f-4789-8abc-def012345678-idp
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Delete
-  forProvider:
-    acceptsPromptNoneForwardFromClient: true
-    addReadTokenRoleOnCreate: false
-    alias: org-1a2b3c4d-5e6f-4789-8abc-def012345678
-    authenticateByDefault: false
-    authorizationUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/auth
-    clientIdSecretRef:
-      key: client_id
-      name: render-fixture-org-1a2b3c4d-5e6f-4789-8abc-def012345678-client
-      namespace: kernel-authentication
-    clientSecretSecretRef:
-      key: client_secret
-      name: render-fixture-org-1a2b3c4d-5e6f-4789-8abc-def012345678-client
-      namespace: kernel-authentication
-    defaultScopes: openid profile email
-    displayName: other.abc.example (1a2b3c4d)
-    enabled: true
-    extraConfig:
-      clientAuthMethod: private_key_jwt
-    firstBrokerLoginFlowAlias: gentian-create-account
-    hideOnLoginPage: true
-    issuer: https://id.abc.example/auth/realms/other
-    jwksUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/certs
-    linkOnly: false
-    logoutUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/logout
-    providerId: oidc
-    realm: render-fixture
-    storeToken: false
-    syncMode: IMPORT
-    tokenUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/token
-    trustEmail: false
-    userInfoUrl: https://id.abc.example/auth/realms/other/protocol/openid-connect/userinfo
-    validateSignature: true
-  managementPolicies:
-  - Observe
-  - Create
-  - Update
-  - Delete
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: organization.keycloak.crossplane.io/v1alpha1
-kind: Organization
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-org-abc
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-org-abc
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Delete
-  forProvider:
-    alias: abc
-    domain:
-    - name: abc.example
-      verified: false
-    enabled: true
-    name: ABC Customer AG
-    realm: render-fixture
-  managementPolicies:
-  - Observe
-  - Create
-  - Update
-  - Delete
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-org-abc-client
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-org-abc-client
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        labels:
-          app.kubernetes.io/managed-by: crossplane
-        name: render-fixture-org-abc-client
-        namespace: kernel-authentication
-      stringData:
-        client_id: broker-to-aluvian
-        client_secret: private-key-jwt
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: oidc.keycloak.crossplane.io/v1alpha1
-kind: IdentityProvider
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-org-abc-idp
-    crossplane.io/external-name: org-abc
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-org-abc-idp
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Delete
-  forProvider:
-    addReadTokenRoleOnCreate: false
-    alias: org-abc
-    authenticateByDefault: false
-    authorizationUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/auth
-    clientIdSecretRef:
-      key: client_id
-      name: render-fixture-org-abc-client
-      namespace: kernel-authentication
-    clientSecretSecretRef:
-      key: client_secret
-      name: render-fixture-org-abc-client
-      namespace: kernel-authentication
-    defaultScopes: openid profile email
-    displayName: ABC Customer AG
-    enabled: true
-    extraConfig:
-      clientAuthMethod: private_key_jwt
-    hideOnLoginPage: true
-    issuer: https://id.abc.example/auth/realms/main
-    jwksUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/certs
-    linkOnly: false
-    logoutUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/logout
-    orgDomain: abc.example
-    orgRedirectModeEmailMatches: true
-    organizationIdRef:
-      name: render-fixture-org-abc
-    providerId: oidc
-    realm: render-fixture
-    storeToken: false
-    syncMode: IMPORT
-    tokenUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/token
-    trustEmail: false
-    userInfoUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/userinfo
-    validateSignature: true
-  managementPolicies:
-  - Observe
-  - Create
-  - Update
-  - Delete
-  providerConfigRef:
-    name: keycloak
 ---
 apiVersion: realm.keycloak.crossplane.io/v1alpha1
 kind: Realm
@@ -2439,6 +3052,70 @@ spec:
           gentianos.io/tenant: render-fixture
           gentianos.io/tier: tenant
         name: tenant-render-fixture
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: partner-app-secret-notes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-notes-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: partners-notes
+        namespace: tenant-render-fixture
+      stringData:
+        PARTNER_CLIENT_ID: partner-notes
+        PARTNER_TOKEN_AUDIENCE: https://id.platform.example.test/auth/realms/render-fixture
+        PARTNER_TOKEN_URL: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: partner-app-secret-shop
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-shop-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: partners-shop
+        namespace: tenant-render-fixture
+      stringData:
+        PARTNER_CLIENT_ID: partner-shop
+        PARTNER_TOKEN_AUDIENCE: https://id.platform.example.test/auth/realms/render-fixture
+        PARTNER_TOKEN_URL: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
   providerConfigRef:
     name: kubernetes
 ---

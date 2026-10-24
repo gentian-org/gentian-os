@@ -26,9 +26,9 @@ import (
 	"time"
 )
 
-// CommissionKey is one component that may commission organizations, as the
+// CommissionKey is one component that may commission partners, as the
 // operator lists it for the director (the ConfigMap director-commission-keys,
-// internal/controller/organizations.go).
+// internal/controller/partner_commissioners.go).
 //
 // The operator gives the component a key of its own, in a Secret of its
 // tenant's namespace, and writes the key's hash here with the tenants whose
@@ -41,8 +41,8 @@ type CommissionKey struct {
 	Component string `json:"component"`
 	// KeyHash is the SHA-256 of the key, in hex.
 	KeyHash string `json:"keyHash"`
-	// Tenants are the tenants whose spec.brokeredFrom it may change: each
-	// names the component in spec.organizationCommissioners.
+	// Tenants are the tenants whose spec.partners it may change: each
+	// names the component in spec.partnerCommissioners.
 	Tenants []string `json:"tenants"`
 }
 

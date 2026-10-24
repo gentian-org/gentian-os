@@ -223,7 +223,8 @@ Other options:
                         otherwise gets from the store's catalogue: the
                         Operations Console (platform tenant), the App Store app
                         and the Subscription Center (every other tenant, new
-                        ones included, while the cluster offers a store).
+                        ones included, while the cluster offers a store),
+                        and the store's vendor as every tenant's partner.
                         Recorded on the Cluster claim (spec.catalogue.
                         extraServices: false), so a later run keeps them out;
                         GENTIAN_NO_EXTRA_SERVICES=0 brings them back
