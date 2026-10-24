@@ -130,10 +130,12 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	hosts := map[string]map[string]bool{}
 	exchange := map[string]map[string]bool{}
 	vouching := map[string]map[string]string{}
+	partners := map[string]map[string]string{}
 	for i := range tenants.Items {
 		hosts[tenants.Items[i].Name] = map[string]bool{}
 		exchange[tenants.Items[i].Name] = map[string]bool{}
 		vouching[tenants.Items[i].Name] = map[string]string{}
+		partners[tenants.Items[i].Name] = map[string]string{}
 	}
 
 	for i := range components.Items {
@@ -165,6 +167,11 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// components of one profile are one issuer with one set of keys.
 			vouching[tenant][profile.Name] = vouchingLine(profile)
 		}
+		if wantsPartners(profile) {
+			// By the profile's name, as above: the realm knows the
+			// component as PartnerClientID(profile).
+			partners[tenant][profile.Name] = partnerLine(profile)
+		}
 		for j := range profile.Spec.Expose {
 			e := &profile.Spec.Expose[j]
 			// Gateway entries only. A perimeter surface is published through
@@ -192,7 +199,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		// Every line starts with its profile's name and no two share one, so
 		// sorting the lines sorts by profile.
 		sort.Strings(vouchingLines)
-		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines); err != nil {
+		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines, sortedValues(partners[tenant])); err != nil {
 			return err
 		}
 	}
@@ -228,6 +235,17 @@ func vouchingLine(profile *gentianov1alpha1.ComponentProfile) string {
 	return strings.Join([]string{profile.Name, keys.Service, strconv.Itoa(int(keys.Port)), path}, " ")
 }
 
+// sortedValues are a map's values, sorted. Every partner line starts with its
+// profile's name, so this sorts them by profile.
+func sortedValues(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func sortedKeys(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {
@@ -240,7 +258,7 @@ func sortedKeys(set map[string]bool) []string {
 // writeZoneHosts creates the ConfigMap the first time and patches it only
 // when the content differs, so a projection that did not change does not wake
 // every Composition that reads it.
-func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles []string) error {
+func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles, partnerProfiles []string) error {
 	key := types.NamespacedName{
 		Name:      zoneHostsConfigMapName(tenant),
 		Namespace: layout.Namespace(layout.Control),
@@ -259,6 +277,7 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 			zoneHostsKey:            strings.Join(hosts, "\n"),
 			zoneExchangeProfilesKey: strings.Join(exchangeProfiles, "\n"),
 			zoneVouchingProfilesKey: strings.Join(vouchingProfiles, "\n"),
+			partnerProfilesKey:      strings.Join(partnerProfiles, "\n"),
 		},
 	}
 

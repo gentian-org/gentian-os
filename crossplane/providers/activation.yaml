@@ -59,6 +59,7 @@ spec:
     - roles.role.keycloak.crossplane.io
     - identityproviders.oidc.keycloak.crossplane.io
     - identityprovidermappers.identityprovider.keycloak.crossplane.io
+    - kubernetesidentityproviders.identityprovider.keycloak.crossplane.io
     - organizations.organization.keycloak.crossplane.io
     - flows.authenticationflow.keycloak.crossplane.io
     - executions.authenticationflow.keycloak.crossplane.io

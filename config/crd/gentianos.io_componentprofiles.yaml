@@ -1741,11 +1741,43 @@ spec:
                           required:
                           - enabled
                           type: object
-                        organizations:
+                        partners:
                           description: |-
-                            Organizations declares that the component commissions the sign-in of
-                            outside realms' people into a tenant's realm, as organizations
-                            (Tenant spec.brokeredFrom). See OrganizationsRequirement.
+                            Partners declares that the component calls apps of partner realms on
+                            a person's behalf, takes such calls, or commissions partners of other
+                            tenants. See PartnersRequirement.
+                          properties:
+                            accept:
+                              description: |-
+                                Accept says the component takes partners' assertions, turning each into
+                                the linked local account by the JWT authorization grant, for every
+                                partner the tenant accepts.
+                              type: boolean
+                            call:
+                              description: |-
+                                Call names the tenant's partners the component asks assertions towards
+                                (standard token exchange, scope partner-<name>): a person's token in,
+                                a token for the partner out, with the person's pairwise subject only.
+                                Naming a partner here is what puts the component on that partner's
+                                list.
+                              items:
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                              maxItems: 16
+                              type: array
+                            commission:
+                              description: |-
+                                Commission says the component asks the director to add receiving
+                                partners to the tenants that name it, or to take them away.
+                              type: boolean
+                            serviceAccount:
+                              description: |-
+                                ServiceAccount is the Kubernetes service account the component's pods
+                                run as; its token is the client's credential. Default: the profile's
+                                name.
+                              maxLength: 63
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
                           type: object
                         rights:
                           description: |-
@@ -3620,11 +3652,43 @@ spec:
                         required:
                         - enabled
                         type: object
-                      organizations:
+                      partners:
                         description: |-
-                          Organizations declares that the component commissions the sign-in of
-                          outside realms' people into a tenant's realm, as organizations
-                          (Tenant spec.brokeredFrom). See OrganizationsRequirement.
+                          Partners declares that the component calls apps of partner realms on
+                          a person's behalf, takes such calls, or commissions partners of other
+                          tenants. See PartnersRequirement.
+                        properties:
+                          accept:
+                            description: |-
+                              Accept says the component takes partners' assertions, turning each into
+                              the linked local account by the JWT authorization grant, for every
+                              partner the tenant accepts.
+                            type: boolean
+                          call:
+                            description: |-
+                              Call names the tenant's partners the component asks assertions towards
+                              (standard token exchange, scope partner-<name>): a person's token in,
+                              a token for the partner out, with the person's pairwise subject only.
+                              Naming a partner here is what puts the component on that partner's
+                              list.
+                            items:
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                            maxItems: 16
+                            type: array
+                          commission:
+                            description: |-
+                              Commission says the component asks the director to add receiving
+                              partners to the tenants that name it, or to take them away.
+                            type: boolean
+                          serviceAccount:
+                            description: |-
+                              ServiceAccount is the Kubernetes service account the component's pods
+                              run as; its token is the client's credential. Default: the profile's
+                              name.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
                         type: object
                       rights:
                         description: |-

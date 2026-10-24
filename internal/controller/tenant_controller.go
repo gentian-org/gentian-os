@@ -259,6 +259,11 @@ type TenantReconciler struct {
 	// so that a store named or withdrawn there places or removes those
 	// components at once. Off where the claim's kind is not installed.
 	WatchClusterClaim bool
+
+	// ServiceAccountIssuer is the issuer of the cluster's service account
+	// tokens (ServiceAccountIssuer in partners.go), which a realm with
+	// partner apps trusts for their clients. Empty: none is composed.
+	ServiceAccountIssuer string
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
@@ -586,7 +591,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		builder.WithPredicates(tenantEnterFactsChanged()))
 	if r.WatchClusterClaim {
 		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
-			builder.WithPredicates(storeAddressChanged()))
+			builder.WithPredicates(claimTenantFactsChanged()))
 		// The verdict also turns on every tenant's domain (store_offer.go).
 		ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
@@ -1284,37 +1289,13 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	// The same: only where there is one, so a tenant without composes as it
 	// did.
 	// The sign-ins between this tenant and another of the cluster
-	// (tenant_sign_in.go): the clients it is the source of join the
-	// brokeredTo it declares, which wins a name both carry.
+	// (tenant_sign_in.go): the clients it is the source of.
 	signInFrom, signInClients, err := r.tenantSignInProjection(ctx, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("read the tenants a sign-in pairs %s with: %w", tenant.Name, err)
 	}
-	store := storeSignInClient(tenant)
-	if len(tenant.Spec.BrokeredTo) > 0 || len(signInClients) > 0 || store != nil {
-		brokered := make([]interface{}, 0, len(tenant.Spec.BrokeredTo)+len(signInClients)+1)
-		declared := map[string]bool{}
-		// The store's client first, and its name is its own: a declared
-		// entry of the same name is not composed beside it.
-		if store != nil {
-			declared[storeClientName] = true
-			brokered = append(brokered, store)
-		}
-		for _, b := range tenant.Spec.BrokeredTo {
-			if declared[b.Name] {
-				continue
-			}
-			declared[b.Name] = true
-			brokered = append(brokered, map[string]interface{}{
-				"name": b.Name, "redirectURI": b.RedirectURI, "jwksURL": b.JWKSURL,
-			})
-		}
-		for _, c := range signInClients {
-			if !declared[c.(map[string]interface{})["name"].(string)] {
-				brokered = append(brokered, c)
-			}
-		}
-		spec["brokeredTo"] = brokered
+	if len(signInClients) > 0 {
+		spec["brokeredTo"] = signInClients
 	}
 	if len(signInFrom) > 0 {
 		spec["signInFrom"] = signInFrom
@@ -1339,24 +1320,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 		spec["groups"] = groups
 	}
-	if len(tenant.Spec.BrokeredFrom) > 0 {
-		from := make([]interface{}, 0, len(tenant.Spec.BrokeredFrom))
-		for _, b := range tenant.Spec.BrokeredFrom {
-			entry := map[string]interface{}{
-				"name": b.Name, "displayName": b.DisplayName, "issuer": b.Issuer,
-				"clientID": b.ClientID,
-			}
-			if b.LinkExisting {
-				entry["linkExisting"] = true
-				if b.CreateAccounts {
-					entry["createAccounts"] = true
-				}
-			} else {
-				entry["domain"] = b.Domain
-			}
-			from = append(from, entry)
-		}
-		spec["brokeredFrom"] = from
+	// The tenant's partners (partners.go), within what the claim allows.
+	claimPartners, err := readClusterPartners(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("read the Cluster claim's partners: %w", err)
+	}
+	if partners := tenantPartnerProjection(tenant, claimPartners); len(partners) > 0 {
+		spec["partners"] = partners
+	}
+	if r.ServiceAccountIssuer != "" {
+		spec["serviceAccountIssuer"] = r.ServiceAccountIssuer
 	}
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas

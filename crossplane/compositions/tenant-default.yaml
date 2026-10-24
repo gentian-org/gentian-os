@@ -618,6 +618,25 @@ spec:
             {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3)) }}
             {{- end }}
             {{- end }}
+            {{- /* The components that call partners or accept their
+                 assertions (requires.services.partners), from the same
+                 projection: one line each, "<profile> <service account>
+                 <call> <accept>", call a comma-separated list of partner
+                 names or "-", accept 1 or 0 (partnerLine in the operator).
+                 $partnerCallers are the profiles among them that call. */}}
+            {{- $partnerApps    := list }}
+            {{- $partnerSeen    := list }}
+            {{- $partnerCallers := list }}
+            {{- range $line := (splitList "\n" (dig "partnerProfiles" "" $zhData)) }}
+            {{- $f := splitList " " (trim $line) }}
+            {{- if and (eq (len $f) 4) (not (has (index $f 0) $partnerSeen)) }}
+            {{- $partnerSeen = append $partnerSeen (index $f 0) }}
+            {{- $call := list }}
+            {{- if ne (index $f 2) "-" }}{{- $call = splitList "," (index $f 2) }}{{- end }}
+            {{- if gt (len $call) 0 }}{{- $partnerCallers = append $partnerCallers (index $f 0) }}{{- end }}
+            {{- $partnerApps = append $partnerApps (dict "profile" (index $f 0) "sa" (index $f 1) "call" $call "accept" (eq (index $f 3) "1")) }}
+            {{- end }}
+            {{- end }}
 
             {{- /* The secret exists before the client does, and is generated
                  here rather than minted by Keycloak. A client created with no
@@ -913,6 +932,43 @@ spec:
                   userinfo.token.claim: "false"
               providerConfigRef:
                 name: keycloak
+
+            {{- /* A partner app's client in the zone token's audience: an app
+                 handed the person's zone token (forwardToken) exchanges it
+                 at its client partner-<profile> for an assertion towards a
+                 partner (requires.services.partners.call), and Keycloak
+                 exchanges only a token that names the exchanging client.
+                 The client authenticates by the app's own service account
+                 token, so naming it here lets that app, and no other,
+                 exchange. All five config keys, as at director-audience. */}}
+            {{- range $pc := $partnerCallers }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-zone-partner-{{ $pc }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-partner-{{ $pc }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                name: {{ printf "partner-%s-audience" $pc }}
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ printf "partner-%s" $pc }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
 
             {{- /* The exchange client in the zone token's audience.
 
@@ -1263,6 +1319,34 @@ spec:
                   userinfo.token.claim: "false"
               providerConfigRef:
                 name: keycloak
+            {{- /* And the app's partner client, for an app that calls partners:
+                 the token it is handed names that client, which may then
+                 exchange it (see the zone client's partner audiences). */}}
+            {{- if has $p $partnerCallers }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}-partner-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}-partner-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: partner-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ printf "partner-%s" $p }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- /* Who the person is, for the app: their groups of this realm,
                  their address and their name, in the access token the app is
                  handed. The exchange client has no default scope beyond
@@ -2164,10 +2248,10 @@ spec:
 
 
             {{- /* ── brokered to ──────────────────────────────────────────
-                 Realms outside the tenant -- usually of another cluster --
-                 where its people may sign in with their account here
-                 (spec.brokeredTo): one client each, broker-to-<name>, that
-                 sends a person back to the outside realm's broker endpoint
+                 Other tenants of this cluster where this tenant's people
+                 sign in (spec.signInTo, projected by the operator as
+                 brokeredTo): one client each, broker-to-<name>, that
+                 sends a person back to the other realm's broker endpoint
                  and nowhere else.
 
                  No secret. The outside realm authenticates with a JWT it
@@ -2216,77 +2300,44 @@ spec:
                   gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
-            {{- /* identityOnly (the store's sign-in, spec.store.signIn): the
-                 client's default scopes are the person's identity -- basic
-                 (the subject), profile and email -- and not the realm's
-                 groups or roles. Optional scopes are given only to a caller
-                 that asks, and the store realm's provider asks for openid
-                 profile email. */}}
-            {{- if $b.identityOnly }}
-            ---
-            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-            kind: ClientDefaultScopes
-            metadata:
-              name: {{ $tenant }}-broker-to-{{ $b.name }}-default-scopes
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-to-{{ $b.name }}-default-scopes
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                clientIdRef:
-                  name: {{ $tenant }}-broker-to-{{ $b.name }}-client
-                  policy:
-                    resolve: Always
-                defaultScopes:
-                  - basic
-                  - email
-                  - profile
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
             {{- end }}
             {{- end }}
 
-            {{- /* ── brokered from ────────────────────────────────────────
-                 The other half: realms outside the tenant whose people sign
-                 in here, each as an organization (spec.brokeredFrom). Per
-                 entry an Organization with the entry's domain, and an
-                 identity provider, org-<name>, linked to it.
+            {{- /* ── partners ─────────────────────────────────────────────
+                 Realms of other clusters this realm links its people's
+                 accounts with (spec.partners, projected by the operator
+                 with the Cluster claim's defaults, within its allowed
+                 issuers; AD-17, docs/identity-brokering.md). Each direction
+                 is one switch.
 
-                 The identity provider authenticates to the outside realm with
-                 a JWT this realm signs (clientAuthMethod private_key_jwt), and
-                 the outside realm checks it against this realm's published
-                 keys: no secret is made. The provider insists on a client
-                 secret all the same, so the Secret below carries a fixed word
-                 that is never sent.
+                 issue -- this tenant's people towards the partner: the scope
+                 partner-<name>, whose mappers give an access token the
+                 partner's issuer as its only audience and the person's
+                 pairwise subject (sector the partner's issuer, the salt the
+                 operator derives), and the partner client, client ID = the
+                 partner's issuer, which the partner's realm signs in through
+                 once per person to link the two accounts. It sends a person
+                 back only to <issuer>/broker/partner-<as>/endpoint, checks
+                 the partner realm's published keys (no secret), asks for
+                 consent, gives no role, and its one default scope is
+                 partner-<name>: the subject is all it gives.
 
-                 It maps nothing and trusts no address: whoever signs in
-                 through it is a member of the organization, with no group and
-                 no role of this realm, and an address that is already an
-                 account here is linked only once that account's owner proves
-                 it (Keycloak's own first-broker-login flow, not the kernel
-                 broker's, which links by address). Hidden on the login page:
-                 Keycloak sends a person there when the domain of the address
-                 they give is the organization's, and a page can name it with
-                 kc_idp_hint.
+                 accept -- the partner's people here: the identity provider
+                 partner-<name>, authenticating to the partner by a JWT this
+                 realm signs, with the JWT authorization grant on, so the
+                 partner's apps' assertions become the linked account here
+                 (single use, at most two minutes old, ten seconds of clock
+                 skew). Hidden on the login page, trusts no address, maps
+                 nothing. What a first arrival becomes is accept.accounts:
+                 link (gentian-link-existing), create
+                 (gentian-create-account) or organization (a member of an
+                 organization with the domain given).
 
-                 Delete and not Orphan: an entry taken away must stop the
-                 sign-in, not leave it in the realm.
-
-                 An entry with linkExisting (the store's sign-in through a
-                 customer tenant's own realm) has no organization and no
-                 domain. Its provider makes no account: its first-login flow,
-                 gentian-link-existing below, asks the person to sign in to
-                 their account here, once, and links the two; from then on the
-                 sign-in asks nothing, and the provider forwards a client's
-                 prompt=none to the outside realm, so a person with a session
-                 there is signed in here without a page. Under prompt=none
-                 the flow's form is a challenge, which Keycloak answers
-                 interaction_required: nothing is made silently. */}}
+                 Delete and not Orphan: a partner taken away must stop, not
+                 linger in the realm. */}}
             {{- $linkExisting := false }}
-            {{- range $b := (dig "brokeredFrom" list $spec) }}
-            {{- if $b.linkExisting }}{{- $linkExisting = true }}{{- end }}
+            {{- range $b := (dig "partners" list $spec) }}
+            {{- if eq (dig "accept" "accounts" "" $b) "link" }}{{- $linkExisting = true }}{{- end }}
             {{- end }}
             {{- if $linkExisting }}
             ---
@@ -2362,18 +2413,19 @@ spec:
                 name: keycloak
             {{- end }}
             {{- end }}
-            {{- /* An entry with linkExisting and createAccounts (the store's
-                 registration through a customer tenant's own realm) makes
-                 the account at the first sign-in through it when no account
-                 here has the person's address: gentian-create-account below,
-                 idp-create-user-if-unique, with no page, so it is made also
-                 under prompt=none. An address that is an account already is
-                 linked as gentian-link-existing links it: the person signs in
-                 to that account once, with its second factor. Nothing is
-                 linked by address alone. */}}
+            {{- /* A partner that accepts with accounts: create (a registration
+                 through the partner's realm) makes the account at the first
+                 arrival through it: gentian-create-account below,
+                 idp-create-user-if-unique, with no page of the provider's.
+                 The partner gives a pairwise subject and no address, so the
+                 account is named by that subject; what this realm's own
+                 profile rules require more is asked by the realm. One that a
+                 person proves is theirs is linked as gentian-link-existing
+                 links it: they sign in to it once, with its second factor.
+                 Nothing is linked by address. */}}
             {{- $createAccounts := false }}
-            {{- range $b := (dig "brokeredFrom" list $spec) }}
-            {{- if and $b.linkExisting $b.createAccounts }}{{- $createAccounts = true }}{{- end }}
+            {{- range $b := (dig "partners" list $spec) }}
+            {{- if eq (dig "accept" "accounts" "" $b) "create" }}{{- $createAccounts = true }}{{- end }}
             {{- end }}
             {{- if $createAccounts }}
             ---
@@ -2482,51 +2534,174 @@ spec:
                 name: keycloak
             {{- end }}
             {{- end }}
-            {{- range $b := (dig "brokeredFrom" list $spec) }}
-            {{- if regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name) }}
+            {{- $ownIssuer := printf "https://id.%s/auth/realms/%s" $kd $realm }}
+            {{- range $b := (dig "partners" list $spec) }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name)) (hasPrefix "https://" (toString $b.issuer)) }}
             {{- $issuer := trimSuffix "/" (toString $b.issuer) }}
-            {{- if hasPrefix "https://" $issuer }}
+            {{- if $b.issue }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-partner-{{ $b.name }}-scope
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-scope
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ printf "partner-%s" $b.name }}
+                description: {{ printf "The person's pairwise subject, for %s and nothing else" $issuer | quote }}
+                includeInTokenScope: true
+                consentScreenText: {{ printf "An identifier of you that only %s knows you by" $b.name | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- $scopeID := dig "resources" (printf "keycloak-partner-%s-scope" $b.name) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $scopeID }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-partner-{{ $b.name }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-audience
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: partner-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $issuer | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-partner-{{ $b.name }}-pairwise
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-pairwise
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: pairwise-subject
+                protocol: openid-connect
+                protocolMapper: oidc-sha256-pairwise-sub-mapper
+                config:
+                  sectorIdentifierUri: {{ $issuer | quote }}
+                  pairwiseSubAlgorithmSalt: {{ $b.salt | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-partner-{{ $b.name }}-client
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-client
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $issuer | quote }}
+                name: {{ printf "Partner %s" $b.name | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                clientAuthenticatorType: client-jwt
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                consentRequired: true
+                displayOnConsentScreen: true
+                validRedirectUris:
+                  - {{ printf "%s/broker/partner-%s/endpoint" $issuer $b.as | quote }}
+                extraConfig:
+                  use.jwks.url: "true"
+                  jwks.url: {{ printf "%s/protocol/openid-connect/certs" $issuer | quote }}
+                  token.endpoint.auth.signing.alg: RS256
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            {{- if $scopeID }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-partner-{{ $b.name }}-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-partner-{{ $b.name }}-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - {{ printf "partner-%s" $b.name }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- $accounts := dig "accept" "accounts" "" $b }}
+            {{- if and $accounts $kd }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-org-{{ $b.name }}-client
-              name: {{ $tenant }}-org-{{ $b.name }}-client
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-idp-client
+              name: {{ $tenant }}-partner-{{ $b.name }}-idp-client
             spec:
               forProvider:
                 manifest:
                   apiVersion: v1
                   kind: Secret
                   metadata:
-                    name: {{ $tenant }}-org-{{ $b.name }}-client
+                    name: {{ $tenant }}-partner-{{ $b.name }}-idp-client
                     namespace: {{ $identityNs }}
                     labels:
                       app.kubernetes.io/managed-by: crossplane
                   stringData:
-                    client_id: {{ $b.clientID | quote }}
-                    # Never sent: the client authenticates by a signed JWT.
+                    # The partner's client for this realm is named by this
+                    # realm's issuer.
+                    client_id: {{ $ownIssuer | quote }}
+                    # Never sent: the provider authenticates by a signed JWT.
                     client_secret: private-key-jwt
               providerConfigRef:
                 name: kubernetes
-            {{- if not $b.linkExisting }}
+            {{- if eq $accounts "organization" }}
             ---
             apiVersion: organization.keycloak.crossplane.io/v1alpha1
             kind: Organization
             metadata:
-              name: {{ $tenant }}-org-{{ $b.name }}
+              name: {{ $tenant }}-partner-{{ $b.name }}-org
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-org-{{ $b.name }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-org
             spec:
               deletionPolicy: Delete
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 realm: {{ $realm }}
-                name: {{ $b.displayName | quote }}
+                name: {{ dig "accept" "displayName" $b.name $b | quote }}
                 alias: {{ $b.name }}
                 enabled: true
                 domain:
-                  - name: {{ $b.domain | quote }}
+                  - name: {{ dig "accept" "domain" "" $b | quote }}
                     verified: false
               providerConfigRef:
                 name: keycloak
@@ -2535,17 +2710,17 @@ spec:
             apiVersion: oidc.keycloak.crossplane.io/v1alpha1
             kind: IdentityProvider
             metadata:
-              name: {{ $tenant }}-org-{{ $b.name }}-idp
+              name: {{ $tenant }}-partner-{{ $b.name }}-idp
               annotations:
-                crossplane.io/external-name: org-{{ $b.name }}
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-org-{{ $b.name }}-idp
+                crossplane.io/external-name: partner-{{ $b.name }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-idp
             spec:
               deletionPolicy: Delete
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 realm: {{ $realm }}
-                alias: org-{{ $b.name }}
-                displayName: {{ $b.displayName | quote }}
+                alias: partner-{{ $b.name }}
+                displayName: {{ dig "accept" "displayName" $b.name $b | quote }}
                 providerId: oidc
                 enabled: true
                 trustEmail: false
@@ -2556,38 +2731,210 @@ spec:
                 addReadTokenRoleOnCreate: false
                 syncMode: IMPORT
                 validateSignature: true
-                defaultScopes: openid profile email
+                defaultScopes: openid
                 issuer: {{ $issuer | quote }}
                 authorizationUrl: {{ printf "%s/protocol/openid-connect/auth" $issuer | quote }}
                 tokenUrl: {{ printf "%s/protocol/openid-connect/token" $issuer | quote }}
                 jwksUrl: {{ printf "%s/protocol/openid-connect/certs" $issuer | quote }}
                 userInfoUrl: {{ printf "%s/protocol/openid-connect/userinfo" $issuer | quote }}
                 logoutUrl: {{ printf "%s/protocol/openid-connect/logout" $issuer | quote }}
-                {{- if and $b.linkExisting $b.createAccounts }}
+                {{- if eq $accounts "create" }}
                 firstBrokerLoginFlowAlias: gentian-create-account
-                acceptsPromptNoneForwardFromClient: true
-                {{- else if $b.linkExisting }}
+                {{- else if eq $accounts "link" }}
                 firstBrokerLoginFlowAlias: gentian-link-existing
-                acceptsPromptNoneForwardFromClient: true
                 {{- else }}
                 organizationIdRef:
-                  name: {{ $tenant }}-org-{{ $b.name }}
-                orgDomain: {{ $b.domain | quote }}
+                  name: {{ $tenant }}-partner-{{ $b.name }}-org
+                orgDomain: {{ dig "accept" "domain" "" $b | quote }}
                 orgRedirectModeEmailMatches: true
                 {{- end }}
                 extraConfig:
                   clientAuthMethod: private_key_jwt
+                  jwtAuthorizationGrantEnabled: "true"
+                  jwtAuthorizationGrantAssertionReuseAllowed: "false"
+                  jwtAuthorizationGrantMaxAllowedAssertionExpiration: "120"
+                  jwtAuthorizationGrantAllowedClockSkew: "10"
+                  jwtAuthorizationGrantAssertionSignatureAlg: RS256
+                  jwtAuthorizationGrantLimitAccessTokenExp: "true"
                 clientIdSecretRef:
-                  name: {{ $tenant }}-org-{{ $b.name }}-client
+                  name: {{ $tenant }}-partner-{{ $b.name }}-idp-client
                   namespace: {{ $identityNs }}
                   key: client_id
                 clientSecretSecretRef:
-                  name: {{ $tenant }}-org-{{ $b.name }}-client
+                  name: {{ $tenant }}-partner-{{ $b.name }}-idp-client
                   namespace: {{ $identityNs }}
                   key: client_secret
               providerConfigRef:
                 name: keycloak
             {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── partner apps ─────────────────────────────────────────
+                 A component that calls partners or accepts their assertions
+                 (requires.services.partners, from the zone projection) has
+                 one client here, partner-<profile>, and no secret: it
+                 authenticates by its Kubernetes service account token
+                 (federated client authentication), which Keycloak checks
+                 against the cluster's service account issuer -- the
+                 identity provider "kubernetes" below -- and whose subject
+                 must be the component's account,
+                 system:serviceaccount:<namespace>:<account>. The token's
+                 audience is this realm's issuer, which the component asks
+                 for in its projected token.
+
+                 Calling: standard token exchange on, the scopes
+                 partner-<name> of the partners it names (and that this
+                 tenant issues towards) as its optional scopes, basic as its
+                 only default -- an assertion carries the pairwise subject
+                 and nothing about the person. Accepting: the JWT
+                 authorization grant on, for every partner this tenant
+                 accepts. Every other flow off; no role (fullScopeAllowed
+                 off).
+
+                 The component is told the client, the token endpoint on the
+                 cluster's network and the audience its token needs, in the
+                 Secret partners-<profile> (PartnerSecretName); nothing in it
+                 is secret. */}}
+            {{- $saIssuer := default "" $spec.serviceAccountIssuer }}
+            {{- if and $kcInternal $saIssuer $kd (gt (len $partnerApps) 0) }}
+            {{- $issuing := list }}
+            {{- $accepting := list }}
+            {{- range $b := (dig "partners" list $spec) }}
+            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name)) (hasPrefix "https://" (toString $b.issuer)) }}
+            {{- if and $b.issue (dig "resources" (printf "keycloak-partner-%s-scope" $b.name) "resource" "status" "atProvider" "id" "" $observed) }}
+            {{- $issuing = append $issuing $b.name }}
+            {{- end }}
+            {{- if dig "accept" "accounts" "" $b }}
+            {{- $accepting = append $accepting (printf "partner-%s" $b.name) }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: KubernetesIdentityProvider
+            metadata:
+              name: {{ $tenant }}-kubernetes-idp
+              annotations:
+                crossplane.io/external-name: kubernetes
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kubernetes-idp
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                alias: kubernetes
+                displayName: Kubernetes service accounts
+                enabled: true
+                hideOnLoginPage: true
+                issuer: {{ $saIssuer | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- range $a := $partnerApps }}
+            {{- $p := $a.profile }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-partner-app-{{ $p }}-client
+              annotations:
+                crossplane.io/external-name: {{ printf "partner-%s" $p }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-app-{{ $p }}-client
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ printf "partner-%s" $p }}
+                name: {{ printf "%s partner calls (%s)" $brandName $p | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                clientAuthenticatorType: federated-jwt
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                standardTokenExchangeEnabled: {{ gt (len $a.call) 0 }}
+                extraConfig:
+                  jwt.credential.issuer: kubernetes
+                  jwt.credential.sub: {{ printf "system:serviceaccount:%s:%s" $ns $a.sa | quote }}
+                  {{- if and $a.accept (gt (len $accepting) 0) }}
+                  oauth2.jwt.authorization.grant.enabled: "true"
+                  oauth2.jwt.authorization.grant.idp: {{ join "##" $accepting | quote }}
+                  {{- end }}
+                  gentianos.io/managed-by: platform
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-partner-app-{{ $p }}-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-app-{{ $p }}-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-partner-app-{{ $p }}-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - basic
+              providerConfigRef:
+                name: keycloak
+            {{- $optional := list }}
+            {{- range $n := $a.call }}
+            {{- if has $n $issuing }}{{- $optional = append $optional (printf "partner-%s" $n) }}{{- end }}
+            {{- end }}
+            {{- if gt (len $optional) 0 }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientOptionalScopes
+            metadata:
+              name: {{ $tenant }}-partner-app-{{ $p }}-optional-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-app-{{ $p }}-optional-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-partner-app-{{ $p }}-client
+                  policy:
+                    resolve: Always
+                optionalScopes:
+                  {{- range $s := $optional }}
+                  - {{ $s }}
+                  {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-partner-app-{{ $p }}-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: partner-app-secret-{{ $p }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ printf "partners-%s" $p }}
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    PARTNER_CLIENT_ID: {{ printf "partner-%s" $p | quote }}
+                    PARTNER_TOKEN_URL: {{ printf "%s/realms/%s/protocol/openid-connect/token" $kcInternal $realm | quote }}
+                    PARTNER_TOKEN_AUDIENCE: {{ $ownIssuer | quote }}
+              providerConfigRef:
+                name: kubernetes
             {{- end }}
             {{- end }}
 
@@ -2888,14 +3235,13 @@ spec:
                 realm: {{ $realm }}
                 enabled: true
                 displayName: {{ $spec.displayName | quote }}
-                {{- /* Organizations, only in a realm that has outside realms
-                     signing in as one (spec.brokeredFrom): every other realm
-                     is composed as it was, and does not grow the identity-first
-                     login step organizations add. An entry that links
-                     existing accounts (linkExisting) is no organization. */}}
+                {{- /* Organizations, only in a realm that accepts a partner as
+                     one (spec.partners, accept.accounts organization): every
+                     other realm is composed as it was, and does not grow the
+                     identity-first login step organizations add. */}}
                 {{- $orgs := false }}
-                {{- range $b := (dig "brokeredFrom" list $spec) }}
-                {{- if not $b.linkExisting }}{{- $orgs = true }}{{- end }}
+                {{- range $b := (dig "partners" list $spec) }}
+                {{- if eq (dig "accept" "accounts" "" $b) "organization" }}{{- $orgs = true }}{{- end }}
                 {{- end }}
                 {{- if $orgs }}
                 organizationsEnabled: true

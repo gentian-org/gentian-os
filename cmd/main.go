@@ -298,6 +298,7 @@ func main() {
 		// setting; the claim is read, and watched, for the second.
 		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
 		WatchClusterClaim:      true,
+		ServiceAccountIssuer:   controller.ServiceAccountIssuer(),
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")

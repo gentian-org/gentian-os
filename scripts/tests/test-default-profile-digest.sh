@@ -614,6 +614,33 @@ else
     bad "a new claim's catalogue section records it" "${section}"
 fi
 
+# The store's vendor as every tenant's partner, with the extra services.
+new_world
+printf 'spec:\n  catalogue:\n    storeUrl: https://store.example\n' > "$(CLAIM_OF)"
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' >/dev/null
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' >/dev/null
+if [[ "$(grep -c '^  partners:$' "$(CLAIM_OF)")" == "1" ]] \
+    && grep -q '^        issuer: https://id.aluvian.io/auth/realms/customers$' "$(CLAIM_OF)" \
+    && grep -q '^      - name: aluvian$' "$(CLAIM_OF)"; then
+    ok "the extra services make the store's vendor every tenant's partner, once"
+else
+    bad "the extra services make the store's vendor every tenant's partner, once" "$(cat "$(CLAIM_OF)")"
+fi
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=1 >/dev/null
+if [[ "$(cat "$(CLAIM_OF)")" == $'spec:\n  catalogue:\n    storeUrl: https://store.example' ]]; then
+    ok "--no-extra-services takes the partner out again, comment and all"
+else
+    bad "--no-extra-services takes the partner out again, comment and all" "$(cat "$(CLAIM_OF)")"
+fi
+printf 'spec:\n  partners:\n    allowedIssuers: ["https://*"]\n' > "$(CLAIM_OF)"
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=1 >/dev/null
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' >/dev/null
+if [[ "$(cat "$(CLAIM_OF)")" == $'spec:\n  partners:\n    allowedIssuers: ["https://*"]' ]]; then
+    ok "a partners section somebody wrote is left alone either way"
+else
+    bad "a partners section somebody wrote is left alone either way" "$(cat "$(CLAIM_OF)")"
+fi
+
 echo ""
 if [[ ${fail} -eq 0 ]]; then
     echo "${GREEN}${pass} checks passed.${NC}"

@@ -49,140 +49,91 @@ type TenantSignUp struct {
 	Enabled bool `json:"enabled,omitempty"`
 }
 
-// TenantBrokeredTo is a realm outside this tenant -- usually of another
-// cluster -- where this tenant's people may sign in with their account here:
-// that realm brokers this one. The platform makes the client the outside
-// realm signs in with, in this tenant's realm, and nothing else: which of
-// the people who arrive there get any rights is the outside realm's to say.
+// TenantPartner is another realm -- usually of another cluster -- this
+// tenant's realm has a declared relation with (docs/identity-brokering.md,
+// AD-17). Per direction it is one switch: Issue, this tenant's people towards
+// the partner; Accept, the partner's people here. A person links their two
+// accounts once, by signing in at the partner through this realm; apps then
+// call each other on that person's behalf with assertions that carry a
+// pairwise subject and nothing else about the person. No secret crosses
+// between the clusters, and no group or role.
 //
-// No secret is made or handed over. The client authenticates the outside
-// realm by a JWT that realm signs with its own key, checked against the
-// keys it publishes (JWKSURL): what crosses between the clusters is public.
-type TenantBrokeredTo struct {
-	// Name says whose realm it is; the client is broker-to-<name>.
+// Only an issuer the Cluster claim allows (spec.partners.allowedIssuers) is
+// composed.
+// +kubebuilder:validation:XValidation:rule="!has(self.accept) || self.accept.accounts != 'organization' || has(self.accept.domain)",message="an organization names its domain"
+type TenantPartner struct {
+	// Name is the partner's name here: the realm's scope and identity
+	// provider for it are partner-<name>.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=40
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
 
-	// RedirectURI is the outside realm's broker endpoint for this tenant,
-	// https://id.<their domain>/auth/realms/<realm>/broker/<alias>/endpoint:
-	// the one address the client sends a person back to.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/[^\s]*$`
-	RedirectURI string `json:"redirectURI"`
-
-	// JWKSURL is where the outside realm publishes its signing keys,
-	// https://id.<their domain>/auth/realms/<realm>/protocol/openid-connect/certs.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/[^\s]*$`
-	JWKSURL string `json:"jwksURL"`
-}
-
-// TenantStore is the tenant's side of the store the cluster names
-// (spec.catalogue.storeUrl on the Cluster claim).
-type TenantStore struct {
-	// SignIn lets the store's realm sign this tenant's people in to the store
-	// through this realm; see TenantStoreSignIn. Unset: it does not.
-	// +optional
-	SignIn *TenantStoreSignIn `json:"signIn,omitempty"`
-}
-
-// TenantStoreSignIn is the store's realm brokering this tenant's realm, so a
-// person signed in here is signed in to their store account without being
-// asked. Written by the director, as the patch store-sign-in.yaml beside the
-// tenant, at the request of the tenant's administrator -- in practice the App
-// Store app's, once the store has associated the tenant with its account.
-//
-// The platform makes, in this tenant's realm, the client broker-to-store: it
-// sends a person back only to the store realm's broker endpoint for this
-// tenant, <issuer>/broker/org-<metadata.uid>/endpoint, authenticates the
-// store's realm by a JWT that realm signs (checked against the keys it
-// publishes: no secret), and gives it the person's identity only -- subject,
-// name and e-mail address -- with no group and no role. Taking the line away
-// removes the client.
-type TenantStoreSignIn struct {
-	// Issuer is the store's realm, as the store's GET /v1/meta names it:
-	// https://<host>/<path to the realm>.
+	// Issuer is the partner's realm, https://<host>/<path to the realm>.
+	// Its endpoints and keys are read under it.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=500
-	// +kubebuilder:validation:Pattern=`^https://[^/:\s]+/[^\s?#]*[^/\s?#]$`
+	// +kubebuilder:validation:Pattern=`^https://[^/:\s]+(:[0-9]+)?/[^\s?#]*[^/\s?#]$`
 	Issuer string `json:"issuer"`
-}
 
-// TenantBrokeredFrom is the other half of TenantBrokeredTo: a realm outside
-// this tenant -- a customer's cluster -- whose people sign in here with their
-// account there. The platform makes, in this tenant's realm, an organization
-// of that name, with the domain given, and an identity provider for the
-// outside realm, linked to the organization (org-<name>).
-//
-// The identity provider authenticates to the outside realm with a JWT this
-// realm signs (private_key_jwt): no secret is made or handed over. It maps
-// nothing: whoever signs in through it is a member of the organization and
-// holds no group and no role of this realm by it. A person who already has an
-// account here links it themself, at their first sign-in through it.
-//
-// The outside realm is a Keycloak realm, such as a Gentian tenant's:
-// its endpoints are read from the issuer by Keycloak's own layout.
-// +kubebuilder:validation:XValidation:rule="has(self.linkExisting) && self.linkExisting ? !has(self.domain) : has(self.domain)",message="an organization names its domain; an entry that links existing accounts makes no organization and names none"
-// +kubebuilder:validation:XValidation:rule="!has(self.createAccounts) || !self.createAccounts || (has(self.linkExisting) && self.linkExisting)",message="createAccounts is for an entry that links existing accounts"
-type TenantBrokeredFrom struct {
-	// Name says whose realm it is; the organization's alias, and the identity
-	// provider is org-<name>.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
+	// As is the name the partner gives this realm: its broker endpoint for
+	// this realm is <issuer>/broker/partner-<as>/endpoint, the one address
+	// the partner client sends a person back to. Default: the tenant's
+	// metadata.uid, which the usage statistics report tells a store.
+	// +optional
 	// +kubebuilder:validation:MaxLength=40
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Name string `json:"name"`
+	As string `json:"as,omitempty"`
 
-	// DisplayName is the organization's name as people read it.
+	// Issue lets this tenant's people sign in at the partner and its apps ask
+	// for assertions towards it: the partner client (client ID = Issuer) and
+	// the scope partner-<name>, with a pairwise subject and the partner's
+	// issuer as the only audience. Which apps may ask is what their profiles
+	// declare (requires.services.partners.call).
+	// +optional
+	Issue bool `json:"issue,omitempty"`
+
+	// Accept lets the partner's people arrive here: the identity provider
+	// partner-<name>, with the JWT authorization grant. Unset: they do not.
+	// +optional
+	Accept *TenantPartnerAccept `json:"accept,omitempty"`
+}
+
+// PartnerAccounts is what a person's first arrival from a partner becomes.
+// +kubebuilder:validation:Enum=link;create;organization
+type PartnerAccounts string
+
+const (
+	// PartnerAccountsLink links an account that exists here, once its owner
+	// signed in to it; no account is made.
+	PartnerAccountsLink PartnerAccounts = "link"
+	// PartnerAccountsCreate makes the account at the first arrival, or links
+	// an existing one as PartnerAccountsLink does.
+	PartnerAccountsCreate PartnerAccounts = "create"
+	// PartnerAccountsOrganization makes every arrival a member of an
+	// organization of this realm for the partner, with Domain.
+	PartnerAccountsOrganization PartnerAccounts = "organization"
+)
+
+// TenantPartnerAccept is the receiving side of a partner.
+type TenantPartnerAccept struct {
+	// Accounts is what a first arrival becomes; see PartnerAccounts.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=120
-	DisplayName string `json:"displayName"`
+	Accounts PartnerAccounts `json:"accounts"`
 
-	// Issuer is the outside realm, https://id.<their domain>/auth/realms/<realm>.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/[^\s]*[^/\s]$`
-	Issuer string `json:"issuer"`
-
-	// ClientID is the client the outside realm made for this one, the
-	// broker-to-<name> of its TenantBrokeredTo.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=64
-	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]+$`
-	ClientID string `json:"clientID"`
-
-	// Domain is the organization's domain: the domain of its people's
-	// addresses, which Keycloak sends to this identity provider when one of
-	// them gives their address. One organization per domain. The director
-	// takes only the issuer's cluster domain (the issuer is at
-	// id.<cluster domain>) or one below it. Empty only with LinkExisting.
+	// Domain is the organization's domain (organization only): the domain
+	// of its people's addresses.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
 	Domain string `json:"domain,omitempty"`
 
-	// LinkExisting makes the entry a sign-in to accounts that already exist
-	// here, and nothing else: no organization and no domain, and no account
-	// is ever made through it. The first time a person arrives through it
-	// they sign in to their account of this realm, once, and the two are
-	// linked; from then on they are signed in without being asked, also
-	// when a client asks for that with prompt=none, which this provider
-	// forwards to the outside realm. The store's sign-in through a
-	// tenant's own realm (store-contract.md §6.1).
+	// DisplayName is the organization's name as people read it
+	// (organization only). Default: the partner's name.
 	// +optional
-	LinkExisting bool `json:"linkExisting,omitempty"`
-
-	// CreateAccounts, with LinkExisting, makes the account here at a
-	// person's first sign-in through the entry when no account has their
-	// address: no page, no password of this realm. One that has it is
-	// linked as LinkExisting says, by signing in to it once. The store's
-	// registration through a tenant's own realm (store-contract.md §6.1).
-	// +optional
-	CreateAccounts bool `json:"createAccounts,omitempty"`
+	// +kubebuilder:validation:MaxLength=120
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // TenantComponentRef names a component of a tenant by the profile it runs.
@@ -297,33 +248,26 @@ type TenantSpec struct {
 	// +optional
 	SignUp *TenantSignUp `json:"signUp,omitempty"`
 
-	// BrokeredTo are realms outside this tenant where its people may sign in
-	// with their account here; see TenantBrokeredTo. Empty: none.
-	// +optional
-	// +kubebuilder:validation:MaxItems=8
-	// +listType=map
-	// +listMapKey=name
-	BrokeredTo []TenantBrokeredTo `json:"brokeredTo,omitempty"`
-
-	// BrokeredFrom are realms outside this tenant whose people sign in here,
-	// each as an organization; see TenantBrokeredFrom. Written by the
-	// director, as the patch brokered-from.yaml beside the tenant. Empty:
-	// none, and the realm's organizations stay off.
+	// Partners are realms outside this tenant it has a relation with; see
+	// TenantPartner. Written by the director, as the patch partners.yaml
+	// beside the tenant. The Cluster claim's spec.partners.defaults are
+	// partners of every tenant besides these; an entry here of the same
+	// name replaces one.
 	// +optional
 	// +kubebuilder:validation:MaxItems=1000
 	// +listType=map
 	// +listMapKey=name
-	BrokeredFrom []TenantBrokeredFrom `json:"brokeredFrom,omitempty"`
+	Partners []TenantPartner `json:"partners,omitempty"`
 
-	// OrganizationCommissioners are the components, of this tenant or
-	// another, that may ask the director to add an entry to BrokeredFrom or
+	// PartnerCommissioners are the components, of this tenant or another,
+	// that may ask the director to add a receiving partner (accept only) or
 	// take one away. A component is admitted only when its profile declares
-	// requires.services.organizations as well: the administrator who names
-	// it here grants, and the profile asks. Declared by hand in git; nothing
-	// writes it.
+	// requires.services.partners.commission as well: the administrator who
+	// names it here grants, and the profile asks. Declared by hand in git;
+	// nothing writes it.
 	// +optional
 	// +kubebuilder:validation:MaxItems=8
-	OrganizationCommissioners []TenantComponentRef `json:"organizationCommissioners,omitempty"`
+	PartnerCommissioners []TenantComponentRef `json:"partnerCommissioners,omitempty"`
 
 	// Groups are groups of the tenant's realm declared in git; see
 	// TenantGroup.
@@ -348,11 +292,6 @@ type TenantSpec struct {
 	// +listType=map
 	// +listMapKey=tenant
 	SignInFrom []TenantSignInFrom `json:"signInFrom,omitempty"`
-
-	// Store is this tenant's side of the store the cluster names; see
-	// TenantStore.
-	// +optional
-	Store *TenantStore `json:"store,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
