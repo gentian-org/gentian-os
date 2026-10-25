@@ -103,25 +103,6 @@ shows the button (or, to go straight to the source, add
 `&kc_idp_hint=<alias>` to a sign-in URL of the target); after signing in at the source, they are back in the
 target, in the group.
 
-## The source on another cluster, commissioned with the tenant
-
-When the source realm is a tenant of *this* cluster and the target is on
-another — a hosted tenant whose people sign in to their provider's
-customer realm — step 1 need not be done by hand. The tenant is created with
-the target named:
-
-```bash
-kubectl gentian tenants create acme \
-  --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
-```
-
-The platform makes the client `broker-to-aluvian` in the tenant's realm. It
-has no secret: the target authenticates with a JWT signed by its own realm
-key, which the client checks against the keys the target publishes
-(`jwks`). In the target, step 2 is then done with *Client authentication*
-set to **JWT signed with private key** instead of a client secret, and
-*Client ID* `broker-to-aluvian`. Nothing secret crosses between the clusters.
-
 ## Both on this cluster: declared in git
 
 When source and target are tenants of the same cluster, steps 1 to 3 are not
@@ -164,65 +145,56 @@ Declared groups are made as plain groups: the Admin Console puts people in
 them and neither renames nor deletes them. A group of the same name made by
 hand earlier is in the way, and is removed first.
 
-## The target on this cluster: organizations, declared
+## Another cluster: partners, declared
 
-The other half, when the *target* is a tenant of this cluster, need not be
-done by hand either, and is then in git rather than only in Keycloak. Each
-source realm becomes an **organization** of the target's realm, with an
-identity provider `org-<name>` linked to it (Tenant `spec.brokeredFrom`,
-written by the director as `brokered-from.yaml` beside the tenant):
+When the other realm is on another cluster, neither side is configured by
+hand: each tenant declares the other as a **partner** (Tenant
+`spec.partners`, written by the director as `partners.yaml` beside the
+tenant; [plans/cross-cluster-identity.md](plans/cross-cluster-identity.md),
+AD-17). A person links their account here with their account there once, by
+signing in there through this realm; from then on apps on either side call
+each other on that person's behalf. The other side learns a **pairwise
+subject** only — never a name, an address, a group or a role.
 
 ```bash
-kubectl gentian tenants organizations customers add acme \
-  --display-name "ACME AG" \
-  --issuer https://id.gentian.cloud/auth/realms/acme \
-  --client-id broker-to-aluvian \
-  --domain acme.gentian.cloud
+# our people towards them (we issue)
+kubectl gentian tenants partners acme add shop --issuer https://id.shop.example/auth/realms/customers --issue
+# their people here (we accept): link | create | organization
+kubectl gentian tenants partners customers add acme --issuer https://id.acme.example/auth/realms/acme --accept create
+kubectl gentian tenants partners customers                 # lists them
+kubectl gentian tenants partners customers remove acme     # ends it
 ```
 
-- **Domain.** The organization's domain is the domain of its people's
-  addresses. It has to be the issuer's cluster domain (the issuer is
-  `id.<cluster domain>`) or one below it, such as `<tenant>.<cluster
-  domain>`, and never this cluster's own. Keycloak sends a person who gives
-  an address of that domain to the organization's provider.
-- **Authentication.** The provider signs a JWT with the target realm's key
-  (*JWT signed with private key*); the source's `broker-to-<name>` client
-  checks it against the target's published keys. No secret.
-- **Rights.** None. The provider maps nothing and does not trust the address
-  it is given: an arrival is a member of the organization, with no group of
-  the realm, and an address that is already an account here is linked only
-  once its owner proves it. Groups are still given by hand (step 3).
-- **Login page.** The provider is hidden there. A page sends people to it
-  with `kc_idp_hint=org-<name>`, or Keycloak does when they give their
-  address.
-- **The realm.** Keycloak's organizations are switched on only in a realm
-  that has at least one such entry.
-
-`kubectl gentian tenants organizations <tenant>` lists them, `… remove
-<name>` takes one away, and with it the organization and its provider.
-Adding and removing take `can_configure` on the cluster.
-
-### Commissioned by a component
-
-A component can do the same with a key of its own, for instance a shop
-that links each customer's cluster to its customer realm once the cluster
-is made. Both halves of the grant are needed:
-
-1. its profile declares `requires.services.organizations: {}`;
-2. the target tenant names it, in git, by hand:
-
-   ```yaml
-   spec:
-     organizationCommissioners:
-       - tenant: team            # where the component runs
-         profile: aluvian-commerce
-   ```
-
-The operator then lists the component's key for that tenant, and the
-component calls the director with it: `PUT`, `DELETE` and `GET` on
-`/v1/tenants/<tenant>/brokered-from[/<name>]`, at `DIRECTOR_URL` with the
-bearer `RIGHTS_CHECK_KEY`, both from its Secret `rights-check-<component>`.
-The commit names the component. The key opens nothing else.
+- **Issue** makes, in this realm, the scope `partner-<name>` (the partner's
+  issuer as the only audience, the pairwise subject) and the partner client,
+  whose client ID is the partner's issuer: it sends a person back only to
+  `<issuer>/broker/partner-<as>/endpoint`, checks the partner realm's
+  published keys, asks the person's consent once and gives the subject only.
+  `as` is the name the partner gives this realm; by default the tenant's
+  `metadata.uid`.
+- **Accept** makes the identity provider `partner-<name>`, hidden on the
+  login page, authenticating by a JWT this realm signs, with the JWT
+  authorization grant on. A first arrival is linked to an account that
+  exists here (`link`), made (`create`), or a member of an organization of
+  the realm with the domain given (`organization`). It maps no group and
+  trusts no address; groups are still given by hand (step 3).
+- **Bounds.** The Cluster claim's `spec.partners.allowedIssuers` lists the
+  issuers a tenant may name (`*` matches any run of characters); the
+  director refuses and the operator leaves out any other.
+  `spec.partners.defaults` are partners every tenant issues towards; the
+  installer declares the store's vendor there with the store's extra
+  services.
+- **Who writes.** The tenant's administrators (`can_administer`). A
+  component that commissions partners — a service linking every customer
+  cluster that registers with it — writes receiving entries with a key of
+  its own: its profile declares `requires.services.partners.commission:
+  true`, the tenant names it, by hand, in `spec.partnerCommissioners`
+  (`tenant`, `profile`), and it calls `PUT`, `DELETE` and `GET` on
+  `/v1/tenants/<tenant>/partners[/<name>]` at `DIRECTOR_URL` with the bearer
+  `RIGHTS_CHECK_KEY`, both from its Secret `rights-check-<component>`.
+- **Apps.** An app is on a partner's list by declaring it in its profile
+  (`requires.services.partners.call: [<name>]`, or `accept: true` to take
+  partners' assertions); see [app-customization.md](app-customization.md).
 
 ## Removing it
 

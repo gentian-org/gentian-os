@@ -112,6 +112,45 @@ spec:
                         broker IdP would fetch tokens from an address that resolves to
                         nothing. Left unset, the composition derives it from
                         kernel/namespaces.yaml, the way it derives the edge namespace.
+                partners:
+                  type: object
+                  description: >
+                    Bounds and defaults of the tenants' partners (Tenant
+                    spec.partners, AD-17): realms of other clusters a tenant's
+                    realm links its people's accounts with.
+                  properties:
+                    allowedIssuers:
+                      type: array
+                      maxItems: 64
+                      description: >
+                        The issuers a tenant may name as a partner; "*"
+                        matches any run of characters, so
+                        "https://id.example.net/auth/realms/*" allows every
+                        realm there and "https://*" any issuer. Empty: none.
+                        A partner outside these is refused by the director and
+                        not composed by the operator.
+                      items:
+                        type: string
+                    defaults:
+                      type: array
+                      maxItems: 8
+                      description: >
+                        Partners every tenant issues towards, those made
+                        later included; a tenant's own entry of the same name
+                        replaces one. The installer declares the store's
+                        vendor here with the store's extra services, and
+                        allows its issuer; --no-extra-services leaves it out.
+                      items:
+                        type: object
+                        required: [name, issuer]
+                        properties:
+                          name:
+                            type: string
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            maxLength: 40
+                          issuer:
+                            type: string
+                            pattern: '^https://[^/\s]+/[^\s?#]*[^/\s?#]$'
                 catalogue:
                   type: object
                   description: >
@@ -146,6 +185,19 @@ spec:
 
                         Unset means this cluster belongs to no store, which is
                         supported: its own catalogues are then all there is.
+                    extraServices:
+                      type: boolean
+                      default: true
+                      description: >
+                        Whether the installer places the store's extra
+                        services from its catalogue: the Operations Console
+                        (platform tenant), the App Store app and the
+                        Subscription Center (every other tenant, while the
+                        cluster offers a store). false is what
+                        --no-extra-services records, so that a later run
+                        without the flag keeps them out. Read by the
+                        installer; the operator places whatever profiles the
+                        cluster's catalogue holds.
                     updates:
                       type: object
                       description: >

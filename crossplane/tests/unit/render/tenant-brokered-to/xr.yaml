@@ -15,11 +15,6 @@ spec:
     - name: aluvian
       redirectURI: https://id.aluvian.example/auth/realms/customers/broker/render-fixture/endpoint
       jwksURL: https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
-    # The store's sign-in (spec.store.signIn): identity-only scopes.
-    - name: store
-      redirectURI: https://id.aluvian.example/auth/realms/customers/broker/org-0f8e7d6c-5b4a-4321-9876-0123456789ab/endpoint
-      jwksURL: https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs
-      identityOnly: true
     - name: Not_A_Label
       redirectURI: https://id.evil.example/x
       jwksURL: https://id.evil.example/certs

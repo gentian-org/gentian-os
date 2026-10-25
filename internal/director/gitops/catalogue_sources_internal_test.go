@@ -409,7 +409,7 @@ func TestWhichOriginMayTakeAName(t *testing.T) {
 func TestEveryHolderOfAReservedAddressIsAPlatformProfile(t *testing.T) {
 	holders := 0
 	for _, r := range hostnames.PlatformLabels() {
-		if r.Owner == "" {
+		if r.Owner == "" || r.FromClusterCatalogue {
 			continue
 		}
 		holders++

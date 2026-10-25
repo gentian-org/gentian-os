@@ -246,7 +246,7 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 	want := []string{
 		"version", "sequence", "sentAt", "publicKey",
 		"cluster", "cluster.id", "cluster.url",
-		"tenants", "tenants.url", "tenants.uid", "tenants.users",
+		"tenants", "tenants.url", "tenants.uid", "tenants.issuer", "tenants.users",
 		"tenants.apps", "tenants.apps.coordinate", "tenants.apps.digest", "tenants.apps.users",
 		"tenants.apps.addons", "tenants.apps.addons.coordinate", "tenants.apps.addons.digest",
 		"tenants.apps.addons.users",
@@ -393,7 +393,7 @@ func TestACountThatCannotBeHadIsNull(t *testing.T) {
 		t.Fatal("the report did not go")
 	}
 	body := string(e.bodies[0])
-	if !strings.Contains(body, `{"url":"https://acme.k.example","uid":"0f8e7d6c-5b4a-4321-9876-0123456789ab","users":null,`) {
+	if !strings.Contains(body, `{"url":"https://acme.k.example","uid":"0f8e7d6c-5b4a-4321-9876-0123456789ab","issuer":"https://id.k.example/auth/realms/acme","users":null,`) {
 		t.Errorf("uncounted accounts are not null:\n%s", body)
 	}
 	if !strings.Contains(body, `"digest":"`+unsourced+`","users":null,"addons":[]}`) {

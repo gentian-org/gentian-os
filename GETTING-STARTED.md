@@ -740,11 +740,16 @@ on the Cluster claim (`spec.catalogue.storeUrl`,
 `https://store-service.aluvian.io` by default) for the list, with no account,
 and installs through the director as the person signed in.
 
-A tenant has the App Store while three things hold, which a default
-installation arranges: the cluster reports its licenses, the claim names a
+The App Store app comes from the store's catalogue (`catalogue.aluvian.io`),
+with the Subscription Center beside it and the Operations Console in the
+platform tenant: step 0 places the three profiles, the *extra services*,
+unless `./install.sh --no-extra-services` (recorded on the claim as
+`spec.catalogue.extraServices: false`) leaves them out. A tenant has the App
+Store while four things hold, which a default installation arranges: the
+profile is placed, the cluster reports its usage statistics, the claim names a
 store, and that store is not an address a cluster's own App Store app could
-have (`store.<a domain a cluster is installed under>`). The platform tenant
-never has it. The install says which it is, on a line beginning
+have (`store.<a domain a cluster is installed under>`). Tenants created later
+get it too. The platform tenant never has it. The install says which it is, on a line beginning
 `App Store app:` in step `D-03`.
 
 **The store's catalogues are added for you.** An app bought in the App Store
@@ -762,7 +767,9 @@ of addresses; every bundle is still held to the digest of its install
 order:
 
 1. *Is the app placed?* `kubectl get component -A | grep app-store` shows
-   one for the tenant. If it does not:
+   one for the tenant. If it does not, first `kubectl get componentprofile
+   app-store`: none means step 0 did not place it (`--no-extra-services`, or
+   the catalogue's index did not list it yet; step 0 says which). Otherwise:
 
    ```bash
    kubectl get configmap gentian-tiles -n kernel-control -o jsonpath='{.data.tiles\.yaml}' | grep -A2 '^appStore:'

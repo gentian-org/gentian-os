@@ -42,7 +42,6 @@ CHART_VALUES = [
     "desktop.enabled=true",
     "adminConsole.enabled=true",
     "concierge.enabled=true",
-    "appStore.enabled=true",
 ]
 
 # Plain YAML that may also hold a ComponentProfile.

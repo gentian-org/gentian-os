@@ -72,102 +72,73 @@ func TestSignUpReachesTheXTenantOnlyWhereATenantSaysSo(t *testing.T) {
 	}
 }
 
-// An outside realm a tenant's people sign in at reaches the XTenant only
-// where the tenant names one, and the XRD and the Composition carry it.
-func TestBrokeredToReachesTheXTenantOnlyWhereATenantNamesOne(t *testing.T) {
+// A tenant's partners reach the XTenant with the claim's defaults, within
+// the claim's allowed issuers, as and salt filled in; a tenant without any
+// and a claim without defaults project none.
+func TestPartnersReachTheXTenantWithinTheClaimsBounds(t *testing.T) {
 	r := &TenantReconciler{
 		Client:       fake.NewClientBuilder().WithScheme(appStoreScheme(t)).Build(),
 		KernelDomain: "k.example", TenancyMode: "multi",
 	}
 	plain := &gentianov1alpha1.Tenant{}
 	plain.Name = "acme"
+	plain.UID = "0f1e2d3c-aaaa-bbbb-cccc-000000000001"
 	plain.Spec.DisplayName = "Acme"
 	xr, err := r.buildXTenant(context.Background(), plain)
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec, _ := xr.Object["spec"].(map[string]interface{})
-	if _, stated := spec["brokeredTo"]; stated {
-		t.Fatalf("a tenant that names no outside realm projects one: %v", spec["brokeredTo"])
+	if _, stated := spec["partners"]; stated {
+		t.Fatalf("a tenant with no partner projects one: %v", spec["partners"])
 	}
 
+	claim := clusterPartners{AllowedIssuers: []string{"https://id.shop.example/auth/realms/*"}}
+	claim.Defaults = append(claim.Defaults, struct {
+		Name   string `json:"name"`
+		Issuer string `json:"issuer"`
+	}{Name: "aluvian", Issuer: "https://id.aluvian.example/auth/realms/customers"})
 	named := plain.DeepCopy()
-	named.Spec.BrokeredTo = []gentianov1alpha1.TenantBrokeredTo{{
-		Name:        "aluvian",
-		RedirectURI: "https://id.aluvian.example/auth/realms/customers/broker/acme/endpoint",
-		JWKSURL:     "https://id.aluvian.example/auth/realms/customers/protocol/openid-connect/certs",
-	}}
-	xr, err = r.buildXTenant(context.Background(), named)
-	if err != nil {
-		t.Fatal(err)
+	named.Spec.Partners = []gentianov1alpha1.TenantPartner{
+		{Name: "shop", Issuer: "https://id.shop.example/auth/realms/main", As: "acme", Issue: true},
+		{Name: "elsewhere", Issuer: "https://id.other.example/auth/realms/x", Issue: true},
+		{Name: "customer", Issuer: "https://id.shop.example/auth/realms/c1",
+			Accept: &gentianov1alpha1.TenantPartnerAccept{Accounts: gentianov1alpha1.PartnerAccountsCreate}},
 	}
-	spec, _ = xr.Object["spec"].(map[string]interface{})
-	list, _ := spec["brokeredTo"].([]interface{})
-	if len(list) != 1 || list[0].(map[string]interface{})["jwksURL"] != named.Spec.BrokeredTo[0].JWKSURL {
-		t.Fatalf("brokeredTo is not projected: %v", spec["brokeredTo"])
+	list := tenantPartnerProjection(named, claim)
+	byName := map[string]map[string]interface{}{}
+	for _, e := range list {
+		m := e.(map[string]interface{})
+		byName[m["name"].(string)] = m
 	}
-
-	xrd, err := os.ReadFile("../../crossplane/xrds/tenant.yaml")
-	if err != nil {
-		t.Fatal(err)
+	if len(list) != 3 || byName["elsewhere"] != nil {
+		t.Fatalf("projected %v; want aluvian, customer and shop, not an issuer the claim does not allow", list)
 	}
-	if !strings.Contains(string(xrd), "brokeredTo:") {
-		t.Error("crossplane/xrds/tenant.yaml does not declare brokeredTo")
+	if a := byName["aluvian"]; a["issue"] != true || a["as"] != string(plain.UID) || a["salt"] == "" {
+		t.Fatalf("the default is projected as %v", a)
+	}
+	if byName["shop"]["as"] != "acme" {
+		t.Fatalf("a stated as is not kept: %v", byName["shop"])
+	}
+	if acc, _ := byName["customer"]["accept"].(map[string]interface{}); acc["accounts"] != "create" || byName["customer"]["issue"] != nil {
+		t.Fatalf("a receiving entry is projected as %v", byName["customer"])
+	}
+	if byName["aluvian"]["salt"] == byName["shop"]["salt"] {
+		t.Fatal("two partners share a salt")
+	}
+	if tenantPartnerProjection(&gentianov1alpha1.Tenant{Spec: named.Spec}, claim) != nil {
+		t.Fatal("a tenant without a uid projects partners")
+	}
+	if !IssuerAllowed([]string{"https://*"}, "https://id.x.example/auth/realms/y") ||
+		IssuerAllowed([]string{"https://id.a.example/auth/realms/b"}, "https://id.a.example/auth/realms/bc") {
+		t.Fatal("IssuerAllowed matches wrongly")
 	}
 	composition, err := os.ReadFile("../../crossplane/compositions/tenant-default.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(composition), `dig "brokeredTo" list $spec`) {
-		t.Error("tenant-default.yaml does not read brokeredTo")
-	}
-}
-
-// The outside realms whose people sign in as organizations reach the XTenant
-// only where a tenant has one, and the composition reads them: a tenant
-// without composes as it did, its realm's organizations off. The tenants
-// that commission them are the operator's to read and never projected.
-func TestBrokeredFromReachesTheXTenantOnlyWhereATenantHasOne(t *testing.T) {
-	r := &TenantReconciler{
-		Client:       fake.NewClientBuilder().WithScheme(appStoreScheme(t)).Build(),
-		KernelDomain: "k.example", TenancyMode: "multi",
-	}
-	plain := &gentianov1alpha1.Tenant{}
-	plain.Name = "customers"
-	plain.Spec.DisplayName = "Customers"
-	plain.Spec.OrganizationCommissioners = []gentianov1alpha1.TenantComponentRef{{Tenant: "team", Profile: "shop"}}
-	xr, err := r.buildXTenant(context.Background(), plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, _ := xr.Object["spec"].(map[string]interface{})
-	for _, field := range []string{"brokeredFrom", "organizationCommissioners"} {
-		if _, stated := spec[field]; stated {
-			t.Fatalf("%s is projected for a tenant without outside realms: %v", field, spec[field])
-		}
-	}
-
-	named := plain.DeepCopy()
-	named.Spec.BrokeredFrom = []gentianov1alpha1.TenantBrokeredFrom{{
-		Name: "abc", DisplayName: "ABC AG", Issuer: "https://id.abc.example/auth/realms/main",
-		ClientID: "broker-to-aluvian", Domain: "abc.example",
-	}}
-	xr, err = r.buildXTenant(context.Background(), named)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, _ = xr.Object["spec"].(map[string]interface{})
-	list, _ := spec["brokeredFrom"].([]interface{})
-	if len(list) != 1 || list[0].(map[string]interface{})["domain"] != "abc.example" ||
-		list[0].(map[string]interface{})["clientID"] != "broker-to-aluvian" {
-		t.Fatalf("brokeredFrom is not projected: %v", spec["brokeredFrom"])
-	}
-	composition, err := os.ReadFile("../../crossplane/compositions/tenant-default.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(composition), `dig "brokeredFrom" list $spec`) {
-		t.Error("tenant-default.yaml does not read brokeredFrom")
+	if !strings.Contains(string(composition), `dig "partners" list $spec`) {
+		t.Error("tenant-default.yaml does not read partners")
 	}
 }
 

@@ -155,10 +155,11 @@ if [[ "${out}" == *"Default profile operations-console: ${DIGEST}, listed by the
 else
     bad "what goes into the commit says the digest, that the index stated it, the address and the origin" "${out}"
 fi
-if fetched "${BASE}/index.yaml" && fetched "${URL}" && [[ "$(wc -l < "${CURL_LOG}" | tr -d ' ')" == "2" ]]; then
-    ok "two requests: the index, then the profile"
+if fetched "${BASE}/index.yaml" && fetched "${URL}" && [[ "$(wc -l < "${CURL_LOG}" | tr -d ' ')" == "4" ]] \
+    && [[ "$(grep -c '/profiles/' "${CURL_LOG}")" == "1" ]]; then
+    ok "the index, then the profile; for the two extra services the index does not list, the index alone"
 else
-    bad "two requests: the index, then the profile" "$(cat "${CURL_LOG}")"
+    bad "the index, then the profile; for the two extra services the index does not list, the index alone" "$(cat "${CURL_LOG}")"
 fi
 
 # A second run.
@@ -252,7 +253,7 @@ fi
 
 # --- the index lacks the entry ---------------------------------------------------
 new_world; publish something-else 1.0.0; profile operations-console 1.0.0 > "${CATALOGUE}/profiles/operations-console.yaml"
-out="$(scaffold)"
+out="$(scaffold GENTIAN_DEFAULT_PROFILES="${URL}")"
 if [[ "${out}" == *"rc=1"* && "${out}" == *"lists no entry named operations-console"* && "${out}" == *"@sha256:<digest>"* ]] && nothing_written && ! fetched "${URL}"; then
     ok "the index does not list the entry: stops, the file is not even fetched, and it says how to pin"
 else
@@ -536,6 +537,108 @@ if command -v gpg >/dev/null 2>&1; then
     fi
 else
     echo "  ${YELLOW}skipped${NC}: gpg is not installed; the signed commit is not exercised."
+fi
+
+# --- the extra services ----------------------------------------------------------
+echo ""
+echo "The extra services: in the default list, and left out by --no-extra-services"
+CLAIM_OF() { printf '%s' "${CHECKOUT}/clusters/${CLUSTER}/kernel/claims/cluster.yaml"; }
+
+new_world; publish something-else 1.0.0
+out="$(scaffold)"
+if [[ "${out}" == *"rc=0"* && "${out}" == *"lists no app-store; that extra service is not placed"* ]] && nothing_written; then
+    ok "the default list, at a catalogue that lists none of them: warned, nothing placed, the install goes on"
+else
+    bad "the default list, at a catalogue that lists none of them: warned, nothing placed, the install goes on" "${out}"
+fi
+
+new_world; publish operations-console 1.0.0
+out="$(scaffold GENTIAN_NO_EXTRA_SERVICES=1)"
+if [[ "${out}" == *"rc=0"* ]] && nothing_written && [[ ! -s "${CURL_LOG}" ]]; then
+    ok "--no-extra-services: nothing placed, the catalogue not asked"
+else
+    bad "--no-extra-services: nothing placed, the catalogue not asked" "${out}"$'\n'"$(cat "${CURL_LOG}")"
+fi
+
+new_world; publish operations-console 1.0.0
+printf 'spec:\n  catalogue:\n    extraServices: false\n    sources: []\n' > "$(CLAIM_OF)"
+out="$(scaffold)"
+if [[ "${out}" == *"rc=0"* ]] && nothing_written; then
+    ok "a claim that records extraServices: false keeps them out on a run without the flag"
+else
+    bad "a claim that records extraServices: false keeps them out on a run without the flag" "${out}"
+fi
+out="$(scaffold GENTIAN_NO_EXTRA_SERVICES=0)"
+if [[ "${out}" == *"rc=0"* && -f "${DIR}/operations-console.yaml" ]]; then
+    ok "GENTIAN_NO_EXTRA_SERVICES=0 places them all the same"
+else
+    bad "GENTIAN_NO_EXTRA_SERVICES=0 places them all the same" "${out}"
+fi
+out="$(scaffold GENTIAN_NO_EXTRA_SERVICES=1)"
+if [[ "${out}" == *"rc=0"* && "${out}" == *"removed operations-console from the cluster's catalogue"* ]] \
+    && [[ ! -e "${DIR}/operations-console.yaml" && ! -e "${DIR}/operations-console.bundle.yaml" ]] \
+    && ! grep -q 'operations-console.yaml\|operations-console.bundle.yaml' "${DIR}/kustomization.yaml" \
+    && grep -q '^- builds/operations-console-' "${DIR}/kustomization.yaml" \
+    && grep -qx 'patches: \[\]' "${DIR}/kustomization.yaml"; then
+    ok "a later run with the flag takes a placed one away again: profile, bundle and their lines; the build stays"
+else
+    bad "a later run with the flag takes a placed one away again: profile, bundle and their lines; the build stays" "${out}"$'\n'"$(cat "${DIR}/kustomization.yaml")"
+fi
+
+# The claim's record of the flag.
+new_world
+printf 'spec:\n  catalogue:\n    sources: []\n' > "$(CLAIM_OF)"
+run '_claim_record_extra_services "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=1 >/dev/null
+run '_claim_record_extra_services "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=1 >/dev/null
+if [[ "$(grep -c '^    extraServices: false$' "$(CLAIM_OF)")" == "1" && "$(run 'gentian_extra_services_enabled "'"$(CLAIM_OF)"'"')" == "false" ]]; then
+    ok "--no-extra-services is recorded on the claim, once"
+else
+    bad "--no-extra-services is recorded on the claim, once" "$(cat "$(CLAIM_OF)")"
+fi
+run '_claim_record_extra_services "'"$(CLAIM_OF)"'"' >/dev/null
+if grep -q '^    extraServices: false$' "$(CLAIM_OF)"; then
+    ok "a run that says nothing leaves the record"
+else
+    bad "a run that says nothing leaves the record" "$(cat "$(CLAIM_OF)")"
+fi
+run '_claim_record_extra_services "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=0 >/dev/null
+if [[ "$(cat "$(CLAIM_OF)")" == $'spec:\n  catalogue:\n    sources: []' ]]; then
+    ok "GENTIAN_NO_EXTRA_SERVICES=0 removes it, comment and all"
+else
+    bad "GENTIAN_NO_EXTRA_SERVICES=0 removes it, comment and all" "$(cat "$(CLAIM_OF)")"
+fi
+section="$(run '_claim_catalogue_section' GENTIAN_NO_EXTRA_SERVICES=1 GENTIAN_NO_USAGE_STATISTICS=0)"
+if [[ "${section}" == *$'\n    extraServices: false\n    sources:'* ]]; then
+    ok "a new claim's catalogue section records it"
+else
+    bad "a new claim's catalogue section records it" "${section}"
+fi
+
+# The store's vendor as every tenant's partner, with the extra services.
+new_world
+printf 'spec:\n  catalogue:\n    storeUrl: https://store.example\n' > "$(CLAIM_OF)"
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' >/dev/null
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' >/dev/null
+if [[ "$(grep -c '^  partners:$' "$(CLAIM_OF)")" == "1" ]] \
+    && grep -q '^        issuer: https://id.aluvian.io/auth/realms/customers$' "$(CLAIM_OF)" \
+    && grep -q '^      - name: aluvian$' "$(CLAIM_OF)"; then
+    ok "the extra services make the store's vendor every tenant's partner, once"
+else
+    bad "the extra services make the store's vendor every tenant's partner, once" "$(cat "$(CLAIM_OF)")"
+fi
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=1 >/dev/null
+if [[ "$(cat "$(CLAIM_OF)")" == $'spec:\n  catalogue:\n    storeUrl: https://store.example' ]]; then
+    ok "--no-extra-services takes the partner out again, comment and all"
+else
+    bad "--no-extra-services takes the partner out again, comment and all" "$(cat "$(CLAIM_OF)")"
+fi
+printf 'spec:\n  partners:\n    allowedIssuers: ["https://*"]\n' > "$(CLAIM_OF)"
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' GENTIAN_NO_EXTRA_SERVICES=1 >/dev/null
+run '_claim_record_partners "'"$(CLAIM_OF)"'"' >/dev/null
+if [[ "$(cat "$(CLAIM_OF)")" == $'spec:\n  partners:\n    allowedIssuers: ["https://*"]' ]]; then
+    ok "a partners section somebody wrote is left alone either way"
+else
+    bad "a partners section somebody wrote is left alone either way" "$(cat "$(CLAIM_OF)")"
 fi
 
 echo ""

@@ -1866,6 +1866,9 @@ _claim_cluster_fields() {
     # access. A cluster with no source still works: it materialises nothing on
     # reference, and its profiles arrive with the kernel.
     _claim_catalogue_section
+    if [[ "$(gentian_extra_services_enabled)" == "true" ]]; then
+        _claim_partners_section
+    fi
     # The API extensions of add-ons. Recorded here even while nothing reads
     # it, so the choice an installer made is in git beside everything else it
     # chose; the grant and the service entries follow when the catalogue
@@ -2167,6 +2170,9 @@ _claim_catalogue_section() {
         printf '    # turned off on this cluster (--no-usage-statistics).\n'
         printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store-service.aluvian.io}"
     fi
+    if [[ "$(gentian_extra_services_enabled)" != "true" ]]; then
+        _claim_extra_services_lines
+    fi
     printf '    sources:\n'
     printf '      - name: gentian\n'
     # The public catalogue of the gentian-apps repository, which is where the
@@ -2176,6 +2182,111 @@ _claim_catalogue_section() {
     printf '        url: %s\n' "$(gentian_catalogue_url)"
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
+}
+
+# _claim_extra_services_lines -- the claim's record of --no-extra-services,
+# two lines under spec.catalogue.
+_claim_extra_services_lines() {
+    printf '    # No Operations Console, App Store app or Subscription Center from the\n'
+    printf '    # store'"'"'s catalogue (--no-extra-services). Remove to have them again.\n'
+    printf '    extraServices: false\n'
+}
+
+# _claim_record_extra_services <claim file> -- writes the run's
+# --no-extra-services, or GENTIAN_NO_EXTRA_SERVICES=0, into a claim that has
+# a catalogue section. A run that says neither leaves the claim as it is.
+_claim_record_extra_services() {
+    local claim="$1" tmp lines
+    case "${GENTIAN_NO_EXTRA_SERVICES:-}" in
+        1)
+            grep -qE '^    extraServices: *false *(#.*)?$' "${claim}" && return 0
+            grep -qE '^  catalogue: *$' "${claim}" || return 0
+            lines="$(_claim_extra_services_lines)"
+            tmp="$(mktemp)"
+            awk -v lines="${lines}" '
+                { print }
+                !done && /^  catalogue: *$/ { print lines; done = 1 }
+            ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
+            rm -f "${tmp}"
+            info "claims/cluster.yaml: recorded extraServices: false (--no-extra-services)."
+            ;;
+        0)
+            grep -qE '^    extraServices: *false *(#.*)?$' "${claim}" || return 0
+            tmp="$(mktemp)"
+            awk '
+                /^    # No Operations Console, App Store app or Subscription Center from the$/ { next }
+                /^    # store.s catalogue \(--no-extra-services\)\. Remove to have them again\.$/ { next }
+                /^    extraServices: *false *(#.*)?$/ { next }
+                { print }
+            ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
+            rm -f "${tmp}"
+            info "claims/cluster.yaml: removed extraServices: false (GENTIAN_NO_EXTRA_SERVICES=0)."
+            ;;
+    esac
+    return 0
+}
+
+# gentian_store_partner_issuer -- the store's vendor's realm, the partner
+# every tenant has with the store's extra services (AD-17).
+gentian_store_partner_issuer() {
+    printf '%s\n' "${GENTIAN_STORE_PARTNER_ISSUER:-https://id.aluvian.io/auth/realms/customers}"
+}
+
+# _claim_partners_section -- the claim's partners: the store's vendor as a
+# partner of every tenant, and its issuer allowed. Written with the store's
+# extra services, and removed by --no-extra-services while it is still what
+# this wrote (_claim_record_partners).
+_claim_partners_section() {
+    local issuer
+    issuer="$(gentian_store_partner_issuer)"
+    printf '  # The store'"'"'s vendor is a partner of every tenant (AD-17), with the\n'
+    printf '  # store'"'"'s extra services: the App Store app and the Subscription Center\n'
+    printf '  # act for the person signed in there, with a pairwise subject only.\n'
+    printf '  # --no-extra-services leaves it out.\n'
+    printf '  partners:\n'
+    printf '    allowedIssuers:\n'
+    printf '      - %s\n' "${issuer}"
+    printf '    defaults:\n'
+    printf '      - name: aluvian\n'
+    printf '        issuer: %s\n' "${issuer}"
+}
+
+# _claim_record_partners <claim file> -- with the extra services, a claim
+# that names a store and no partners is given the store's vendor (appended while spec is
+# its last top-level key); with --no-extra-services, the section this wrote
+# is taken out again. A partners section somebody changed is theirs.
+_claim_record_partners() {
+    local claim="$1" tmp section
+    [[ -f "${claim}" ]] || return 0
+    section="$(_claim_partners_section)"
+    if [[ "$(gentian_extra_services_enabled "${claim}")" == "true" ]]; then
+        grep -qE '^  partners:' "${claim}" && return 0
+        # Only where the claim names a store: a cluster without one has no
+        # use for its vendor as a partner.
+        grep -qE '^    storeUrl: *https://' "${claim}" || return 0
+        [[ "$(grep -E '^[A-Za-z]' "${claim}" | tail -n 1)" == "spec:" ]] || return 0
+        [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
+        printf '%s\n' "${section}" >> "${claim}"
+        info "claims/cluster.yaml: the store's vendor is every tenant's partner ($(gentian_store_partner_issuer))."
+        return 0
+    fi
+    # The block as this wrote it, and only that: the whole file read as one
+    # string, so a section somebody changed does not match.
+    tmp="$(mktemp)"
+    if ! awk -v block="${section}" '
+        { s = s $0 "\n" }
+        END {
+            i = index(s, block "\n")
+            if (!i) exit 1
+            printf "%s", substr(s, 1, i - 1) substr(s, i + length(block) + 1)
+        }' "${claim}" > "${tmp}"; then
+        rm -f "${tmp}"
+        return 0
+    fi
+    cat "${tmp}" > "${claim}"
+    rm -f "${tmp}"
+    info "claims/cluster.yaml: removed the store's vendor as every tenant's partner (--no-extra-services)."
+    return 0
 }
 
 # ensure_claim_catalogue_section <claim file>
@@ -2203,6 +2314,8 @@ ensure_claim_catalogue_section() {
         _claim_drop_catalogue_access "${claim}"
         _claim_drop_catalogue_tenants "${claim}"
         _claim_warn_retired_catalogue_addresses "${claim}"
+        _claim_record_extra_services "${claim}"
+        _claim_record_partners "${claim}"
         # A store somebody named stays named: the claim is theirs. The desktop
         # is told the store is unavailable all the same, by the usher.
         if [[ "$(gentian_usage_statistics_enabled)" != "true" ]] \
@@ -2227,6 +2340,7 @@ ensure_claim_catalogue_section() {
     # its last line.
     [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
     _claim_catalogue_section >> "${claim}"
+    _claim_record_partners "${claim}"
     info "claims/cluster.yaml named no catalogue: the App Store default was added."
     info "  Catalogue: $(gentian_catalogue_url)"
     info "  $(gentian_catalogue_reason)"
@@ -3296,8 +3410,11 @@ print_roles_summary() {
 #
 # GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
 # of a profile in a catalogue (<catalogue>/profiles/<name>.yaml), optionally
-# pinned with @sha256:<digest>. The default is the Operations Console from the
-# store's catalogue. --disable-api-extensions writes none.
+# pinned with @sha256:<digest>. The default is the store's extra services from
+# its catalogue: the Operations Console, the App Store app and the
+# Subscription Center. --no-extra-services leaves those out, and takes them
+# away again if an earlier run placed them; --disable-api-extensions writes
+# none.
 #
 # Each is held to a digest before a byte of it is written -- the pin, or else
 # what the catalogue's index lists -- and written as the director writes an
@@ -3324,7 +3441,10 @@ _scaffold_default_profiles() {
         info "Default profiles skipped (--disable-api-extensions)."
         return 0
     fi
-    list="$(_default_profiles_configured)"
+    if [[ "$(gentian_extra_services_enabled "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml")" != "true" ]]; then
+        _default_extra_services_remove "${dir}"
+    fi
+    list="$(_default_profiles_configured "${cluster}")"
     [[ -n "${list}" ]] || return 0
     IFS=',' read -r -a entries <<< "${list}"
     for entry in ${entries[@]+"${entries[@]}"}; do

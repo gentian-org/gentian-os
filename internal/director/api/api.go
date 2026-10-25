@@ -78,13 +78,13 @@ type Repository interface {
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantMailMode(ctx context.Context, tenant, mode string, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
-	TenantBrokeredFrom(ctx context.Context, tenant string) ([]gitops.BrokeredFrom, error)
+	TenantPartners(ctx context.Context, tenant string) ([]gitops.Partner, error)
 	TenantGroups(ctx context.Context, tenant string) ([]string, error)
 	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
 	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
 	SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta gitops.Meta) (gitops.Result, error)
-	SetTenantBrokeredFrom(ctx context.Context, tenant string, entry gitops.BrokeredFrom, meta gitops.Meta) (gitops.Result, error)
-	RemoveTenantBrokeredFrom(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
+	SetTenantPartner(ctx context.Context, tenant string, entry gitops.Partner, commissioned bool, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantPartner(ctx context.Context, tenant, name string, commissioned bool, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
@@ -124,8 +124,6 @@ type Repository interface {
 	RemoveRoleHolder(ctx context.Context, role, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlatformAccess(ctx context.Context, tenant string) (bool, error)
 	SetTenantPlatformAccess(ctx context.Context, tenant string, on bool, meta gitops.Meta) (gitops.Result, error)
-	TenantStoreSignIn(ctx context.Context, tenant string) (string, error)
-	SetTenantStoreSignIn(ctx context.Context, tenant, issuer string, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -201,8 +199,8 @@ type Config struct {
 	// Nil leaves those routes unregistered: a director with no operator to
 	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
-	// CommissionKeys are the components that may commission organizations,
-	// as the operator lists them (brokered_from.go). Nil recognises none.
+	// CommissionKeys are the components that may commission partners,
+	// as the operator lists them (partners.go). Nil recognises none.
 	CommissionKeys *CommissionKeys
 }
 
@@ -629,16 +627,11 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
 
-	// A tenant's outside realms: read by whoever may see the tenant, written
-	// by the cluster's administrators and by a component the tenant names
-	// (brokered_from.go).
-	s.commissioned("GET /v1/tenants/{t}/brokered-from", "can_view", tenantObject, s.tenantBrokeredFrom)
-	s.commissioned("PUT /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.setTenantBrokeredFrom)
-	s.commissioned("DELETE /v1/tenants/{t}/brokered-from/{name}", "can_configure", s.thisCluster, s.removeTenantBrokeredFrom)
-	// The store's sign-in through the tenant's own realm (store_sign_in.go).
-	s.guarded("GET /v1/tenants/{t}/store-sign-in", "can_view", tenantObject, s.tenantStoreSignIn)
-	s.guarded("PUT /v1/tenants/{t}/store-sign-in", "can_administer", tenantObject, s.setTenantStoreSignIn)
-	s.guarded("DELETE /v1/tenants/{t}/store-sign-in", "can_administer", tenantObject, s.removeTenantStoreSignIn)
+	// A tenant's partners: read by whoever may see the tenant, written by its
+	// administrators and by a component the tenant names (partners.go).
+	s.commissioned("GET /v1/tenants/{t}/partners", "can_view", tenantObject, s.tenantPartners)
+	s.commissioned("PUT /v1/tenants/{t}/partners/{name}", "can_administer", tenantObject, s.setTenantPartner)
+	s.commissioned("DELETE /v1/tenants/{t}/partners/{name}", "can_administer", tenantObject, s.removeTenantPartner)
 
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
@@ -1802,15 +1795,8 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", `+
-			`"brokeredTo": [{"name": "<name>", "redirectURI": "https://…", "jwksURL": "https://…"}]`)
+			`"requireMFA": false, "catalogue": {"delegated": true}, "signUp": true, "country": "CH"`)
 		return
-	}
-	for _, b := range body.BrokeredTo {
-		if err := gitops.ValidBrokeredTo(b); err != nil {
-			s.fail(w, r, http.StatusBadRequest, err.Error())
-			return
-		}
 	}
 	if !gitops.ValidName(body.Name) {
 		s.fail(w, r, http.StatusBadRequest,
@@ -1836,7 +1822,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
-	answer := map[string]any{"status": res.Status, "signUp": body.SignUp, "brokeredTo": len(body.BrokeredTo), "country": body.Country}
+	answer := map[string]any{"status": res.Status, "signUp": body.SignUp, "country": body.Country}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return

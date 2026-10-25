@@ -18,7 +18,7 @@
 #   kubectl gentian tenants list
 #   kubectl gentian tenants show <name>
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues]
-#                                  [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...]
+#                                  [--self-sign-up]
 #                                  [--country <ISO 3166-1 alpha-2, e.g. CH>]
 #                                  (sign-up is off, and is said out loud when it is on:
 #                                  anybody may make an account)
@@ -40,10 +40,11 @@
 #   kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
 #   kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
 #                                                             people of another tenant of this cluster signing in here
-#   kubectl gentian tenants organizations <name>               realms of other clusters whose people sign in here
-#   kubectl gentian tenants organizations <name> add <org> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>>
-#                                  --client-id <id> --domain <domain>   people of <domain> sign in as the organization <text>
-#   kubectl gentian tenants organizations <name> remove <org>  they no longer do
+#   kubectl gentian tenants partners <name>                    realms of other clusters its realm links accounts with
+#   kubectl gentian tenants partners <name> add <partner> --issuer <https://<host>/<path to the realm>>
+#                                  [--issue] [--accept link|create|organization [--domain <d>] [--display-name <text>]]
+#                                  [--as <name the partner gives this realm>]
+#   kubectl gentian tenants partners <name> remove <partner>
 #   kubectl gentian tenants platform-access <name> [on|off]    whether the platform's administrators may sign in
 #                                                             to the tenant as its administrators (the tenant's switch)
 #
@@ -606,8 +607,8 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" catalogues="false" signup="false" country="" answer brokered="[]" spec kv bname bredirect bjwks
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues] [--self-sign-up] [--brokered-to name=<n>,redirect=<url>,jwks=<url> ...] [--country <alpha-2>]"
+    local name="" display="" mfa="true" catalogues="false" signup="false" country="" answer
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues] [--self-sign-up] [--country <alpha-2>]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
@@ -616,26 +617,6 @@ cmd_tenants_create() {
             --self-sign-up) signup="true"; shift ;;
             # The country the tenant is in, ISO 3166-1 alpha-2 (CH, DE).
             --country) country="${2:?--country <alpha-2>}"; shift 2 ;;
-            # A realm outside the tenant -- usually of another cluster -- where
-            # its people may sign in with their account here. Repeatable.
-            --brokered-to)
-                spec="${2:?--brokered-to name=<n>,redirect=<url>,jwks=<url>}"; shift 2
-                bname=""; bredirect=""; bjwks=""
-                IFS=',' read -r -a parts <<<"${spec}"
-                for kv in "${parts[@]}"; do
-                    case "${kv}" in
-                        name=*) bname="${kv#name=}" ;;
-                        redirect=*) bredirect="${kv#redirect=}" ;;
-                        jwks=*) bjwks="${kv#jwks=}" ;;
-                        *) die "--brokered-to takes name=, redirect= and jwks=; not ${kv}" ;;
-                    esac
-                done
-                [[ -n "${bname}" && -n "${bredirect}" && -n "${bjwks}" ]] ||
-                    die "--brokered-to needs name=, redirect= and jwks="
-                need jq
-                brokered="$(jq -c --arg n "${bname}" --arg r "${bredirect}" --arg j "${bjwks}" \
-                    '. + [{name:$n, redirectURI:$r, jwksURL:$j}]' <<<"${brokered}")"
-                ;;
             -*) die "unknown option $1" ;;
             *) name="$1"; shift ;;
         esac
@@ -654,11 +635,10 @@ cmd_tenants_create() {
         echo "  realm can send. For a tenant whose apps serve the public; not for a workspace." >&2
     fi
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson c "${catalogues}" --argjson s "${signup}" --argjson b "${brokered}" --arg k "${country}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson c "${catalogues}" --argjson s "${signup}" --arg k "${country}" \
             '{name:$n, displayName:$d, requireMFA:$m}
              + (if $c then {catalogue:{delegated:true}} else {} end)
              + (if $s then {signUp:true} else {} end)
-             + (if ($b | length) > 0 then {brokeredTo:$b} else {} end)
              + (if $k != "" then {country:$k} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
     if [[ "${catalogues}" == "true" ]]; then
@@ -669,9 +649,6 @@ cmd_tenants_create() {
     fi
     if [[ -n "${country}" ]]; then
         echo "Its country: ${country}."
-    fi
-    if [[ "$(jq 'length' <<<"${brokered}")" -gt 0 ]]; then
-        echo "Its people may sign in at: $(jq -r '[.[].name] | join(", ")' <<<"${brokered}") (a client broker-to-<name> each, trusting that realm's published keys)."
     fi
     echo "When it is ready, hand the administrator account over:"
     echo "  kubectl gentian tenants activate-admin ${name} [--recovery-email <address>]"
@@ -1975,17 +1952,18 @@ cmd_tenants_sign_in() {
     echo "Their button on ${name}'s sign-in page reads ${from}'s display name."
 }
 
-# kubectl gentian tenants organizations <tenant> [add <name> ... | remove <name>]
-# The realms of other clusters whose people sign in to a tenant, each as an
-# organization of its realm (Tenant spec.brokeredFrom). The director commits;
-# the composition makes the organization and its identity provider. Writing
-# needs can_configure on the cluster; a component the tenant names in
-# spec.organizationCommissioners writes them with its own key instead.
-cmd_tenants_organizations() {
-    local usage_text name="" action="" link="" display="" issuer="" client="" domain="" answer
-    usage_text="usage: kubectl gentian tenants organizations <tenant>
-       kubectl gentian tenants organizations <tenant> add <name> --display-name <text> --issuer <https://id.<cluster>/auth/realms/<realm>> --client-id <id> --domain <domain>
-       kubectl gentian tenants organizations <tenant> remove <name>"
+# kubectl gentian tenants partners <tenant> [add <name> ... | remove <name>]
+# The realms of other clusters a tenant's realm links its people's accounts
+# with (Tenant spec.partners, AD-17). The director commits, within the issuers
+# the Cluster claim allows; the composition makes the partner client and
+# scope (--issue) and the identity provider partner-<name> (--accept).
+# Writing needs can_administer on the tenant; a component the tenant names in
+# spec.partnerCommissioners writes receiving entries with its own key.
+cmd_tenants_partners() {
+    local usage_text name="" action="" partner="" issuer="" as="" issue="false" accounts="" domain="" display="" answer
+    usage_text="usage: kubectl gentian tenants partners <tenant>
+       kubectl gentian tenants partners <tenant> add <name> --issuer <https://<host>/<path to the realm>> [--issue] [--accept link|create|organization [--domain <domain>] [--display-name <text>]] [--as <name>]
+       kubectl gentian tenants partners <tenant> remove <name>"
     name="${1:-}"
     [[ -n "${name}" && "${name}" != -* ]] || die "${usage_text}"
     shift
@@ -1995,52 +1973,64 @@ cmd_tenants_organizations() {
     case "${action}" in
         "") ;;
         add|remove)
-            link="${1:-}"
-            [[ -n "${link}" && "${link}" != -* ]] || die "${usage_text}"
+            partner="${1:-}"
+            [[ -n "${partner}" && "${partner}" != -* ]] || die "${usage_text}"
             shift
-            _label "an organization" "${link}" ;;
+            _label "a partner" "${partner}" ;;
         *) die "${usage_text}" ;;
     esac
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --display-name) display="${2:-}"; shift 2 || die "--display-name needs a value" ;;
             --issuer) issuer="${2:-}"; shift 2 || die "--issuer needs a value" ;;
-            --client-id) client="${2:-}"; shift 2 || die "--client-id needs a value" ;;
+            --as) as="${2:-}"; shift 2 || die "--as needs a value" ;;
+            --issue) issue="true"; shift ;;
+            --accept) accounts="${2:-}"; shift 2 || die "--accept needs link, create or organization" ;;
             --domain) domain="${2:-}"; shift 2 || die "--domain needs a value" ;;
+            --display-name) display="${2:-}"; shift 2 || die "--display-name needs a value" ;;
             *) die "unexpected argument $1" ;;
         esac
     done
     need curl jq
     case "${action}" in
         "")
-            answer="$(_call GET "/v1/tenants/${name}/brokered-from")" || exit 1
-            if [[ "$(printf '%s' "${answer}" | jq '.brokeredFrom | length')" == "0" ]]; then
-                echo "No realm of another cluster signs in to tenant ${name}."
+            answer="$(_call GET "/v1/tenants/${name}/partners")" || exit 1
+            if [[ "$(printf '%s' "${answer}" | jq '.partners | length')" == "0" ]]; then
+                echo "Tenant ${name} declares no partner (the Cluster claim's defaults apply)."
                 return 0
             fi
-            printf '%s' "${answer}" | jq -r '.brokeredFrom[] |
-                "\(.name)\t\(.displayName)\t\(.domain)\t\(.issuer)\tclient \(.clientID)\tsign-in alias org-\(.name)"'
+            printf '%s' "${answer}" | jq -r '.partners[] |
+                "\(.name)\t\(.issuer)\t\(if .issue then "issues" else "-" end)\t\(if .accept then "accepts: " + .accept.accounts else "-" end)\tidentity provider / scope partner-\(.name)"'
             ;;
         add)
-            [[ -n "${display}" && -n "${issuer}" && -n "${client}" && -n "${domain}" ]] || die "${usage_text}"
+            [[ -n "${issuer}" ]] || die "${usage_text}"
+            [[ "${issue}" == "true" || -n "${accounts}" ]] || die "a partner issues (--issue), accepts (--accept ...), or both"
+            case "${accounts}" in
+                ""|link|create) [[ -z "${domain}${display}" ]] || die "--domain and --display-name are for --accept organization" ;;
+                organization) [[ -n "${domain}" ]] || die "--accept organization needs --domain" ;;
+                *) die "--accept takes link, create or organization" ;;
+            esac
             domain="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]')"
-            answer="$(_call PUT "/v1/tenants/${name}/brokered-from/${link}" "$(jq -n --arg d "${display}" \
-                --arg i "${issuer}" --arg c "${client}" --arg m "${domain}" \
-                '{displayName: $d, issuer: $i, clientID: $c, domain: $m}')")" || exit 1
+            answer="$(_call PUT "/v1/tenants/${name}/partners/${partner}" "$(jq -n --arg i "${issuer}" --arg a "${as}" \
+                --argjson s "${issue}" --arg c "${accounts}" --arg m "${domain}" --arg d "${display}" \
+                '{issuer: $i}
+                 + (if $a != "" then {as: $a} else {} end)
+                 + (if $s then {issue: true} else {} end)
+                 + (if $c != "" then {accept: ({accounts: $c}
+                     + (if $m != "" then {domain: $m} else {} end)
+                     + (if $d != "" then {displayName: $d} else {} end))} else {} end)')")" || exit 1
             if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
-                echo "Tenant ${name} already has ${link} as declared; nothing was committed."
+                echo "Tenant ${name} already has ${partner} as declared; nothing was committed."
                 return 0
             fi
-            echo "People of ${domain} sign in to tenant ${name} as the organization ${display}: committed ($(_committed "${answer}"))."
-            echo "The realm at ${issuer} has to have the client ${client} for this one (its tenant's brokeredTo)."
+            echo "Tenant ${name} has the partner ${partner} (${issuer}): committed ($(_committed "${answer}"))."
             ;;
         remove)
-            answer="$(_call DELETE "/v1/tenants/${name}/brokered-from/${link}")" || exit 1
+            answer="$(_call DELETE "/v1/tenants/${name}/partners/${partner}")" || exit 1
             if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
-                echo "Tenant ${name} has no organization ${link}; nothing was committed."
+                echo "Tenant ${name} has no partner ${partner}; nothing was committed."
                 return 0
             fi
-            echo "People of ${link} no longer sign in to tenant ${name}: committed ($(_committed "${answer}"))."
+            echo "Tenant ${name} no longer has the partner ${partner}: committed ($(_committed "${answer}"))."
             ;;
     esac
 }
@@ -2990,11 +2980,11 @@ main() {
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
                 mail-mode) cmd_tenants_mail_mode "$@" ;;
-                organizations) cmd_tenants_organizations "$@" ;;
+                partners) cmd_tenants_partners "$@" ;;
                 groups) cmd_tenants_groups "$@" ;;
                 sign-in) cmd_tenants_sign_in "$@" ;;
                 platform-access) cmd_tenants_platform_access "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|mail-mode|organizations|groups|sign-in|platform-access" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|mail-mode|partners|groups|sign-in|platform-access" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;

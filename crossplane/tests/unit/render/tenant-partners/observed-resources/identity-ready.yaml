@@ -234,3 +234,33 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: render-fixture-partner-aluvian-scope
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-scope
+status:
+  atProvider:
+    id: 00000000-0000-4000-8000-0000000f0001
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: render-fixture-partner-abc-scope
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-scope
+status:
+  atProvider:
+    id: 00000000-0000-4000-8000-0000000f0002
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

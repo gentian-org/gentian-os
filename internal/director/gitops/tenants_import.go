@@ -147,9 +147,10 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		// registrations says nothing about this cluster's: a tenant is made
 		// with sign-up on here, deliberately, or not at all.
 		declared.SignUp = nil
-		// Nor which outside realms its people sign in at: a client that trusts
-		// another realm's keys is commissioned on this cluster, deliberately.
-		declared.BrokeredTo = nil
+		// Nor its partners: a realm that trusts another's keys is declared on
+		// this cluster, deliberately, within this claim's bounds.
+		declared.Partners = nil
+		declared.PartnerCommissioners = nil
 		body, err := yaml.Marshal(map[string]any{
 			"apiVersion": "gentianos.io/v1alpha1",
 			"kind":       "Tenant",

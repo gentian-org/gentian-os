@@ -15,6 +15,10 @@
 # own, so that none of the four is taken from another. Each gets an identity
 # provider entry, a client and a Secret of the tenant's namespace, and both
 # clients may ask for the two app scopes above.
+#
+# partnerProfiles is the components with a part in the tenant's partners
+# (requires.services.partners): "notes" calls aluvian and abc as its service
+# account notes-sa, "shop" accepts every partner the tenant accepts.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,3 +37,6 @@ data:
   vouchingProfiles: |
     scribe scribe 8080 /.well-known/jwks.json
     steward steward-keys 8443 /keys/current.json
+  partnerProfiles: |
+    notes notes-sa aluvian,abc 0
+    shop shop - 1

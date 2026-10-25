@@ -286,16 +286,14 @@ repository beside the desktop and the admin console.
   store's catalogue reads take no token, and the app makes them anonymously.
   An anonymous read tells the store only the address the request comes
   from; the app sends no cluster or tenant identifier with it.
-- **It signs the person in to the store only for what concerns the tenant**
-  — acquiring, and seeing what the tenant has acquired — with their account
-  at the vendor, as a public client with no secret. Its backend exchanges
-  the code and keeps the token, bound to the administrator's cluster
-  session and never handed to the browser; the issuer redirects to the
-  app's one callback and nowhere else (the exception AD-13 states). That
-  token is valid at the store and nowhere on the cluster, and it is not
-  what pulls images. Whether the store serves the tenant
-  is learned at that sign-in, not before; the catalogue is readable either
-  way.
+- **It acts for the person at the store only for what concerns the tenant**
+  — acquiring, and seeing what the tenant has acquired — with an assertion
+  its tenant's realm issues for the store (AD-17): a token exchange at its
+  own realm, with no secret and no sign-in flow, carrying the person's
+  pairwise subject only. The person registers with the store once, by
+  linking their account there through their own realm. Whether the store
+  serves the tenant is learned at that call, not before; the catalogue is
+  readable either way.
 - **Not an entitlement issuer, and neither is the store.** The store decides
   nothing for the cluster and the cluster does no license gating (AD-3).
   There is no signed grant, no store key on the Cluster claim, and no tuple

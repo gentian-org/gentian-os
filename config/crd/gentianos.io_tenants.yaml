@@ -308,138 +308,6 @@ spec:
                   - message: either profile or profileRef is required
                     rule: has(self.profile) || has(self.profileRef)
                 type: array
-              brokeredFrom:
-                description: |-
-                  BrokeredFrom are realms outside this tenant whose people sign in here,
-                  each as an organization; see TenantBrokeredFrom. Written by the
-                  director, as the patch brokered-from.yaml beside the tenant. Empty:
-                  none, and the realm's organizations stay off.
-                items:
-                  description: |-
-                    TenantBrokeredFrom is the other half of TenantBrokeredTo: a realm outside
-                    this tenant -- a customer's cluster -- whose people sign in here with their
-                    account there. The platform makes, in this tenant's realm, an organization
-                    of that name, with the domain given, and an identity provider for the
-                    outside realm, linked to the organization (org-<name>).
-
-                    The identity provider authenticates to the outside realm with a JWT this
-                    realm signs (private_key_jwt): no secret is made or handed over. It maps
-                    nothing: whoever signs in through it is a member of the organization and
-                    holds no group and no role of this realm by it. A person who already has an
-                    account here links it themself, at their first sign-in through it.
-
-                    The outside realm is a Keycloak realm, such as a Gentian tenant's:
-                    its endpoints are read from the issuer by Keycloak's own layout.
-                  properties:
-                    clientID:
-                      description: |-
-                        ClientID is the client the outside realm made for this one, the
-                        broker-to-<name> of its TenantBrokeredTo.
-                      maxLength: 64
-                      minLength: 1
-                      pattern: ^[A-Za-z0-9._-]+$
-                      type: string
-                    displayName:
-                      description: DisplayName is the organization's name as people
-                        read it.
-                      maxLength: 120
-                      minLength: 1
-                      type: string
-                    domain:
-                      description: |-
-                        Domain is the organization's domain: the domain of its people's
-                        addresses, which Keycloak sends to this identity provider when one of
-                        them gives their address. One organization per domain. The director
-                        takes only the issuer's cluster domain (the issuer is at
-                        id.<cluster domain>) or one below it. Empty only with LinkExisting.
-                      maxLength: 253
-                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
-                      type: string
-                    issuer:
-                      description: Issuer is the outside realm, https://id.<their
-                        domain>/auth/realms/<realm>.
-                      pattern: ^https://[^/\s]+/[^\s]*[^/\s]$
-                      type: string
-                    linkExisting:
-                      description: |-
-                        LinkExisting makes the entry a sign-in to accounts that already exist
-                        here, and nothing else: no organization and no domain, and no account
-                        is ever made through it. The first time a person arrives through it
-                        they sign in to their account of this realm, once, and the two are
-                        linked; from then on they are signed in without being asked, also
-                        when a client asks for that with prompt=none, which this provider
-                        forwards to the outside realm. The store's sign-in through a
-                        tenant's own realm (store-contract.md §6.1).
-                      type: boolean
-                    name:
-                      description: |-
-                        Name says whose realm it is; the organization's alias, and the identity
-                        provider is org-<name>.
-                      maxLength: 40
-                      minLength: 1
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                      type: string
-                  required:
-                  - clientID
-                  - displayName
-                  - issuer
-                  - name
-                  type: object
-                  x-kubernetes-validations:
-                  - message: an organization names its domain; an entry that links
-                      existing accounts makes no organization and names none
-                    rule: 'has(self.linkExisting) && self.linkExisting ? !has(self.domain)
-                      : has(self.domain)'
-                maxItems: 1000
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
-              brokeredTo:
-                description: |-
-                  BrokeredTo are realms outside this tenant where its people may sign in
-                  with their account here; see TenantBrokeredTo. Empty: none.
-                items:
-                  description: |-
-                    TenantBrokeredTo is a realm outside this tenant -- usually of another
-                    cluster -- where this tenant's people may sign in with their account here:
-                    that realm brokers this one. The platform makes the client the outside
-                    realm signs in with, in this tenant's realm, and nothing else: which of
-                    the people who arrive there get any rights is the outside realm's to say.
-
-                    No secret is made or handed over. The client authenticates the outside
-                    realm by a JWT that realm signs with its own key, checked against the
-                    keys it publishes (JWKSURL): what crosses between the clusters is public.
-                  properties:
-                    jwksURL:
-                      description: |-
-                        JWKSURL is where the outside realm publishes its signing keys,
-                        https://id.<their domain>/auth/realms/<realm>/protocol/openid-connect/certs.
-                      pattern: ^https://[^/\s]+/[^\s]*$
-                      type: string
-                    name:
-                      description: Name says whose realm it is; the client is broker-to-<name>.
-                      maxLength: 40
-                      minLength: 1
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                      type: string
-                    redirectURI:
-                      description: |-
-                        RedirectURI is the outside realm's broker endpoint for this tenant,
-                        https://id.<their domain>/auth/realms/<realm>/broker/<alias>/endpoint:
-                        the one address the client sends a person back to.
-                      pattern: ^https://[^/\s]+/[^\s]*$
-                      type: string
-                  required:
-                  - jwksURL
-                  - name
-                  - redirectURI
-                  type: object
-                maxItems: 8
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
               catalogue:
                 description: |-
                   Catalogue is where this tenant may install from beside the catalogues
@@ -923,14 +791,14 @@ spec:
                       The Secret must provide keys: host, port, username, password.
                     type: string
                 type: object
-              organizationCommissioners:
+              partnerCommissioners:
                 description: |-
-                  OrganizationCommissioners are the components, of this tenant or
-                  another, that may ask the director to add an entry to BrokeredFrom or
+                  PartnerCommissioners are the components, of this tenant or another,
+                  that may ask the director to add a receiving partner (accept only) or
                   take one away. A component is admitted only when its profile declares
-                  requires.services.organizations as well: the administrator who names
-                  it here grants, and the profile asks. Declared by hand in git; nothing
-                  writes it.
+                  requires.services.partners.commission as well: the administrator who
+                  names it here grants, and the profile asks. Declared by hand in git;
+                  nothing writes it.
                 items:
                   description: TenantComponentRef names a component of a tenant by
                     the profile it runs.
@@ -953,6 +821,101 @@ spec:
                   type: object
                 maxItems: 8
                 type: array
+              partners:
+                description: |-
+                  Partners are realms outside this tenant it has a relation with; see
+                  TenantPartner. Written by the director, as the patch partners.yaml
+                  beside the tenant. The Cluster claim's spec.partners.defaults are
+                  partners of every tenant besides these; an entry here of the same
+                  name replaces one.
+                items:
+                  description: |-
+                    TenantPartner is another realm -- usually of another cluster -- this
+                    tenant's realm has a declared relation with (docs/identity-brokering.md,
+                    AD-17). Per direction it is one switch: Issue, this tenant's people towards
+                    the partner; Accept, the partner's people here. A person links their two
+                    accounts once, by signing in at the partner through this realm; apps then
+                    call each other on that person's behalf with assertions that carry a
+                    pairwise subject and nothing else about the person. No secret crosses
+                    between the clusters, and no group or role.
+
+                    Only an issuer the Cluster claim allows (spec.partners.allowedIssuers) is
+                    composed.
+                  properties:
+                    accept:
+                      description: |-
+                        Accept lets the partner's people arrive here: the identity provider
+                        partner-<name>, with the JWT authorization grant. Unset: they do not.
+                      properties:
+                        accounts:
+                          description: Accounts is what a first arrival becomes; see
+                            PartnerAccounts.
+                          enum:
+                          - link
+                          - create
+                          - organization
+                          type: string
+                        displayName:
+                          description: |-
+                            DisplayName is the organization's name as people read it
+                            (organization only). Default: the partner's name.
+                          maxLength: 120
+                          type: string
+                        domain:
+                          description: |-
+                            Domain is the organization's domain (organization only): the domain
+                            of its people's addresses.
+                          maxLength: 253
+                          pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
+                          type: string
+                      required:
+                      - accounts
+                      type: object
+                    as:
+                      description: |-
+                        As is the name the partner gives this realm: its broker endpoint for
+                        this realm is <issuer>/broker/partner-<as>/endpoint, the one address
+                        the partner client sends a person back to. Default: the tenant's
+                        metadata.uid, which the usage statistics report tells a store.
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    issue:
+                      description: |-
+                        Issue lets this tenant's people sign in at the partner and its apps ask
+                        for assertions towards it: the partner client (client ID = Issuer) and
+                        the scope partner-<name>, with a pairwise subject and the partner's
+                        issuer as the only audience. Which apps may ask is what their profiles
+                        declare (requires.services.partners.call).
+                      type: boolean
+                    issuer:
+                      description: |-
+                        Issuer is the partner's realm, https://<host>/<path to the realm>.
+                        Its endpoints and keys are read under it.
+                      maxLength: 500
+                      pattern: ^https://[^/:\s]+(:[0-9]+)?/[^\s?#]*[^/\s?#]$
+                      type: string
+                    name:
+                      description: |-
+                        Name is the partner's name here: the realm's scope and identity
+                        provider for it are partner-<name>.
+                      maxLength: 40
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - issuer
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: an organization names its domain
+                    rule: '!has(self.accept) || self.accept.accounts != ''organization''
+                      || has(self.accept.domain)'
+                maxItems: 1000
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               platformAccess:
                 description: |-
                   PlatformAccess is what the tenant opens to the platform's own people
@@ -1277,27 +1240,6 @@ spec:
                       customers with accounts -- and not for a workspace, whose people are
                       invited. Off by default; off, every account is made by an invitation.
                     type: boolean
-                type: object
-              store:
-                description: |-
-                  Store is this tenant's side of the store the cluster names; see
-                  TenantStore.
-                properties:
-                  signIn:
-                    description: |-
-                      SignIn lets the store's realm sign this tenant's people in to the store
-                      through this realm; see TenantStoreSignIn. Unset: it does not.
-                    properties:
-                      issuer:
-                        description: |-
-                          Issuer is the store's realm, as the store's GET /v1/meta names it:
-                          https://<host>/<path to the realm>.
-                        maxLength: 500
-                        pattern: ^https://[^/:\s]+/[^\s?#]*[^/\s?#]$
-                        type: string
-                    required:
-                    - issuer
-                    type: object
                 type: object
             required:
             - displayName

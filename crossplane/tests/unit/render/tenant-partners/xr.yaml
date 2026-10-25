@@ -7,32 +7,50 @@ metadata:
 spec:
   displayName: Render Fixture
   adminEmail: admin-render@example.test
-  # Outside realms signing in as organizations: one valid entry, and one whose
-  # name is not a label and one whose issuer is not https, which compose
-  # nothing.
-  brokeredFrom:
-    - name: abc
-      displayName: ABC Customer AG
-      issuer: https://id.abc.example/auth/realms/main/
-      clientID: broker-to-aluvian
-      domain: abc.example
-    # The store's sign-in through a customer tenant's realm: no
-    # organization, the link-existing first-login flow, prompt=none forwarded.
-    - name: 0f8e7d6c-5b4a-4321-9876-0123456789ab
-      displayName: test.abc.example (0f8e7d6c)
+  # Partners as the operator projects them (as and salt filled in): the
+  # store's vendor by default (issue), a customer realm accepted with
+  # accounts made at the first arrival, one linked to existing accounts, an
+  # organization, and one whose name is not a label and one whose issuer is
+  # not https, which compose nothing.
+  partners:
+    - name: aluvian
+      issuer: https://id.aluvian.example/auth/realms/customers/
+      as: 0f8e7d6c-5b4a-4321-9876-0123456789ab
+      salt: 5a1f00000000000000000000000000aa
+      issue: true
+    - name: 1a2b3c4d-5e6f-4789-8abc-def012345678
+      issuer: https://id.abc.example/auth/realms/other
+      as: 0f8e7d6c-5b4a-4321-9876-0123456789ab
+      salt: 5a1f00000000000000000000000000bb
+      accept:
+        accounts: create
+    - name: linked
       issuer: https://id.abc.example/auth/realms/test
-      clientID: broker-to-store
-      linkExisting: true
+      as: 0f8e7d6c-5b4a-4321-9876-0123456789ab
+      salt: 5a1f00000000000000000000000000cc
+      accept:
+        accounts: link
+    - name: abc
+      issuer: https://id.abc.example/auth/realms/main
+      as: render-fixture
+      salt: 5a1f00000000000000000000000000dd
+      issue: true
+      accept:
+        accounts: organization
+        domain: abc.example
+        displayName: ABC Customer AG
     - name: Not_A_Label
-      displayName: Evil
       issuer: https://id.evil.example/auth/realms/x
-      clientID: broker-to-aluvian
-      domain: evil.example
+      as: x
+      salt: x
+      issue: true
     - name: plain
-      displayName: Plain
       issuer: http://id.plain.example/auth/realms/x
-      clientID: broker-to-aluvian
-      domain: plain.example
+      as: x
+      salt: x
+      accept:
+        accounts: create
+  serviceAccountIssuer: https://kubernetes.default.svc.cluster.local
   kernelDomain: platform.example.test
   apps:
     - name: catalogue-test-app

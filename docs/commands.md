@@ -104,15 +104,6 @@ a tenant whose apps serve the public, not for a workspace
 kubectl gentian tenants create customers --display-name "Customers" --self-sign-up
 ```
 
-And where else the tenant's people may sign in with their account here — a
-realm of another cluster that brokers this one (`--brokered-to`, repeatable,
-`spec.brokeredTo`): a client per realm, trusting that realm's published keys,
-with no secret ([identity-brokering.md](identity-brokering.md)):
-
-```bash
-kubectl gentian tenants create acme --brokered-to name=aluvian,redirect=https://id.aluvian.io/auth/realms/customers/broker/org-acme/endpoint,jwks=https://id.aluvian.io/auth/realms/customers/protocol/openid-connect/certs
-```
-
 The country the tenant is in (`--country`, ISO 3166-1 alpha-2, `spec.country`)
 is optional. It is changed afterwards by whoever may set the tenant's policy,
 its own administrators too (`PUT /v1/tenants/<t>/country`, `can_set_policy`);
@@ -126,17 +117,19 @@ kubectl gentian tenants set acme --country DE
 kubectl gentian tenants set acme --country ""
 ```
 
-The other half, on the cluster whose tenant those people sign in to: each
-realm of another cluster becomes an organization of the tenant's realm, with
-an identity provider `org-<name>` (`spec.brokeredFrom`, `can_configure` on
-the cluster; the domain is the one its people's addresses are of, under the
-issuer's cluster):
+A tenant's partners — realms of other clusters its realm links its people's
+accounts with (`spec.partners`, AD-17, [identity-brokering.md](identity-brokering.md)).
+`--issue`: our people sign in there and our apps call it for them; `--accept`:
+their people arrive here, linked (`link`), made (`create`) or as an
+organization. Written by the tenant's administrators (`can_administer`),
+within the Cluster claim's `spec.partners.allowedIssuers`:
 
 ```bash
-kubectl gentian tenants organizations customers      # list them
-kubectl gentian tenants organizations customers add acme --display-name "ACME AG" \
-  --issuer https://id.gentian.cloud/auth/realms/acme --client-id broker-to-aluvian --domain acme.gentian.cloud
-kubectl gentian tenants organizations customers remove acme
+kubectl gentian tenants partners customers      # list them
+kubectl gentian tenants partners acme add shop --issuer https://id.shop.example/auth/realms/customers --issue
+kubectl gentian tenants partners customers add acme --issuer https://id.acme.example/auth/realms/acme \
+  --accept organization --domain acme.example --display-name "ACME AG"
+kubectl gentian tenants partners customers remove acme
 ```
 
 The catalogue switch is a line in the tenant's manifest in git

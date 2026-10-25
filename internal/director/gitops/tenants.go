@@ -14,10 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -360,11 +358,6 @@ type NewTenant struct {
 	// spec.signUp.enabled). Off unless the request says so: a tenant's
 	// people are invited.
 	SignUp bool `json:"signUp,omitempty"`
-	// BrokeredTo are realms outside the tenant where its people may sign in
-	// with their account here (Tenant spec.brokeredTo). Commissioned here,
-	// composed by the platform: a client in the tenant's realm that trusts
-	// the outside realm's published keys; no secret.
-	BrokeredTo []BrokeredTo `json:"brokeredTo,omitempty"`
 	// Country is the tenant's country (Tenant spec.country), an ISO 3166-1
 	// alpha-2 code; empty names none.
 	Country string `json:"country,omitempty"`
@@ -401,7 +394,6 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	}
 	return g.createTenant(ctx, req.Name, func() ([]byte, error) {
 		text := tenantManifest(req.Name, display, requireMFA, req.SignUp)
-		text = withBrokeredTo(text, req.BrokeredTo)
 		var err error
 		if country != "" {
 			if text, err = setTenantCountry(text, country); err != nil {
@@ -672,52 +664,6 @@ func tenantPurgeRequested(text string) bool {
 		} `json:"metadata"`
 	}
 	return yaml.Unmarshal([]byte(text), &doc) == nil && doc.Metadata.Annotations[PurgeAnnotation] != ""
-}
-
-// BrokeredTo is one realm outside a tenant where the tenant's people may
-// sign in with their account here (api/v1alpha1 TenantBrokeredTo).
-type BrokeredTo struct {
-	Name        string `json:"name"`
-	RedirectURI string `json:"redirectURI"`
-	JWKSURL     string `json:"jwksURL"`
-}
-
-var brokeredName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
-
-// ValidBrokeredTo says what is wrong with an entry, or nothing: a name that
-// is a DNS label, and two https addresses with a host. The addresses are
-// not followed; the client sends people back to the one, and reads keys
-// from the other only when the outside realm signs in.
-func ValidBrokeredTo(b BrokeredTo) error {
-	if !brokeredName.MatchString(b.Name) {
-		return fmt.Errorf("brokeredTo name %q is not a DNS label of up to 40 characters", b.Name)
-	}
-	for field, raw := range map[string]string{"redirectURI": b.RedirectURI, "jwksURL": b.JWKSURL} {
-		u, err := url.Parse(raw)
-		if err != nil || u.Scheme != "https" || u.Host == "" || strings.ContainsAny(raw, " \t\n") {
-			return fmt.Errorf("brokeredTo %s %q is not an https address", field, raw)
-		}
-	}
-	return nil
-}
-
-// withBrokeredTo writes spec.brokeredTo into a tenant manifest, with what it
-// does, before the isolation block; nothing for none.
-func withBrokeredTo(text string, list []BrokeredTo) string {
-	if len(list) == 0 {
-		return text
-	}
-	var b strings.Builder
-	b.WriteString(`  # Realms outside this tenant where its people may sign in with their
-  # account here. The platform makes one client each, broker-to-<name>, which
-  # sends a person back to redirectURI only and trusts the outside realm's
-  # signing keys at jwksURL; no secret is made or handed over.
-  brokeredTo:
-`)
-	for _, e := range list {
-		fmt.Fprintf(&b, "    - name: %s\n      redirectURI: %q\n      jwksURL: %q\n", e.Name, e.RedirectURI, e.JWKSURL)
-	}
-	return strings.Replace(text, "  isolation:\n", b.String()+"  isolation:\n", 1)
 }
 
 // tenantManifest is the file a new tenant starts as.

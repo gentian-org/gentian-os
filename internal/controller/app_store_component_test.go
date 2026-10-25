@@ -68,9 +68,19 @@ func renderShippedProfile(t *testing.T, template string, set ...string) *gentian
 	return profile
 }
 
+// shippedAppStoreProfile is the App Store app's profile as a store's
+// catalogue carries it (testdata/app-store/profile.yaml), read strictly.
 func shippedAppStoreProfile(t *testing.T) *gentianov1alpha1.ComponentProfile {
-	return renderShippedProfile(t, "componentprofile-app-store.yaml",
-		"appStore.enabled=true", "appStore.chart.version=0.1.0-develop.9c4d6bb")
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "app-store", "profile.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := yaml.UnmarshalStrict(raw, profile); err != nil {
+		t.Fatalf("testdata/app-store/profile.yaml is not a ComponentProfile: %v", err)
+	}
+	return profile
 }
 
 // clusterClaim is a Cluster claim where the operator reads it, naming a store
@@ -100,7 +110,7 @@ func appStoreScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-// The profile the chart ships is the one the app's README asks for: the API
+// The profile a catalogue carries is the one the app's README asks for: the API
 // behind /api, the store's sign-in callback and the two probes, with the
 // zone's token forwarded; everything else to the bundle; one host, store; and
 // a tile for the people who may install apps in the tenant.
@@ -114,7 +124,7 @@ func TestTheAppStoreProfileRoutesAsTheAppExpects(t *testing.T) {
 			p.Spec.DefaultWhereStoreOffered, p.Spec.DefaultForTenants, p.Spec.DefaultForPlatform)
 	}
 	if c := p.Spec.Package.Chart; c == nil || c.Name != "app-store" || c.Version != "0.1.0-develop.9c4d6bb" ||
-		c.Repository != "oci://ghcr.io/gentian-org/charts" {
+		c.Repository != "oci://ghcr.io/aluvian-hq/charts" {
 		t.Fatalf("chart = %+v", p.Spec.Package.Chart)
 	}
 	if len(p.Spec.Expose) != 2 {
@@ -363,7 +373,7 @@ func TestTheAppStoreIsToldEveryFactItsChartReads(t *testing.T) {
 
 // The values above are ones the app's chart accepts. The schema and the
 // defaults are the published chart's (ghcr.io/gentian-org/charts/app-store
-// 0.1.0-develop.9c4d6bb, gentian-ui apps/app-store/chart), copied to testdata:
+// 0.1.0-develop.9c4d6bb, now aluvian services/app-store/chart), copied to testdata:
 // the schema refuses a key it does not know, a host without the store label
 // and a store address with a trailing slash, and a release refused for its
 // values is found on a cluster an hour into an install.

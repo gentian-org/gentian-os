@@ -93,7 +93,7 @@ There is no `<stage>` suffix or subdirectory inside a cluster's tree:
 | Repository | Role | Typical ref |
 | --- | --- | --- |
 | **gentian-os** | The platform's chart, Crossplane definitions, kernel manifests, installer | a branch (dev) · a release tag `v*` (prod) |
-| **gentian-ui** | The charts of the desktop, the consoles, the App Store app and the sign-in page | a branch or tag |
+| **gentian-ui** | The charts of the desktop, the consoles and the sign-in page | a branch or tag |
 | **deployments repository** | Stage profiles, per-cluster claims and values, the materialised catalogue, tenant manifests | `main` |
 
 A catalogue such as `gentian-apps` is not among them: a cluster reads no

@@ -252,6 +252,47 @@ release whether or not `optional` is set. Nobody uninstalls a placed
 component, so its key goes when the tenant is deleted with its data, when the
 profile stops declaring `llm`, or when the platform takes the component away.
 
+**Calling an app of another cluster for the person (AD-17).** An app that
+calls a partner of its tenant's realm — or takes such calls — declares it,
+and that is what puts it on the partner's list:
+
+```yaml
+spec:
+  requires:
+    services:
+      partners:
+        call: [aluvian]             # partners it asks assertions towards
+        accept: false               # true: it takes partners' assertions
+        serviceAccount: my-app      # the account its pods run as; default: the profile's name
+```
+
+The platform makes the client `partner-<profile>` in the tenant's realm,
+with no secret: the app authenticates with a projected service account token
+whose audience is the realm's issuer (the chart mounts it, the audience from
+`valueMapping.platform.issuerKey`). The Secret `partners-<profile>` says
+`PARTNER_CLIENT_ID`, `PARTNER_TOKEN_URL` and `PARTNER_TOKEN_AUDIENCE`. The one
+call, with the person's token the edge handed the app (`forwardToken` or
+`exchangeToken`):
+
+```text
+POST $PARTNER_TOKEN_URL
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+client_assertion=<the projected service account token>
+subject_token=<the person's token>
+subject_token_type=urn:ietf:params:oauth:token-type:access_token
+scope=partner-<name>
+```
+
+The answer's `access_token` is an assertion for the partner — its issuer the
+only audience, the person's pairwise subject and nothing else about them —
+sent once, as `Authorization: Bearer`. A receiving app posts it to its own
+realm (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`,
+`assertion=…`, the same client assertion) and acts as the account the answer
+names. A person not linked yet is answered 401 with `WWW-Authenticate:
+Partner link="<address>"`, which the calling app shows them
+([plans/cross-cluster-identity.md](plans/cross-cluster-identity.md) §4–5).
+
 **Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}`,
 `${S3_ENDPOINT}`, `${MYSQL_HOST}` and `${REDIS_HOST}` handed the app a literal
 hostname and no credential — an app wired that way can only attempt

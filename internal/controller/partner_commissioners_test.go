@@ -29,17 +29,17 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-func organizationsProfile(name string) *gentianov1alpha1.ComponentProfile {
+func partnerCommissionProfile(name string) *gentianov1alpha1.ComponentProfile {
 	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
-		Services: &gentianov1alpha1.ServiceRequirements{Organizations: &gentianov1alpha1.OrganizationsRequirement{}},
+		Services: &gentianov1alpha1.ServiceRequirements{Partners: &gentianov1alpha1.PartnersRequirement{Commission: true}},
 	}
 	return profile
 }
 
 func commissionTenant(name string, commissioners ...gentianov1alpha1.TenantComponentRef) *gentianov1alpha1.Tenant {
 	t := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	t.Spec.OrganizationCommissioners = commissioners
+	t.Spec.PartnerCommissioners = commissioners
 	return t
 }
 
@@ -70,7 +70,7 @@ func TestDirectorListHoldsAComponentOnlyForTheTenantsThatNameIt(t *testing.T) {
 	idle := rightsComponent("team", "idle")
 	plain := rightsComponent("team", "plain")
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{
-		"shop": organizationsProfile("shop"), "idle": organizationsProfile("idle"), "plain": rightsProfile("plain", true),
+		"shop": partnerCommissionProfile("shop"), "idle": partnerCommissionProfile("idle"), "plain": rightsProfile("plain", true),
 	}
 	customers := commissionTenant("customers",
 		gentianov1alpha1.TenantComponentRef{Tenant: "team", Profile: "shop"},
@@ -116,7 +116,7 @@ func TestDirectorListHoldsAComponentOnlyForTheTenantsThatNameIt(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: "customers"}, current); err != nil {
 		t.Fatal(err)
 	}
-	current.Spec.OrganizationCommissioners = nil
+	current.Spec.PartnerCommissioners = nil
 	if err := c.Update(ctx, current); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestDirectorListHoldsAComponentOnlyForTheTenantsThatNameIt(t *testing.T) {
 func TestACommissionerReachesTheDirector(t *testing.T) {
 	r := &ComponentReconciler{}
 	control := layout.Namespace(layout.Control)
-	if got := r.componentEgressNamespaces(organizationsProfile("shop"), nil); !slices.Contains(got, control) {
+	if got := r.componentEgressNamespaces(partnerCommissionProfile("shop"), nil); !slices.Contains(got, control) {
 		t.Fatalf("a commissioner's namespaces: %v", got)
 	}
 	if got := r.componentEgressNamespaces(rightsProfile("plain", false), nil); slices.Contains(got, control) {

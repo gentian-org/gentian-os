@@ -159,7 +159,8 @@ one hour. No failure stops anything else.
 ```json
 {"version": 1, "sequence": 12, "sentAt": "2026-03-04T05:06:07Z",
  "cluster": {"id": "<cluster id>", "url": "https://<kernel domain>"},
- "tenants": [{"url": "https://<the tenant's host>", "uid": "<metadata.uid>", "users": 40,
+ "tenants": [{"url": "https://<the tenant's host>", "uid": "<metadata.uid>",
+              "issuer": "https://id.<kernel domain>/auth/realms/<realm>", "users": 40,
               "apps": [{"coordinate": "<catalogue>/<app>",
                         "digest": "sha256:…", "users": 25,
                         "addons": [{"coordinate": "<catalogue>/<addon>",
@@ -173,9 +174,12 @@ one hour. No failure stops anything else.
   no group of the tenant and is not a user of it.
 - `tenants[].uid` is the tenant's `metadata.uid`: random, never reused and
   not derived from its name, so a tenant deleted and made again under the
-  same name is another tenant to the receiver. The store keys its sign-in
-  through the tenant's realm by it ([store-contract.md](store-contract.md)
+  same name is another tenant to the receiver. A store names its partner
+  entry for the tenant's realm by it ([store-contract.md](store-contract.md)
   §6.1).
+- `tenants[].issuer` is the tenant's realm: the issuer of the assertions its
+  people's apps send a partner such as the store, which finds the tenant by
+  it (AD-17).
 - `apps` lists only the apps installed through the App Store: the entries of
   `Tenant.spec.apps` that carry a `digest`. `users` is the number of people
   entitled to the app, the members of its group.
@@ -196,7 +200,7 @@ one hour. No failure stops anything else.
 - Apps are sorted by `digest`, and an app's add-ons by `digest` and then by
   name, so a cluster whose state has not changed says the same thing again.
 
-`addons` and `uid` were added without raising `version`: the format does not forbid
+`addons`, `uid` and `issuer` were added without raising `version`: the format does not forbid
 members a receiver does not know, and a receiver that reads only the members
 it knows reads a report with them exactly as it read one without.
 

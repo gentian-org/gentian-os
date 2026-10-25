@@ -234,30 +234,59 @@ type ServiceRequirements struct {
 	// +optional
 	Vouching *VouchingRequirement `json:"vouching,omitempty"`
 
-	// Organizations declares that the component commissions the sign-in of
-	// outside realms' people into a tenant's realm, as organizations
-	// (Tenant spec.brokeredFrom). See OrganizationsRequirement.
+	// Partners declares that the component calls apps of partner realms on
+	// a person's behalf, takes such calls, or commissions partners of other
+	// tenants. See PartnersRequirement.
 	// +optional
-	Organizations *OrganizationsRequirement `json:"organizations,omitempty"`
+	Partners *PartnersRequirement `json:"partners,omitempty"`
 }
 
-// OrganizationsRequirement declares that a component asks the director to add
-// an outside realm to a tenant's realm, as an organization, or to take one
-// away. Being present is the declaration.
+// PartnersRequirement declares a component's part in the partner relations of
+// its tenant's realm (Tenant spec.partners, AD-17).
 //
-// It is half of a grant. The other half is the tenant whose realm is
-// changed: it names the component in spec.organizationCommissioners, which
-// only an administrator writes. With both, the component's own key (the
-// Secret rights-check-<component>, RIGHTS_CHECK_KEY, as for
-// requires.services.rights) admits it at the director for that tenant's
-// spec.brokeredFrom and nothing else; the Secret also carries the director's
-// address (DIRECTOR_URL), and the component is given a network path to it.
+// For a component that calls or accepts, the platform makes, in the tenant's
+// realm, the client partner-<profile>, authenticated by the component's
+// Kubernetes service account token (federated client authentication: no
+// secret), and writes the Secret partners-<profile> in the tenant's namespace
+// (PARTNER_CLIENT_ID, PARTNER_TOKEN_URL, PARTNER_TOKEN_AUDIENCE). The
+// component mounts a projected service account token with that audience and
+// presents it as its client assertion.
 //
-// What it adds lets an outside realm's people sign in to that tenant. They
-// hold no group and no role there by it, but the realm trusts the outside
-// realm for who they are. So the declaration alone admits nothing: what
-// admits the component is the administrator naming it on the tenant.
-type OrganizationsRequirement struct{}
+// Commission is half of a grant, as the rights check's key is: the tenant
+// whose partners are changed names the component in spec.partnerCommissioners.
+// With both, the component's own key (the Secret rights-check-<component>,
+// RIGHTS_CHECK_KEY, beside the director's address DIRECTOR_URL) admits it at
+// the director for that tenant's receiving partners and nothing else.
+type PartnersRequirement struct {
+	// Call names the tenant's partners the component asks assertions towards
+	// (standard token exchange, scope partner-<name>): a person's token in,
+	// a token for the partner out, with the person's pairwise subject only.
+	// Naming a partner here is what puts the component on that partner's
+	// list.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Call []string `json:"call,omitempty"`
+
+	// Accept says the component takes partners' assertions, turning each into
+	// the linked local account by the JWT authorization grant, for every
+	// partner the tenant accepts.
+	// +optional
+	Accept bool `json:"accept,omitempty"`
+
+	// Commission says the component asks the director to add receiving
+	// partners to the tenants that name it, or to take them away.
+	// +optional
+	Commission bool `json:"commission,omitempty"`
+
+	// ServiceAccount is the Kubernetes service account the component's pods
+	// run as; its token is the client's credential. Default: the profile's
+	// name.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+}
 
 // VouchingRequirement declares that a component vouches for people at the
 // tenant's realm (RFC 7523, the JWT authorization grant).
@@ -617,7 +646,6 @@ type TokenAudience string
 // The pattern is a regular expression in the syntax Go and Java share --
 // named groups as (?<name>...), no back-references, no look-around -- and is
 // matched against at most 512 characters, with a bound on the work.
-//
 type OIDCRequestParameterSpec struct {
 	// Name is the parameter, as the app sends it on the authorization request.
 	// Not one of OAuth's or OpenID Connect's own: the operator holds an
