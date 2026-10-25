@@ -32,14 +32,35 @@ import (
 //go:embed model.json
 var modelV1 []byte
 
-// StoreName is the OpenFGA store the platform uses. One per cluster.
+// StoreName is the name the operator gives the kernel store. It is a label
+// for a person reading OpenFGA, not an address: the store is known by the id
+// the operator records in PinConfigMap, and the name is read only once, by
+// the operator, to adopt the store a cluster made before ids were recorded.
 const StoreName = "gentian"
 
-// Bootstrap finds or creates the store and makes sure the embedded model is
+// PinConfigMap is the ConfigMap in the control namespace in which the
+// operator records the kernel store and model it established, under PinStoreKey
+// and PinModelKey. Every enforcement point reads the two ids from it and
+// refuses to start without them; none looks a store up by its name, so a
+// second store called "gentian", however it came to exist, is never asked.
+const (
+	PinConfigMap = "authorization-store"
+	PinStoreKey  = "storeID"
+	PinModelKey  = "modelID"
+)
+
+// Bootstrap establishes the kernel store and makes sure the embedded model is
 // the one its decisions are made against. It returns the store and model ids
-// to pin.
+// for the operator to record.
 //
-// This is the director's own work, not an installer step: the ids exist only
+// o.StoreID is the store the operator recorded before. It is kept while
+// OpenFGA still holds it; when it does not -- the database was rebuilt, and
+// what was in it is rebuilt from git -- a new store is created rather than one
+// found by name, which would be whichever store happened to carry it. Only a
+// cluster with nothing recorded looks for the name, once, to adopt the store
+// it made before the ids were recorded.
+//
+// This is the operator's own work, not an installer step: the ids exist only
 // after OpenFGA is answering, and a cluster rebuilt from git must arrive at
 // the same place without anyone remembering to run something.
 func Bootstrap(ctx context.Context, o Options) (storeID, modelID string, err error) {
@@ -47,7 +68,12 @@ func Bootstrap(ctx context.Context, o Options) (storeID, modelID string, err err
 	if err != nil {
 		return "", "", err
 	}
-	storeID, err = c.ensureStore(ctx, StoreName)
+	switch {
+	case o.StoreID != "":
+		storeID, err = c.keepStore(ctx, o.StoreID)
+	default:
+		storeID, err = c.ensureStore(ctx, StoreName)
+	}
 	if err != nil {
 		return "", "", err
 	}
@@ -57,6 +83,26 @@ func Bootstrap(ctx context.Context, o Options) (storeID, modelID string, err err
 	}
 	c.log.InfoContext(ctx, "authorization store ready", "store", storeID, "model", modelID)
 	return storeID, modelID, nil
+}
+
+// keepStore returns id when OpenFGA holds that store and a new store
+// otherwise.
+func (c *OpenFGA) keepStore(ctx context.Context, id string) (string, error) {
+	var row storeRow
+	err := c.get(ctx, "/stores/"+id, &row)
+	if err == nil && row.ID == id {
+		return id, nil
+	}
+	if err != nil && !isNotFound(err) {
+		return "", fmt.Errorf("read store %s: %w", id, err)
+	}
+	var created storeRow
+	if err := c.post(ctx, "", "/stores", map[string]string{"name": StoreName}, &created); err != nil {
+		return "", fmt.Errorf("create store %q: %w", StoreName, err)
+	}
+	c.log.WarnContext(ctx, "the recorded authorization store is gone; created a new one",
+		"recorded", id, "store", created.ID)
+	return created.ID, nil
 }
 
 // newClient is a client for the server rather than for a store: bootstrap is

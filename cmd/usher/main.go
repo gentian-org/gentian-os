@@ -69,23 +69,18 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	// The store the director established; this process never writes one.
+	// The store the operator established and recorded; this process never
+	// writes one, and without the record it does not start rather than find
+	// a store by its name.
 	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
 	fgaOptions.StoreID, fgaOptions.ModelID = os.Getenv("OPENFGA_STORE_ID"), os.Getenv("OPENFGA_MODEL_ID")
-	if fgaOptions.StoreID == "" || fgaOptions.ModelID == "" {
-		lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		store, model, err := authz.Lookup(lookupCtx, fgaOptions)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("authorization store: %w", err)
-		}
-		if fgaOptions.StoreID == "" {
-			fgaOptions.StoreID = store
-		}
-		if fgaOptions.ModelID == "" {
-			fgaOptions.ModelID = model
-		}
+	pinCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	pinnedStore, pinnedModel, err := authz.Pinned(pinCtx, fgaOptions)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("authorization store: %w", err)
 	}
+	fgaOptions.StoreID, fgaOptions.ModelID = pinnedStore, pinnedModel
 	store, err := authz.NewOpenFGA(fgaOptions)
 	if err != nil {
 		return err

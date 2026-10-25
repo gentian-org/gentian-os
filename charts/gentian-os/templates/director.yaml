@@ -122,6 +122,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "gentian-os.fullname" . }}-director
+  annotations:
+    configmap.reloader.stakater.com/reload: "authorization-store"
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
     app.kubernetes.io/component: director
@@ -239,6 +241,7 @@ spec:
               value: {{ .Values.director.audience | quote }}
             - name: OPENFGA_API_URL
               value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- include "gentian-os.authorizationStoreEnv" . | nindent 12 }}
             {{- if .Values.director.openfgaTokenSecretRef.name }}
             - name: OPENFGA_API_TOKEN
               valueFrom:

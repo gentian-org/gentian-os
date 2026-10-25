@@ -133,6 +133,8 @@ kind: Deployment
 metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    configmap.reloader.stakater.com/reload: "authorization-store"
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
     app.kubernetes.io/component: registrar
@@ -202,6 +204,7 @@ spec:
             # The authorization store, read and never written.
             - name: OPENFGA_API_URL
               value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- include "gentian-os.authorizationStoreEnv" . | nindent 12 }}
             {{- if .Values.director.openfgaTokenSecretRef.name }}
             - name: OPENFGA_API_TOKEN
               valueFrom:

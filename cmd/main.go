@@ -85,14 +85,6 @@ func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
 	return controller.ClientsetLogTailer{Clientset: cs}
 }
 
-// authorizationGraph builds the operator's OpenFGA client, creating the store
-// and writing the model when this cluster has neither.
-//
-// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
-// authorization service, and the projection is simply not run. A cluster that
-// has one and cannot be reached is a different thing, and says so loudly --
-// nobody administers a cluster whose roles were never projected, and that
-// reads from the outside exactly like a broken login.
 // bootClient reads the API server before the manager's cache exists.
 //
 // Settings taken from the claim are needed to build the reconcilers, which is
@@ -111,41 +103,52 @@ func bootClient() client.Reader {
 	return c
 }
 
+// authorizationGraph builds the operator's OpenFGA client, creating the store
+// and writing the model when this cluster has neither, and records the ids in
+// the ConfigMap every enforcement point reads them from.
+//
+// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
+// authorization service, and the projection is simply not run. A cluster that
+// has one and cannot be reached is a different thing, and says so loudly --
+// nobody administers a cluster whose roles were never projected, and that
+// reads from the outside exactly like a broken login.
 func authorizationGraph(log logr.Logger) *authz.OpenFGA {
 	url := os.Getenv("OPENFGA_API_URL")
 	if url == "" {
 		return nil
 	}
+	control := envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control))
 	opts := authz.Options{
 		BaseURL:  url,
 		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
-		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
-		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
 		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
-	if opts.StoreID == "" || opts.ModelID == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		store, model, err := authz.Bootstrap(ctx, opts)
-		if err != nil {
-			// Exit, so the pod restarts and asks again. Carrying on without
-			// the graph was carrying on for good: nothing retried, the store
-			// was never created, and the director and the edge bouncer -- which
-			// only read it -- crash-looped on "no authorization store yet"
-			// long after OpenFGA was answering. A configured OpenFGA that
-			// does not answer is a dependency not up yet, and a restart with
-			// back-off is how this cluster already waits for one.
-			log.Error(err, "authorization graph unavailable; exiting so the pod restarts and asks again",
-				"openfga", url)
-			os.Exit(1)
-		}
-		if opts.StoreID == "" {
-			opts.StoreID = store
-		}
-		if opts.ModelID == "" {
-			opts.ModelID = model
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	boot, err := client.New(ctrl.GetConfigOrDie(), client.Options{})
+	if err != nil {
+		log.Error(err, "no client to record the authorization store with; exiting so the pod restarts")
+		os.Exit(1)
 	}
+	opts.StoreID = controller.RecordedAuthorizationStore(ctx, boot, control)
+	store, model, err := authz.Bootstrap(ctx, opts)
+	if err == nil {
+		err = controller.RecordAuthorizationStore(ctx, boot,
+			[]string{control, layout.Namespace(layout.Edge)}, store, model)
+	}
+	if err != nil {
+		// Exit, so the pod restarts and asks again. Carrying on without
+		// the graph was carrying on for good: nothing retried, the store
+		// was never created, and the director and the edge bouncer -- which
+		// only read it -- crash-looped on "no authorization store yet"
+		// long after OpenFGA was answering. A configured OpenFGA that
+		// does not answer is a dependency not up yet, and a restart with
+		// back-off is how this cluster already waits for one.
+		log.Error(err, "authorization graph unavailable; exiting so the pod restarts and asks again",
+			"openfga", url)
+		os.Exit(1)
+	}
+	opts.StoreID, opts.ModelID = store, model
 	graph, err := authz.NewOpenFGA(opts)
 	if err != nil {
 		log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected")

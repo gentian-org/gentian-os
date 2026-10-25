@@ -13,9 +13,13 @@ package authz
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -335,4 +339,75 @@ func TestWhoApprovesThePerimeterFollowsTheClaim(t *testing.T) {
 	}
 	project("user:p-acme/p-tom")
 	expect("the operator withdrawn", map[string]bool{"p-root": false, "p-acme/p-tom": true, "kernel/p-petra": true})
+}
+
+// fakeStores is an OpenFGA holding the stores in have, each with no model.
+type fakeStores struct {
+	have    map[string]bool
+	created []string
+	listed  bool
+}
+
+func (f *fakeStores) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/stores":
+		id := fmt.Sprintf("new-%d", len(f.created)+1)
+		f.created = append(f.created, id)
+		f.have[id] = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": StoreName})
+	case r.URL.Path == "/stores":
+		f.listed = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"stores": []map[string]any{
+			{"id": "by-name", "name": StoreName, "created_at": "2025-01-01T00:00:00Z"},
+		}})
+	case strings.HasSuffix(r.URL.Path, "/authorization-models") && r.Method == http.MethodPost:
+		_ = json.NewEncoder(w).Encode(map[string]any{"authorization_model_id": "model-1"})
+	case strings.HasSuffix(r.URL.Path, "/authorization-models"):
+		_ = json.NewEncoder(w).Encode(map[string]any{"authorization_models": []any{}})
+	case strings.HasPrefix(r.URL.Path, "/stores/"):
+		id := strings.TrimPrefix(r.URL.Path, "/stores/")
+		if !f.have[id] {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": StoreName})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func fakeStoreOptions(t *testing.T, f *fakeStores, recorded string) Options {
+	t.Helper()
+	srv := httptest.NewServer(f)
+	t.Cleanup(srv.Close)
+	return Options{BaseURL: srv.URL, StoreID: recorded, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+// The recorded store is kept, and a cluster whose recorded store is gone
+// gets a new one rather than whichever store carries the name.
+func TestBootstrapKeepsTheRecordedStoreAndNeverAdoptsOneByNameOverIt(t *testing.T) {
+	f := &fakeStores{have: map[string]bool{"recorded": true, "by-name": true}}
+	store, _, err := Bootstrap(context.Background(), fakeStoreOptions(t, f, "recorded"))
+	if err != nil || store != "recorded" {
+		t.Fatalf("store=%q err=%v, want the recorded one", store, err)
+	}
+
+	f = &fakeStores{have: map[string]bool{"by-name": true}}
+	store, _, err = Bootstrap(context.Background(), fakeStoreOptions(t, f, "gone"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store != "new-1" || f.listed {
+		t.Fatalf("store=%q listed=%v, want a new store and no look by name", store, f.listed)
+	}
+}
+
+// With nothing recorded the operator adopts the store a cluster made before
+// the ids were recorded.
+func TestBootstrapAdoptsTheNamedStoreOnlyWhenNothingIsRecorded(t *testing.T) {
+	f := &fakeStores{have: map[string]bool{"by-name": true}}
+	store, _, err := Bootstrap(context.Background(), fakeStoreOptions(t, f, ""))
+	if err != nil || store != "by-name" {
+		t.Fatalf("store=%q err=%v, want by-name", store, err)
+	}
 }

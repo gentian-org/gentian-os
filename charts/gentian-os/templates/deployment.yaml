@@ -184,14 +184,6 @@ spec:
                   optional: true
             {{- end }}
             {{- end }}
-            {{- with .Values.authzBridge.storeID }}
-            - name: OPENFGA_STORE_ID
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.authzBridge.modelID }}
-            - name: OPENFGA_MODEL_ID
-              value: {{ . | quote }}
-            {{- end }}
             {{- if .Values.membershipListener.keysSecretRef.name }}
             # The public halves of the keys Keycloak's event listener signs
             # with. A statement about who is in which group is believed only

@@ -106,19 +106,14 @@ func store(log *slog.Logger) (authz.Checker, error) {
 		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
 		Logger:   log,
 	}
-	if opts.StoreID == "" || opts.ModelID == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		storeID, modelID, err := authz.Lookup(ctx, opts)
-		if err != nil {
-			return nil, fmt.Errorf("authorization store: %w", err)
-		}
-		if opts.StoreID == "" {
-			opts.StoreID = storeID
-		}
-		if opts.ModelID == "" {
-			opts.ModelID = modelID
-		}
+	// The ids the operator recorded, and no others: without them this
+	// service does not start rather than find a store by its name.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	storeID, modelID, err := authz.Pinned(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("authorization store: %w", err)
 	}
+	opts.StoreID, opts.ModelID = storeID, modelID
 	return authz.NewOpenFGA(opts)
 }
