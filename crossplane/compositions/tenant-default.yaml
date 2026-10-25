@@ -2826,7 +2826,6 @@ spec:
                 alias: kubernetes
                 displayName: Kubernetes service accounts
                 enabled: true
-                hideOnLoginPage: true
                 issuer: {{ $saIssuer | quote }}
               providerConfigRef:
                 name: keycloak
