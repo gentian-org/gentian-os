@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -64,14 +65,13 @@ import (
 //     arbiter and nothing else, and the arbiter admits the tenants' namespaces
 //     on its one port, which their own policies narrow to the components that
 //     declared a store.
-//
 const (
 	// arbiterRoleJob is the Job that makes the instance's role and database.
 	arbiterRoleJob = "openfga-apps-role"
 	// openfgaAppsDatabase is the instance's database, and its role's name.
 	openfgaAppsDatabase = "openfga_apps"
-	// roleProvisionedAnnotation on the datastore's ExternalSecret records
-	// the hash of the password the role Job succeeded with; the Job is not
+	// roleProvisionedAnnotation on the datastore's ExternalSecret records a
+	// fingerprint of the password the role Job succeeded with; the Job is not
 	// run again for as long as the vault holds that one.
 	roleProvisionedAnnotation = "gentianos.io/role-provisioned"
 )
@@ -224,10 +224,20 @@ func (r *AuthorizationEngineReconciler) applyExternalSecret(ctx context.Context,
 	return r.Patch(ctx, existing, patch)
 }
 
+// passwordFingerprint tells one password from another without saying
+// anything of it: an HMAC keyed with the password over a fixed label, never
+// a hash of the password itself, because the annotation it is written to is
+// readable by whoever may read the ExternalSecret.
+func passwordFingerprint(password string) string {
+	mac := hmac.New(sha256.New, []byte(password))
+	mac.Write([]byte(roleProvisionedAnnotation))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // ensureRole runs the role Job until it has succeeded once with the
 // password the vault holds, and reports whether it has. That it has is
-// written on the datastore's ExternalSecret, as the hash of the password it
-// succeeded with: the operator's object, where a vault record replaced by a
+// written on the datastore's ExternalSecret, as a fingerprint of the password
+// it succeeded with: the operator's object, where a vault record replaced by a
 // person would show as a hash that is not the record's.
 func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password string) (bool, error) {
 	es := &unstructured.Unstructured{}
@@ -235,8 +245,7 @@ func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password
 	if err := r.Get(ctx, types.NamespacedName{Name: arbiter.DatastoreSecret, Namespace: arbiter.Namespace}, es); err != nil {
 		return false, err
 	}
-	sum := sha256.Sum256([]byte(password))
-	done := hex.EncodeToString(sum[:])
+	done := passwordFingerprint(password)
 	if es.GetAnnotations()[roleProvisionedAnnotation] == done {
 		return true, nil
 	}
