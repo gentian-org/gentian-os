@@ -301,6 +301,14 @@ type TenantSpec struct {
 	// +optional
 	Mail *TenantMail `json:"mail,omitempty"`
 
+	// StoreTerms records that the tenant accepted the App Store's terms:
+	// which version, and when. Written by the director when a person who
+	// may install apps accepts them in the App Store, and carried in the
+	// usage statistics report. Recorded, not enforced: nothing on the
+	// cluster turns on it.
+	// +optional
+	StoreTerms *TenantStoreTerms `json:"storeTerms,omitempty"`
+
 	// Quotas sets resource limits for this tenant.
 	// +optional
 	Quotas *TenantQuotas `json:"quotas,omitempty"`
@@ -653,6 +661,17 @@ type TenantIsolation struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9\-]*$`
 	S3Prefix string `json:"s3Prefix,omitempty"`
+}
+
+// TenantStoreTerms is one acceptance of a store's terms.
+type TenantStoreTerms struct {
+	// Version is the version of the terms the store named when they were
+	// accepted.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]{1,64}$`
+	Version string `json:"version"`
+
+	// AcceptedAt is when they were accepted.
+	AcceptedAt metav1.Time `json:"acceptedAt"`
 }
 
 // TenantMail configures the mail stack for this tenant.

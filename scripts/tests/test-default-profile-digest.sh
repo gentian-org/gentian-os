@@ -585,6 +585,23 @@ else
     bad "a later run with the flag takes a placed one away again: profile, bundle and their lines; the build stays" "${out}"$'\n'"$(cat "${DIR}/kustomization.yaml")"
 fi
 
+# --no-usage-statistics says no extra services as well, and is recorded the
+# same way.
+new_world; publish operations-console 1.0.0
+out="$(scaffold GENTIAN_NO_USAGE_STATISTICS=1)"
+if [[ "${out}" == *"rc=0"* ]] && nothing_written && [[ ! -s "${CURL_LOG}" ]]; then
+    ok "--no-usage-statistics: no extra service placed, the catalogue not asked"
+else
+    bad "--no-usage-statistics: no extra service placed, the catalogue not asked" "${out}"$'\n'"$(cat "${CURL_LOG}")"
+fi
+printf 'spec:\n  catalogue:\n    sources: []\n' > "$(CLAIM_OF)"
+run '_claim_record_extra_services "'"$(CLAIM_OF)"'"' GENTIAN_NO_USAGE_STATISTICS=1 >/dev/null
+if [[ "$(grep -c '^    extraServices: false$' "$(CLAIM_OF)")" == "1" ]]; then
+    ok "--no-usage-statistics is recorded on the claim as no extra services"
+else
+    bad "--no-usage-statistics is recorded on the claim as no extra services" "$(cat "$(CLAIM_OF)")"
+fi
+
 # The claim's record of the flag.
 new_world
 printf 'spec:\n  catalogue:\n    sources: []\n' > "$(CLAIM_OF)"

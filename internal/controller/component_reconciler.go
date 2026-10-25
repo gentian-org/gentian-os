@@ -581,6 +581,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		if releaseReady && wantsPartners(profile) {
+			if err := r.rollOnPartnersSecret(ctx, comp, profile); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		if !releaseReady {
 			releaseMessage = pull.withPullHint(releaseMessage, profile)
 		}
@@ -1899,6 +1904,9 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
+		// A partner app's Secret arriving or changing rolls its pods
+		// (partner_rollout.go).
+		Watches(&corev1.Secret{}, componentsOfPartnersSecret(mgr.GetClient())).
 		// A restore holding an app back, or ending, is the edge's business
 		// at once: the hold is read from the restore (restore_hold.go).
 		Watches(&gentianov1alpha1.TenantRestore{}, componentsOfRestore(mgr.GetClient()),

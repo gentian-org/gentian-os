@@ -18,7 +18,7 @@ SPDX-License-Identifier: MPL-2.0
 //
 // What is sent is counts and addresses of things, never of people: the
 // cluster's id and address, each tenant's address and how many accounts its
-// realm holds, and for each app installed through the App Store its
+// realm holds and which version of the App Store's terms it accepted, and for each app installed through the App Store its
 // coordinate, the digest it is pinned to, and how many people are entitled to
 // it, and the same three for each addon of it that is pinned. Each tenant is
 // also named by its unique id (metadata.uid), a random value that says
@@ -129,6 +129,16 @@ type Tenant struct {
 	// could not be counted, which is not the same as none.
 	Users *int  `json:"users"`
 	Apps  []App `json:"apps"`
+	// Terms is the App Store's terms the tenant accepted, as its manifest
+	// records them (spec.storeTerms). Left out where it accepted none; a
+	// receiver of an earlier report format ignores it.
+	Terms *Terms `json:"terms,omitempty"`
+}
+
+// Terms is which version of the store's terms a tenant accepted, and when.
+type Terms struct {
+	Version    string `json:"version"`
+	AcceptedAt string `json:"acceptedAt"`
 }
 
 // App is one app installed through the App Store.
@@ -223,6 +233,9 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 				realm = tenant.Spec.Isolation.KeycloakRealm
 			}
 			entry.Issuer = "https://id." + id.KernelDomain + "/auth/realms/" + realm
+		}
+		if terms := tenant.Spec.StoreTerms; terms != nil && terms.Version != "" {
+			entry.Terms = &Terms{Version: terms.Version, AcceptedAt: terms.AcceptedAt.UTC().Format(time.RFC3339)}
 		}
 		if n, err := counter.TenantUsers(ctx, tenant); err != nil {
 			uncounted("the accounts of a tenant", err)

@@ -216,7 +216,10 @@ Other options:
                         tells the report address once a day what it runs:
                         tenants, counts of accounts, and the apps installed
                         through the App Store. No personal data. Off, nothing
-                        is sent and the App Store is not offered. The same as
+                        is sent and there are no extra services (as with
+                        --no-extra-services): no App Store, Operations Console
+                        or Subscription Center. For people who manage their
+                        own cluster at their own risk. The same as
                         GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
                         where to put it so a later run does not turn it back on
   --no-extra-services   leave out the store's extra services, which a cluster

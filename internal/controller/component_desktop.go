@@ -541,9 +541,15 @@ const (
 // The administration console is the second, and rather than teach this
 // function a second name the profile says it: a component the platform ships
 // to everyone declares that on itself, and this creates whatever declares it.
-// Existing Components are left alone. Removing the declaration does not
-// delete them, because a tenant's component going away is a tenant-level
-// change and this is not where those are decided.
+// The placement is declarative. A Component this function placed (labelled
+// origin default) that the profiles no longer assign to the tenant -- the
+// declaration withdrawn, the profile gone from the cluster's catalogue, a
+// profile for the platform tenant found in another, or one that needs usage
+// statistics on a cluster that does not report -- is removed, with the
+// cleanup any Component's removal has; what it retained is purged as an
+// uninstalled app's is. Nobody else can remove it: it is in no tenant's
+// manifest. A Component of the same name a tenant installed is the
+// tenant's and stays, and so does one without the label.
 //
 // One declaration is conditional, and its Component is taken away again:
 // defaultWhereStoreOffered gives every tenant but the platform tenant a
@@ -562,6 +568,10 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		offerErr  error
 		offerRead bool
 	)
+	// The profiles this pass places, and those whose placement it could not
+	// decide: neither is taken away below.
+	placed := map[string]bool{}
+	undecided := map[string]bool{}
 	for i := range profiles.Items {
 		profile := &profiles.Items[i]
 		if !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
@@ -570,6 +580,11 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		// Every tenant's, or the platform tenant's alone.
 		wanted := profile.Spec.DefaultForTenants ||
 			(profile.Spec.DefaultForPlatform && r.adoptsKernelRealm(tenant))
+		// A profile that needs the cluster to report usage statistics is
+		// placed nowhere on a cluster that does not.
+		if profile.Annotations[requiresUsageStatisticsAnnotation] == "true" && !r.UsageStatisticsEnabled {
+			continue
+		}
 		if !wanted && profile.Spec.DefaultWhereStoreOffered {
 			if !offerRead {
 				offer, offerErr = readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
@@ -581,12 +596,10 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 				}
 			}
 			if offerErr != nil {
+				undecided[profile.Name] = true
 				continue
 			}
 			if !offer.offered() || r.adoptsKernelRealm(tenant) {
-				if err := r.removeDefaultComponent(ctx, tenant, profile.Name); err != nil {
-					return err
-				}
 				continue
 			}
 			wanted = true
@@ -594,12 +607,34 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if !wanted {
 			continue
 		}
+		placed[profile.Name] = true
 		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil, moveRecord{}); err != nil {
+			return err
+		}
+	}
+	components := &gentianov1alpha1.ComponentList{}
+	if err := r.List(ctx, components, client.InNamespace(tenantNamespaceName(tenant)),
+		client.MatchingLabels{componentOriginLabel: componentOriginDefault}); err != nil {
+		return err
+	}
+	for i := range components.Items {
+		name := components.Items[i].Name
+		if placed[name] || undecided[name] {
+			continue
+		}
+		if err := r.removeDefaultComponent(ctx, tenant, name); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+// requiresUsageStatisticsAnnotation on a ComponentProfile says the component
+// is placed by default only on a cluster that reports usage statistics: with
+// reporting off it is not placed, and the default Components of it are
+// removed. An annotation and not a field, so a catalogue can say it to a
+// cluster of any version.
+const requiresUsageStatisticsAnnotation = "gentianos.io/requires-usage-statistics"
 
 // removeDefaultComponent deletes the Component this reconciler placed for a
 // profile, and only that one: named after the profile, of the profile, and
@@ -619,7 +654,7 @@ func (r *TenantReconciler) removeDefaultComponent(ctx context.Context, tenant *g
 		return nil
 	}
 	if err := r.Delete(ctx, comp); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("remove the %s component, which this cluster no longer offers: %w", profileName, err)
+		return fmt.Errorf("remove the %s component, which this tenant is no longer given: %w", profileName, err)
 	}
 	return nil
 }
