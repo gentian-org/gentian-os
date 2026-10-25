@@ -1174,7 +1174,7 @@ profile reaches a cluster when it is installed, with one exception.
 install, before there is a director, the installer places the Operations
 Console's profile in the cluster's catalogue directory (AD-14, decided
 2026-10-09). The address is
-`https://catalogue.aluvian.io/profiles/operations-console.yaml` by default;
+`https://catalogue.aluvian.io/profiles/operations-console-ee.yaml` by default;
 `GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name others, each
 the https address of a profile in a catalogue. The installer reads that
 catalogue's `index.yaml`, takes the digest listed for the entry — or the

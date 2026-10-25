@@ -15,12 +15,16 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 func profileFixture(name string, defaultForTenants bool, classes ...gentianov1alpha1.ComponentClass) *gentianov1alpha1.ComponentProfile {
@@ -269,5 +273,96 @@ func TestAProfileThatNeedsUsageStatisticsFollowsTheReport(t *testing.T) {
 		if got := defaultNames(t, c, platform)["operations-console"]; got != reporting {
 			t.Fatalf("reporting %v: console present = %v", reporting, got)
 		}
+	}
+}
+
+// A default profile materialised from a catalogue that has left the catalogue
+// directory -- its catalogue renamed it, and the installer took the old name
+// out -- is still an object, because the catalogue's Application never
+// prunes, and still declares itself a default. It is placed no more, and the
+// Components placed of it are removed: the Application marking it as
+// requiring pruning is what says it left. Until it says so, or where it
+// cannot be read, it stays placed.
+func TestADefaultProfileThatLeftTheCatalogueIsPlacedNoMore(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	old := profileFixture("operations-console", true, gentianov1alpha1.ComponentClassApp)
+	old.Annotations = map[string]string{profilebundle.Annotation: "Ynl0ZXM="}
+	renamed := profileFixture("operations-console-ee", true, gentianov1alpha1.ComponentClassApp)
+	renamed.Annotations = map[string]string{profilebundle.Annotation: "Ynl0ZXM="}
+
+	app := &unstructured.Unstructured{}
+	app.SetGroupVersionKind(profilebundle.ApplicationGVK)
+	app.SetName(profilebundle.CatalogueApplicationPrefix + "prod")
+	app.SetNamespace(layout.Namespace(layout.GitOps))
+	resources := func(prunable bool) []interface{} {
+		return []interface{}{
+			map[string]interface{}{"group": "gentianos.io", "kind": "ComponentProfile", "name": "operations-console", "requiresPruning": prunable},
+			map[string]interface{}{"group": "gentianos.io", "kind": "ComponentProfile", "name": "operations-console-ee"},
+		}
+	}
+	_ = unstructured.SetNestedSlice(app.Object, resources(false), "status", "resources")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), old, renamed, app).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+	names := func() string { return componentNames(t, c, tenantNamespaceName(tenant)) }
+
+	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); got != "operations-console operations-console-ee" {
+		t.Fatalf("while both are declared: components = %q", got)
+	}
+
+	if err := c.Get(ctx, client.ObjectKeyFromObject(app), app); err != nil {
+		t.Fatal(err)
+	}
+	_ = unstructured.SetNestedSlice(app.Object, resources(true), "status", "resources")
+	if err := c.Update(ctx, app); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); got != "operations-console-ee" {
+		t.Fatalf("after the old name left the catalogue: components = %q, want operations-console-ee only", got)
+	}
+
+	// No catalogue Application to ask: nothing is known to be gone, and the
+	// declaration is followed as before.
+	bare := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), old.DeepCopy()).Build()
+	rb := &TenantReconciler{Client: bare, Scheme: scheme}
+	if err := rb.ensureDefaultComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, bare, tenantNamespaceName(tenant)); got != "operations-console" {
+		t.Fatalf("without an Application: components = %q", got)
+	}
+}
+
+// The catalogue's Application wakes the tenants only when the profiles it
+// reports as gone change, not on each of its status writes.
+func TestTheCatalogueApplicationWakesTenantsOnlyWhenAProfileLeaves(t *testing.T) {
+	p := catalogueProfilesGoneChanged()
+	app := func(name string, prunable bool, reconciledAt string) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{}
+		u.SetGroupVersionKind(profilebundle.ApplicationGVK)
+		u.SetName(name)
+		_ = unstructured.SetNestedField(u.Object, reconciledAt, "status", "reconciledAt")
+		_ = unstructured.SetNestedSlice(u.Object, []interface{}{
+			map[string]interface{}{"group": "gentianos.io", "kind": "ComponentProfile", "name": "a", "requiresPruning": prunable},
+		}, "status", "resources")
+		return u
+	}
+	if p.Update(event.UpdateEvent{ObjectOld: app("gentian-catalogue-prod", false, "1"), ObjectNew: app("gentian-catalogue-prod", false, "2")}) {
+		t.Fatal("a status write that changes no profile woke the tenants")
+	}
+	if !p.Update(event.UpdateEvent{ObjectOld: app("gentian-catalogue-prod", false, "1"), ObjectNew: app("gentian-catalogue-prod", true, "2")}) {
+		t.Fatal("a profile leaving the catalogue did not wake the tenants")
+	}
+	if p.Update(event.UpdateEvent{ObjectOld: app("tenant-acme", false, "1"), ObjectNew: app("tenant-acme", true, "2")}) {
+		t.Fatal("another Application woke the tenants")
 	}
 }

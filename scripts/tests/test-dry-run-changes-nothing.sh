@@ -396,7 +396,7 @@ says "  it says what an install would commit and push" "Would commit these chang
 says "  it names the uncommitted edit" "kernel/claims/cluster.yaml"
 says "  it says the claim would be given its catalogue section" "Would edit claims/cluster.yaml"
 says "  it says ~/.gentian/config would be written" "Would save the deployments repository's address"
-says "  it says the default profile would be placed only at the digest the catalogue's index lists" "place operations-console only if"
+says "  it says the default profile would be placed only at the digest the catalogue's index lists" "place operations-console-ee only if"
 says "  it says an install would stop: the break-glass key keys.env records is not on this host" "Recorded:  2222222222222222"
 says "    and that the preview goes on" "Would stop here for that reason; this preview goes on"
 says "  it says an install would stop on a tunnel cluster that does not hold the tunnel" "kubectl create secret generic cf-tunnel -n default"

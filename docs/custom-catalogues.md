@@ -25,13 +25,15 @@ fetches that one file, checks it, and commits it to the deployments repository u
 else the file holds (§2).
 
 **One profile is fetched by the installer rather than the director.** Step 0 of an install places
-the Operations Console's profile — `https://catalogue.aluvian.io/profiles/operations-console.yaml`,
+the Operations Console's profile — `https://catalogue.aluvian.io/profiles/operations-console-ee.yaml`,
 or what `GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name — into the same directory,
 before there is a director to ask. It is held to a digest like any other: the one the catalogue's
 `index.yaml` lists for the entry, or one pinned in `GENTIAN_DEFAULT_PROFILES` (`…@sha256:<digest>`).
 Bytes that do not hash to it stop the install; a catalogue that cannot be reached is a warning;
 `--disable-api-extensions` places none. What is written is what the director writes — the file, and
 its bundle and origin on the profile — so everything below about a materialised profile holds for it.
+Placed so from the store's catalogue and not pinned, it follows that catalogue: each run replaces it
+with the build the index lists. One recorded from another catalogue, or pinned, is kept and reported.
 Of the checks of §2 the installer runs those on kinds, names and metadata. At rollout the operator
 holds the profile and what its bundle brings to that recorded bundle, for the Component it creates
 by default as for a pinned install ([install-reference.md §4](install-reference.md)).
