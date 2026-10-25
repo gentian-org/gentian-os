@@ -215,7 +215,7 @@ func TestTheAppClaimNamesItsComposition(t *testing.T) {
 		{"", "app-default"},
 		{"app-shop", "app-shop"},
 	} {
-		if _, _, err := r.ensureAppClaim(context.Background(), comp, tenant, zone, pullSecrets{}, step.given, "", false, nil); err != nil {
+		if _, _, err := r.ensureAppClaim(context.Background(), comp, tenant, zone, pullSecrets{}, step.given, "", false, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		if got := named(); got != step.want {

@@ -501,8 +501,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if models.reason != "" {
 		return r.status(ctx, comp, metav1.ConditionFalse, models.reason, models.message, componentRequeue)
 	}
+	// What the operator itself tells the chart -- the model gateway, the
+	// platform's facts, the component's placement -- kept apart from the
+	// profile's own values: a chart the app Composition delivers gets the
+	// profile's from the Composition and these from the claim, and a chart
+	// installed here gets both merged below.
+	operatorValues := map[string]interface{}{}
 	if models.placed {
-		mergeValues(values, modelAccessValues(comp, profile, models.delivered))
+		mergeValues(operatorValues, modelAccessValues(comp, profile, models.delivered))
 	}
 	// The key for the rights check, for a component that declares it, before
 	// the chart runs so that its pods find the Secret they are told to read.
@@ -513,14 +519,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
-	mergeValues(values, r.platformValues(profile, tenant, zone))
+	mergeValues(operatorValues, r.platformValues(profile, tenant, zone))
 	// And those that are this component's own: the host it answers on, where
 	// the store is and where the desktop's API is, for a profile that asked.
 	placed, err := r.placementValues(ctx, comp, profile, zone)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	mergeValues(values, placed)
+	mergeValues(operatorValues, placed)
+	mergeValues(values, operatorValues)
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
@@ -566,7 +573,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	case composed:
 		var err error
 		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile), build,
-			r.mailboxTokenSignIn(ctx, tenant, profile), signIn)
+			r.mailboxTokenSignIn(ctx, tenant, profile), signIn, operatorValues)
 		if err != nil {
 			return ctrl.Result{}, err
 		}

@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -19,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -140,7 +142,7 @@ func appComposition(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.
 // Component removes the claim, and with it everything the Composition made.
 func (r *ComponentReconciler) ensureAppClaim(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
-	composition, build string, mailboxTokenSignIn bool, signIn *signInSidecar,
+	composition, build string, mailboxTokenSignIn bool, signIn *signInSidecar, operatorValues map[string]interface{},
 ) (bool, string, error) {
 	if composition == "" {
 		composition = defaultAppComposition
@@ -193,21 +195,43 @@ func (r *ComponentReconciler) ensureAppClaim(
 		}
 		spec["addons"] = addons
 	}
+	config := map[string]interface{}{}
+	values := map[string]interface{}{}
 	if cfg := comp.Spec.Config; cfg != nil {
-		config := map[string]interface{}{}
 		if cfg.Replicas != nil {
 			config["replicas"] = int64(*cfg.Replicas)
 		}
 		if cfg.ExtraValues != nil && len(cfg.ExtraValues.Raw) > 0 {
-			values := map[string]interface{}{}
 			if err := decodeJSONObject(cfg.ExtraValues.Raw, &values); err != nil {
 				return false, "", fmt.Errorf("config.extraValues is not an object: %w", err)
 			}
-			config["extraValues"] = values
 		}
-		if len(config) > 0 {
-			spec["config"] = config
+	}
+	// What the operator tells the chart (the platform's facts its profile
+	// mapped, its placement, the model gateway) travels in the same values
+	// the Composition lays over the profile's, and over the component's own:
+	// the facts are the operator's to know, not a tenant's to override. A
+	// chart delivered this way got none of them before, and one that needs
+	// them could not start.
+	if len(operatorValues) > 0 {
+		mergeValues(values, operatorValues)
+	}
+	if len(values) > 0 {
+		// Through JSON, so the claim holds only what the API server would
+		// give back: an int read back as int64 would otherwise differ from
+		// the int written, and the claim be patched on every pass.
+		raw, err := json.Marshal(values)
+		if err != nil {
+			return false, "", fmt.Errorf("claim values: %w", err)
 		}
+		normalised := map[string]interface{}{}
+		if err := utiljson.Unmarshal(raw, &normalised); err != nil {
+			return false, "", fmt.Errorf("claim values: %w", err)
+		}
+		config["extraValues"] = normalised
+	}
+	if len(config) > 0 {
+		spec["config"] = config
 	}
 
 	desired := &unstructured.Unstructured{}
