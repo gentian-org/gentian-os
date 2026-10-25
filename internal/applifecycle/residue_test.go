@@ -858,3 +858,24 @@ func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T)
 		t.Errorf("the operator may delete %v of gentianos.io, want %v", deletable, want)
 	}
 }
+
+// A profile that declares itself a default is not residue while the catalogue
+// directory declares it. Once it has left the directory the operator places it
+// nowhere, and it is listed as an unused profile like any other.
+func TestADefaultProfileThatLeftTheDirectoryIsAnUnusedProfile(t *testing.T) {
+	retired := func() *gentianov1alpha1.ComponentProfile {
+		p := materialisedProfile("old-console", alone("old-console"))
+		p.Spec.DefaultForTenants = true
+		return p
+	}
+	_, by := residueOf(t, residueWorld(t, retired(),
+		argoCatalogue("ComponentProfile/shop", "ComponentProfile/notes", "ComponentProfile/old-console")))
+	if _, listed := by["ComponentProfile/old-console"]; listed {
+		t.Fatal("a declared default profile is listed as unused")
+	}
+	_, by = residueOf(t, residueWorld(t, retired(),
+		argoCatalogue("ComponentProfile/shop", "ComponentProfile/notes", "ComponentProfile/old-console!")))
+	if item, listed := by["ComponentProfile/old-console"]; !listed || item.Class != ResidueUnusedProfile || !item.Removable {
+		t.Fatalf("a default profile gone from the directory: %+v, listed %v", item, listed)
+	}
+}

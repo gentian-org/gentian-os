@@ -40,6 +40,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/locales"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 // The desktop is the one component the OS ships itself (ui-restructure.md
@@ -567,6 +568,9 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		offer     storeOffer
 		offerErr  error
 		offerRead bool
+		gone      map[string]bool
+		goneErr   error
+		goneRead  bool
 	)
 	// The profiles this pass places, and those whose placement it could not
 	// decide: neither is taken away below.
@@ -606,6 +610,23 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		}
 		if !wanted {
 			continue
+		}
+		// A profile materialised from a catalogue that has since left the
+		// catalogue directory -- retired, or replaced under another name --
+		// is still an object (the Application never prunes) and still
+		// declares itself a default. It is placed no more.
+		if strings.TrimSpace(profile.Annotations[profilebundle.Annotation]) != "" {
+			if !goneRead {
+				gone, goneErr = profilebundle.GoneFromCatalogue(ctx, r.Client, layout.Namespace(layout.GitOps))
+				goneRead = true
+				if goneErr != nil {
+					log.FromContext(ctx).V(1).Info("which profiles left the catalogue directory could not be read; "+
+						"every default profile is placed", "tenant", tenant.Name, "error", goneErr.Error())
+				}
+			}
+			if gone[profile.Name] {
+				continue
+			}
 		}
 		placed[profile.Name] = true
 		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil, moveRecord{}); err != nil {

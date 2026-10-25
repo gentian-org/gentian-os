@@ -513,14 +513,22 @@ func (v *residueView) effective(ctx context.Context, reader client.Reader, packs
 // not say for certain, no profile is listed.
 func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view *residueView) ([]found, error) {
 	var candidates []*profileState
+	// A profile that declares itself a default is in use by declaration --
+	// until it has left the catalogue directory, after which the operator
+	// places it nowhere and it is residue like any other.
+	gone, err := profilebundle.GoneFromCatalogue(ctx, reader, layout.Namespace(layout.GitOps))
+	if err != nil {
+		gone = nil
+	}
 	for _, state := range view.profiles {
 		p := state.profile
+		declaredDefault := p.Spec.DefaultForTenants || p.Spec.DefaultForPlatform || p.Spec.DefaultWhereStoreOffered
 		switch {
 		case strings.TrimSpace(p.Annotations[profilebundle.Annotation]) == "":
 			// Not materialised from a catalogue: the platform's chart
 			// shipped it, or an earlier installer wrote it.
 		case p.Labels["app.kubernetes.io/managed-by"] == "Helm", p.Annotations[platformAppAnnotation] == "true":
-		case p.Spec.DefaultForTenants, p.Spec.DefaultForPlatform, p.Spec.DefaultWhereStoreOffered:
+		case declaredDefault && !gone[p.Name]:
 		case p.DeletionTimestamp != nil, len(p.OwnerReferences) > 0:
 		case view.inUse[p.Name]:
 		default:
