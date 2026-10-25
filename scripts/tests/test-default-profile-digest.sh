@@ -309,8 +309,8 @@ fi
 # another catalogue -- is somebody's decision, and is kept.
 new_world; publish operations-console-ee 1.0.0
 scaffold >/dev/null
-sed -i.bak 's|gentianos.io/catalogue-origin: .*|gentianos.io/catalogue-origin: cluster/in-house|' "${DIR}/operations-console-ee.bundle.yaml"
-rm -f "${DIR}/operations-console-ee.bundle.yaml.bak"
+sed 's|gentianos.io/catalogue-origin: .*|gentianos.io/catalogue-origin: cluster/in-house|' "${DIR}/operations-console-ee.bundle.yaml" > "${WORLD}/bundle.tmp"
+cat "${WORLD}/bundle.tmp" > "${DIR}/operations-console-ee.bundle.yaml"
 OLD="sha256:$(sha "${DIR}/operations-console-ee.yaml")"
 publish operations-console-ee 2.0.0   # the catalogue moves on
 NEW="sha256:$(sha "${CATALOGUE}/profiles/operations-console-ee.yaml")"
