@@ -18,6 +18,8 @@ import (
 	"fmt"
 
 	"github.com/openfga/language/pkg/go/transformer"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // Compile turns a profile's model, written in the OpenFGA DSL, into the JSON
@@ -54,6 +56,28 @@ func Compile(dsl string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("the compiled authorization model: %w", err)
 	}
 	return json.RawMessage(canonical), nil
+}
+
+// Requirement is what a profile's requires.services.authorization makes of
+// a store: the compiled model and the starting tuples, held to it. Every
+// place that admits a profile asks this, so that what one admits the others
+// do as well.
+func Requirement(req *gentianov1alpha1.AuthorizationRequirement) (json.RawMessage, []Tuple, error) {
+	if req == nil {
+		return nil, nil, errors.New("no authorization requirement")
+	}
+	model, err := Compile(req.Model)
+	if err != nil {
+		return nil, nil, err
+	}
+	tuples := make([]Tuple, 0, len(req.Tuples))
+	for _, t := range req.Tuples {
+		tuples = append(tuples, Tuple{User: t.User, Relation: t.Relation, Object: t.Object})
+	}
+	if err := ValidateStartingTuples(model, tuples, req.MirrorsGroups()); err != nil {
+		return nil, nil, err
+	}
+	return model, tuples, nil
 }
 
 // ModelDigest is what tells one compiled model from another: the SHA-256 of

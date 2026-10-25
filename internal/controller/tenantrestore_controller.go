@@ -66,6 +66,9 @@ type TenantRestoreReconciler struct {
 	// Required: a restore that cannot read the manifest is refused, never
 	// run on a guess.
 	Bundles BundleReader
+	// Authorization puts an app's authorization store back through the
+	// arbiter. Nil on a cluster that runs none.
+	Authorization AuthorizationStores
 }
 
 // BundleReader is the object store as a restore uses it. *bundlestore.Store
@@ -77,6 +80,8 @@ type BundleReader interface {
 	// AppSecrets reads an app's secrets artefact, at the path the manifest
 	// gives for it, and opens it with the key.
 	AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppSecrets, error)
+	// AppAuthorization reads an app's authorization artefact and opens it.
+	AppAuthorization(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppAuthorization, error)
 	RemoveImported(ctx context.Context, ref gentianov1alpha1.BundleRef) error
 }
 
@@ -296,6 +301,17 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// the app is handed them while it still runs, and is paused only then.
 	if entry.QuiesceStart == nil {
 		ready, failure, err := r.restoreAppSecrets(ctx, restore, tenant, appName, profile)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if failure != "" {
+			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+		}
+		if !ready {
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
+		}
+		// And its authorization store, which a Job cannot reach.
+		ready, failure, err = r.restoreAppAuthorization(ctx, restore, tenant, appName)
 		entry = appStatus(&restore.Status.Apps, appName)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -657,6 +673,10 @@ func (r *TenantRestoreReconciler) restoreUnits(
 		case bundle.ArtefactSecrets:
 			// No unit: the operator sets them itself (restoreAppSecrets),
 			// so that no Job is handed a value.
+			continue
+		case bundle.ArtefactAuthorization:
+			// No unit: the operator puts the store back itself, through the
+			// arbiter, which no Job can reach (restoreAppAuthorization).
 			continue
 		case bundle.ArtefactPostgres:
 			p = pgParams

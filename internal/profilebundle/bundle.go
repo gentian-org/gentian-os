@@ -23,6 +23,7 @@ import (
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	yamlv3 "sigs.k8s.io/yaml/goyaml.v3"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/arbiter"
 )
 
@@ -230,9 +231,16 @@ func checkProfile(b *Bundle) error {
 	// An authorization model that does not compile is a failed install, here,
 	// before anything is committed: never a store without a model.
 	if authorization, ok := dig(b.Profile, "spec", "requires", "services", "authorization").(map[string]any); ok {
-		model, _ := authorization["model"].(string)
-		if _, err := arbiter.Compile(model); err != nil {
-			return fmt.Errorf("%w: its requires.services.authorization.model: %v", ErrRefused, err)
+		raw, err := json.Marshal(authorization)
+		req := &gentianov1alpha1.AuthorizationRequirement{}
+		if err == nil {
+			err = json.Unmarshal(raw, req)
+		}
+		if err == nil {
+			_, _, err = arbiter.Requirement(req)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: its requires.services.authorization: %v", ErrRefused, err)
 		}
 	}
 	return nil

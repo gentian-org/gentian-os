@@ -421,6 +421,14 @@ spec:
             {}
             {{- end }}
           volumeMounts:
+            # The operator's token for the arbiter's platform path: the
+            # realm's memberships into the app stores that mirror them, and a
+            # store's export, restore and purge. Projected for that audience
+            # alone and replaced by the kubelet; the arbiter asks the API
+            # server whose it is (internal/arbiter/platform.go).
+            - name: arbiter-token
+              mountPath: /var/run/secrets/gentian/arbiter
+              readOnly: true
             {{- if .Values.openbao.caSecret }}
             - name: openbao-ca
               mountPath: /etc/gentian/openbao-ca
@@ -454,6 +462,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
+        - name: arbiter-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: gentian-arbiter
+                  expirationSeconds: 600
+                  path: token
         {{- with .Values.openbao.caSecret }}
         # The vault's CA certificate, nothing else. Optional, so the pod
         # starts without it; the vault is then verified against no CA and

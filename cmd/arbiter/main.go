@@ -78,8 +78,11 @@ func run(log *slog.Logger) error {
 	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	go func() { _ = health.ListenAndServe() }()
 
+	// The platform's path: the operator's ServiceAccount, by the API
+	// server's word on a token projected for this path alone.
+	platform := &arbiter.PlatformAuth{Reviews: kube.AuthenticationV1().TokenReviews(), Caller: os.Getenv("ARBITER_PLATFORM_CALLER")}
 	api := &http.Server{
-		Addr: envOr("ARBITER_LISTEN", ":8080"), Handler: srv.Handler(),
+		Addr: envOr("ARBITER_LISTEN", ":8080"), Handler: srv.Handler(platform),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
 	}
 	done := make(chan error, 1)

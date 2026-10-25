@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package membership
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -77,8 +78,11 @@ var (
 type Receiver struct {
 	keys map[string]ed25519.PublicKey
 	proj *Projector
-	log  *slog.Logger
-	now  func() time.Time
+	// mirror carries the same statements on to the app stores that mirror
+	// the realm's groups; nil when there is nothing to carry them to.
+	mirror Mirror
+	log    *slog.Logger
+	now    func() time.Time
 
 	mu   sync.Mutex
 	seen map[string]time.Time // event id → when it may be forgotten
@@ -98,6 +102,21 @@ func NewReceiver(keys map[string]ed25519.PublicKey, proj *Projector, log *slog.L
 	return &Receiver{keys: keys, proj: proj, log: log, now: time.Now,
 		seen: map[string]time.Time{}, last: map[string]int64{}}, nil
 }
+
+// Mirror carries a realm's memberships on to the stores of the apps that
+// mirror them (app-authorization.md §2.5). It is given every statement the
+// projection applied, after the projection: the kernel's store is never
+// held back by an app's.
+type Mirror interface {
+	// SetUserGroups states a person's complete set of groups in a realm:
+	// every group, not only the platform's vocabulary.
+	SetUserGroups(ctx context.Context, realm, sub string, groups []string) error
+	// RemoveGroup says a group of a realm is gone.
+	RemoveGroup(ctx context.Context, realm, group string) error
+}
+
+// SetMirror has the receiver carry what it applies on to m as well.
+func (rc *Receiver) SetMirror(m Mirror) { rc.mirror = m }
 
 // ParseKeys reads "id=base64key,id=base64key".
 func ParseKeys(s string) (map[string]ed25519.PublicKey, error) {
@@ -160,8 +179,14 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			groups = nil
 		}
 		change, err = rc.proj.SetUserGroups(ctx, ev.Realm, ev.User, groups)
+		if err == nil && rc.mirror != nil {
+			err = rc.mirror.SetUserGroups(ctx, ev.Realm, ev.User, groups)
+		}
 	case TypeGroupDeleted:
 		change, err = rc.proj.RemoveGroup(ctx, ev.Realm, ev.Group)
+		if err == nil && rc.mirror != nil {
+			err = rc.mirror.RemoveGroup(ctx, ev.Realm, ev.Group)
+		}
 	default:
 		// A listener newer than this director may send types it does not know.
 		w.WriteHeader(http.StatusNoContent)

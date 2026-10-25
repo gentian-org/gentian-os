@@ -21,13 +21,36 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
+
+	authenticationv1 "k8s.io/api/authentication/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+const operatorSA = "system:serviceaccount:kernel-control:gentian-os"
+
+// fakeReviews is the API server's word on three tokens: the operator's, a
+// tenant's app's (projected for the same audience in its own pod), and one
+// it vouches for for another audience.
+type fakeReviews struct{}
+
+func (fakeReviews) Create(_ context.Context, review *authenticationv1.TokenReview, _ metav1.CreateOptions) (*authenticationv1.TokenReview, error) {
+	out := review.DeepCopy()
+	switch review.Spec.Token {
+	case "operator-token":
+		out.Status = authenticationv1.TokenReviewStatus{Authenticated: true, Audiences: []string{PlatformAudience},
+			User: authenticationv1.UserInfo{Username: operatorSA}}
+	case "app-token":
+		out.Status = authenticationv1.TokenReviewStatus{Authenticated: true, Audiences: []string{PlatformAudience},
+			User: authenticationv1.UserInfo{Username: "system:serviceaccount:tenant-acme:ledger"}}
+	case "other-audience":
+		out.Status = authenticationv1.TokenReviewStatus{Authenticated: true, Audiences: []string{"https://kubernetes.default.svc"},
+			User: authenticationv1.UserInfo{Username: operatorSA}}
+	}
+	return out, nil
+}
 
 // fakeFGA is the app instance: stores, models and tuples, and every call it
 // was made, by store.
@@ -96,6 +119,19 @@ func (f *fakeFGA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && op == "":
 		delete(f.stores, id)
 		w.WriteHeader(http.StatusNoContent)
+	case op == "authorization-models" && r.Method == http.MethodGet:
+		http.NotFound(w, r)
+	case strings.HasPrefix(op, "authorization-models/"):
+		n := 0
+		_, _ = fmt.Sscanf(strings.TrimPrefix(op, "authorization-models/"), id+"-model-%d", &n)
+		if n < 1 || n > len(st.models) {
+			http.NotFound(w, r)
+			return
+		}
+		var m map[string]any
+		_ = json.Unmarshal(st.models[n-1], &m)
+		m["id"] = fmt.Sprintf("%s-model-%d", id, n)
+		_ = json.NewEncoder(w).Encode(map[string]any{"authorization_model": m})
 	case op == "authorization-models":
 		raw, _ := json.Marshal(body)
 		st.models = append(st.models, raw)
@@ -119,6 +155,13 @@ func (f *fakeFGA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				for _, k := range group["tuple_keys"].([]any) {
 					t := keyOf(k)
 					if kind == "writes" {
+						if has(t) {
+							if group["on_duplicate"] != "ignore" {
+								http.Error(w, `{"code":"write_failed_due_to_invalid_input","message":"cannot write a tuple which already exists"}`, http.StatusBadRequest)
+								return
+							}
+							continue
+						}
 						st.tuples = append(st.tuples, t)
 						continue
 					}
@@ -133,8 +176,15 @@ func (f *fakeFGA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = io.WriteString(w, "{}")
 	case op == "read":
+		filter := keyOf(body["tuple_key"])
 		var out []map[string]fgaTuple
 		for _, t := range st.tuples {
+			if filter.User != "" && t.User != filter.User || filter.Relation != "" && t.Relation != filter.Relation {
+				continue
+			}
+			if o := filter.Object; o != "" && t.Object != o && (!strings.HasSuffix(o, ":") || !strings.HasPrefix(t.Object, o)) {
+				continue
+			}
 			out = append(out, map[string]fgaTuple{"key": t})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"tuples": out})
@@ -272,7 +322,7 @@ func newHarness(t *testing.T, entries ...Entry) *harness {
 	fga := NewOpenFGA(srv.URL, f.token)
 	s := NewServer(fga, NewStores(fga, rec, log), log)
 	s.SetTable(&Table{Stores: entries})
-	return &harness{fga: f, rec: rec, server: s, api: s.Handler()}
+	return &harness{fga: f, rec: rec, server: s, api: s.Handler(&PlatformAuth{Reviews: fakeReviews{}, Caller: operatorSA})}
 }
 
 func (h *harness) call(t *testing.T, method, path, key string, body any) (int, map[string]any) {
@@ -457,39 +507,6 @@ func TestTheQuestionsAnswerInTheAPIsShapes(t *testing.T) {
 	}
 	if code, body := h.call(t, http.MethodPost, "/v1/write", "key-a", WriteRequest{Deletes: []Tuple{{User: "user:1", Relation: "viewer", Object: "doc:1"}}}); code != http.StatusOK {
 		t.Fatalf("delete: %d %v", code, body)
-	}
-}
-
-// A store the table says to purge is deleted with its record, once; a table
-// that both keeps and purges a store is not one.
-func TestAPurgedStoreIsDeletedWithItsRecord(t *testing.T) {
-	ledger := entry(t, "acme", "ledger", "key-a", docModel)
-	h := newHarness(t, ledger)
-	h.call(t, http.MethodGet, "/v1/model", "key-a", nil)
-	if _, st := h.fga.storeNamed("acme/ledger"); st == nil {
-		t.Fatal("no store")
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, TableKey)
-	raw, _ := json.Marshal(Table{Purge: []Ref{{Tenant: "acme", Component: "ledger"}}})
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	Follow(ctx, path, 10*time.Millisecond, h.server, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, st := h.fga.storeNamed("acme/ledger"); st != nil {
-		t.Fatal("the purged store is still there")
-	}
-	if _, ok := h.rec.ids["acme.ledger"]; ok {
-		t.Fatal("the purged store is still recorded")
-	}
-	if code, _ := h.call(t, http.MethodGet, "/v1/model", "key-a", nil); code != http.StatusUnauthorized {
-		t.Fatalf("the purge table still names the key: %d", code)
-	}
-	both, _ := json.Marshal(Table{Stores: []Entry{ledger}, Purge: []Ref{{Tenant: "acme", Component: "ledger"}}})
-	if _, err := ParseTable(both); err == nil {
-		t.Fatal("a table that keeps and purges one store was taken")
 	}
 }
 

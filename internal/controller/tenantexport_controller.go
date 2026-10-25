@@ -106,6 +106,9 @@ type TenantExportReconciler struct {
 	// own secrets, which it encrypts and no Job is handed. Without it an
 	// export of an app that has such secrets stored fails and says so.
 	Bundles BundleWriter
+	// Authorization reads an app's authorization store through the
+	// arbiter. Nil on a cluster that runs none: no app has a store.
+	Authorization AuthorizationStores
 
 	// SigningKey is the cluster's bundle signing key, read when a manifest
 	// is written and when a restore checks one. Nil, or an error, and the
@@ -420,13 +423,18 @@ func (r *TenantExportReconciler) captureApp(
 	entry.Artefacts = unitArtefacts(units)
 	// And the secrets the data was written with, which the operator puts
 	// into the bundle itself.
-	if err := r.withAppSecrets(ctx, export, tenant, appName, profile, encryption, entry); err != nil {
+	// Its authorization store too, read through the arbiter.
+	err = r.withAppAuthorization(ctx, export, tenant, appName, encryption, entry)
+	if err == nil {
+		err = r.withAppSecrets(ctx, export, tenant, appName, profile, encryption, entry)
+	}
+	if err != nil {
 		// Bounded like a capture Job: a vault or an object store that does
 		// not answer fails the export, with the reason, and a bundle whose
 		// data is unreadable without them is not written as complete.
 		entry.Attempts++
 		if entry.Attempts > exportMaxAttempts {
-			return r.failApp(ctx, export, tenant, appName, fmt.Sprintf("its own secrets could not be put into the bundle: %v", err))
+			return r.failApp(ctx, export, tenant, appName, fmt.Sprintf("its own secrets or its authorization store could not be put into the bundle: %v", err))
 		}
 		// Not captured yet: the next pass comes back here.
 		entry.Artefacts = nil

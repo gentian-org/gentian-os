@@ -324,6 +324,21 @@ spec:
                     enabled: false
                   ingress:
                     enabled: false
+                  {{- /* The system tier is held to the baseline the kernel
+                       tier is spared (gentian-baseline): non-root, no
+                       capabilities, no escalation, the runtime's seccomp
+                       profile -- for the server and its migration alike. */}}
+                  podSecurityContext:
+                    runAsNonRoot: true
+                    runAsUser: 65532
+                    seccompProfile:
+                      type: RuntimeDefault
+                  securityContext:
+                    runAsNonRoot: true
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities:
+                      drop: ["ALL"]
                   telemetry:
                     trace:
                       enabled: false

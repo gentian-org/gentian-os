@@ -40,6 +40,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/arbiter"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -272,9 +273,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The arbiter's platform path, for the app authorization stores of a
+	// tenant's export, restore and deletion.
+	arbiterPlatform := arbiter.NewPlatformClient()
 	tenantReconciler := &controller.TenantReconciler{
-		Definitions: held,
-		Client:      mgr.GetClient(),
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Authorization: arbiterPlatform,
 		// Needed by the deletion path, which has to tell "gone" apart from "not
 		// in the cache yet" before it acts on a Tenant being deleted.
 		APIReader:    mgr.GetAPIReader(),
@@ -491,6 +496,8 @@ func main() {
 		Client:    mgr.GetClient(),
 		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		Image:     os.Getenv("GENTIAN_IMAGE"),
+		PlatformCaller: applifecycle.ServiceAccountUsername(
+			envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)), os.Getenv("OPERATOR_SA")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationEngine")
 		os.Exit(1)
@@ -524,10 +531,11 @@ func main() {
 	}
 
 	tenantExportReconciler := &controller.TenantExportReconciler{
-		Definitions: held,
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Reconciler:  tenantReconciler,
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Reconciler:    tenantReconciler,
+		Authorization: arbiterPlatform,
 		// The API reader, not the cached client: appVolumes explains why a
 		// cached PVC read is how an export comes to hold an app offline
 		// indefinitely with nothing in the log.
@@ -561,11 +569,12 @@ func main() {
 	}
 
 	if err := (&controller.TenantRestoreReconciler{
-		Definitions: held,
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Reconciler:  tenantExportReconciler,
-		Tenant:      tenantReconciler,
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Reconciler:    tenantExportReconciler,
+		Authorization: arbiterPlatform,
+		Tenant:        tenantReconciler,
 		// The bundle's manifest is what a restore goes by; this is how the
 		// operator reads it, with the credentials it holds for the store
 		// the bundle sits in.
@@ -640,7 +649,12 @@ func main() {
 		// Keycloak states a user's whole group set, signed; this applies it.
 		// It was the director's last write to the graph, which is what kept
 		// the director's token a writing token.
-		listener, err := controller.NewMembershipListener(graph, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		mirror := &controller.AppStoreMirror{
+			Client:    mgr.GetClient(),
+			Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+			Arbiter:   arbiterPlatform,
+		}
+		listener, err := controller.NewMembershipListener(graph, mirror, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		if err != nil {
 			setupLog.Error(err, "unable to create the membership listener")
 			os.Exit(1)

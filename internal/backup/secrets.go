@@ -116,3 +116,49 @@ func (e Encryption) ageRecipients(passphrase string) ([]age.Recipient, error) {
 	}
 	return nil, fmt.Errorf("unknown encryption mode %q", e.Mode)
 }
+
+// AuthorizationArtefact is where an app's authorization store is in a
+// bundle, below the bundle's prefix and before the suffix encryption adds.
+func AuthorizationArtefact(app string) string { return "authorization/" + app + ".json" }
+
+// SealAppAuthorization encrypts an app's authorization store as its secrets
+// are encrypted, by the operator itself: the store is read through the
+// arbiter, which no Job can reach.
+func SealAppAuthorization(e Encryption, passphrase string, doc *bundle.AppAuthorization) ([]byte, error) {
+	if doc == nil || len(doc.Model) == 0 {
+		return nil, errors.New("no authorization store to encrypt")
+	}
+	recipients, err := e.ageRecipients(passphrase)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := json.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("encode the authorization store: %w", err)
+	}
+	var out bytes.Buffer
+	w, err := age.Encrypt(&out, recipients...)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt the authorization store: %w", err)
+	}
+	if _, err := w.Write(plain); err != nil {
+		return nil, fmt.Errorf("encrypt the authorization store: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("encrypt the authorization store: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
+// OpenAppAuthorization decrypts an app's authorization artefact and reads it.
+func OpenAppAuthorization(cipher []byte, ids []age.Identity) (*bundle.AppAuthorization, error) {
+	plain, err := age.Decrypt(bytes.NewReader(cipher), ids...)
+	if err != nil {
+		return nil, fmt.Errorf("the authorization store could not be opened with that key: %w", err)
+	}
+	var out bundle.AppAuthorization
+	if err := json.NewDecoder(plain).Decode(&out); err != nil || len(out.Model) == 0 {
+		return nil, errors.New("the authorization store does not parse")
+	}
+	return &out, nil
+}

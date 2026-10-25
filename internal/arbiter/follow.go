@@ -21,9 +21,9 @@ import (
 // Follow keeps the server on the operator's table. The kubelet swaps the
 // mounted file when the operator changes the ConfigMap; every interval the
 // file is read again, and a table that reads differently and parses is put
-// in force, with the stores it says to purge deleted. One that does not
-// parse leaves the last good one in force: the operator writes only good
-// ones, and a torn read is not a reason to refuse every key.
+// in force. One that does not parse leaves the last good one in force: the
+// operator writes only good ones, and a torn read is not a reason to refuse
+// every key.
 func Follow(ctx context.Context, path string, interval time.Duration, s *Server, log *slog.Logger) {
 	var last []byte
 	apply := func() {
@@ -42,19 +42,8 @@ func Follow(ctx context.Context, path string, interval time.Duration, s *Server,
 			return
 		}
 		s.SetTable(t)
-		purged := true
-		for _, p := range t.Purge {
-			if err := s.stores.Purge(ctx, p.Tenant, p.Component); err != nil {
-				log.Error("a store was not purged; tried again with the next look", "store", p.Tenant+"/"+p.Component, "error", err.Error())
-				purged = false
-			}
-		}
-		// A purge that failed is tried again: the table is read as new
-		// until every purge it asks for has gone through.
-		if purged {
-			last = raw
-		}
-		log.Info("table in force", "stores", len(t.Stores), "purge", len(t.Purge))
+		last = raw
+		log.Info("table in force", "stores", len(t.Stores))
 	}
 	apply()
 	tick := time.NewTicker(interval)

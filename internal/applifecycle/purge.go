@@ -69,6 +69,7 @@ const (
 	KindRecords       = string(backup.KindRecords)
 	KindModelAccess   = string(backup.KindModelAccess)
 	KindSignInScope   = string(backup.KindSignInScope)
+	KindAuthorization = string(backup.KindAuthorization)
 )
 
 // kindLabels are the kinds as a person reads them.
@@ -82,6 +83,7 @@ var kindLabels = map[string]string{
 	KindRecords:       "provisioning records",
 	KindModelAccess:   "model key",
 	KindSignInScope:   "sign-in scope",
+	KindAuthorization: "authorization store",
 }
 
 // The bounds of one purge.
@@ -173,7 +175,9 @@ type purgeStep struct {
 // recorded is what the tenant's record says was provisioned for the app. A
 // store it names is destroyed whether or not the profile still declares it:
 // a profile that has since dropped its bucket has not removed the bucket.
-func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned) []purgeStep {
+//
+// authorized says the arbiter recorded an authorization store for the app.
+func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned, authorized bool) []purgeStep {
 	inv := backup.InventoryOf(tenant, app, profile)
 	extensions := backup.SidecarNames(profile)
 	owned := backup.MergeStores(inv.Stores, recorded)
@@ -197,6 +201,16 @@ func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov
 	if recorded.ModelKey != "" {
 		how[backup.KindModelAccess] = func(ctx context.Context) error {
 			return s.purgeModelKey(ctx, tenant.Name, app, recorded.ModelKey)
+		}
+	}
+	// The app's authorization store, when the arbiter made one: deleted
+	// through the arbiter, which holds the only credential that can.
+	if authorized {
+		how[backup.KindAuthorization] = func(ctx context.Context) error {
+			if s.authorization == nil {
+				return fmt.Errorf("the app's authorization store is held and this operator has no arbiter to delete it with")
+			}
+			return s.authorization.Purge(ctx, tenant.Name, app)
 		}
 	}
 	// The client scope the app's sign-in pack describes, when its profile
@@ -291,7 +305,11 @@ func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.T
 // has looked at, and carrying on would destroy more on the strength of it.
 func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned) (destroyed []string, err error) {
 	logger := log.FromContext(ctx).WithName("purge").WithValues("tenant", tenant.Name, "app", app)
-	steps := s.purgeSteps(tenant, profile, app, recorded)
+	authorized, err := s.authorizationRecorded(ctx, tenant.Name, app)
+	if err != nil {
+		return nil, err
+	}
+	steps := s.purgeSteps(tenant, profile, app, recorded, authorized)
 	for i, step := range steps {
 		if err := step.run(ctx); err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {

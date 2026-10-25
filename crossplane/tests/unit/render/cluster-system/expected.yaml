@@ -394,6 +394,11 @@ spec:
         enabled: false
       playground:
         enabled: false
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
       postgresql:
         enabled: false
       replicaCount: 1
@@ -404,6 +409,13 @@ spec:
         requests:
           cpu: 50m
           memory: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
       telemetry:
         metrics:
           enabled: false

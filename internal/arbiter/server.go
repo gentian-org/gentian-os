@@ -196,9 +196,10 @@ func (s *Server) SetTable(t *Table) {
 	s.table.Store(k)
 }
 
-// Handler is the API's routes.
-func (s *Server) Handler() http.Handler {
+// Handler is the API's routes, and the platform's path behind auth.
+func (s *Server) Handler(auth *PlatformAuth) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/v1/platform/", s.PlatformHandler(auth))
 	mux.HandleFunc("POST /v1/check", s.call(s.check))
 	mux.HandleFunc("POST /v1/batch-check", s.call(s.batchCheck))
 	mux.HandleFunc("POST /v1/list-objects", s.call(s.listObjects))
@@ -626,6 +627,13 @@ func (s *Server) write(ctx context.Context, ids StoreIDs, _ Entry, r *http.Reque
 		for i, t := range tuples {
 			if err := t.valid(fmt.Sprintf("%s[%d]", name, i)); err != nil {
 				return nil, err
+			}
+			// Who is in a group is the realm's to say, through the
+			// platform: a component that could write it could make
+			// anybody a member of anything its model lets a group hold.
+			if isGroupTyped(t) {
+				return nil, &refusal{status: http.StatusForbidden, code: "forbidden",
+					message: fmt.Sprintf("%s[%d]: %v", name, i, errForbiddenGroupTuple)}
 			}
 			keys = append(keys, toFGA(t))
 		}

@@ -148,5 +148,80 @@ func (c *openFGA) writeModel(ctx context.Context, storeID string, model json.Raw
 	return written.ID, nil
 }
 
+// writeTuples writes and deletes tuples for the platform, in transactions of
+// at most MaxWriteTuples, the way the platform's own writes are made: a tuple
+// that is there already is not an error, nor is one that is gone already. A
+// component's own writes are not made this way (Server.write): a component
+// is told what OpenFGA says.
+func (c *openFGA) writeTuples(ctx context.Context, storeID, model string, writes, deletes []Tuple) error {
+	send := func(kind string, tuples []Tuple, option map[string]string) error {
+		for len(tuples) > 0 {
+			n := min(len(tuples), MaxWriteTuples)
+			keys := make([]fgaTuple, 0, n)
+			for _, t := range tuples[:n] {
+				keys = append(keys, toFGA(t))
+			}
+			group := map[string]any{"tuple_keys": keys}
+			for k, v := range option {
+				group[k] = v
+			}
+			body := map[string]any{kind: group}
+			if model != "" {
+				body["authorization_model_id"] = model
+			}
+			if err := c.do(ctx, http.MethodPost, storePath(storeID, "/write"), body, nil); err != nil {
+				return err
+			}
+			tuples = tuples[n:]
+		}
+		return nil
+	}
+	if err := send("deletes", deletes, map[string]string{"on_missing": "ignore"}); err != nil {
+		return err
+	}
+	return send("writes", writes, map[string]string{"on_duplicate": "ignore"})
+}
+
+// readAll is every tuple of a store matching a partial tuple, all pages.
+func (c *openFGA) readAll(ctx context.Context, storeID string, filter fgaTuple) ([]Tuple, error) {
+	var out []Tuple
+	token := ""
+	for {
+		body := map[string]any{"page_size": MaxPageSize}
+		if filter != (fgaTuple{}) {
+			body["tuple_key"] = filter
+		}
+		if token != "" {
+			body["continuation_token"] = token
+		}
+		var page struct {
+			Tuples []struct {
+				Key fgaTuple `json:"key"`
+			} `json:"tuples"`
+			ContinuationToken string `json:"continuation_token"`
+		}
+		if err := c.do(ctx, http.MethodPost, storePath(storeID, "/read"), body, &page); err != nil {
+			return nil, err
+		}
+		for _, t := range page.Tuples {
+			out = append(out, Tuple(t.Key))
+		}
+		if token = page.ContinuationToken; token == "" || len(page.Tuples) == 0 {
+			return out, nil
+		}
+	}
+}
+
+// readModel is one model of a store, as OpenFGA holds it.
+func (c *openFGA) readModel(ctx context.Context, storeID, model string) (json.RawMessage, error) {
+	var out struct {
+		Model json.RawMessage `json:"authorization_model"`
+	}
+	if err := c.do(ctx, http.MethodGet, storePath(storeID, "/authorization-models/"+model), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Model, nil
+}
+
 // storePath is a path under one store.
 func storePath(storeID, rest string) string { return "/stores/" + storeID + rest }

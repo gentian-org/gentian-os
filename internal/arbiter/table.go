@@ -64,20 +64,22 @@ type Entry struct {
 	KeyHash string `json:"keyHash"`
 	// Model is the compiled model (Compile), as OpenFGA's API takes it.
 	Model json.RawMessage `json:"model"`
-}
-
-// Ref names a store by its tenant and component.
-type Ref struct {
-	Tenant    string `json:"tenant"`
-	Component string `json:"component"`
+	// Realm is the tenant's realm: the only realm whose memberships reach
+	// this store, and only when MirrorGroups says so.
+	Realm string `json:"realm,omitempty"`
+	// MirrorGroups says the store holds the realm's group memberships,
+	// kept by the platform (requires.services.authorization.groups: mirror).
+	MirrorGroups bool `json:"mirrorGroups,omitempty"`
+	// Tuples are the store's starting tuples, which the platform writes and
+	// takes away again when the profile no longer names them
+	// (requires.services.authorization.tuples).
+	Tuples []Tuple `json:"tuples,omitempty"`
 }
 
 // Table is what the operator writes: one entry per component that declares
-// requires.services.authorization and holds its key, and the stores a purge
-// has destroyed the rest of an app's data for, which the arbiter deletes.
+// requires.services.authorization and holds its key.
 type Table struct {
 	Stores []Entry `json:"stores"`
-	Purge  []Ref   `json:"purge,omitempty"`
 }
 
 // dnsLabel is what a tenant's and a component's name are.
@@ -118,16 +120,11 @@ func ParseTable(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("the arbiter's table names %s or its key twice", e.StoreName())
 		}
 		seen[e.KeyHash], seen[e.recordKey()] = true, true
-	}
-	for _, p := range t.Purge {
-		e := Entry{Tenant: p.Tenant, Component: p.Component}
-		if !dnsLabel.MatchString(p.Tenant) || !dnsLabel.MatchString(p.Component) {
-			return nil, fmt.Errorf("the arbiter's table purges a store that is not one: %q/%q", p.Tenant, p.Component)
+		if e.MirrorGroups && e.Realm == "" {
+			return nil, fmt.Errorf("the arbiter's table mirrors groups into %s and names no realm", e.StoreName())
 		}
-		// A store is decided in or purged, never both: a table that says
-		// both is not one the operator wrote.
-		if seen[e.recordKey()] {
-			return nil, fmt.Errorf("the arbiter's table both keeps and purges %s", e.StoreName())
+		if len(e.Tuples) > MaxStartingTuples {
+			return nil, fmt.Errorf("the arbiter's table gives %s more than %d starting tuples", e.StoreName(), MaxStartingTuples)
 		}
 	}
 	return t, nil

@@ -74,6 +74,14 @@ type Service struct {
 	// models, when set, is the model gateway to use in place of the one the
 	// cluster's admin-key Secret names. Tests set it.
 	models func(ctx context.Context) (ModelKeys, bool, error)
+	// authorization is the arbiter's platform path, nil without one.
+	authorization AuthorizationStores
+}
+
+// AuthorizationStores is the part of the arbiter's platform path a purge
+// uses. *arbiter.PlatformClient is one.
+type AuthorizationStores interface {
+	Purge(ctx context.Context, tenant, component string) error
 }
 
 // accessGroups is the identity provider's groups, with the administrator
@@ -139,6 +147,9 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	// not nil, and the purge's check for "no vault" would pass it.
 	if opts.Vault != nil {
 		svc.vault = opts.Vault
+	}
+	if opts.Authorization != nil {
+		svc.authorization = opts.Authorization
 	}
 	// Constructed rather than probed: metrics.k8s.io may be absent, and
 	// discovering that at start-up would make the operator's readiness depend

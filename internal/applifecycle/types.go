@@ -34,6 +34,10 @@ type Options struct {
 	// vault configured; a purge then fails rather than claim the credentials
 	// destroyed.
 	Vault CredentialStore
+	// Authorization is the arbiter's platform path: what a purge deletes an
+	// app's authorization store through. Nil leaves the store, and the
+	// purge says so rather than claim it destroyed.
+	Authorization AuthorizationStores
 	// LiveReader reads the API server itself rather than the manager's
 	// cache. The catalogue's residue is listed and removed on what it
 	// answers, because what is deleted there is decided on the answer. Nil

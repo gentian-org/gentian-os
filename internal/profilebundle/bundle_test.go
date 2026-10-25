@@ -349,7 +349,7 @@ func TestAnAuthorizationModelIsCompiledWhenTheBundleIsRead(t *testing.T) {
 	}
 	bad := "          model\n            schema 1.1\n          type ledger\n            relations\n              define owner [user]\n"
 	_, err := Check([]byte(with(bad)), "shop", "")
-	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "requires.services.authorization.model") {
+	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "requires.services.authorization") {
 		t.Fatalf("a model that does not compile: %v", err)
 	}
 }

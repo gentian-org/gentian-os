@@ -80,6 +80,9 @@ type AuthorizationEngineReconciler struct {
 	Namespace string
 	// Image is the operator's own image, which the arbiter runs.
 	Image string
+	// PlatformCaller is the operator's ServiceAccount, as the API server
+	// names it: the one identity the arbiter admits to its platform path.
+	PlatformCaller string
 }
 
 var authorizationEngineRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: arbiter.ServiceName}}
@@ -119,7 +122,7 @@ func (r *AuthorizationEngineReconciler) Reconcile(ctx context.Context, _ ctrl.Re
 	} else if !done {
 		return ctrl.Result{RequeueAfter: componentRequeue}, nil
 	}
-	for _, obj := range arbiterObjects(r.Image) {
+	for _, obj := range arbiterObjects(r.Image, r.Namespace, r.PlatformCaller) {
 		if err := r.apply(ctx, obj); err != nil {
 			return ctrl.Result{}, fmt.Errorf("%T %s: %w", obj, obj.GetName(), err)
 		}
@@ -233,7 +236,9 @@ func makeAppInstanceRoleJob() *batchv1.Job {
 }
 
 // arbiterObjects are the arbiter's workload and the namespace's policies.
-func arbiterObjects(image string) []client.Object {
+// control is the operator's namespace and caller its ServiceAccount, which
+// the arbiter's platform path admits.
+func arbiterObjects(image, control, caller string) []client.Object {
 	ns := arbiter.Namespace
 	labels := arbiterPodLabels()
 	objLabels := map[string]string{managedByLabel: managedByValue, "app.kubernetes.io/name": arbiter.ServiceName}
@@ -287,6 +292,7 @@ func arbiterObjects(image string) []client.Object {
 						Env: []corev1.EnvVar{
 							{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
 							{Name: "ARBITER_TABLE", Value: "/etc/arbiter/" + arbiter.TableKey},
+							{Name: "ARBITER_PLATFORM_CALLER", Value: caller},
 						},
 						Ports: []corev1.ContainerPort{
 							{Name: "api", ContainerPort: arbiter.Port, Protocol: tcp},
@@ -329,10 +335,19 @@ func arbiterObjects(image string) []client.Object {
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: labels},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			// The tenants' namespaces, which their own policies narrow to
+			// the components that declared a store, and the operator, for
+			// the platform path.
 			Ingress: []networkingv1.NetworkPolicyIngressRule{{
-				From: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"gentianos.io/tier": "tenant"},
-				}}},
+				From: []networkingv1.NetworkPolicyPeer{
+					{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"gentianos.io/tier": "tenant"}}},
+					{
+						NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": control}},
+						PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+							"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/component": "operator",
+						}},
+					},
+				},
 				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
 			}},
 		},

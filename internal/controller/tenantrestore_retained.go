@@ -78,6 +78,22 @@ func (r *TenantRestoreReconciler) restoreRetained(
 	}
 	entry = appStatus(&restore.Status.Apps, appName)
 
+	// Its authorization store, into a fresh store of the app here, where its
+	// next install finds it.
+	if artefactOf(entry.Artefacts, bundle.ArtefactAuthorization) != nil {
+		done, failure, err := r.restoreAppAuthorization(ctx, restore, tenant, appName)
+		entry = appStatus(&restore.Status.Apps, appName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if failure != "" {
+			return failed(failure)
+		}
+		if !done {
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
+		}
+	}
+
 	// The secrets its data was written with, at the app's place in this
 	// tenant's vault, where its next install finds them: an install keeps a
 	// value that is stored. Nothing runs, so nothing is handed them now.

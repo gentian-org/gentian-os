@@ -84,8 +84,8 @@ func authorizationModelRefusal(profile *gentianov1alpha1.ComponentProfile) strin
 	if !wantsAuthorization(profile) {
 		return ""
 	}
-	if _, err := arbiter.Compile(profile.Services().Authorization.Model); err != nil {
-		return "requires.services.authorization.model: " + err.Error()
+	if _, _, err := arbiter.Requirement(profile.Services().Authorization); err != nil {
+		return "requires.services.authorization: " + err.Error()
 	}
 	return ""
 }
@@ -210,7 +210,8 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 		if !wantsAuthorization(profile) {
 			continue
 		}
-		model, err := arbiter.Compile(profile.Services().Authorization.Model)
+		requirement := profile.Services().Authorization
+		model, tuples, err := arbiter.Requirement(requirement)
 		if err != nil {
 			// The Component is held for it (authorizationModelRefusal); the
 			// store keeps the model it was last handed until one compiles.
@@ -218,9 +219,14 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 				"component", comp.Name, "namespace", comp.Namespace, "error", err.Error())
 			continue
 		}
+		realm, err := realmOfTenantNamespace(ctx, c, secret.Namespace, tenant)
+		if err != nil {
+			return nil, err
+		}
 		sum := sha256.Sum256(key)
 		out = append(out, arbiter.Entry{
 			Tenant: tenant, Component: comp.Name, KeyHash: hex.EncodeToString(sum[:]), Model: model,
+			Realm: realm, MirrorGroups: requirement.MirrorsGroups(), Tuples: tuples,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -230,6 +236,21 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 		return out[i].Component < out[j].Component
 	})
 	return out, nil
+}
+
+// realmOfTenantNamespace is the realm of the tenant whose namespace this
+// is: the one realm whose memberships reach that tenant's stores.
+func realmOfTenantNamespace(ctx context.Context, c client.Reader, namespace, fallback string) (string, error) {
+	list := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, list); err != nil {
+		return "", err
+	}
+	for i := range list.Items {
+		if list.Items[i].NamespaceName() == namespace {
+			return tenantRealmName(&list.Items[i]), nil
+		}
+	}
+	return fallback, nil
 }
 
 // AuthorizationTableReconciler writes the arbiter's table: which key opens
@@ -294,6 +315,7 @@ func (r *AuthorizationTableReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Named("authorization-table").
 		Watches(&gentianov1alpha1.Component{}, toTable).
 		Watches(&gentianov1alpha1.ComponentProfile{}, toTable).
+		Watches(&gentianov1alpha1.Tenant{}, toTable).
 		Watches(&corev1.Secret{}, toTable, builder.WithPredicates(holders)).
 		Watches(&corev1.Namespace{}, toTable, builder.WithPredicates(predicate.NewPredicateFuncs(func(o client.Object) bool {
 			return o.GetName() == arbiter.Namespace

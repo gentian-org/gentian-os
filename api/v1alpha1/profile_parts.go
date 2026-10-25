@@ -272,6 +272,49 @@ type AuthorizationRequirement struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=65536
 	Model string `json:"model"`
+
+	// Groups "mirror" has the platform keep the tenant realm's group
+	// memberships in the store, as tuples
+	// group:<realm>/<group name>#member of user:<realm>/<subject>: every
+	// top-level group of the realm, kept equal to the realm as people join
+	// and leave. The model must define a type group with a relation member
+	// users are written with. A component's own key cannot write a tuple
+	// whose user or object is a group, mirrored or not.
+	// +optional
+	// +kubebuilder:validation:Enum=mirror
+	Groups string `json:"groups,omitempty"`
+
+	// Tuples are the store's starting tuples, written by the platform and
+	// held to the model when the profile is admitted. One the profile no
+	// longer names is taken out again; what the component wrote itself is
+	// never touched. A store that mirrors groups names no group as an
+	// object here.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	Tuples []AuthorizationTuple `json:"tuples,omitempty"`
+}
+
+// MirrorsGroups reports whether the store holds the realm's memberships.
+func (a *AuthorizationRequirement) MirrorsGroups() bool {
+	return a != nil && a.Groups == AuthorizationGroupsMirror
+}
+
+// AuthorizationGroupsMirror is requires.services.authorization.groups'
+// one value.
+const AuthorizationGroupsMirror = "mirror"
+
+// AuthorizationTuple is one relation between a user and an object, as
+// OpenFGA writes it: user:acme/123 is viewer of project:42.
+type AuthorizationTuple struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	User string `json:"user"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Relation string `json:"relation"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Object string `json:"object"`
 }
 
 // PartnersRequirement declares a component's part in the partner relations of
