@@ -330,7 +330,7 @@ for the person (§6.1).
 
 | Operation | Token | Answers |
 |---|---|---|
-| `GET /v1/meta` | open | The store's name, the API version, the store's realm as a partner (`partner.issuer`) and its registration page (`registrationUrl`). Also the origins images and checkout pages may be on, and the catalogue sources its entries come from (1.5) |
+| `GET /v1/meta` | open | The store's name, the API version, the store's realm as a partner (`partner.issuer`) and its registration page (`registrationUrl`). Also the origins images and checkout pages may be on, the catalogue sources its entries come from (1.5), and the version of its terms in force (`termsVersion`, 1.12) |
 | `GET /v1/categories` | open | The categories apps are filed under |
 | `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price, how many add-ons; a maturity score and an installation count (1.6) |
 | `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons each with its icon, edition and list price, links (a tutorial video among them, 1.6), license, the customization grade and rungs its profile declares (1.6); and the partners that offer support for it, narrowed to a country when asked |
@@ -491,6 +491,16 @@ store's terms and privacy notice and asks the company's name, size,
 country, address and industry, each optional. A store that needs a billing
 contact asks for it there or in its checkout. The first account that
 registers for a tenant holds it.
+
+**The store's terms.** Using the App Store means accepting the store's
+terms. The app asks once per tenant and per version (`termsVersion` in
+`GET /v1/meta`): one dialog with the links to the terms and the privacy
+notice and an OK, shown to a person who may install apps. The answer is
+recorded on the tenant through the director
+(`PUT /v1/tenants/{t}/store-terms`, under `can_install_app`, written to
+`spec.storeTerms`), read back with `GET`, and carried in the usage statistics
+report (`tenants[].terms`). A new version asks again. Recorded, not
+enforced: nothing refuses a tenant that has not accepted.
 
 **Who acts for a tenant at the store.** A tenant is an organisation in the
 store's records, and an account is a person; the two are separate things.

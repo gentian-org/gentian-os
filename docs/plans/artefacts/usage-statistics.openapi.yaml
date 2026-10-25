@@ -226,6 +226,21 @@ components:
             The tenant's realm, `https://id.<cluster domain>/auth/realms/<realm>`:
             the issuer of the assertions its people's apps send a partner
             such as a store. Optional; added without raising `version`.
+        terms:
+          type: object
+          description: |
+            The store's terms the tenant accepted: which version and when,
+            as its App Store recorded it on the tenant (`spec.storeTerms`).
+            Optional: absent where the tenant has accepted none. Added
+            without raising `version`. Recorded, not enforced.
+          required: [version, acceptedAt]
+          properties:
+            version:
+              type: string
+              pattern: "^[A-Za-z0-9._-]{1,64}$"
+            acceptedAt:
+              type: string
+              format: date-time
         users:
           type: [integer, "null"]
           minimum: 0

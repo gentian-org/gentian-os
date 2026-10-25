@@ -1158,7 +1158,9 @@ By default the cluster tells a report address once a day what it runs: its
 tenants, how many accounts each has, and the apps installed through the App
 Store — no personal data. `./install.sh --no-usage-statistics` (or
 `GENTIAN_NO_USAGE_STATISTICS=1` in `install.env`) turns that off; nothing is then
-sent, and the App Store is not offered: no tenant has the App Store tile. What is sent, and where to read the
+sent, and there are no extra services: no App Store, Operations Console or
+Subscription Center (as with `--no-extra-services`) — for people who manage
+their own cluster at their own risk. What is sent, and where to read the
 last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 
 ### Which Crossplane resource types exist

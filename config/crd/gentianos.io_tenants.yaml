@@ -1241,6 +1241,28 @@ spec:
                       invited. Off by default; off, every account is made by an invitation.
                     type: boolean
                 type: object
+              storeTerms:
+                description: |-
+                  StoreTerms records that the tenant accepted the App Store's terms:
+                  which version, and when. Written by the director when a person who
+                  may install apps accepts them in the App Store, and carried in the
+                  usage statistics report. Recorded, not enforced: nothing on the
+                  cluster turns on it.
+                properties:
+                  acceptedAt:
+                    description: AcceptedAt is when they were accepted.
+                    format: date-time
+                    type: string
+                  version:
+                    description: |-
+                      Version is the version of the terms the store named when they were
+                      accepted.
+                    pattern: ^[A-Za-z0-9._-]{1,64}$
+                    type: string
+                required:
+                - acceptedAt
+                - version
+                type: object
             required:
             - displayName
             type: object

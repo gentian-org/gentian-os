@@ -1976,6 +1976,17 @@ components:
             account:
               $ref: "#/components/schemas/Url"
               description: Where a person manages their store account.
+        termsVersion:
+          type: string
+          pattern: "^[A-Za-z0-9._-]{1,64}$"
+          description: |
+            The version of the terms (`links.terms`) in force. A client asks
+            a tenant to accept them once per version, and asks again when
+            this changes; it records the acceptance on the cluster, where the
+            usage statistics report carries it. Recorded, not enforced: the
+            store refuses nothing for a tenant that has not accepted.
+            Absent when the store names no version or no terms. Optional;
+            added in 1.12.
     StoreCatalogue:
       type: object
       required: [name, url]
@@ -3255,6 +3266,7 @@ components:
           privacy: https://store.example/privacy
           support: https://store.example/support
           account: https://accounts.store.example/account
+        termsVersion: "2026-10"
     TenantServed:
       value:
         tenantUrl: https://acme.example

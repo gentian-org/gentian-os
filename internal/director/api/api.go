@@ -77,6 +77,8 @@ type Repository interface {
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantMailMode(ctx context.Context, tenant, mode string, meta gitops.Meta) (gitops.Result, error)
+	TenantStoreTerms(ctx context.Context, tenant string) (*gitops.StoreTerms, error)
+	SetTenantStoreTerms(ctx context.Context, tenant, version string, now time.Time, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantPartners(ctx context.Context, tenant string) ([]gitops.Partner, error)
 	TenantGroups(ctx context.Context, tenant string) ([]string, error)
@@ -477,6 +479,12 @@ func (s *Server) routes() {
 	// can_install_app -- and decides nothing itself (ui-restructure.md §2).
 	// Entered under can_enter, the relation that reaches the desktop at all.
 	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
+
+	// The App Store's terms, accepted once per version (spec.storeTerms):
+	// read by whoever sees the tenant, recorded by whoever may install apps
+	// in it -- the App Store asks that person before anything else.
+	s.guarded("GET /v1/tenants/{t}/store-terms", "can_view", tenantObject, s.tenantStoreTerms)
+	s.guarded("PUT /v1/tenants/{t}/store-terms", "can_install_app", tenantObject, s.acceptStoreTerms)
 
 	// No tiles here. What a person may open is the usher's to answer
 	// (internal/usher), for everybody who has a desktop and from a process
@@ -934,6 +942,39 @@ func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 		// know: the cluster's settings carry it too, under can_audit.
 		"platformVersionLine": backup.PlatformVersionLine,
 	})
+}
+
+// tenantStoreTerms answers the tenant's acceptance of the store's terms:
+// {"version", "acceptedAt"}, or {} when there is none.
+func (s *Server) tenantStoreTerms(w http.ResponseWriter, r *http.Request, _ call) {
+	terms, err := s.cfg.Repo.TenantStoreTerms(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if terms == nil {
+		s.json(w, http.StatusOK, map[string]any{})
+		return
+	}
+	s.json(w, http.StatusOK, terms)
+}
+
+// acceptStoreTerms records that the tenant accepts this version of the
+// store's terms, now: one commit, or "unchanged" for the version recorded.
+func (s *Server) acceptStoreTerms(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Version string `json:"version"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Version) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"version": "<the version of the terms the store names>"}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantStoreTerms(r.Context(), r.PathValue("t"), body.Version, time.Now(), c.meta)
+	if errors.Is(err, gitops.ErrInvalidTermsVersion) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
 }
 
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request, _ call) {

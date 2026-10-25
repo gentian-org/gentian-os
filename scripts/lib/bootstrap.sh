@@ -2239,8 +2239,10 @@ _claim_extra_services_lines() {
 # --no-extra-services, or GENTIAN_NO_EXTRA_SERVICES=0, into a claim that has
 # a catalogue section. A run that says neither leaves the claim as it is.
 _claim_record_extra_services() {
-    local claim="$1" tmp lines
-    case "${GENTIAN_NO_EXTRA_SERVICES:-}" in
+    local claim="$1" tmp lines said="${GENTIAN_NO_EXTRA_SERVICES:-}"
+    # --no-usage-statistics says no extra services as well.
+    [[ "${GENTIAN_NO_USAGE_STATISTICS:-}" == "1" ]] && said=1
+    case "${said}" in
         1)
             grep -qE '^    extraServices: *false *(#.*)?$' "${claim}" && return 0
             grep -qE '^  catalogue: *$' "${claim}" || return 0
@@ -2251,7 +2253,7 @@ _claim_record_extra_services() {
                 !done && /^  catalogue: *$/ { print lines; done = 1 }
             ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
             rm -f "${tmp}"
-            info "claims/cluster.yaml: recorded extraServices: false (--no-extra-services)."
+            info "claims/cluster.yaml: recorded extraServices: false (--no-extra-services or --no-usage-statistics)."
             ;;
         0)
             grep -qE '^    extraServices: *false *(#.*)?$' "${claim}" || return 0

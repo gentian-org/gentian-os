@@ -2549,9 +2549,17 @@ gentian_usage_statistics_enabled() {
 # GENTIAN_NO_EXTRA_SERVICES=0 says yes. A run that says neither keeps what
 # the Cluster claim records: spec.catalogue.extraServices: false is a
 # decision somebody made, and a later run without the flag must not undo it.
+#
+# A cluster without usage statistics (--no-usage-statistics, or turned off
+# earlier) gets none of them whatever else is said: the store's services are
+# for clusters that report.
 # =============================================================================
 gentian_extra_services_enabled() {
     local claim="${1:-}"
+    if [[ "${GENTIAN_NO_USAGE_STATISTICS:-}" == "1" || "$(gentian_usage_statistics_enabled)" == "false" ]]; then
+        echo false
+        return 0
+    fi
     case "${GENTIAN_NO_EXTRA_SERVICES:-}" in
         1) echo false; return 0 ;;
         0) echo true; return 0 ;;

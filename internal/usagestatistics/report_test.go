@@ -116,6 +116,9 @@ func tenants() []client.Object {
 			ObjectMeta: metav1.ObjectMeta{Name: "acme", UID: "0f8e7d6c-5b4a-4321-9876-0123456789ab"},
 			Spec: gentianov1alpha1.TenantSpec{
 				DisplayName: "Acme Widgets of Zurich",
+				StoreTerms: &gentianov1alpha1.TenantStoreTerms{
+					Version: "2026-10", AcceptedAt: metav1.NewTime(time.Date(2026, 10, 25, 8, 0, 0, 0, time.UTC)),
+				},
 				Apps: []gentianov1alpha1.TenantApp{
 					{
 						Profile: "nextcloud-base-ee", Digest: storeApp, Catalogue: "gentian",
@@ -247,6 +250,7 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 		"version", "sequence", "sentAt", "publicKey",
 		"cluster", "cluster.id", "cluster.url",
 		"tenants", "tenants.url", "tenants.uid", "tenants.issuer", "tenants.users",
+		"tenants.terms", "tenants.terms.version", "tenants.terms.acceptedAt",
 		"tenants.apps", "tenants.apps.coordinate", "tenants.apps.digest", "tenants.apps.users",
 		"tenants.apps.addons", "tenants.apps.addons.coordinate", "tenants.apps.addons.digest",
 		"tenants.apps.addons.users",
@@ -287,6 +291,14 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 	// Each by its unique id too, where it has one.
 	if report.Tenants[0].UID != "0f8e7d6c-5b4a-4321-9876-0123456789ab" || report.Tenants[1].UID != "" {
 		t.Errorf("uids = %q, %q", report.Tenants[0].UID, report.Tenants[1].UID)
+	}
+	// The App Store's terms where the tenant accepted them, and nothing
+	// where it did not.
+	if got := report.Tenants[0].Terms; got == nil || *got != (Terms{Version: "2026-10", AcceptedAt: "2026-10-25T08:00:00Z"}) {
+		t.Errorf("acme's terms = %+v", got)
+	}
+	if report.Tenants[1].Terms != nil || strings.Count(string(body), `"terms"`) != 1 {
+		t.Errorf("beta accepted nothing, and the body says %s", body)
 	}
 	if *report.Tenants[0].Users != 40 || *report.Tenants[1].Users != 3 {
 		t.Errorf("accounts = %d, %d", *report.Tenants[0].Users, *report.Tenants[1].Users)
