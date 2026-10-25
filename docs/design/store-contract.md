@@ -341,6 +341,7 @@ for the person (§6.1).
 | `GET /v1/tenant/access`, `POST …/{subject}/approve` and `…/decline` | signed in | Who manages the tenant; the account that holds it lets another manage it, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired |
 | `POST /v1/acquisitions` | signed in, managing the tenant | Acquire an app. `201` with a confirmation; or `202` while it waits for a checkout at the store, for an approval, or for the store's own confirmation; or `200` with the acquisition the tenant already has |
+| `POST /v1/acquisitions/free` | assertion, no account (1.13) | Acquire an app whose price model is `free` without registering (§6.1, *Free apps*). Answers as `POST /v1/acquisitions` |
 | `GET /v1/acquisitions/{id}` | signed in | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation. Its repository credential is in it only for an account that manages the tenant |
 | `POST /v1/acquisitions/{id}/credential` | signed in, managing the tenant | Replaces the repository credentials now (rotation) and answers the confirmation with the new ones |
 
@@ -499,8 +500,28 @@ notice and an OK, shown to a person who may install apps. The answer is
 recorded on the tenant through the director
 (`PUT /v1/tenants/{t}/store-terms`, under `can_install_app`, written to
 `spec.storeTerms`), read back with `GET`, and carried in the usage statistics
-report (`tenants[].terms`). A new version asks again. Recorded, not
-enforced: nothing refuses a tenant that has not accepted.
+report (`tenants[].terms`). A new version asks again. Nothing on the
+cluster turns on it; the store takes a free app without registration only
+for a tenant that accepted the version in force.
+
+**Free apps, without registration.** An app whose price model is `free`
+needs no account at the store: the tenant accepts the terms (above), and
+the app sends `POST /v1/acquisitions/free` with an assertion obtained as
+for every call, the tenant's `metadata.uid`, and the acceptance the tenant
+recorded. The store does not turn the assertion into an account. It checks
+it itself — the signature with the keys its issuer publishes, its audience
+(the store's realm alone), its expiry, its `jti` once — and holds the
+issuer and the uid to the latest usage statistics report naming the
+tenant: the signed report ties a realm to a tenant, so a cluster cannot
+claim another's realm and a request cannot claim another tenant. The
+acceptance is the report's, or the request's where the report has not
+caught up, and the store records which. The acquisition is recorded
+against the tenant uid and the pairwise subject; no name or address is
+sent, and nobody holds the tenant. Every other price model — `freemium`
+among them — and every other call need registration: a free acquisition
+is answered `403 registration-required` with the registration page for an
+app that is not free. This is the one call on which the store takes an
+assertion without a link (AD-17).
 
 **Who acts for a tenant at the store.** A tenant is an organisation in the
 store's records, and an account is a person; the two are separate things.
@@ -568,7 +589,8 @@ person            App Store app                      store                      
   │  browses            │  GET /v1/apps, …  (no token)  │                          │
   │────────────────────►│──────────────────────────────►│                          │
   │  "get this app"     │                               │                          │
-  │  registers at the store, once (§6.1); GET /v1/tenant│                          │
+  │  free: POST /v1/acquisitions/free, no registration  │                          │
+  │  else: registers at the store once (§6.1)           │                          │
   │────────────────────►│  POST /v1/acquisitions        │                          │
   │                     │──────────────────────────────►│                          │
   │                     │  201 confirmation             │   free, or no checkout   │

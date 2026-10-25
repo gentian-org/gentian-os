@@ -232,7 +232,10 @@ components:
             The store's terms the tenant accepted: which version and when,
             as its App Store recorded it on the tenant (`spec.storeTerms`).
             Optional: absent where the tenant has accepted none. Added
-            without raising `version`. Recorded, not enforced.
+            without raising `version`. With `uid` and `issuer`, what a store
+            holds a free acquisition without registration to (store API
+            1.13, `POST /v1/acquisitions/free`); nothing on the cluster turns
+            on it.
           required: [version, acceptedAt]
           properties:
             version:

@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.12"
+  version: "1.13"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -50,7 +50,7 @@ info:
     validate, or one for a tenant it does not serve, is ignored on an open
     read: the answer is the anonymous one, not an error.
 
-    **Signed-in calls** need a token: `GET /v1/tenant`, every
+    **Signed-in calls** need a token: `GET /v1/tenant`, every other
     `/v1/acquisitions` operation, and a request for support
     (`POST /v1/apps/{catalogue}/{app}/support-requests`). The token is a
     **partner assertion** (1.11, the security scheme `partnerAssertion`):
@@ -60,6 +60,15 @@ info:
     assertion into its own account of the person by the JWT bearer grant at
     its realm; the tenant a call is about is the issuer of the assertion,
     not a parameter.
+
+    **One call takes the assertion without an account** (1.13):
+    `POST /v1/acquisitions/free`, for an app whose price model is `free`.
+    The store checks the assertion itself — its issuer's keys, its
+    audience, its expiry, its `jti` once — and holds its issuer and the
+    tenant `uid` in the body to the usage statistics reports it has
+    received, and the tenant's acceptance of its terms to the version in
+    force. No account is made; the acquisition is recorded against the
+    tenant and the pairwise subject.
 
     ## Accounts and tenants
 
@@ -161,6 +170,8 @@ info:
     | 401 | `unauthenticated` | Signed-in calls only. No assertion, one the store refuses, or a person not linked yet: `WWW-Authenticate: Partner link=…` |
     | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
     | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
+    | 403 | `registration-required` | `POST /v1/acquisitions/free` only (1.13). The app is not free; `WWW-Authenticate` names the registration page |
+    | 403 | `terms-not-accepted` | `POST /v1/acquisitions/free` only (1.13). The tenant has not accepted the store's terms in force |
     | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why |
     | 404 | `not-found` | No such app, acquisition, support offer, or page |
     | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
@@ -1300,6 +1311,174 @@ paths:
           $ref: "#/components/responses/Internal"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/acquisitions/free:
+    post:
+      tags: [acquisitions]
+      operationId: acquireFree
+      summary: Acquire a free app for this tenant, without registering
+      description: |
+        Added in 1.13, with the feature `free-acquisition`. Acquires an app
+        whose price model is `free` for the tenant whose realm issued the
+        assertion, with no account at the store: the person has not
+        registered, and nothing is made at the store for them. The store
+        stays the point of record of every tenant that takes an app from it,
+        under its terms.
+
+        The bearer is a partner assertion obtained exactly as for a
+        signed-in call (`partnerAssertion`). The store does not turn it into
+        an account; it checks it itself, and accepts it only when all of
+        these hold:
+
+        1. The entry's price model is `free` (`Price.model`). Any other —
+           `freemium` among them — is answered `403`
+           `registration-required`, with the registration page in
+           `WWW-Authenticate: Partner link="…"`; the client then goes the
+           signed-in way (`POST /v1/acquisitions`).
+        2. The assertion's signature verifies with a key its issuer
+           publishes: the issuer's OpenID discovery document
+           (`<iss>/.well-known/openid-configuration`) names its `jwks_uri`,
+           both `https`. A store caches the keys for minutes and reads them
+           again for a key id it does not know.
+        3. The latest usage statistics report naming the tenant `uid` sent
+           in the body names this issuer for it (`tenants[].uid`,
+           `tenants[].issuer`), on the reporting cluster's own domain. The
+           signed report is what ties a realm to a tenant: a cluster
+           cannot claim another cluster's realm, and a body cannot claim
+           another tenant. Otherwise `403` `tenant-refused`, reason
+           `no-reports-for-tenant`.
+        4. Its `aud` is the store's realm (`partner.issuer` of
+           `GET /v1/meta`) and nothing else; it has not expired (a few
+           seconds of skew are allowed); its `jti` has not been seen before
+           — each assertion is taken once. Otherwise `401`.
+        5. The tenant has accepted the terms in force (`termsVersion` of
+           `GET /v1/meta`): the report says so (`tenants[].terms.version`),
+           or, where the report has not caught up, the body does (`terms`)
+           and the store records that this acceptance came with the
+           request. Otherwise `403` `terms-not-accepted`. A store that
+           names no terms version takes no acquisition this way.
+
+        The acquisition is recorded against the tenant `uid` and the
+        assertion's pairwise subject; nothing else about the person is
+        sent or kept. The answers are those of `POST /v1/acquisitions`:
+        `201` confirmed, `202` while the store's own confirmation is
+        outstanding, `200` with the tenant's live acquisition of the
+        coordinate. A client asks again with this call and a new assertion,
+        not with `GET /v1/acquisitions/{id}`, which needs an account. A
+        confirmation answered here carries its repository credential: it is
+        the tenant's, and the tenant has nobody else to hand it to.
+      security:
+        - partnerAssertion: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FreeAcquisitionRequest"
+            examples:
+              free:
+                summary: A free app, with the acceptance the tenant recorded
+                value:
+                  coordinate: gentian/xwiki-ce
+                  tenant: 3f2b9c1e-7d4a-4e0b-9a51-2c8d6f0e1b7a
+                  terms:
+                    version: "2026-10"
+                    acceptedAt: "2026-10-24T09:12:00Z"
+      responses:
+        "200":
+          description: The tenant's existing live acquisition of this coordinate.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+        "201":
+          description: Acquired. The acquisition is `confirmed` and carries its confirmation.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+              examples:
+                free:
+                  $ref: "#/components/examples/AcquisitionFree"
+        "202":
+          description: |
+            Not decided yet: `pending`, waiting for the store's own
+            `confirmation`. The client asks again with this call after
+            `Retry-After`.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          description: |
+            No assertion, or one the store does not take: its signature does
+            not verify with its issuer's keys, its audience is not the
+            store's realm, it has expired, or it was taken before.
+          headers:
+            WWW-Authenticate:
+              description: '`Bearer error="invalid_token"`.'
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: |
+            `registration-required`: the entry is not free; the registration
+            page is in `WWW-Authenticate: Partner link="…"`.
+            `tenant-refused` (reason `no-reports-for-tenant`): no usage
+            statistics report names this tenant with this realm.
+            `terms-not-accepted`: the tenant has not accepted the terms in
+            force, or the store names none.
+          headers:
+            WWW-Authenticate:
+              description: '`Partner link="<address>"` with `registration-required`.'
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                notFree:
+                  value:
+                    type: urn:gentian:store:problem:registration-required
+                    code: registration-required
+                    title: Register with the store to acquire this app
+                    status: 403
+                    detail: gentian/nextcloud-base-ee is not free. Register with the store, then acquire it.
+                terms:
+                  value:
+                    type: urn:gentian:store:problem:terms-not-accepted
+                    code: terms-not-accepted
+                    title: Accept the store's terms first
+                    status: 403
+                    detail: The tenant has not accepted version 2026-10 of the store's terms.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/NotAcquirable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/acquisitions/{id}:
     parameters:
       - $ref: "#/components/parameters/AcquisitionId"
@@ -1945,6 +2124,9 @@ components:
             `support`: apps may carry support offers (`support` on an app)
             and a signed-in person may request one
             (`POST /v1/apps/{catalogue}/{app}/support-requests`).
+            `free-acquisition` (1.13): a tenant takes an app whose price
+            model is `free` without registering
+            (`POST /v1/acquisitions/free`).
           items:
             type: string
         catalogues:
@@ -1983,8 +2165,10 @@ components:
             The version of the terms (`links.terms`) in force. A client asks
             a tenant to accept them once per version, and asks again when
             this changes; it records the acceptance on the cluster, where the
-            usage statistics report carries it. Recorded, not enforced: the
-            store refuses nothing for a tenant that has not accepted.
+            usage statistics report carries it. A store that offers
+            `free-acquisition` takes a free app without registration only
+            for a tenant that accepted this version (1.13); a registered
+            account's calls do not turn on it.
             Absent when the store names no version or no terms. Optional;
             added in 1.12.
     StoreCatalogue:
@@ -2904,6 +3088,39 @@ components:
             tenant's administrator chose, or the tenant's users when it is
             for everybody. A priced app's checkout is for that many seats,
             at the price per seat. Absent: the store decides, as before.
+    FreeAcquisitionRequest:
+      type: object
+      description: Added in 1.13. The body of `POST /v1/acquisitions/free`.
+      required: [coordinate, tenant]
+      additionalProperties: false
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        version:
+          type: string
+          description: The version to confirm. Absent means the latest the store lists.
+        tenant:
+          type: string
+          pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
+          description: |
+            The tenant's `metadata.uid`, as the cluster's usage statistics
+            report names it (`tenants[].uid`). The store holds it, with the
+            assertion's issuer, to that report.
+        terms:
+          type: object
+          description: |
+            The tenant's acceptance of the store's terms as the cluster
+            recorded it (`spec.storeTerms`). Taken where the latest report
+            does not carry it yet, and recorded as stated in the request.
+          required: [version]
+          additionalProperties: false
+          properties:
+            version:
+              type: string
+              pattern: "^[A-Za-z0-9._-]{1,64}$"
+            acceptedAt:
+              type: string
+              format: date-time
     AcquisitionStatus:
       type: string
       description: |
