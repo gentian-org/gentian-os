@@ -10,7 +10,8 @@
 #   - a new Cluster claim names gentian:platform:admin for admin, and no group
 #     for any other role;
 #   - a claim that names its security officers the earlier way
-#     (platformAccess.securityOfficers) is rewritten as role holders;
+#     (platformAccess.securityOfficers) is rewritten as role holders, and a
+#     key that rewrite leaves with nothing under it (platformAccess) goes;
 #   - a claim that names a group for a role now held by name, and a tenant
 #     that let its administrators approve (spec.perimeter.adminsApprove), are
 #     carried over to role holders from Keycloak's members, and whoever
@@ -56,6 +57,7 @@ env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=
 CLAIM="${CO}/clusters/c1/kernel/claims/cluster.yaml"
 roles() { /usr/bin/python3 -c 'import sys, yaml; r = yaml.safe_load(open(sys.argv[1]))["spec"]["platformRoles"]; print(sorted(r))' "${CLAIM}" 2>/dev/null; }
 if [[ -f "${CLAIM}" ]]; then
+    cp "${CLAIM}" "${SANDBOX}/claim.orig"
     is "a new claim names the administrators' group and no other" "$(roles)" "['admin']"
 else
     bad "step 0 wrote no Cluster claim" "$(tail -n 20 "${SANDBOX}/scaffold.log")"
@@ -79,6 +81,28 @@ EOF
         >"${SANDBOX}/scaffold2.log" 2>&1
     holders="$(/usr/bin/python3 -c 'import sys, yaml; a = yaml.safe_load(open(sys.argv[1]))["spec"]["platformAccess"]; print(sorted(a), a["roleHolders"])' "${CLAIM}" 2>&1)"
     is "the security officers become role holders" "${holders}" "['roleHolders'] [{'role': 'securityOfficer', 'tenant': 'test', 'subject': '7d0f3c2e', 'username': 'admin@test.example'}]"
+fi
+
+# --- a key the rewrite leaves with nothing under it -------------------------
+# A claim whose platformAccess held only brokeredSecondFactor is left with a
+# bare key once the switch is removed: null, where the schema wants an
+# object, and Argo applies none of the claim. Step 0 removes the key, and
+# heals a claim an earlier install already left that way.
+bare_access() { # <what> <lines appended to the claim>
+    cp "${SANDBOX}/claim.orig" "${CLAIM}"
+    printf '%s\n' "$2" >> "${CLAIM}"
+    env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=k.example \
+        GENTIAN_DEPLOYMENTS_PATH="${CO}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 GENTIAN_OS_BRANCH=develop \
+        bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; scaffold_cluster_deployment' \
+        >"${SANDBOX}/scaffold3.log" 2>&1
+    is "$1" "$(/usr/bin/python3 -c 'import sys, yaml; s = yaml.safe_load(open(sys.argv[1]))["spec"]; print("platformAccess" in s, sorted(s["platformRoles"]))' "${CLAIM}" 2>&1)" "False ['admin']"
+}
+if [[ -f "${SANDBOX}/claim.orig" ]]; then
+    bare_access "a platformAccess that held only brokeredSecondFactor goes with it" '
+  platformAccess:
+    brokeredSecondFactor: off'
+    bare_access "a bare platformAccess left by an earlier install is removed" '
+  platformAccess:'
 fi
 
 # --- the carry-over: groups and the tenant's switch, as role holders ---------

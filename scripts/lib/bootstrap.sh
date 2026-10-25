@@ -2038,6 +2038,49 @@ _claim_security_officers_to_role_holders() {
     return 0
 }
 
+# _claim_drop_empty_mappings <claim file>
+#
+# A key of the claim's spec with nothing under it is null, and the schema
+# wants an object there: Argo's diff of the whole claim fails and nothing of
+# it reaches the cluster. A rewrite that removes a key's last child leaves
+# just that (platformAccess, once its brokeredSecondFactor was retired), so
+# step 0 runs this after every rewrite: each key below spec with neither a
+# value nor a child goes, and with it a parent it empties in turn. Returns 1
+# when there was none.
+_claim_drop_empty_mappings() {
+    local file="$1" tmp
+    [[ -f "${file}" ]] || return 1
+    tmp="$(mktemp)"
+    awk '
+        function indent(s) { match(s, /^ */); return RLENGTH }
+        { line[NR] = $0; keep[NR] = 1 }
+        END {
+            n = NR; dropped = 0
+            do {
+                changed = 0
+                for (i = 1; i <= n; i++) {
+                    if (!keep[i] || line[i] !~ /^  +[A-Za-z_][A-Za-z0-9_-]*:[ \t]*(#.*)?$/) continue
+                    k = indent(line[i]); empty = 1
+                    for (j = i + 1; j <= n; j++) {
+                        if (!keep[j] || line[j] ~ /^[ \t]*(#.*)?$/) continue
+                        d = indent(line[j])
+                        empty = !(d > k || (d == k && substr(line[j], d + 1, 2) == "- "))
+                        break
+                    }
+                    if (empty) { keep[i] = 0; changed = 1; dropped++ }
+                }
+            } while (changed)
+            last = n
+            if (dropped) while (last > 0 && (!keep[last] || line[last] ~ /^[ \t]*$/)) last--
+            for (i = 1; i <= last; i++) if (keep[i]) print line[i]
+            exit (dropped ? 0 : 1)
+        }
+    ' "${file}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
+    mv "${tmp}" "${file}"
+    info "Rewrote ${file}: removed keys left with nothing under them (a null where the schema wants an object)."
+    return 0
+}
+
 # _claim_carry_over_role_holders <kernel_dir> <cluster>
 #
 # securityOfficer, auditor, serviceAdmin and sharedAppsAdmin are held by name
@@ -2777,6 +2820,7 @@ EOF
     _remove_retired_suze_claim "${kernel_dir}" && generated=1
     _claim_security_officers_to_role_holders "${kernel_dir}" && generated=1
     _claim_carry_over_role_holders "${kernel_dir}" "${cluster}" && generated=1
+    _claim_drop_empty_mappings "${kernel_dir}/claims/cluster.yaml" && generated=1
 
     # The deployments repository's own credential.
     #
