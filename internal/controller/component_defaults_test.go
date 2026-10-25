@@ -167,3 +167,107 @@ func keys(m map[string]gentianov1alpha1.Component) []string {
 	}
 	return out
 }
+
+// defaultPlaced is a Component the tenant reconciler placed for a profile.
+func defaultPlaced(tenant *gentianov1alpha1.Tenant, name string) *gentianov1alpha1.Component {
+	c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Namespace: tenantNamespaceName(tenant),
+		Labels: map[string]string{componentOriginLabel: componentOriginDefault},
+	}}
+	c.Spec.ProfileRef.Name = name
+	c.Spec.Class = gentianov1alpha1.ComponentClassApp
+	return c
+}
+
+func defaultNames(t *testing.T, c client.Client, tenant *gentianov1alpha1.Tenant) map[string]bool {
+	t.Helper()
+	list := &gentianov1alpha1.ComponentList{}
+	if err := c.List(context.Background(), list, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, comp := range list.Items {
+		out[comp.Name] = true
+	}
+	return out
+}
+
+// The placement is declarative: a Component the operator placed that the
+// profiles no longer give the tenant is taken away -- a platform-only
+// component left in a user tenant by an earlier placement, one whose profile
+// left the catalogue, one whose declaration was withdrawn. Nothing else could
+// remove it: it is in no tenant's manifest. What a tenant installed, and a
+// Component without the label, stay.
+func TestADefaultTheTenantIsNoLongerGivenIsRemoved(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	console := profileFixture("operations-console", false, gentianov1alpha1.ComponentClassApp)
+	console.Spec.DefaultForPlatform = true
+	installed := defaultPlaced(tenant, "nextcloud")
+	installed.Labels[componentOriginLabel] = componentOriginInstall
+	unlabelled := defaultPlaced(tenant, "legacy")
+	unlabelled.Labels = nil
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), console,
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+		profileFixture("withdrawn", false, gentianov1alpha1.ComponentClassApp),
+		profileFixture("nextcloud", false, gentianov1alpha1.ComponentClassApp),
+		defaultPlaced(tenant, "desktop"),
+		defaultPlaced(tenant, "operations-console"),
+		defaultPlaced(tenant, "withdrawn"),
+		defaultPlaced(tenant, "gone-from-the-catalogue"),
+		installed, unlabelled,
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel"}
+	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	got := defaultNames(t, c, tenant)
+	want := map[string]bool{"desktop": true, "nextcloud": true, "legacy": true}
+	if len(got) != len(want) {
+		t.Fatalf("components = %v, want %v", got, want)
+	}
+	for name := range want {
+		if !got[name] {
+			t.Fatalf("components = %v, want %v", got, want)
+		}
+	}
+
+	// In the platform tenant the console is what the profile asks for.
+	platform := platformTenantFixture()
+	c2 := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		platform.DeepCopy(), console.DeepCopy(), defaultPlaced(platform, "operations-console"),
+	).Build()
+	r2 := &TenantReconciler{Client: c2, Scheme: scheme, KernelRealm: "kernel"}
+	if err := r2.ensureDefaultComponents(context.Background(), platform); err != nil {
+		t.Fatal(err)
+	}
+	if !defaultNames(t, c2, platform)["operations-console"] {
+		t.Fatal("the platform tenant's console was removed")
+	}
+}
+
+// A profile annotated as needing usage statistics is placed nowhere on a
+// cluster that does not report, and its placed Components are removed;
+// with reporting on it is placed as declared.
+func TestAProfileThatNeedsUsageStatisticsFollowsTheReport(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	platform := platformTenantFixture()
+	console := profileFixture("operations-console", false, gentianov1alpha1.ComponentClassApp)
+	console.Spec.DefaultForPlatform = true
+	console.Annotations = map[string]string{requiresUsageStatisticsAnnotation: "true"}
+	for _, reporting := range []bool{true, false} {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			platform.DeepCopy(), console.DeepCopy(), defaultPlaced(platform, "operations-console"),
+		).Build()
+		r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: reporting}
+		if err := r.ensureDefaultComponents(context.Background(), platform); err != nil {
+			t.Fatal(err)
+		}
+		if got := defaultNames(t, c, platform)["operations-console"]; got != reporting {
+			t.Fatalf("reporting %v: console present = %v", reporting, got)
+		}
+	}
+}

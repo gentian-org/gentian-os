@@ -396,8 +396,8 @@ _default_profile_is_extra_service() {
 # _default_extra_services_remove <catalogue dir> -- without the extra services,
 # the profiles an earlier run placed for them leave the cluster's catalogue:
 # the profile, its bundle patch and their lines in the kustomization. The
-# ProfileBuilds stay: a tenant that runs a build keeps it. A Component the
-# operator placed in a tenant is not removed by this, as for any profile.
+# ProfileBuilds stay: a tenant that runs a build keeps it. The Components the
+# operator placed of them go once the profiles do (ensureDefaultComponents).
 _default_extra_services_remove() {
     local dir="$1" name kust tmp removed=""
     kust="${dir}/kustomization.yaml"
