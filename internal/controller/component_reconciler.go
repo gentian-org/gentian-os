@@ -476,6 +476,19 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// the Composition's, and nothing of them is written here as well.
 	composed := composedDelivery(profile)
 
+	// The system engines it declares, before anything that needs one: a
+	// component's first install is what asks for an engine that was not
+	// running, and until the engine answers the component waits under a
+	// condition that names it rather than failing on a store that is not
+	// there (system_engines.go).
+	if engine, err := systemEngineWaiting(ctx, r.Client, profile); err != nil {
+		return ctrl.Result{}, err
+	} else if engine != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonSystemEngineNotReady,
+			fmt.Sprintf("waiting for the system engine %s, which this component is the first to declare or which is not ready yet", engine),
+			componentRequeue)
+	}
+
 	// Requirements first: a chart whose database does not exist yet is not
 	// installed, it is waited for.
 	if !composed && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {

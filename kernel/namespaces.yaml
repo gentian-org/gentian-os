@@ -54,7 +54,11 @@ kernel:
 # these a cluster runs depends on what the claim declares, and the installer
 # does not read the claim. The four below are unconditional because every
 # cluster serves tenants; mail and LLM are conditional and are not built yet
-# (implementation-plan.md S9).
+# (implementation-plan.md S9). The namespaces are; the engines in
+# system-mariadb and system-cache are composed only once a component declares
+# one (the operator's system-engines set), because Argo CD syncs each engine's
+# values and credential into its namespace and cannot follow one that comes
+# and goes.
 #
 # The composition in crossplane/compositions/cluster-default.yaml is what
 # creates them. lint-namespace-layout.sh asserts this list and that one agree,

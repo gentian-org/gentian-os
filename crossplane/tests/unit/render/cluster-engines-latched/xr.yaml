@@ -1,0 +1,33 @@
+# Engines are latched: one composed already stays composed whatever the
+# operator's set says, until the set says "purge".
+#
+# Both MariaDB and Redis were composed before. The set (required-resources)
+# names neither as wanted -- as after the last component that declared them
+# went, or before the operator has written it -- and marks the cache "purge",
+# which the operator writes only when a person asked and nothing declares it.
+# MariaDB stays; Redis goes.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  compositeDeletePolicy: Background
+  resourceRefs: []

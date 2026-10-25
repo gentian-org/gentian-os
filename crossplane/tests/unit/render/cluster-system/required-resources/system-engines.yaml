@@ -1,0 +1,13 @@
+# The operator's set of the system engines something declares
+# (internal/controller/system_engines.go). A component declares MariaDB and
+# nothing declares a cache, so the MariaDB Release is composed and the Redis
+# Release is not; SeaweedFS is composed on every cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: system-engines
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: system-engines
+data:
+  mariadb: wanted

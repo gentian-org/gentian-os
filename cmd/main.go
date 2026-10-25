@@ -473,6 +473,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The system engines something on this cluster declares, for the
+	// Cluster composition to compose (internal/controller/system_engines.go).
+	if err := (&controller.SystemEnginesReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Namespace:   envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Recorder:    mgr.GetEventRecorderFor("system-engines"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SystemEngines")
+		os.Exit(1)
+	}
+
 	if err := (&controller.ConciergeLookupReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),

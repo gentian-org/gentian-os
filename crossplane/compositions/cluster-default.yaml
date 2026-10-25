@@ -10,6 +10,31 @@ spec:
     kind: XCluster
   mode: Pipeline
   pipeline:
+    # The system engines something on this cluster declares, as the operator
+    # keeps them (internal/controller/system_engines.go): one key per engine,
+    # "wanted" or "purge". minMatch 0, because the operator writes it only
+    # once it runs; until then an engine is composed only when the claim says
+    # always or when it is composed already, which is the latch below.
+    - step: fetch-system-engines
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ConfigMap
+              into: systemEngines
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: system-engines
+
     - step: render-cluster-resources
       functionRef:
         name: function-go-templating
@@ -73,7 +98,8 @@ spec:
                  exists before any claim does.
 
                  The four are unconditional because every cluster serves
-                 tenants. system-mail and system-llm are conditional on the
+                 tenants; the engines in two of them are not (the Releases
+                 below). system-mail and system-llm are conditional on the
                  claim and are not built yet; until they are, both opt-ins are
                  refused at admission by the XRD, so no claim can ask for a
                  namespace that would stay empty.
@@ -151,16 +177,45 @@ spec:
                  (namespace-cleanup.md §2.2): it held only kernel databases,
                  and those are on kernel-postgres in kernel-data now. */}}
             {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
+            {{- /* Which engines run (app-authorization.md §3). SeaweedFS
+                 always: it is the platform's own object store, where every
+                 backup, bundle and export is written whether or not an app
+                 takes a bucket. MariaDB and Redis on demand: composed when
+                 the operator's set says a component declares one, or when the
+                 claim's systemServices.always names it.
+
+                 And kept once composed. An engine already composed stays
+                 until the set says "purge", which the operator writes only
+                 when a person asked and no component declares the engine. A
+                 set that is missing, empty or stale is therefore never a
+                 reason to take an engine away: its data may be all that is
+                 left of a removed app, and a Release that goes takes its
+                 StatefulSet with it.
+
+                 The namespaces are not conditional. Each engine's values,
+                 credential and NetworkPolicy are synced into its namespace
+                 by the 08-data-plane ApplicationSet, and an Argo CD
+                 Application with no namespace to sync into fails and is not
+                 retried against the same commit. What is composed on demand
+                 is the engine itself. */}}
+            {{- $extraRes  := default dict (index .context "apiextensions.crossplane.io/extra-resources") }}
+            {{- $seList    := dig "systemEngines" list $extraRes }}
+            {{- $seData    := dig "data" dict (index (append $seList dict) 0) }}
+            {{- $alwaysFns := default list (dig "systemServices" "always" list $spec) }}
+            {{- $obsEngines := default dict .observed.resources }}
             {{- /* The ConfigMap names below carry no stage. A cluster has one
                  stage (namespace-cleanup.md §2.2) and the Cluster claim does
                  not carry it, so a name with a stage in it could only ever be
                  right on a dev cluster -- and would fail as a Release that
                  cannot find its values. */}}
             {{- range $e := (list
-                  (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m")
-                  (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m")
-                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0-gentian.1" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m")
+                  (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m" "onDemand" true)
+                  (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m" "onDemand" true)
+                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0-gentian.1" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m" "onDemand" false)
                ) }}
+            {{- $mark   := dig $e.fn "" $seData }}
+            {{- $engine := or (not $e.onDemand) (has $e.fn $alwaysFns) (eq $mark "wanted") (and (hasKey $obsEngines (printf "%s-release" $e.chart)) (ne $mark "purge")) }}
+            {{- if $engine }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release
@@ -202,6 +257,7 @@ spec:
                   {{- end }}
               providerConfigRef:
                 name: kubernetes
+            {{- end }}
             {{- end }}
 
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}

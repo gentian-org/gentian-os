@@ -1,0 +1,30 @@
+# The claim may say an engine is always there, for a cluster that wants it
+# ready before the first install: MariaDB is composed with no set at all and
+# nothing composed before.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  systemServices:
+    always: ["mariadb"]
+  compositeDeletePolicy: Background
+  resourceRefs: []
