@@ -218,14 +218,14 @@ Other options:
                         through the App Store. No personal data. Off, nothing
                         is sent and there are no extra services (as with
                         --no-extra-services): no App Store, Operations Console
-                        or Subscription Center. For people who manage their
+                        or Aluvian Center. For people who manage their
                         own cluster at their own risk. The same as
                         GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
                         where to put it so a later run does not turn it back on
   --no-extra-services   leave out the store's extra services, which a cluster
                         otherwise gets from the store's catalogue: the
                         Operations Console (platform tenant), the App Store app
-                        and the Subscription Center (every other tenant, new
+                        and the Aluvian Center (every other tenant, new
                         ones included, while the cluster offers a store),
                         and the store's vendor as every tenant's partner.
                         Recorded on the Cluster claim (spec.catalogue.

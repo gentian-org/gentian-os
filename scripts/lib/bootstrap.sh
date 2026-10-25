@@ -2230,7 +2230,7 @@ _claim_catalogue_section() {
 # _claim_extra_services_lines -- the claim's record of --no-extra-services,
 # two lines under spec.catalogue.
 _claim_extra_services_lines() {
-    printf '    # No Operations Console, App Store app or Subscription Center from the\n'
+    printf '    # No Operations Console, App Store app or Aluvian Center from the\n'
     printf '    # store'"'"'s catalogue (--no-extra-services). Remove to have them again.\n'
     printf '    extraServices: false\n'
 }
@@ -2259,7 +2259,7 @@ _claim_record_extra_services() {
             grep -qE '^    extraServices: *false *(#.*)?$' "${claim}" || return 0
             tmp="$(mktemp)"
             awk '
-                /^    # No Operations Console, App Store app or Subscription Center from the$/ { next }
+                /^    # No Operations Console, App Store app or (Aluvian|Subscription) Center from the$/ { next }
                 /^    # store.s catalogue \(--no-extra-services\)\. Remove to have them again\.$/ { next }
                 /^    extraServices: *false *(#.*)?$/ { next }
                 { print }
@@ -2285,7 +2285,7 @@ _claim_partners_section() {
     local issuer
     issuer="$(gentian_store_partner_issuer)"
     printf '  # The store'"'"'s vendor is a partner of every tenant (AD-17), with the\n'
-    printf '  # store'"'"'s extra services: the App Store app and the Subscription Center\n'
+    printf '  # store'"'"'s extra services: the App Store app and the Aluvian Center\n'
     printf '  # act for the person signed in there, with a pairwise subject only.\n'
     printf '  # --no-extra-services leaves it out.\n'
     printf '  partners:\n'
@@ -3458,7 +3458,7 @@ print_roles_summary() {
 # of a profile in a catalogue (<catalogue>/profiles/<name>.yaml), optionally
 # pinned with @sha256:<digest>. The default is the store's extra services from
 # its catalogue: the Operations Console, the App Store app and the
-# Subscription Center. --no-extra-services leaves those out, and takes them
+# Aluvian Center. --no-extra-services leaves those out, and takes them
 # away again if an earlier run placed them; --disable-api-extensions writes
 # none.
 #

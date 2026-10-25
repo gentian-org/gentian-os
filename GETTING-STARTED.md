@@ -741,7 +741,7 @@ on the Cluster claim (`spec.catalogue.storeUrl`,
 and installs through the director as the person signed in.
 
 The App Store app comes from the store's catalogue (`catalogue.aluvian.io`),
-with the Subscription Center beside it and the Operations Console in the
+with the Aluvian Center beside it and the Operations Console in the
 platform tenant: step 0 places the three profiles, the *extra services*,
 unless `./install.sh --no-extra-services` (recorded on the claim as
 `spec.catalogue.extraServices: false`) leaves them out. A tenant has the App
@@ -768,7 +768,7 @@ order:
 
 1. *Is the app placed?* `kubectl get component -A | grep app-store` shows
    one for the tenant. If it does not, first `kubectl get componentprofile
-   app-store`: none means step 0 did not place it (`--no-extra-services`, or
+   app-store-pe`: none means step 0 did not place it (`--no-extra-services`, or
    the catalogue's index did not list it yet; step 0 says which). Otherwise:
 
    ```bash
@@ -1159,7 +1159,7 @@ tenants, how many accounts each has, and the apps installed through the App
 Store — no personal data. `./install.sh --no-usage-statistics` (or
 `GENTIAN_NO_USAGE_STATISTICS=1` in `install.env`) turns that off; nothing is then
 sent, and there are no extra services: no App Store, Operations Console or
-Subscription Center (as with `--no-extra-services`) — for people who manage
+Aluvian Center (as with `--no-extra-services`) — for people who manage
 their own cluster at their own risk. What is sent, and where to read the
 last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 
