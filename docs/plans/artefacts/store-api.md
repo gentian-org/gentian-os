@@ -27,6 +27,16 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-25** (1.13, additive: a 1.12 client is answered as before)
+
+1. **`POST /v1/acquisitions/free`**, with the feature `free-acquisition`: a
+   tenant takes an app whose price model is `free` without registering
+   (§6, *POST /v1/acquisitions/free*). The store checks the assertion
+   itself and holds its issuer and the tenant `uid` to the usage
+   statistics reports, and the tenant's acceptance to the terms in force.
+2. **New problem codes** `registration-required` and `terms-not-accepted`
+   (§8).
+
 **2026-10-24** (1.11, not additive: signed-in calls change)
 
 1. **The token of a signed-in call is a partner assertion** (§3): the App
@@ -355,6 +365,7 @@ present. A type written `string \| null` is present and may be `null`.
 | `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired; filter `status` |
 | `POST /v1/acquisitions` | signed in | Acquire an app: `201` decided, `202` waiting (checkout, approval, confirmation), `200` already acquired |
+| `POST /v1/acquisitions/free` | assertion, no account (1.13) | Acquire an app whose price model is `free` without registering; answers as `POST /v1/acquisitions` |
 | `GET /v1/acquisitions/{id}` | signed in | One acquisition; once confirmed, its confirmation with the repository credential |
 | `POST /v1/acquisitions/{id}/credential` | signed in | Replaces the repository credentials now; answers the confirmation with the new ones |
 
@@ -978,6 +989,39 @@ a separate window; the person pays there, at the store, signed in to the
 store. The app then asks `GET /v1/acquisitions/{id}` for the outcome. The
 store does not tell the cluster: there is no callback.
 
+### POST /v1/acquisitions/free
+
+Added in 1.13, with the feature `free-acquisition`. A tenant takes an app
+whose price model is `free` without anybody registering with the store. The
+store stays the point of record of every tenant that takes an app from it,
+under its terms; it makes no account.
+
+```jsonc
+{
+  "coordinate": "gentian/xwiki-ce",
+  "tenant": "3f2b9c1e-7d4a-4e0b-9a51-2c8d6f0e1b7a",   // the tenant's metadata.uid
+  "terms": {"version": "2026-10", "acceptedAt": "2026-10-24T09:12:00Z"}  // as spec.storeTerms records it
+}
+```
+
+The bearer is a partner assertion obtained as for any signed-in call (§3).
+The store does not post it to its realm; it checks it itself and takes it
+only when all of these hold:
+
+| Rule | Otherwise |
+|---|---|
+| The entry's price model is `free`. `freemium` and every priced model go the signed-in way | `403 registration-required`, `WWW-Authenticate: Partner link="…"` |
+| The signature verifies with a key the issuer publishes (`<iss>/.well-known/openid-configuration` → `jwks_uri`, both `https`; cached for minutes, read again for an unknown key id) | `401` |
+| The latest usage statistics report naming the tenant `uid` names this issuer for it, on the reporting cluster's own domain | `403 tenant-refused`, `no-reports-for-tenant` |
+| `aud` is exactly the store's realm (`partner.issuer`); not expired; `jti` not seen before | `401` |
+| The tenant accepted the terms in force: the report says so, or — where the report has not caught up — the body does, and the store records that the acceptance came with the request. A store with no `termsVersion` takes nothing this way | `403 terms-not-accepted` |
+
+The acquisition is recorded against the tenant `uid` and the pairwise
+subject. The answers are those of `POST /v1/acquisitions`; while one is
+`pending` the client asks again with this call and a new assertion, since
+`GET /v1/acquisitions/{id}` needs an account. A confirmation answered here
+carries its repository credential: it is the tenant's.
+
 ### GET /v1/acquisitions/{id}
 
 The outcome. While `pending` the answer carries `Retry-After`, which the app
@@ -1222,6 +1266,8 @@ Every answer with a status of 400 or above is `application/problem+json`
 | 401 | `unauthenticated` | Signed-in calls only. No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer`. The app signs the person in again |
 | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
 | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
+| 403 | `registration-required` | `POST /v1/acquisitions/free` only. The app is not free; the registration page is in `WWW-Authenticate: Partner link=…` |
+| 403 | `terms-not-accepted` | `POST /v1/acquisitions/free` only. The tenant has not accepted the store's terms in force |
 | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why. Never from `GET /v1/tenant`, never from an open read |
 | 404 | `not-found` | No such app, acquisition, support offer or page — or one that is another tenant's |
 | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |

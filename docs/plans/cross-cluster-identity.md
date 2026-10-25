@@ -328,6 +328,17 @@ by the App Store app — falls away; requesting an assertion is a token
 exchange at the tenant's own realm, which every partner app does, and holds
 no secret.
 
+**One call without a link.** A free app is acquired without registering
+(`POST /v1/acquisitions/free`, store contract §6.1): the store takes the
+same assertion without the JWT grant, for that call alone. It verifies the
+assertion itself against the keys the issuer publishes — audience, expiry
+and `jti` as above — and accepts the issuer only for the tenant the latest
+signed usage statistics report names it for (`tenants[].uid`,
+`tenants[].issuer`, on the reporting cluster's own domain), and only once
+that tenant accepted the store's terms. It makes no account and records the
+pairwise subject and the tenant uid. No other call, at the store or at any
+other partner, takes an assertion without a link.
+
 Links made by the store's earlier sign-in are not carried over: they named
 the tenant realm's plain subject, and each person links once more.
 
