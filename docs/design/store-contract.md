@@ -406,16 +406,20 @@ artefact.
 
 ## 6. The App Store app
 
-A platform UI of its own, component `app-store`, installed per tenant. Its
-tile is shown only to people who may install apps in that tenant. It is
-absent on a cluster whose usage statistics report is off (§6.2) and on one that names
-no store.
+The store's interface on the cluster, installed per tenant. Its tile is
+shown only to people who may install apps in that tenant. It is absent on a
+cluster whose usage statistics report is off (§6.2), on one that names no
+store, and on one installed without the store's extra services.
 
-**Where it is, and when.** The operator chart ships the component profile
-`app-store`, and the operator places a Component of it on every tenant
-except the platform tenant, where nobody installs apps, for as long as two
-things hold: usage statistics are on, and the Cluster claim names a store
-(`spec.catalogue.storeUrl`, an https address). When either stops holding the
+**Where it is, and when.** The operator chart does not ship it: it is a
+profile in the store's own catalogue (`app-store-pe` at
+`catalogue.aluvian.io`), one of the store's *extra services* that the
+installer's step 0 places in the cluster's catalogue unless
+`--no-extra-services` leaves them out. The profile says
+`defaultWhereStoreOffered`, and the operator places a Component of it on
+every tenant except the platform tenant, where nobody installs apps, for as
+long as two things hold: usage statistics are on, and the Cluster claim
+names a store (`spec.catalogue.storeUrl`, an https address). When either stops holding the
 Component is removed again — the workload only; the app owns no data — and
 it is placed again when both hold. The operator watches the claim, so a
 change there takes effect when Argo CD has applied it; the reporting setting
