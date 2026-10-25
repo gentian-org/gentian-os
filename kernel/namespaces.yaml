@@ -77,6 +77,12 @@ system:
   - name: system-s3
     function: s3
     holds: SeaweedFS, the object store apps take buckets from
+  # Composed once a component declares an authorization store, and kept
+  # until a person purges the engine (the operator's system-engines set).
+  - name: system-authorization
+    function: authorization
+    when: requires.services.authorization
+    holds: the app instance of OpenFGA, with the components' authorization stores, and the arbiter, the one way into it
   # `when` marks a namespace the claim decides. Without it a namespace is
   # unconditional. A cluster that relays mail through a provider has no
   # mailbox store and no MTA of its own, and composing empty namespaces for

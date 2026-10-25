@@ -308,8 +308,8 @@ func (r *SystemEnginesReconciler) releaseGone(ctx context.Context, engine string
 	return !found, err
 }
 
-// engineRelease finds the provider-helm Release that installs an engine
-// into its namespace, and reports whether it is Ready. The Cluster
+// engineRelease finds the provider-helm Releases that install an engine
+// into its namespace, and reports whether every one is Ready. The Cluster
 // composition names Releases after the claim, which the operator does not
 // read; the namespace a Release installs into is the engine's alone.
 func engineRelease(ctx context.Context, c client.Reader, engine string) (ready, found bool, err error) {
@@ -324,20 +324,23 @@ func engineRelease(ctx context.Context, c client.Reader, engine string) (ready, 
 		return false, false, err
 	}
 	ns := layout.System(engine)
+	ready = true
 	for _, rel := range list.Items {
 		if target, _, _ := unstructured.NestedString(rel.Object, "spec", "forProvider", "namespace"); target != ns {
 			continue
 		}
 		found = true
+		this := false
 		conditions, _, _ := unstructured.NestedSlice(rel.Object, "status", "conditions")
 		for _, raw := range conditions {
 			cond, _ := raw.(map[string]any)
 			if cond["type"] == "Ready" && cond["status"] == string(metav1.ConditionTrue) {
-				return true, true, nil
+				this = true
 			}
 		}
+		ready = ready && this
 	}
-	return false, found, nil
+	return ready && found, found, nil
 }
 
 // systemEngineWaiting is the first on-demand engine the profile declares
@@ -349,6 +352,13 @@ func systemEngineWaiting(ctx context.Context, c client.Reader, profile *gentiano
 		ready, _, err := engineRelease(ctx, c, engine)
 		if err != nil {
 			return "", err
+		}
+		// The app authorization engine is the instance's Release and the
+		// arbiter beside it, which the operator deploys itself.
+		if ready && engine == EngineAuthorization {
+			if ready, err = arbiterReady(ctx, c); err != nil {
+				return "", err
+			}
 		}
 		if !ready {
 			return engine, nil

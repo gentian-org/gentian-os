@@ -736,7 +736,7 @@ spec:
                         here.
                       items:
                         type: string
-                        enum: ["mariadb", "cache"]
+                        enum: ["mariadb", "cache", "authorization"]
                       x-kubernetes-list-type: set
                 llm:
                   type: object

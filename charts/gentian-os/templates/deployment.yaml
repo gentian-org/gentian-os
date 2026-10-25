@@ -371,6 +371,12 @@ spec:
                   fieldPath: metadata.namespace
             - name: OPERATOR_SA
               value: {{ include "gentian-os.serviceAccountName" . | quote }}
+            # The image the operator runs, which the arbiter it deploys in
+            # system-authorization runs as well, with its own command: one
+            # build, so the table the operator writes and the arbiter that
+            # reads it cannot come from different commits.
+            - name: GENTIAN_IMAGE
+              value: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ $imageTag }}{{- end }}"
           ports:
             - name: metrics
               containerPort: 8080

@@ -1,7 +1,9 @@
 # The operator's set of the system engines something declares
 # (internal/controller/system_engines.go). A component declares MariaDB and
 # nothing declares a cache, so the MariaDB Release is composed and the Redis
-# Release is not; SeaweedFS is composed on every cluster.
+# Release is not; SeaweedFS is composed on every cluster. A component declares
+# an authorization store, so system-authorization and the app instance of
+# OpenFGA are composed.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,3 +13,4 @@ metadata:
     gentianos.io/config-type: system-engines
 data:
   mariadb: wanted
+  authorization: wanted

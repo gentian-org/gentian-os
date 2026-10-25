@@ -485,6 +485,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The app instance of OpenFGA's database and the arbiter, while a
+	// component declares an authorization store.
+	if err := (&controller.AuthorizationEngineReconciler{
+		Client:    mgr.GetClient(),
+		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Image:     os.Getenv("GENTIAN_IMAGE"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationEngine")
+		os.Exit(1)
+	}
+
 	// The arbiter's table: which component's key opens which authorization
 	// store, and the model each is decided against.
 	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {

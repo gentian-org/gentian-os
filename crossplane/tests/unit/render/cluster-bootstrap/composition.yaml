@@ -113,12 +113,30 @@ spec:
             {{- /* The unconditional four, then whatever the claim adds.
                  kernel/namespaces.yaml marks the conditional ones with `when`
                  and the lint asserts both halves against this. */}}
+            {{- /* The operator's set of the engines something declares, the
+                 claim's systemServices.always and what is composed already:
+                 what decides an on-demand engine, below and here (the
+                 Releases' comment says how). */}}
+            {{- $extraRes  := default dict (index .context "apiextensions.crossplane.io/extra-resources") }}
+            {{- $seList    := dig "systemEngines" list $extraRes }}
+            {{- $seData    := dig "data" dict (index (append $seList dict) 0) }}
+            {{- $alwaysFns := default list (dig "systemServices" "always" list $spec) }}
+            {{- $obsEngines := default dict .observed.resources }}
             {{- $systemFns := list "postgresql" "mariadb" "cache" "s3" }}
             {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
             {{- $systemFns = concat $systemFns (list "mail" "mail-dmz") }}
             {{- end }}
             {{- if dig "llm" "enabled" false $spec }}
             {{- $systemFns = concat $systemFns (list "llm") }}
+            {{- end }}
+            {{- /* App authorization: its namespace holds nothing Argo CD
+                 syncs -- the instance's Release is composed here and the
+                 arbiter is the operator's -- so the namespace comes and goes
+                 with the engine, latched as the engines are. */}}
+            {{- $authzMark   := dig "authorization" "" $seData }}
+            {{- $authzEngine := or (has "authorization" $alwaysFns) (eq $authzMark "wanted") (and (or (hasKey $obsEngines "namespace-system-authorization") (hasKey $obsEngines "openfga-apps-release")) (ne $authzMark "purge")) }}
+            {{- if $authzEngine }}
+            {{- $systemFns = concat $systemFns (list "authorization") }}
             {{- end }}
             {{- range $fn := $systemFns }}
             ---
@@ -198,11 +216,7 @@ spec:
                  Application with no namespace to sync into fails and is not
                  retried against the same commit. What is composed on demand
                  is the engine itself. */}}
-            {{- $extraRes  := default dict (index .context "apiextensions.crossplane.io/extra-resources") }}
-            {{- $seList    := dig "systemEngines" list $extraRes }}
-            {{- $seData    := dig "data" dict (index (append $seList dict) 0) }}
-            {{- $alwaysFns := default list (dig "systemServices" "always" list $spec) }}
-            {{- $obsEngines := default dict .observed.resources }}
+
             {{- /* The ConfigMap names below carry no stage. A cluster has one
                  stage (namespace-cleanup.md §2.2) and the Cluster claim does
                  not carry it, so a name with a stage in it could only ever be
@@ -258,6 +272,72 @@ spec:
               providerConfigRef:
                 name: kubernetes
             {{- end }}
+            {{- end }}
+
+            {{- /* ── The app instance of OpenFGA ─────────────────────────────────
+                 The components' authorization stores, on a server of their
+                 own: OpenFGA's credential opens every store on its server,
+                 and the kernel's holds the platform's graph. The vendored
+                 chart of the kernel's instance, packaged with the engines;
+                 its values here, because nothing of them is a secret and the
+                 namespace has no Argo CD Application to sync them. The two
+                 Secrets it reads are the operator's datastore URI and the
+                 arbiter's key (authorization_engine.go), and its one client
+                 is the arbiter. */}}
+            {{- if $authzEngine }}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openfga-apps-release
+                crossplane.io/external-name: openfga-apps
+              name: {{ $name }}-openfga-apps
+            spec:
+              forProvider:
+                chart:
+                  name: openfga
+                  repository: {{ $infraCharts }}
+                  version: "0.3.10-gentian.1"
+                namespace: system-authorization
+                wait: true
+                waitTimeout: "10m"
+                values:
+                  replicaCount: 1
+                  postgresql:
+                    enabled: false
+                  mysql:
+                    enabled: false
+                  datastore:
+                    engine: postgres
+                    uriSecret: openfga-apps-datastore
+                    maxOpenConns: 20
+                    maxIdleConns: 5
+                    applyMigrations: true
+                    migrationType: initContainer
+                    waitForMigrations: true
+                  authn:
+                    method: preshared
+                    preshared:
+                      keysSecret: openfga-apps-key
+                  playground:
+                    enabled: false
+                  ingress:
+                    enabled: false
+                  telemetry:
+                    trace:
+                      enabled: false
+                    metrics:
+                      enabled: false
+                  resources:
+                    requests:
+                      cpu: 50m
+                      memory: 128Mi
+                    limits:
+                      cpu: "1"
+                      memory: 512Mi
+              providerConfigRef:
+                name: kubernetes
             {{- end }}
 
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}

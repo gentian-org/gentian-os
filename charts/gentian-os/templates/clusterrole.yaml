@@ -82,6 +82,17 @@ rules:
     verbs:
     - get
   - apiGroups:
+    - ''
+    resources:
+    - serviceaccounts
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
     - apiextensions.crossplane.io
     resources:
     - compositions
@@ -485,3 +496,14 @@ rules:
     - update
     - patch
     - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - roles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch

@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 29 more'
+      gentian-cluster-config, and 31 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -206,6 +206,36 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: namespace-system-authorization
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-ns-system-authorization
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          gentianos.io/cluster: dev-cluster
+          gentianos.io/function: authorization
+          gentianos.io/managed-by: crossplane
+          gentianos.io/tier: system
+        name: system-authorization
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: namespace-system-cache
   labels:
     crossplane.io/composite: dev-cluster
@@ -319,6 +349,68 @@ spec:
           gentianos.io/managed-by: crossplane
           gentianos.io/tier: system
         name: system-s3
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: openfga-apps-release
+    crossplane.io/external-name: openfga-apps
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-openfga-apps
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: openfga
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 0.3.10-gentian.1
+    namespace: system-authorization
+    values:
+      authn:
+        method: preshared
+        preshared:
+          keysSecret: openfga-apps-key
+      datastore:
+        applyMigrations: true
+        engine: postgres
+        maxIdleConns: 5
+        maxOpenConns: 20
+        migrationType: initContainer
+        uriSecret: openfga-apps-datastore
+        waitForMigrations: true
+      ingress:
+        enabled: false
+      mysql:
+        enabled: false
+      playground:
+        enabled: false
+      postgresql:
+        enabled: false
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 512Mi
+        requests:
+          cpu: 50m
+          memory: 128Mi
+      telemetry:
+        metrics:
+          enabled: false
+        trace:
+          enabled: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
 ---

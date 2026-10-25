@@ -48,6 +48,13 @@ clients:
     built: tenant-component-database
     proof: internal/controller/component_desktop.go componentDatabaseNamespace, component_network_policy.go
   - store: postgresql
+    client: the app instance of OpenFGA, whose stores live in a database here
+    namespace: system-authorization
+    podLabels: {app.kubernetes.io/name: openfga, app.kubernetes.io/instance: openfga-apps}
+    port: 5432
+    built: none
+    proof: the openfga chart's Release in crossplane/compositions/cluster-default.yaml; its datastore URI is authorization_engine.go ensureDatastore
+  - store: postgresql
     client: the role Job that makes an app's role and database
     namespace: system-postgresql
     podLabels: {}
@@ -440,6 +447,11 @@ clients:
 # What must NOT get in. Each is a pod that could connect before these
 # policies existed, or a port that is not a client's business.
 denied:
+  - store: postgresql
+    client: the arbiter, beside the app instance of OpenFGA, which holds no database credential
+    namespace: system-authorization
+    podLabels: {app.kubernetes.io/name: arbiter, app.kubernetes.io/part-of: gentian-os}
+    port: 5432
   - store: postgresql
     client: Keycloak, whose database is the kernel's own
     namespace: kernel-authentication

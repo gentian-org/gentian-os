@@ -44,10 +44,14 @@ const (
 	// InstanceRelease is the Helm release of the app instance of OpenFGA:
 	// its Service and its pods' instance label.
 	InstanceRelease = "openfga-apps"
-	// CredentialsSecret holds what the app instance and the arbiter share:
-	// the datastore's URI for the one and the instance's preshared key for
-	// both. The operator makes it once.
-	CredentialsSecret = "openfga-apps-credentials"
+	// DatastoreSecret holds the app instance's datastore URI under the key
+	// `uri`, its database and role on the tenants' PostgreSQL. The operator
+	// makes it once, with the role.
+	DatastoreSecret = "openfga-apps-datastore"
+	// KeySecret holds the app instance's preshared key under the key
+	// `keys`. The arbiter makes it, on its first start, and is the only
+	// holder of it beside the instance: the key opens every store.
+	KeySecret = "openfga-apps-key"
 )
 
 // Entry is one store of the table: a tenant's component, the hash of the
@@ -62,10 +66,18 @@ type Entry struct {
 	Model json.RawMessage `json:"model"`
 }
 
+// Ref names a store by its tenant and component.
+type Ref struct {
+	Tenant    string `json:"tenant"`
+	Component string `json:"component"`
+}
+
 // Table is what the operator writes: one entry per component that declares
-// requires.services.authorization and holds its key.
+// requires.services.authorization and holds its key, and the stores a purge
+// has destroyed the rest of an app's data for, which the arbiter deletes.
 type Table struct {
 	Stores []Entry `json:"stores"`
+	Purge  []Ref   `json:"purge,omitempty"`
 }
 
 // dnsLabel is what a tenant's and a component's name are.
@@ -106,6 +118,17 @@ func ParseTable(raw []byte) (*Table, error) {
 			return nil, fmt.Errorf("the arbiter's table names %s or its key twice", e.StoreName())
 		}
 		seen[e.KeyHash], seen[e.recordKey()] = true, true
+	}
+	for _, p := range t.Purge {
+		e := Entry{Tenant: p.Tenant, Component: p.Component}
+		if !dnsLabel.MatchString(p.Tenant) || !dnsLabel.MatchString(p.Component) {
+			return nil, fmt.Errorf("the arbiter's table purges a store that is not one: %q/%q", p.Tenant, p.Component)
+		}
+		// A store is decided in or purged, never both: a table that says
+		// both is not one the operator wrote.
+		if seen[e.recordKey()] {
+			return nil, fmt.Errorf("the arbiter's table both keeps and purges %s", e.StoreName())
+		}
 	}
 	return t, nil
 }
