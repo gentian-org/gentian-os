@@ -30,6 +30,11 @@
     the operator        reads and writes the usage history and the notices in
                         a tenant's desktop database (internal/usage,
                         applifecycle/notifications.go).
+    the app instance    of OpenFGA, in the authorization namespace, which keeps
+                        the components' authorization stores in a database of
+                        its own here (authorization_engine.go). Its pods by
+                        their release, so that the arbiter beside them and
+                        anything else there is not admitted.
 
   The instance manager's port (status): CloudNativePG's operator, in the
   kernel's data namespace, asks every instance for its state there, and
@@ -81,6 +86,13 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.authorization | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openfga
+              app.kubernetes.io/instance: openfga-apps
       ports:
         - protocol: TCP
           port: {{ $np.ports.postgresql }}

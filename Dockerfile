@@ -45,6 +45,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o custodian ./cmd/cu
 # held by the process that pushes to git.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o registrar ./cmd/registrar
 
+# The arbiter: the one way into the app instance of OpenFGA, run in the
+# system namespace beside it with its own ServiceAccount. The only holder of
+# that instance's key.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o arbiter ./cmd/arbiter
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
@@ -62,6 +67,7 @@ COPY --from=builder /workspace/bouncer /bouncer
 COPY --from=builder /workspace/usher /usher
 COPY --from=builder /workspace/custodian /custodian
 COPY --from=builder /workspace/registrar /registrar
+COPY --from=builder /workspace/arbiter /arbiter
 
 USER 65532:65532
 

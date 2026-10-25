@@ -596,6 +596,10 @@ func planApp(
 			// No target: where a value goes is never the bundle's to say.
 			a.Name = app.Name
 			holdsSecrets = true
+		case bundle.ArtefactAuthorization:
+			// The app's own store, in the tenant restored into: named
+			// by this tenant and this app, never by the bundle.
+			a.Name = app.Name
 		case bundle.ArtefactPostgres, bundle.ArtefactPostgresOwned:
 			if inv.Stores.Database != gentianov1alpha1.DatabaseEnginePostgreSQL {
 				return nil, "", fmt.Sprintf("has a PostgreSQL database in the bundle and %s here", engineText(inv.Stores.Database)), nil
@@ -731,6 +735,8 @@ func planRetained(
 			}
 			a.Name = app.Name
 			holdsSecrets = true
+		case s.Kind == bundle.ArtefactAuthorization:
+			a.Name = app.Name
 		case engine != "":
 			switch {
 			case now.held.Database == engine:

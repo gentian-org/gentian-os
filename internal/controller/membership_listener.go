@@ -63,7 +63,7 @@ type MembershipListener struct {
 // follows from being in a group is refused to everyone. That is a
 // configuration a person may have chosen, and it is also exactly what a
 // forgotten secret looks like, so it says so at start either way.
-func NewMembershipListener(graph *authz.OpenFGA, logger *slog.Logger) (*MembershipListener, error) {
+func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logger *slog.Logger) (*MembershipListener, error) {
 	if graph == nil {
 		return nil, nil
 	}
@@ -92,6 +92,12 @@ func NewMembershipListener(graph *authz.OpenFGA, logger *slog.Logger) (*Membersh
 	receiver, err := membership.NewReceiver(keys, projector, logger)
 	if err != nil {
 		return nil, err
+	}
+	// The same statements, on to the app stores that mirror the realm's
+	// groups (app_store_mirror.go). After the kernel's projection, which is
+	// as it was.
+	if mirror != nil {
+		receiver.SetMirror(mirror)
 	}
 	return &MembershipListener{
 		Addr:    envOrDefault("GENTIAN_MEMBERSHIP_ADDR", ":8090"),

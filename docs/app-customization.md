@@ -293,6 +293,50 @@ names. A person not linked yet is answered 401 with `WWW-Authenticate:
 Partner link="<address>"`, which the calling app shows them
 ([plans/cross-cluster-identity.md](plans/cross-cluster-identity.md) §4–5).
 
+**An authorization store of the app's own.** An app that decides with
+relations (who may see which project, who administers which company)
+declares a store, with its model in the OpenFGA DSL; every trust tier may:
+
+```yaml
+spec:
+  requires:
+    services:
+      authorization:
+        model: |
+          model
+            schema 1.1
+          type user
+          type group
+            relations
+              define member: [user]
+          type project
+            relations
+              define owner: [user, group#member]
+              define viewer: [user, group#member, user:*] or owner
+        groups: mirror              # optional: keep the realm's groups in the store
+        tuples:                     # optional: written by the platform
+          - {user: "user:*", relation: viewer, object: "project:handbook"}
+```
+
+The model is compiled when the profile is admitted, and the starting tuples
+are held to it; either failing is a failed install. The app gets the Secret
+`authorization-<component>` (`AUTHORIZATION_URL`, `AUTHORIZATION_KEY`) and a
+network path to the arbiter's port alone. The arbiter speaks OpenFGA's API
+with the store and model taken from the key: `POST /v1/check`,
+`/v1/batch-check` (50), `/v1/list-objects`, `/v1/list-users`, `/v1/read`
+(pages of 100), `/v1/write` (100 tuples), `GET /v1/model`, each with
+`Authorization: Bearer <AUTHORIZATION_KEY>`; an unknown key is 401, and a key
+is limited to 100 calls a second. People are `user:<realm>/<subject>`. With
+`groups: mirror` the platform keeps every top-level group of the tenant's
+realm as `group:<realm>/<name>#member` (`:` in a name becomes `/`, so the
+tenant's members are `group:<realm>/gentian/tenant/<tenant>/members`); the
+model needs a `type group` with `define member: [user]`, and a store created
+after a membership was made holds it from that person's next change in the
+realm on. An app's key may not write a tuple whose user or object is a group
+(403). A starting tuple the profile drops is taken out again; what the app
+wrote is never touched. The store is the tenant's data: exported, restored
+into a fresh store, kept on uninstall and deleted by a purge.
+
 **Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}`,
 `${S3_ENDPOINT}`, `${MYSQL_HOST}` and `${REDIS_HOST}` handed the app a literal
 hostname and no credential — an app wired that way can only attempt

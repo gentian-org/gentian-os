@@ -24,11 +24,35 @@ entries:
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/mariadb-3.0.3.tgz
     version: 3.0.3
+  openfga:
+  - annotations:
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/signKey: |
+        fingerprint: 8E9B315F6C22E339959DA77B35CCF4BDC9F58F2A
+        url: https://openfga.github.io/helm-charts/pgp-public-key.asc
+    apiVersion: v2
+    appVersion: v1.18.1
+    created: "2026-10-25T17:08:32.575626374+01:00"
+    dependencies:
+    - name: common
+      repository: oci://registry-1.docker.io/bitnamicharts
+      tags:
+      - bitnami-common
+      version: 2.13.3
+    description: A Kubernetes Helm chart for the OpenFGA project.
+    digest: d18cf2dfcdec238b2973c2fe8c48f87f83b2e063193c8b1d8ae9a8a8aeaa3522
+    home: https://openfga.github.io/helm-charts
+    icon: https://github.com/openfga/community/raw/main/brand-assets/icon/color/openfga-icon-color.svg
+    name: openfga
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/openfga-0.3.10-gentian.1.tgz
+    version: 0.3.10-gentian.1
   postgresql:
   - annotations:
       category: Database
     apiVersion: v2
-    created: "2026-10-16T10:09:54.16196999+02:00"
+    created: "2026-10-25T17:08:32.576479873+01:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -64,7 +88,7 @@ entries:
       licenses: Apache-2.0
     apiVersion: v2
     appVersion: 7.2.3
-    created: "2026-10-16T10:09:54.16669833+02:00"
+    created: "2026-10-25T17:08:32.57926254+01:00"
     dependencies:
     - name: common
       repository: oci://registry-1.docker.io/bitnamicharts
@@ -93,7 +117,7 @@ entries:
   seaweedfs:
   - apiVersion: v1
     appVersion: "4.48"
-    created: "2026-10-16T10:09:54.174061568+02:00"
+    created: "2026-10-25T17:08:32.585541236+01:00"
     description: SeaweedFS
     digest: ef3582fb5f8b8f7327b61181778f2ad6ae8c96183fc984564844ce38f7b7e5d8
     name: seaweedfs
@@ -102,11 +126,11 @@ entries:
     version: 4.48.0
   - apiVersion: v1
     appVersion: "4.48"
-    created: "2026-10-16T10:09:54.170491138+02:00"
+    created: "2026-10-25T17:08:32.582515715+01:00"
     description: SeaweedFS
     digest: 40b4c119d3837af1ea44243ef56fa4c5805cae2745ea297c4222856277cc039b
     name: seaweedfs
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/seaweedfs-4.48.0-gentian.1.tgz
     version: 4.48.0-gentian.1
-generated: "2026-10-16T10:09:54.158672216+02:00"
+generated: "2026-10-25T17:08:32.573070361+01:00"

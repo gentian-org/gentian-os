@@ -68,6 +68,9 @@ const (
 	// KindModelAccess is the key an app that declared the model gateway
 	// calls models with there, on a cluster that serves models.
 	KindModelAccess Kind = "modelAccess"
+	// KindAuthorization is the app's authorization store at the arbiter
+	// (requires.services.authorization).
+	KindAuthorization Kind = "authorization"
 	// KindSignInClient is the app's OIDC or SAML client in the tenant's
 	// realm, with what is part of it: its client role, its default-scope
 	// assignments, and the access group's mapping to that role.
@@ -203,6 +206,14 @@ var AppKinds = []KindRule{
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "and the tenant's team at the gateway",
 		FoundBy:          "the tenant's record of what was provisioned",
+	},
+	{
+		Kind: KindAuthorization, MadeBy: "the arbiter, on the component's first call, for an app whose profile declares requires.services.authorization",
+		Export: Carries, ExportNote: "its model and every tuple, read through the arbiter's platform path and encrypted by the operator itself; a restore puts them into a fresh store of the app in the tenant restored into",
+		Artefacts: []string{bundle.ArtefactAuthorization},
+		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		TenantDeleteNote: "with every store of the tenant, by the arbiter",
+		FoundBy:          "the arbiter's record of the stores it made",
 	},
 	{
 		Kind: KindSignInClient, MadeBy: "the app Composition, or the tenant's identity Job",

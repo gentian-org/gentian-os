@@ -114,7 +114,7 @@ func TestTeardownIsProvisioningReversed(t *testing.T) {
 	if !reflect.DeepEqual(torn, reversed) {
 		t.Fatalf("teardown %v is not provisioning %v reversed", torn, made)
 	}
-	want := []Kind{KindFiles, KindModelAccess, KindCache, KindObjectStorage, KindDatabase, KindSignInScope, KindAccessGroup, KindCredentials, KindRecords}
+	want := []Kind{KindFiles, KindAuthorization, KindModelAccess, KindCache, KindObjectStorage, KindDatabase, KindSignInScope, KindAccessGroup, KindCredentials, KindRecords}
 	if got := AppPurgeOrder(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("an app's purge works in the order %v, want %v", got, want)
 	}

@@ -16,6 +16,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/gentian-org/gentian-os/internal/arbiter"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
@@ -41,6 +42,7 @@ func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, err
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
 		UsageStatistics:   usagestatistics.SettingsFromEnv(),
 		Vault:             vaultFromEnv(),
+		Authorization:     arbiter.NewPlatformClient(),
 		LiveReader:        mgr.GetAPIReader(),
 		TenancyMode:       tenancyMode,
 		DeploymentsRepo:   os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),

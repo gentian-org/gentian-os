@@ -263,6 +263,28 @@ func (s *Seeder) SeedKernelDatabase(ctx context.Context, category string, conn D
 	}, nil
 }
 
+// SeedKernelKey derives a kernel-scoped key and writes it under
+// gentian-os/kernel/{category}/{name}, as the property key: made once, and
+// the stored value read back and returned ever after. It is the operator's
+// counterpart of what the installer seeds for the kernel's own services (the
+// kernel OpenFGA's preshared_key), for a kernel credential that exists only
+// once something on the cluster needs it.
+func (s *Seeder) SeedKernelKey(ctx context.Context, category, name, key string) (string, error) {
+	path := KernelPath(category, name)
+	g, err := s.gen(ctx, path, key, 48)
+	if err != nil {
+		return "", fmt.Errorf("seed kernel key(%s): %w", path, err)
+	}
+	got, err := s.seedAndRead(ctx, path, map[string]string{key: g.value}, g.reproducible)
+	if err != nil {
+		return "", fmt.Errorf("seed kernel key(%s): %w", path, err)
+	}
+	if got[key] == "" {
+		return "", fmt.Errorf("seed kernel key(%s): the stored record holds no %s", path, key)
+	}
+	return got[key], nil
+}
+
 // SeedDatabase derives the role password and writes the connection record.
 // host/port/name/user are supplied by the caller.
 func (s *Seeder) SeedDatabase(ctx context.Context, tenant, app string, conn DatabaseCreds) (DatabaseCreds, error) {

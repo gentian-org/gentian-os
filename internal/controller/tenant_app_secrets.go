@@ -827,3 +827,14 @@ func secretsNote(entry *gentianov1alpha1.AppExportStatus) string {
 	}
 	return strings.Join(parts, "; ")
 }
+
+// artefactOf is the artefact of a kind among the artefacts of a status
+// entry, nil when there is none.
+func artefactOf(artefacts []gentianov1alpha1.BundleArtefact, kind string) *gentianov1alpha1.BundleArtefact {
+	for i := range artefacts {
+		if artefacts[i].Kind == kind {
+			return &artefacts[i]
+		}
+	}
+	return nil
+}

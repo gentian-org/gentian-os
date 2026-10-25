@@ -242,6 +242,31 @@ func (s *Store) AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, 
 	return backup.OpenAppSecrets(cipher, ids)
 }
 
+// AppAuthorization reads an app's authorization artefact and opens it with
+// the key.
+func (s *Store) AppAuthorization(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key Key) (*bundle.AppAuthorization, error) {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return nil, errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, err
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return nil, err
+	}
+	cipher, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+path+backup.EncryptedSuffix, appAuthorizationLimit)
+	if err != nil {
+		return nil, fmt.Errorf("the bundle's manifest names %s and the bundle does not hold it: %w", path, err)
+	}
+	return backup.OpenAppAuthorization(cipher, ids)
+}
+
+// appAuthorizationLimit bounds an authorization artefact read into memory:
+// a store of some hundred thousand tuples.
+const appAuthorizationLimit = 64 << 20
+
 // OpenManifest decrypts and reads a manifest, and refuses one of a format
 // this build does not read.
 func OpenManifest(cipher []byte, ids []age.Identity) (*bundle.Manifest, error) {

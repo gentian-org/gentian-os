@@ -224,6 +224,10 @@ var xTenantGVK = schema.GroupVersionKind{
 
 // TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
+	// Authorization is the arbiter's platform path, through which the
+	// deletion of a tenant deletes its authorization stores. Nil on a
+	// cluster that runs none.
+	Authorization AuthorizationStores
 	// Definitions holds this reconciler while the cluster's resource
 	// definitions would drop fields it writes (internal/schemacheck). Nil
 	// holds nothing.
@@ -733,6 +737,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	teardown := map[backup.Kind][]func(context.Context, *gentianov1alpha1.Tenant) error{
 		backup.KindWorkloads:     {r.deleteAppDeployment},
 		backup.KindModelAccess:   {r.deleteModelAccess},
+		backup.KindAuthorization: {r.deleteAuthorizationStores},
 		backup.KindCache:         {r.deleteCache},
 		backup.KindObjectStorage: {r.deleteStorage},
 		backup.KindDatabase:      {r.deleteMariaDB, r.deleteDatabase},

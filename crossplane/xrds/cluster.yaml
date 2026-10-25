@@ -718,6 +718,26 @@ spec:
                         irreplaceable: losing every copy loses every backup,
                         with no recourse. Choose it when the cluster is the
                         likelier loss and you are certain of your kit custody.
+                systemServices:
+                  type: object
+                  description: >
+                    Which system engines run. An engine that is not always
+                    on is composed the first time an installed component
+                    declares it, and stays until a person purges it; the
+                    operator keeps that set. PostgreSQL and the object store
+                    run on every cluster and are not named here.
+                  properties:
+                    always:
+                      type: array
+                      description: >
+                        Engines composed whether or not a component declares
+                        them, for a cluster that wants one ready before the
+                        first install. A purge does not remove an engine named
+                        here.
+                      items:
+                        type: string
+                        enum: ["mariadb", "cache", "authorization"]
+                      x-kubernetes-list-type: set
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.

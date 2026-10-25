@@ -10,6 +10,31 @@ spec:
     kind: XCluster
   mode: Pipeline
   pipeline:
+    # The system engines something on this cluster declares, as the operator
+    # keeps them (internal/controller/system_engines.go): one key per engine,
+    # "wanted" or "purge". minMatch 0, because the operator writes it only
+    # once it runs; until then an engine is composed only when the claim says
+    # always or when it is composed already, which is the latch below.
+    - step: fetch-system-engines
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ConfigMap
+              into: systemEngines
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: system-engines
+
     - step: render-cluster-resources
       functionRef:
         name: function-go-templating
@@ -73,7 +98,8 @@ spec:
                  exists before any claim does.
 
                  The four are unconditional because every cluster serves
-                 tenants. system-mail and system-llm are conditional on the
+                 tenants; the engines in two of them are not (the Releases
+                 below). system-mail and system-llm are conditional on the
                  claim and are not built yet; until they are, both opt-ins are
                  refused at admission by the XRD, so no claim can ask for a
                  namespace that would stay empty.
@@ -87,12 +113,30 @@ spec:
             {{- /* The unconditional four, then whatever the claim adds.
                  kernel/namespaces.yaml marks the conditional ones with `when`
                  and the lint asserts both halves against this. */}}
+            {{- /* The operator's set of the engines something declares, the
+                 claim's systemServices.always and what is composed already:
+                 what decides an on-demand engine, below and here (the
+                 Releases' comment says how). */}}
+            {{- $extraRes  := default dict (index .context "apiextensions.crossplane.io/extra-resources") }}
+            {{- $seList    := dig "systemEngines" list $extraRes }}
+            {{- $seData    := dig "data" dict (index (append $seList dict) 0) }}
+            {{- $alwaysFns := default list (dig "systemServices" "always" list $spec) }}
+            {{- $obsEngines := default dict .observed.resources }}
             {{- $systemFns := list "postgresql" "mariadb" "cache" "s3" }}
             {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
             {{- $systemFns = concat $systemFns (list "mail" "mail-dmz") }}
             {{- end }}
             {{- if dig "llm" "enabled" false $spec }}
             {{- $systemFns = concat $systemFns (list "llm") }}
+            {{- end }}
+            {{- /* App authorization: its namespace holds nothing Argo CD
+                 syncs -- the instance's Release is composed here and the
+                 arbiter is the operator's -- so the namespace comes and goes
+                 with the engine, latched as the engines are. */}}
+            {{- $authzMark   := dig "authorization" "" $seData }}
+            {{- $authzEngine := or (has "authorization" $alwaysFns) (eq $authzMark "wanted") (and (or (hasKey $obsEngines "namespace-system-authorization") (hasKey $obsEngines "openfga-apps-release")) (ne $authzMark "purge")) }}
+            {{- if $authzEngine }}
+            {{- $systemFns = concat $systemFns (list "authorization") }}
             {{- end }}
             {{- range $fn := $systemFns }}
             ---
@@ -151,16 +195,41 @@ spec:
                  (namespace-cleanup.md §2.2): it held only kernel databases,
                  and those are on kernel-postgres in kernel-data now. */}}
             {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
+            {{- /* Which engines run (app-authorization.md §3). SeaweedFS
+                 always: it is the platform's own object store, where every
+                 backup, bundle and export is written whether or not an app
+                 takes a bucket. MariaDB and Redis on demand: composed when
+                 the operator's set says a component declares one, or when the
+                 claim's systemServices.always names it.
+
+                 And kept once composed. An engine already composed stays
+                 until the set says "purge", which the operator writes only
+                 when a person asked and no component declares the engine. A
+                 set that is missing, empty or stale is therefore never a
+                 reason to take an engine away: its data may be all that is
+                 left of a removed app, and a Release that goes takes its
+                 StatefulSet with it.
+
+                 The namespaces are not conditional. Each engine's values,
+                 credential and NetworkPolicy are synced into its namespace
+                 by the 08-data-plane ApplicationSet, and an Argo CD
+                 Application with no namespace to sync into fails and is not
+                 retried against the same commit. What is composed on demand
+                 is the engine itself. */}}
+
             {{- /* The ConfigMap names below carry no stage. A cluster has one
                  stage (namespace-cleanup.md §2.2) and the Cluster claim does
                  not carry it, so a name with a stage in it could only ever be
                  right on a dev cluster -- and would fail as a Release that
                  cannot find its values. */}}
             {{- range $e := (list
-                  (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m")
-                  (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m")
-                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0-gentian.1" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m")
+                  (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m" "onDemand" true)
+                  (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m" "onDemand" true)
+                  (dict "fn" "s3"      "chart" "seaweedfs" "version" "4.48.0-gentian.1" "values" (list "seaweedfs-env-values" "seaweedfs-base-values" "seaweedfs-cluster-values") "secret" "" "wait" "10m" "onDemand" false)
                ) }}
+            {{- $mark   := dig $e.fn "" $seData }}
+            {{- $engine := or (not $e.onDemand) (has $e.fn $alwaysFns) (eq $mark "wanted") (and (hasKey $obsEngines (printf "%s-release" $e.chart)) (ne $mark "purge")) }}
+            {{- if $engine }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release
@@ -200,6 +269,89 @@ spec:
                       key: sensitive-values.yaml
                       optional: false
                   {{- end }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── The app instance of OpenFGA ─────────────────────────────────
+                 The components' authorization stores, on a server of their
+                 own: OpenFGA's credential opens every store on its server,
+                 and the kernel's holds the platform's graph. The vendored
+                 chart of the kernel's instance, packaged with the engines;
+                 its values here, because nothing of them is a secret and the
+                 namespace has no Argo CD Application to sync them. The two
+                 Secrets it reads, its datastore URI and its preshared key,
+                 are delivered from the vault by the operator's
+                 ExternalSecrets (authorization_engine.go), and its one
+                 client is the arbiter. */}}
+            {{- if $authzEngine }}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openfga-apps-release
+                crossplane.io/external-name: openfga-apps
+              name: {{ $name }}-openfga-apps
+            spec:
+              forProvider:
+                chart:
+                  name: openfga
+                  repository: {{ $infraCharts }}
+                  version: "0.3.10-gentian.1"
+                namespace: system-authorization
+                wait: true
+                waitTimeout: "10m"
+                values:
+                  replicaCount: 1
+                  postgresql:
+                    enabled: false
+                  mysql:
+                    enabled: false
+                  datastore:
+                    engine: postgres
+                    uriSecret: openfga-apps-datastore
+                    maxOpenConns: 20
+                    maxIdleConns: 5
+                    applyMigrations: true
+                    migrationType: initContainer
+                    waitForMigrations: true
+                  authn:
+                    method: preshared
+                    preshared:
+                      keysSecret: openfga-apps-key
+                  playground:
+                    enabled: false
+                  ingress:
+                    enabled: false
+                  {{- /* The system tier is held to the baseline the kernel
+                       tier is spared (gentian-baseline): non-root, no
+                       capabilities, no escalation, the runtime's seccomp
+                       profile -- for the server and its migration alike. */}}
+                  podSecurityContext:
+                    runAsNonRoot: true
+                    runAsUser: 65532
+                    seccompProfile:
+                      type: RuntimeDefault
+                  securityContext:
+                    runAsNonRoot: true
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities:
+                      drop: ["ALL"]
+                  telemetry:
+                    trace:
+                      enabled: false
+                    metrics:
+                      enabled: false
+                  resources:
+                    requests:
+                      cpu: 50m
+                      memory: 128Mi
+                    limits:
+                      cpu: "1"
+                      memory: 512Mi
               providerConfigRef:
                 name: kubernetes
             {{- end }}

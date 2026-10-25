@@ -21,9 +21,11 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/arbiter"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
@@ -110,6 +112,8 @@ type retainedSources struct {
 	groups map[string]bool
 	// claims are the volume claims in the tenant's namespace.
 	claims []corev1.PersistentVolumeClaim
+	// authorization are the apps the arbiter recorded a store for.
+	authorization map[string]bool
 	// failed says which of the above could not be read.
 	failed map[string]string
 }
@@ -165,6 +169,9 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 	}
 	for key := range src.credentials {
 		names[extensionOwner(key, profiles)] = true
+	}
+	for name := range src.authorization {
+		names[name] = true
 	}
 
 	out := &RetainedApps{Tenant: tenantName, Apps: []RetainedApp{}, Unknown: map[string]string{}}
@@ -266,6 +273,9 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 	// installed before the gateway had to be declared, until the reconciler
 	// has taken its key away.
 	app.Kinds[KindModelAccess] = store(KindModelAccess, recorded.Has(backup.KindModelAccess), backup.DeclaresModelAccess(profile))
+	// The authorization store, by the arbiter's own record of the stores it
+	// made.
+	app.Kinds[KindAuthorization] = state(KindAuthorization, src.authorization[name])
 
 	// Files: the claims a purge would delete.
 	app.Volumes, _ = appVolumes(src.claims, tenant, name, profile)
@@ -317,6 +327,14 @@ func (s *Service) retainedSources(ctx context.Context, tenant *gentianov1alpha1.
 		// No database operator on this cluster, so no databases of its.
 	default:
 		src.failed[KindDatabase] = "the database records could not be listed: " + err.Error()
+	}
+
+	// The authorization stores, by the arbiter's record of them.
+	src.authorization = map[string]bool{}
+	if recorded, err := s.authorizationStores(ctx, tenantName); err != nil {
+		src.failed[KindAuthorization] = "the arbiter's record of its stores could not be read: " + err.Error()
+	} else {
+		src.authorization = recorded
 	}
 
 	// Every store provisioning made, by the record it keeps of them.
@@ -384,4 +402,29 @@ func (s *Service) profileLookup(ctx context.Context) func(string) (*gentianov1al
 // rule (backup.ExtensionOwner).
 func extensionOwner(key string, profiles func(string) (*gentianov1alpha1.ComponentProfile, error)) string {
 	return backup.ExtensionOwner(key, profiles)
+}
+
+// authorizationStores are the apps of a tenant the arbiter recorded an
+// authorization store for (internal/arbiter, StoresConfigMap). No record is
+// no store: the arbiter writes it before it writes anything to a store.
+func (s *Service) authorizationStores(ctx context.Context, tenantName string) (map[string]bool, error) {
+	cm := &corev1.ConfigMap{}
+	err := s.client.Get(ctx, types.NamespacedName{Name: arbiter.StoresConfigMap, Namespace: arbiter.Namespace}, cm)
+	if err != nil {
+		return map[string]bool{}, client.IgnoreNotFound(err)
+	}
+	out := map[string]bool{}
+	for key := range cm.Data {
+		if tenant, app, ok := strings.Cut(key, "."); ok && tenant == tenantName && app != "" {
+			out[app] = true
+		}
+	}
+	return out, nil
+}
+
+// authorizationRecorded reports whether the arbiter recorded a store for the
+// tenant's app.
+func (s *Service) authorizationRecorded(ctx context.Context, tenantName, app string) (bool, error) {
+	stores, err := s.authorizationStores(ctx, tenantName)
+	return stores[app], err
 }

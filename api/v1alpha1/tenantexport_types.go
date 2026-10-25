@@ -463,6 +463,17 @@ type BundleArtefact struct {
 	Claim *BundleClaim `json:"claim,omitempty"`
 }
 
+// AppAuthorizationStatus is what an export or a restore did with an app's
+// authorization store.
+type AppAuthorizationStatus struct {
+	// Tuples is how many tuples the bundle holds of the store.
+	// +optional
+	Tuples int32 `json:"tuples,omitempty"`
+	// RestoredAt is when a restore put the store back.
+	// +optional
+	RestoredAt *metav1.Time `json:"restoredAt,omitempty"`
+}
+
 // AppSecretsStatus is what an export or a restore did with an app's own
 // secrets (spec.secrets.generated of its profile, its extensions'
 // appSecrets, and the keys under spec.secrets.derived). An extension's
@@ -578,6 +589,12 @@ type AppExportStatus struct {
 	// only; no value is ever in a status.
 	// +optional
 	Secrets *AppSecretsStatus `json:"secrets,omitempty"`
+
+	// Authorization says what was done with the app's authorization store:
+	// how many tuples an export put into the bundle, and when a restore
+	// put them back into a fresh store.
+	// +optional
+	Authorization *AppAuthorizationStatus `json:"authorization,omitempty"`
 
 	// Phase is this app's own phase, using the same vocabulary as the export.
 	// +optional

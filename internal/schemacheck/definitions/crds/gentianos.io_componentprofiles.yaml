@@ -1306,6 +1306,66 @@ spec:
                       description: ServiceRequirements declares kernel services the
                         sidecar needs.
                       properties:
+                        authorization:
+                          description: |-
+                            Authorization declares that the component keeps its own relations in
+                            an authorization store the platform makes for it. See
+                            AuthorizationRequirement.
+                          properties:
+                            groups:
+                              description: |-
+                                Groups "mirror" has the platform keep the tenant realm's group
+                                memberships in the store, as tuples
+                                group:<realm>/<group name>#member of user:<realm>/<subject>: every
+                                top-level group of the realm, kept equal to the realm as people join
+                                and leave. The model must define a type group with a relation member
+                                users are written with. A component's own key cannot write a tuple
+                                whose user or object is a group, mirrored or not.
+                              enum:
+                              - mirror
+                              type: string
+                            model:
+                              description: |-
+                                Model is the store's authorization model in the OpenFGA DSL
+                                ("model / schema 1.1 / type user / ..."). A profile whose model does
+                                not compile is refused.
+                              maxLength: 65536
+                              minLength: 1
+                              type: string
+                            tuples:
+                              description: |-
+                                Tuples are the store's starting tuples, written by the platform and
+                                held to the model when the profile is admitted. One the profile no
+                                longer names is taken out again; what the component wrote itself is
+                                never touched. A store that mirrors groups names no group as an
+                                object here.
+                              items:
+                                description: |-
+                                  AuthorizationTuple is one relation between a user and an object, as
+                                  OpenFGA writes it: user:acme/123 is viewer of project:42.
+                                properties:
+                                  object:
+                                    maxLength: 512
+                                    minLength: 1
+                                    type: string
+                                  relation:
+                                    maxLength: 512
+                                    minLength: 1
+                                    type: string
+                                  user:
+                                    maxLength: 512
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - object
+                                - relation
+                                - user
+                                type: object
+                              maxItems: 100
+                              type: array
+                          required:
+                          - model
+                          type: object
                         cache:
                           description: Cache specifies a caching backend requirement.
                           properties:
@@ -3219,6 +3279,66 @@ spec:
                       and then contracts, which is the word the open named set in Provides
                       already holds.
                     properties:
+                      authorization:
+                        description: |-
+                          Authorization declares that the component keeps its own relations in
+                          an authorization store the platform makes for it. See
+                          AuthorizationRequirement.
+                        properties:
+                          groups:
+                            description: |-
+                              Groups "mirror" has the platform keep the tenant realm's group
+                              memberships in the store, as tuples
+                              group:<realm>/<group name>#member of user:<realm>/<subject>: every
+                              top-level group of the realm, kept equal to the realm as people join
+                              and leave. The model must define a type group with a relation member
+                              users are written with. A component's own key cannot write a tuple
+                              whose user or object is a group, mirrored or not.
+                            enum:
+                            - mirror
+                            type: string
+                          model:
+                            description: |-
+                              Model is the store's authorization model in the OpenFGA DSL
+                              ("model / schema 1.1 / type user / ..."). A profile whose model does
+                              not compile is refused.
+                            maxLength: 65536
+                            minLength: 1
+                            type: string
+                          tuples:
+                            description: |-
+                              Tuples are the store's starting tuples, written by the platform and
+                              held to the model when the profile is admitted. One the profile no
+                              longer names is taken out again; what the component wrote itself is
+                              never touched. A store that mirrors groups names no group as an
+                              object here.
+                            items:
+                              description: |-
+                                AuthorizationTuple is one relation between a user and an object, as
+                                OpenFGA writes it: user:acme/123 is viewer of project:42.
+                              properties:
+                                object:
+                                  maxLength: 512
+                                  minLength: 1
+                                  type: string
+                                relation:
+                                  maxLength: 512
+                                  minLength: 1
+                                  type: string
+                                user:
+                                  maxLength: 512
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - object
+                              - relation
+                              - user
+                              type: object
+                            maxItems: 100
+                            type: array
+                        required:
+                        - model
+                        type: object
                       cache:
                         description: Cache specifies a caching backend requirement.
                         properties:
@@ -4062,6 +4182,10 @@ spec:
               rule: '!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements)
                 || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc)
                 || !has(x.kernelRequirements.identity.oidc.backchannelLogout))'
+            - message: an authorization store is the component's own (requires.services.authorization),
+                not an extension's
+              rule: '!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements)
+                || !has(x.kernelRequirements.authorization))'
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
               rule: '[has(self.__package__.chart) || (has(self.__package__.composition)

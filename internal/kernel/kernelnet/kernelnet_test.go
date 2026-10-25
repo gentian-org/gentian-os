@@ -403,6 +403,14 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/mail_reconciler.go":      {{"kernel-authentication", 8080}},
 	// The address of the bouncer's rights check, handed to a component.
 	"internal/controller/rights_check.go": {{"kernel-edge", 8082}},
+	// The arbiter's address, handed to a component: a system namespace.
+	"internal/controller/authorization_service.go": {},
+	// The app instance's datastore, on the tenants' PostgreSQL.
+	"internal/controller/authorization_engine.go": {},
+	// The arbiter's own client of the app instance, beside it.
+	"cmd/arbiter/main.go": {},
+	// The operator's client of the arbiter's platform path: a system namespace.
+	"internal/arbiter/client.go": {},
 	// The sidecar reads the realm's SAML descriptor.
 	"internal/controller/signin_sidecar.go": {{"kernel-authentication", 8080}},
 	// The tenants' stores, in the system namespaces.

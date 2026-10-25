@@ -40,6 +40,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/arbiter"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -85,14 +86,6 @@ func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
 	return controller.ClientsetLogTailer{Clientset: cs}
 }
 
-// authorizationGraph builds the operator's OpenFGA client, creating the store
-// and writing the model when this cluster has neither.
-//
-// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
-// authorization service, and the projection is simply not run. A cluster that
-// has one and cannot be reached is a different thing, and says so loudly --
-// nobody administers a cluster whose roles were never projected, and that
-// reads from the outside exactly like a broken login.
 // bootClient reads the API server before the manager's cache exists.
 //
 // Settings taken from the claim are needed to build the reconcilers, which is
@@ -111,41 +104,52 @@ func bootClient() client.Reader {
 	return c
 }
 
+// authorizationGraph builds the operator's OpenFGA client, creating the store
+// and writing the model when this cluster has neither, and records the ids in
+// the ConfigMap every enforcement point reads them from.
+//
+// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
+// authorization service, and the projection is simply not run. A cluster that
+// has one and cannot be reached is a different thing, and says so loudly --
+// nobody administers a cluster whose roles were never projected, and that
+// reads from the outside exactly like a broken login.
 func authorizationGraph(log logr.Logger) *authz.OpenFGA {
 	url := os.Getenv("OPENFGA_API_URL")
 	if url == "" {
 		return nil
 	}
+	control := envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control))
 	opts := authz.Options{
 		BaseURL:  url,
 		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
-		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
-		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
 		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
-	if opts.StoreID == "" || opts.ModelID == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		store, model, err := authz.Bootstrap(ctx, opts)
-		if err != nil {
-			// Exit, so the pod restarts and asks again. Carrying on without
-			// the graph was carrying on for good: nothing retried, the store
-			// was never created, and the director and the edge bouncer -- which
-			// only read it -- crash-looped on "no authorization store yet"
-			// long after OpenFGA was answering. A configured OpenFGA that
-			// does not answer is a dependency not up yet, and a restart with
-			// back-off is how this cluster already waits for one.
-			log.Error(err, "authorization graph unavailable; exiting so the pod restarts and asks again",
-				"openfga", url)
-			os.Exit(1)
-		}
-		if opts.StoreID == "" {
-			opts.StoreID = store
-		}
-		if opts.ModelID == "" {
-			opts.ModelID = model
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	boot, err := client.New(ctrl.GetConfigOrDie(), client.Options{})
+	if err != nil {
+		log.Error(err, "no client to record the authorization store with; exiting so the pod restarts")
+		os.Exit(1)
 	}
+	opts.StoreID = controller.RecordedAuthorizationStore(ctx, boot, control)
+	store, model, err := authz.Bootstrap(ctx, opts)
+	if err == nil {
+		err = controller.RecordAuthorizationStore(ctx, boot,
+			[]string{control, layout.Namespace(layout.Edge)}, store, model)
+	}
+	if err != nil {
+		// Exit, so the pod restarts and asks again. Carrying on without
+		// the graph was carrying on for good: nothing retried, the store
+		// was never created, and the director and the edge bouncer -- which
+		// only read it -- crash-looped on "no authorization store yet"
+		// long after OpenFGA was answering. A configured OpenFGA that
+		// does not answer is a dependency not up yet, and a restart with
+		// back-off is how this cluster already waits for one.
+		log.Error(err, "authorization graph unavailable; exiting so the pod restarts and asks again",
+			"openfga", url)
+		os.Exit(1)
+	}
+	opts.StoreID, opts.ModelID = store, model
 	graph, err := authz.NewOpenFGA(opts)
 	if err != nil {
 		log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected")
@@ -269,9 +273,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The arbiter's platform path, for the app authorization stores of a
+	// tenant's export, restore and deletion.
+	arbiterPlatform := arbiter.NewPlatformClient()
 	tenantReconciler := &controller.TenantReconciler{
-		Definitions: held,
-		Client:      mgr.GetClient(),
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Authorization: arbiterPlatform,
 		// Needed by the deletion path, which has to tell "gone" apart from "not
 		// in the cache yet" before it acts on a Tenant being deleted.
 		APIReader:    mgr.GetAPIReader(),
@@ -470,6 +478,40 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The system engines something on this cluster declares, for the
+	// Cluster composition to compose (internal/controller/system_engines.go).
+	if err := (&controller.SystemEnginesReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Namespace:   envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Recorder:    mgr.GetEventRecorderFor("system-engines"), //nolint:staticcheck
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SystemEngines")
+		os.Exit(1)
+	}
+
+	// The app instance of OpenFGA's database and the arbiter, while a
+	// component declares an authorization store.
+	if err := (&controller.AuthorizationEngineReconciler{
+		Client: mgr.GetClient(),
+		// The instance's credentials, in the vault the tenants' are kept in.
+		Seeder:    tenantReconciler.Seeder,
+		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Image:     os.Getenv("GENTIAN_IMAGE"),
+		PlatformCaller: applifecycle.ServiceAccountUsername(
+			envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)), os.Getenv("OPERATOR_SA")),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationEngine")
+		os.Exit(1)
+	}
+
+	// The arbiter's table: which component's key opens which authorization
+	// store, and the model each is decided against.
+	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationTable")
+		os.Exit(1)
+	}
+
 	if err := (&controller.ConciergeLookupReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
@@ -491,10 +533,11 @@ func main() {
 	}
 
 	tenantExportReconciler := &controller.TenantExportReconciler{
-		Definitions: held,
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Reconciler:  tenantReconciler,
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Reconciler:    tenantReconciler,
+		Authorization: arbiterPlatform,
 		// The API reader, not the cached client: appVolumes explains why a
 		// cached PVC read is how an export comes to hold an app offline
 		// indefinitely with nothing in the log.
@@ -528,11 +571,12 @@ func main() {
 	}
 
 	if err := (&controller.TenantRestoreReconciler{
-		Definitions: held,
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Reconciler:  tenantExportReconciler,
-		Tenant:      tenantReconciler,
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Reconciler:    tenantExportReconciler,
+		Authorization: arbiterPlatform,
+		Tenant:        tenantReconciler,
 		// The bundle's manifest is what a restore goes by; this is how the
 		// operator reads it, with the credentials it holds for the store
 		// the bundle sits in.
@@ -607,7 +651,12 @@ func main() {
 		// Keycloak states a user's whole group set, signed; this applies it.
 		// It was the director's last write to the graph, which is what kept
 		// the director's token a writing token.
-		listener, err := controller.NewMembershipListener(graph, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		mirror := &controller.AppStoreMirror{
+			Client:    mgr.GetClient(),
+			Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+			Arbiter:   arbiterPlatform,
+		}
+		listener, err := controller.NewMembershipListener(graph, mirror, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		if err != nil {
 			setupLog.Error(err, "unable to create the membership listener")
 			os.Exit(1)

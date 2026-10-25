@@ -413,3 +413,58 @@ func (f *failing) Read(ctx context.Context, t authz.Tuple) ([]authz.Tuple, error
 	}
 	return f.Store.Read(ctx, t)
 }
+
+// recordingMirror is the app stores' side, with what it was told.
+type recordingMirror struct {
+	calls []string
+	fail  bool
+}
+
+func (m *recordingMirror) SetUserGroups(_ context.Context, realm, sub string, groups []string) error {
+	if m.fail {
+		return fmt.Errorf("the arbiter did not answer")
+	}
+	m.calls = append(m.calls, fmt.Sprintf("set %s %s %v", realm, sub, groups))
+	return nil
+}
+
+func (m *recordingMirror) RemoveGroup(_ context.Context, realm, group string) error {
+	m.calls = append(m.calls, fmt.Sprintf("remove %s %s", realm, group))
+	return nil
+}
+
+// The mirror is told every group of each statement, the vocabulary's and the
+// realm's own, after the kernel's projection is as it always was; one it
+// could not take is retried, by a refusal the listener sends again.
+func TestTheAppStoresAreToldEveryGroupAfterTheKernel(t *testing.T) {
+	store := newStore(t)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	proj, _ := membership.NewProjector(store, scope, quiet)
+	rc, _ := membership.NewReceiver(map[string]ed25519.PublicKey{"k1": pub}, proj, quiet)
+	mirror := &recordingMirror{}
+	rc.SetMirror(mirror)
+	ts := httptest.NewServer(rc)
+	t.Cleanup(ts.Close)
+	l := &listener{t: t, url: ts.URL, keyID: "k1", key: priv}
+
+	l.send(membership.Event{Realm: "demo", Type: membership.TypeUserMemberships, User: "u-tom",
+		Groups: []string{"/gentian:tenant:demo:members", "book-club"}})
+	l.send(membership.Event{Realm: "demo", Type: membership.TypeGroupDeleted, Group: "book-club"})
+	l.send(membership.Event{Realm: "demo", Type: membership.TypeUserDeleted, User: "u-ann"})
+	want := []string{
+		"set demo u-tom [/gentian:tenant:demo:members book-club]",
+		"remove demo book-club",
+		"set demo u-ann []",
+	}
+	if strings.Join(mirror.calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("told:\n%s", strings.Join(mirror.calls, "\n"))
+	}
+	if got := groupsOf(t, store, "u-tom"); got != "gentian/tenant/demo/members" {
+		t.Fatalf("the kernel's store holds %q", got)
+	}
+
+	mirror.fail = true
+	if code := l.send(membership.Event{Realm: "demo", Type: membership.TypeUserMemberships, User: "u-tom", Groups: []string{"book-club"}}); code != http.StatusServiceUnavailable {
+		t.Fatalf("a statement the app stores did not take: %d", code)
+	}
+}

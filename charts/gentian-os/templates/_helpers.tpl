@@ -136,3 +136,23 @@ the usher withholding the App Store.
 {{- $r := .Values.usageStatistics | default dict -}}
 {{- if and (eq (toString $r.enabled) "true") (hasPrefix "https://" (toString ($r.url | default ""))) -}}true{{- end -}}
 {{- end }}
+
+{{/*
+The kernel authorization store and model, from the ConfigMap the operator
+records them in. Not optional: a reader without them does not start rather
+than find a store by its name, and the pod waits in CreateContainerConfigError
+until the operator has written the record. The Deployment carries the
+reloader annotation for the ConfigMap, so a new model id restarts it.
+*/}}
+{{- define "gentian-os.authorizationStoreEnv" -}}
+- name: OPENFGA_STORE_ID
+  valueFrom:
+    configMapKeyRef:
+      name: authorization-store
+      key: storeID
+- name: OPENFGA_MODEL_ID
+  valueFrom:
+    configMapKeyRef:
+      name: authorization-store
+      key: modelID
+{{- end }}

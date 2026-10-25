@@ -71,6 +71,19 @@ func (f *fakeBundles) AppSecrets(_ context.Context, ref gentianov1alpha1.BundleR
 	return backup.OpenAppSecrets(cipher, ids)
 }
 
+// AppAuthorization opens what was put, as AppSecrets does.
+func (f *fakeBundles) AppAuthorization(_ context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppAuthorization, error) {
+	cipher, ok := f.objects[ref.Bucket+"/"+ref.Prefix+"/"+path]
+	if !ok {
+		return nil, fmt.Errorf("the bundle does not hold %s", path)
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, err
+	}
+	return backup.OpenAppAuthorization(cipher, ids)
+}
+
 func (f *fakeBundles) SignedManifest(_ context.Context, _ gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, *bundlestore.Signed, error) {
 	f.keys = append(f.keys, key)
 	if f.err != nil {

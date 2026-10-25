@@ -97,6 +97,8 @@ spec:
               value: 'ns.authentication.placeholder'
             - name: networkPolicy.namespaces.mail
               value: 'sys.mail.placeholder'
+            - name: networkPolicy.namespaces.authorization
+              value: 'sys.authorization.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'

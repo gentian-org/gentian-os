@@ -73,14 +73,21 @@ func kernelPolicyName(appName string) string {
 }
 
 // egressTarget is one namespace an app may reach and the TCP ports it may
-// reach there. No ports means the whole namespace.
+// reach there. No ports means the whole namespace. pods, when set, narrows
+// it to the pods carrying those labels.
 type egressTarget struct {
 	namespace string
 	ports     []int32
+	pods      map[string]string
 }
 
 func (t egressTarget) rule() networkingv1.NetworkPolicyEgressRule {
 	rule := namespaceEgress(t.namespace)
+	if t.pods != nil {
+		for i := range rule.To {
+			rule.To[i].PodSelector = &metav1.LabelSelector{MatchLabels: t.pods}
+		}
+	}
 	for _, p := range t.ports {
 		rule.Ports = append(rule.Ports, tcpPort(p))
 	}
@@ -179,6 +186,17 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 			add(layout.Namespace(layout.Control), RegistrarPort)
 			// And the realm, which it posts its statements to.
 			add(layout.Namespace(layout.Authentication))
+		}
+		// An authorization store: the arbiter's pods on the arbiter's
+		// port, and nothing else of its namespace -- the app instance of
+		// OpenFGA beside it listens on the same port number and holds the
+		// credential that opens every store.
+		if kr.Authorization != nil {
+			ns := layout.System("authorization")
+			if _, seen := index[ns]; !seen {
+				index[ns] = len(out)
+				out = append(out, egressTarget{namespace: ns, ports: []int32{ArbiterPort}, pods: ArbiterPodLabels()})
+			}
 		}
 	}
 

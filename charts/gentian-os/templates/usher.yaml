@@ -78,6 +78,8 @@ kind: Deployment
 metadata:
   name: {{ $name }}
   namespace: {{ $ns }}
+  annotations:
+    configmap.reloader.stakater.com/reload: "authorization-store"
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
     app.kubernetes.io/component: usher
@@ -129,6 +131,7 @@ spec:
               value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
             - name: OPENFGA_API_URL
               value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- include "gentian-os.authorizationStoreEnv" . | nindent 12 }}
             {{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
             - name: OPENFGA_API_TOKEN
               valueFrom:

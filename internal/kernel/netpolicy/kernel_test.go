@@ -52,13 +52,20 @@ func opened(t *testing.T, np *networkingv1.NetworkPolicy) []string {
 	}
 	var out []string
 	for _, rule := range np.Spec.Egress {
-		if len(rule.To) != 1 || rule.To[0].NamespaceSelector == nil || rule.To[0].PodSelector != nil || rule.To[0].IPBlock != nil ||
+		if len(rule.To) != 1 || rule.To[0].NamespaceSelector == nil || rule.To[0].IPBlock != nil ||
 			len(rule.To[0].NamespaceSelector.MatchLabels) != 1 || len(rule.To[0].NamespaceSelector.MatchExpressions) != 0 {
 			t.Fatalf("a rule must name exactly one namespace: %+v", rule)
 		}
 		ns := rule.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]
 		if ns == "" {
 			t.Fatalf("a rule must select its namespace by name: %+v", rule.To[0])
+		}
+		// A rule narrowed to some pods of the namespace says which.
+		if pods := rule.To[0].PodSelector; pods != nil {
+			if len(pods.MatchLabels) == 0 || len(pods.MatchExpressions) != 0 {
+				t.Fatalf("%s: a rule narrowed to pods names them by their labels: %+v", ns, pods)
+			}
+			ns += "[" + pods.MatchLabels["app.kubernetes.io/name"] + "]"
 		}
 		if len(rule.Ports) == 0 {
 			out = append(out, ns+":*")
@@ -338,5 +345,23 @@ func TestAnAppBehindTheSignInSidecarDoesNotReachTheIdentityProvider(t *testing.T
 		Identity: &gentianov1alpha1.IdentityRequirement{Sidecar: &gentianov1alpha1.SignInSidecarSpec{}},
 	}, nil), cfg); only != nil {
 		t.Errorf("an app that declares the sidecar and nothing else is opened to %v", opened(t, only))
+	}
+}
+
+// An app that declares an authorization store reaches the arbiter's pods on
+// the arbiter's port, and nothing else of the arbiter's namespace: the app
+// instance of OpenFGA beside it listens on the same port number.
+func TestAnAuthorizationStoreOpensTheArbitersPodsAlone(t *testing.T) {
+	t.Parallel()
+	declaring := profileRequiring(gentianov1alpha1.ServiceRequirements{
+		Authorization: &gentianov1alpha1.AuthorizationRequirement{Model: "model\n  schema 1.1\ntype user\n"},
+	}, nil)
+	np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "ledger", declaring, netpolicy.Config{})
+	if got, want := opened(t, np), []string{fmt.Sprintf("%s[arbiter]:%d", layout.System("authorization"), netpolicy.ArbiterPort)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("opened = %v, want %v", got, want)
+	}
+	to := np.Spec.Egress[0].To
+	if len(to) != 1 || to[0].PodSelector == nil || !reflect.DeepEqual(to[0].PodSelector.MatchLabels, netpolicy.ArbiterPodLabels()) {
+		t.Fatalf("the way to the arbiter's namespace is not narrowed to its pods: %+v", to)
 	}
 }

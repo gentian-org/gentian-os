@@ -24,6 +24,8 @@ SPDX-License-Identifier: Apache-2.0
 package bundle
 
 import (
+	"encoding/json"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
@@ -65,8 +67,14 @@ import (
 // written with. The version is bumped because a reader of version 3 does not
 // know the kind and would leave the app that has one out.
 //
+// Version 5 adds one kind of artefact to an app's, and renames nothing: the
+// app's authorization store (ArtefactAuthorization), its model and every
+// tuple, written by the operator itself as the secrets are. A version 4
+// bundle holds none and reads as before. The version is bumped because a
+// reader of version 4 does not know the kind and would leave the store out.
+//
 // A reader refuses a version newer than its own.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // OldestReadableSchemaVersion is the oldest manifest a restore still reads.
 const OldestReadableSchemaVersion = 1
@@ -126,12 +134,30 @@ const (
 	// (Manifest.Rights). The name is what the inventory and a restore's
 	// result call them by. Since version 3.
 	ArtefactRights = "rights"
+	// ArtefactAuthorization is an app's authorization store
+	// (requires.services.authorization): its model and every tuple, one
+	// JSON document per app (AppAuthorization), encrypted by the operator
+	// itself. A restore puts it back into a fresh store of the app in the
+	// tenant restored into. Since version 5.
+	ArtefactAuthorization = "authorization"
 )
 
 // AppArtefacts are the kinds of artefact an app's data is carried as, for
 // an installed app and for one that was uninstalled with its data kept
 // alike.
-var AppArtefacts = []string{ArtefactPostgres, ArtefactPostgresOwned, ArtefactMariaDB, ArtefactMariaDBOwned, ArtefactS3, ArtefactVolume, ArtefactSecrets}
+var AppArtefacts = []string{ArtefactPostgres, ArtefactPostgresOwned, ArtefactMariaDB, ArtefactMariaDBOwned, ArtefactS3, ArtefactVolume, ArtefactSecrets, ArtefactAuthorization}
+
+// AppAuthorization is the content of an app's authorization artefact: the
+// model its store was decided against and every tuple in it -- the app's
+// own, its starting tuples and the realm's memberships it mirrored alike.
+type AppAuthorization struct {
+	// App is the app the store is of.
+	App string `json:"app"`
+	// Model is the model as OpenFGA's API takes it.
+	Model json.RawMessage `json:"model"`
+	// Tuples are every tuple of the store.
+	Tuples []RightsTuple `json:"tuples"`
+}
 
 // AppSecrets is the content of an app's secrets artefact.
 //

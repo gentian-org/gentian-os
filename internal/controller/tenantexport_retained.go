@@ -237,10 +237,15 @@ func (r *TenantExportReconciler) captureRetained(
 	entry.Artefacts = unitArtefacts(units)
 	// An uninstall keeps the app's secrets in the vault with its data, and
 	// the data is of no use without them.
-	if err := r.withAppSecrets(ctx, export, tenant, app.name, app.profile, encryption, entry); err != nil {
+	// And its authorization store, which the uninstall kept as well.
+	err = r.withAppAuthorization(ctx, export, tenant, app.name, encryption, entry)
+	if err == nil {
+		err = r.withAppSecrets(ctx, export, tenant, app.name, app.profile, encryption, entry)
+	}
+	if err != nil {
 		entry.Attempts++
 		if entry.Attempts > exportMaxAttempts {
-			return failed(fmt.Sprintf("its own secrets could not be put into the bundle: %v", err))
+			return failed(fmt.Sprintf("its own secrets or its authorization store could not be put into the bundle: %v", err))
 		}
 		// Not captured yet: the next pass comes back here.
 		entry.Artefacts = nil

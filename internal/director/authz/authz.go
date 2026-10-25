@@ -333,10 +333,29 @@ func (c *OpenFGA) do(req *http.Request, out any) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("openfga %s: status %d: %s", req.URL.Path, resp.StatusCode, strings.TrimSpace(string(b)))
+		return &statusError{path: req.URL.Path, code: resp.StatusCode, body: strings.TrimSpace(string(b))}
 	}
 	if out == nil {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// statusError is a refusal from OpenFGA, kept apart from a transport error so
+// that a caller can tell "there is no such store" from "OpenFGA did not
+// answer".
+type statusError struct {
+	path string
+	code int
+	body string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("openfga %s: status %d: %s", e.path, e.code, e.body)
+}
+
+// isNotFound reports OpenFGA saying that what was asked for does not exist.
+func isNotFound(err error) bool {
+	var se *statusError
+	return errors.As(err, &se) && se.code == http.StatusNotFound
 }

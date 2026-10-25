@@ -433,7 +433,7 @@ func TestAnExportCarriesAnAppsOwnSecretsEncryptedAndNowhereElse(t *testing.T) {
 	if !reflect.DeepEqual(entry.Secrets.Names, []string{"encryption_key", "search/index_key", "session_key"}) {
 		t.Errorf("status names %v", entry.Secrets.Names)
 	}
-	if m.SchemaVersion != 4 || m.Apps[0].Stores[1].Kind != bundle.ArtefactSecrets || m.Apps[0].Stores[1].Path != "secrets/wiki.json" {
+	if m.SchemaVersion != bundle.SchemaVersion || m.Apps[0].Stores[1].Kind != bundle.ArtefactSecrets || m.Apps[0].Stores[1].Path != "secrets/wiki.json" {
 		t.Errorf("the manifest: format %d, stores %+v", m.SchemaVersion, m.Apps[0].Stores)
 	}
 

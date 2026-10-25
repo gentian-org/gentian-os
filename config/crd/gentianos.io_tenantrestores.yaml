@@ -318,6 +318,23 @@ spec:
                         provisioning, an infinite loop for an export.
                       format: int32
                       type: integer
+                    authorization:
+                      description: |-
+                        Authorization says what was done with the app's authorization store:
+                        how many tuples an export put into the bundle, and when a restore
+                        put them back into a fresh store.
+                      properties:
+                        restoredAt:
+                          description: RestoredAt is when a restore put the store
+                            back.
+                          format: date-time
+                          type: string
+                        tuples:
+                          description: Tuples is how many tuples the bundle holds
+                            of the store.
+                          format: int32
+                          type: integer
+                      type: object
                     chartVersion:
                       description: |-
                         ChartVersion records the chart the app was running when captured.
