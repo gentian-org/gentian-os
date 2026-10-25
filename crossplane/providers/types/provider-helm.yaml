@@ -6,6 +6,8 @@
 #                   the package declares safe-start it becomes a CRD only if an
 #                   activation policy names it (crossplane/providers/activation.yaml).
 # managed: false -> a provider configuration kind; always a plain CRD.
+# forProvider: the top-level fields spec.forProvider declares, for a managed
+#              kind (scripts/lint/lint-composed-provider-fields.py).
 provider: provider-helm
 package: xpkg.upbound.io/crossplane-contrib/provider-helm:v0.20.4
 safeStart: false
@@ -25,3 +27,15 @@ types:
     singular: release
     scope: Cluster
     managed: true
+    forProvider:
+      - "chart"
+      - "insecureSkipTLSVerify"
+      - "namespace"
+      - "patchesFrom"
+      - "set"
+      - "skipCRDs"
+      - "skipCreateNamespace"
+      - "values"
+      - "valuesFrom"
+      - "wait"
+      - "waitTimeout"

@@ -6,6 +6,8 @@
 #                   the package declares safe-start it becomes a CRD only if an
 #                   activation policy names it (crossplane/providers/activation.yaml).
 # managed: false -> a provider configuration kind; always a plain CRD.
+# forProvider: the top-level fields spec.forProvider declares, for a managed
+#              kind (scripts/lint/lint-composed-provider-fields.py).
 provider: provider-vault
 package: xpkg.upbound.io/upbound/provider-vault:v3.0.7
 safeStart: true
@@ -15,371 +17,1525 @@ types:
     singular: alphabet
     scope: Namespaced
     managed: true
+    forProvider:
+      - "alphabet"
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
   - name: alphabets.transform.vault.upbound.io
     kind: Alphabet
     singular: alphabet
     scope: Cluster
     managed: true
+    forProvider:
+      - "alphabet"
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
   - name: audits.vault.vault.m.upbound.io
     kind: Audit
     singular: audit
     scope: Namespaced
     managed: true
+    forProvider:
+      - "description"
+      - "local"
+      - "namespace"
+      - "options"
+      - "path"
+      - "type"
   - name: audits.vault.vault.upbound.io
     kind: Audit
     singular: audit
     scope: Cluster
     managed: true
+    forProvider:
+      - "description"
+      - "local"
+      - "namespace"
+      - "options"
+      - "path"
+      - "type"
   - name: authbackendcerts.aws.vault.m.upbound.io
     kind: AuthBackendCert
     singular: authbackendcert
     scope: Namespaced
     managed: true
+    forProvider:
+      - "awsPublicCert"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certName"
+      - "namespace"
+      - "type"
   - name: authbackendcerts.aws.vault.upbound.io
     kind: AuthBackendCert
     singular: authbackendcert
     scope: Cluster
     managed: true
+    forProvider:
+      - "awsPublicCert"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certName"
+      - "namespace"
+      - "type"
   - name: authbackendclients.aws.vault.m.upbound.io
     kind: AuthBackendClient
     singular: authbackendclient
     scope: Namespaced
     managed: true
+    forProvider:
+      - "accessKeySecretRef"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disableAutomatedRotation"
+      - "ec2Endpoint"
+      - "iamEndpoint"
+      - "iamServerIdHeaderValue"
+      - "identityTokenAudience"
+      - "identityTokenTtl"
+      - "maxRetries"
+      - "namespace"
+      - "roleArn"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "secretKeySecretRef"
+      - "stsEndpoint"
+      - "stsRegion"
+      - "useStsRegionFromClient"
   - name: authbackendclients.aws.vault.upbound.io
     kind: AuthBackendClient
     singular: authbackendclient
     scope: Cluster
     managed: true
+    forProvider:
+      - "accessKeySecretRef"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disableAutomatedRotation"
+      - "ec2Endpoint"
+      - "iamEndpoint"
+      - "iamServerIdHeaderValue"
+      - "identityTokenAudience"
+      - "identityTokenTtl"
+      - "maxRetries"
+      - "namespace"
+      - "roleArn"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "secretKeySecretRef"
+      - "stsEndpoint"
+      - "stsRegion"
+      - "useStsRegionFromClient"
   - name: authbackendconfigidentities.aws.vault.m.upbound.io
     kind: AuthBackendConfigIdentity
     singular: authbackendconfigidentity
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "ec2Alias"
+      - "ec2Metadata"
+      - "iamAlias"
+      - "iamMetadata"
+      - "namespace"
   - name: authbackendconfigidentities.aws.vault.upbound.io
     kind: AuthBackendConfigIdentity
     singular: authbackendconfigidentity
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "ec2Alias"
+      - "ec2Metadata"
+      - "iamAlias"
+      - "iamMetadata"
+      - "namespace"
   - name: authbackendconfigs.azure.vault.m.upbound.io
     kind: AuthBackendConfig
     singular: authbackendconfig
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "disableAutomatedRotation"
+      - "environment"
+      - "identityTokenAudience"
+      - "identityTokenTtl"
+      - "namespace"
+      - "resource"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "tenantIdSecretRef"
   - name: authbackendconfigs.azure.vault.upbound.io
     kind: AuthBackendConfig
     singular: authbackendconfig
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "disableAutomatedRotation"
+      - "environment"
+      - "identityTokenAudience"
+      - "identityTokenTtl"
+      - "namespace"
+      - "resource"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "tenantIdSecretRef"
   - name: authbackendconfigs.kubernetes.vault.m.upbound.io
     kind: AuthBackendConfig
     singular: authbackendconfig
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disableIssValidation"
+      - "disableLocalCaJwt"
+      - "issuer"
+      - "kubernetesCaCert"
+      - "kubernetesHost"
+      - "namespace"
+      - "pemKeys"
+      - "tokenReviewerJwtSecretRef"
+      - "useAnnotationsAsAliasMetadata"
   - name: authbackendconfigs.kubernetes.vault.upbound.io
     kind: AuthBackendConfig
     singular: authbackendconfig
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disableIssValidation"
+      - "disableLocalCaJwt"
+      - "issuer"
+      - "kubernetesCaCert"
+      - "kubernetesHost"
+      - "namespace"
+      - "pemKeys"
+      - "tokenReviewerJwtSecretRef"
+      - "useAnnotationsAsAliasMetadata"
   - name: authbackendgroups.ldap.vault.m.upbound.io
     kind: AuthBackendGroup
     singular: authbackendgroup
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "groupname"
+      - "namespace"
+      - "policies"
   - name: authbackendgroups.ldap.vault.upbound.io
     kind: AuthBackendGroup
     singular: authbackendgroup
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "groupname"
+      - "namespace"
+      - "policies"
   - name: authbackendgroups.okta.vault.m.upbound.io
     kind: AuthBackendGroup
     singular: authbackendgroup
     scope: Namespaced
     managed: true
+    forProvider:
+      - "groupName"
+      - "namespace"
+      - "path"
+      - "policies"
   - name: authbackendgroups.okta.vault.upbound.io
     kind: AuthBackendGroup
     singular: authbackendgroup
     scope: Cluster
     managed: true
+    forProvider:
+      - "groupName"
+      - "namespace"
+      - "path"
+      - "policies"
   - name: authbackendidentitywhitelists.aws.vault.m.upbound.io
     kind: AuthBackendIdentityWhitelist
     singular: authbackendidentitywhitelist
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disablePeriodicTidy"
+      - "namespace"
+      - "safetyBuffer"
   - name: authbackendidentitywhitelists.aws.vault.upbound.io
     kind: AuthBackendIdentityWhitelist
     singular: authbackendidentitywhitelist
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disablePeriodicTidy"
+      - "namespace"
+      - "safetyBuffer"
   - name: authbackendlogins.approle.vault.m.upbound.io
     kind: AuthBackendLogin
     singular: authbackendlogin
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "roleId"
+      - "roleIdRef"
+      - "roleIdSelector"
+      - "secretIdSecretRef"
   - name: authbackendlogins.approle.vault.upbound.io
     kind: AuthBackendLogin
     singular: authbackendlogin
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "roleId"
+      - "roleIdRef"
+      - "roleIdSelector"
+      - "secretIdSecretRef"
   - name: authbackendlogins.aws.vault.m.upbound.io
     kind: AuthBackendLogin
     singular: authbackendlogin
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "iamHttpRequestMethod"
+      - "iamRequestBody"
+      - "iamRequestHeaders"
+      - "iamRequestUrl"
+      - "identity"
+      - "namespace"
+      - "nonce"
+      - "pkcs7"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
+      - "signature"
   - name: authbackendlogins.aws.vault.upbound.io
     kind: AuthBackendLogin
     singular: authbackendlogin
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "iamHttpRequestMethod"
+      - "iamRequestBody"
+      - "iamRequestHeaders"
+      - "iamRequestUrl"
+      - "identity"
+      - "namespace"
+      - "nonce"
+      - "pkcs7"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
+      - "signature"
   - name: authbackendroles.alicloud.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "arn"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "role"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.alicloud.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "arn"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "role"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.approle.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "bindSecretId"
+      - "namespace"
+      - "roleId"
+      - "roleName"
+      - "secretIdBoundCidrs"
+      - "secretIdNumUses"
+      - "secretIdTtl"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.approle.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "bindSecretId"
+      - "namespace"
+      - "roleId"
+      - "roleName"
+      - "secretIdBoundCidrs"
+      - "secretIdNumUses"
+      - "secretIdTtl"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.aws.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowInstanceMigration"
+      - "authType"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundAccountIds"
+      - "boundAmiIds"
+      - "boundEc2InstanceIds"
+      - "boundIamInstanceProfileArns"
+      - "boundIamPrincipalArns"
+      - "boundIamRoleArns"
+      - "boundRegions"
+      - "boundSubnetIds"
+      - "boundVpcIds"
+      - "disallowReauthentication"
+      - "inferredAwsRegion"
+      - "inferredEntityType"
+      - "namespace"
+      - "resolveAwsUniqueIds"
+      - "role"
+      - "roleTag"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.aws.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowInstanceMigration"
+      - "authType"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundAccountIds"
+      - "boundAmiIds"
+      - "boundEc2InstanceIds"
+      - "boundIamInstanceProfileArns"
+      - "boundIamPrincipalArns"
+      - "boundIamRoleArns"
+      - "boundRegions"
+      - "boundSubnetIds"
+      - "boundVpcIds"
+      - "disallowReauthentication"
+      - "inferredAwsRegion"
+      - "inferredEntityType"
+      - "namespace"
+      - "resolveAwsUniqueIds"
+      - "role"
+      - "roleTag"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.azure.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundGroupIds"
+      - "boundLocations"
+      - "boundResourceGroups"
+      - "boundScaleSets"
+      - "boundServicePrincipalIds"
+      - "boundSubscriptionIds"
+      - "namespace"
+      - "role"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.azure.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundGroupIds"
+      - "boundLocations"
+      - "boundResourceGroups"
+      - "boundScaleSets"
+      - "boundServicePrincipalIds"
+      - "boundSubscriptionIds"
+      - "namespace"
+      - "role"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.cert.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedCommonNames"
+      - "allowedDnsSans"
+      - "allowedEmailSans"
+      - "allowedNames"
+      - "allowedOrganizationalUnits"
+      - "allowedUriSans"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certificate"
+      - "displayName"
+      - "name"
+      - "namespace"
+      - "ocspCaCertificates"
+      - "ocspEnabled"
+      - "ocspFailOpen"
+      - "ocspQueryAllServers"
+      - "ocspServersOverride"
+      - "requiredExtensions"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.cert.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedCommonNames"
+      - "allowedDnsSans"
+      - "allowedEmailSans"
+      - "allowedNames"
+      - "allowedOrganizationalUnits"
+      - "allowedUriSans"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certificate"
+      - "displayName"
+      - "name"
+      - "namespace"
+      - "ocspCaCertificates"
+      - "ocspEnabled"
+      - "ocspFailOpen"
+      - "ocspQueryAllServers"
+      - "ocspServersOverride"
+      - "requiredExtensions"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.gcp.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "addGroupAliases"
+      - "allowGceInference"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundInstanceGroups"
+      - "boundLabels"
+      - "boundProjects"
+      - "boundRegions"
+      - "boundServiceAccounts"
+      - "boundZones"
+      - "maxJwtExp"
+      - "namespace"
+      - "role"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "type"
   - name: authbackendroles.gcp.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "addGroupAliases"
+      - "allowGceInference"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundInstanceGroups"
+      - "boundLabels"
+      - "boundProjects"
+      - "boundRegions"
+      - "boundServiceAccounts"
+      - "boundZones"
+      - "maxJwtExp"
+      - "namespace"
+      - "role"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "type"
   - name: authbackendroles.jwt.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedRedirectUris"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundAudiences"
+      - "boundClaims"
+      - "boundClaimsType"
+      - "boundSubject"
+      - "claimMappings"
+      - "clockSkewLeeway"
+      - "disableBoundClaimsParsing"
+      - "expirationLeeway"
+      - "groupsClaim"
+      - "maxAge"
+      - "namespace"
+      - "notBeforeLeeway"
+      - "oidcScopes"
+      - "roleName"
+      - "roleType"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "userClaim"
+      - "userClaimJsonPointer"
+      - "verboseOidcLogging"
   - name: authbackendroles.jwt.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedRedirectUris"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundAudiences"
+      - "boundClaims"
+      - "boundClaimsType"
+      - "boundSubject"
+      - "claimMappings"
+      - "clockSkewLeeway"
+      - "disableBoundClaimsParsing"
+      - "expirationLeeway"
+      - "groupsClaim"
+      - "maxAge"
+      - "namespace"
+      - "notBeforeLeeway"
+      - "oidcScopes"
+      - "roleName"
+      - "roleType"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "userClaim"
+      - "userClaimJsonPointer"
+      - "verboseOidcLogging"
   - name: authbackendroles.kubernetes.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "aliasNameSource"
+      - "audience"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundServiceAccountNames"
+      - "boundServiceAccountNamespaces"
+      - "namespace"
+      - "roleName"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.kubernetes.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "aliasNameSource"
+      - "audience"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "boundServiceAccountNames"
+      - "boundServiceAccountNamespaces"
+      - "namespace"
+      - "roleName"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.token.vault.m.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedEntityAliases"
+      - "allowedPolicies"
+      - "allowedPoliciesGlob"
+      - "disallowedPolicies"
+      - "disallowedPoliciesGlob"
+      - "namespace"
+      - "orphan"
+      - "pathSuffix"
+      - "renewable"
+      - "roleName"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendroles.token.vault.upbound.io
     kind: AuthBackendRole
     singular: authbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedEntityAliases"
+      - "allowedPolicies"
+      - "allowedPoliciesGlob"
+      - "disallowedPolicies"
+      - "disallowedPoliciesGlob"
+      - "namespace"
+      - "orphan"
+      - "pathSuffix"
+      - "renewable"
+      - "roleName"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
   - name: authbackendrolesecretids.approle.vault.m.upbound.io
     kind: AuthBackendRoleSecretID
     singular: authbackendrolesecretid
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "cidrList"
+      - "metadata"
+      - "namespace"
+      - "numUses"
+      - "roleName"
+      - "roleNameRef"
+      - "roleNameSelector"
+      - "secretIdSecretRef"
+      - "ttl"
+      - "withWrappedAccessor"
+      - "wrappingTtl"
   - name: authbackendrolesecretids.approle.vault.upbound.io
     kind: AuthBackendRoleSecretID
     singular: authbackendrolesecretid
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "cidrList"
+      - "metadata"
+      - "namespace"
+      - "numUses"
+      - "roleName"
+      - "roleNameRef"
+      - "roleNameSelector"
+      - "secretIdSecretRef"
+      - "ttl"
+      - "withWrappedAccessor"
+      - "wrappingTtl"
   - name: authbackendroletagblacklists.aws.vault.m.upbound.io
     kind: AuthBackendRoletagBlacklist
     singular: authbackendroletagblacklist
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disablePeriodicTidy"
+      - "namespace"
+      - "safetyBuffer"
   - name: authbackendroletagblacklists.aws.vault.upbound.io
     kind: AuthBackendRoletagBlacklist
     singular: authbackendroletagblacklist
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disablePeriodicTidy"
+      - "namespace"
+      - "safetyBuffer"
   - name: authbackendroletags.aws.vault.m.upbound.io
     kind: AuthBackendRoleTag
     singular: authbackendroletag
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowInstanceMigration"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disallowReauthentication"
+      - "instanceId"
+      - "maxTtl"
+      - "namespace"
+      - "policies"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
   - name: authbackendroletags.aws.vault.upbound.io
     kind: AuthBackendRoleTag
     singular: authbackendroletag
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowInstanceMigration"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "disallowReauthentication"
+      - "instanceId"
+      - "maxTtl"
+      - "namespace"
+      - "policies"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
   - name: authbackends.gcp.vault.m.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "clientEmail"
+      - "clientId"
+      - "credentialsSecretRef"
+      - "customEndpoint"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "local"
+      - "namespace"
+      - "path"
+      - "privateKeyId"
+      - "projectId"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "serviceAccountEmail"
+      - "tune"
   - name: authbackends.gcp.vault.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "clientEmail"
+      - "clientId"
+      - "credentialsSecretRef"
+      - "customEndpoint"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "local"
+      - "namespace"
+      - "path"
+      - "privateKeyId"
+      - "projectId"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "serviceAccountEmail"
+      - "tune"
   - name: authbackends.github.vault.m.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "baseUrl"
+      - "description"
+      - "disableRemount"
+      - "namespace"
+      - "organization"
+      - "organizationId"
+      - "path"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "tune"
   - name: authbackends.github.vault.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "baseUrl"
+      - "description"
+      - "disableRemount"
+      - "namespace"
+      - "organization"
+      - "organizationId"
+      - "path"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "tune"
   - name: authbackends.jwt.vault.m.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "boundIssuer"
+      - "defaultRole"
+      - "description"
+      - "disableRemount"
+      - "jwksCaPem"
+      - "jwksPairs"
+      - "jwksUrl"
+      - "jwtSupportedAlgs"
+      - "jwtValidationPubkeys"
+      - "local"
+      - "namespace"
+      - "namespaceInState"
+      - "oidcClientId"
+      - "oidcClientSecretSecretRef"
+      - "oidcDiscoveryCaPem"
+      - "oidcDiscoveryUrl"
+      - "oidcResponseMode"
+      - "oidcResponseTypes"
+      - "path"
+      - "providerConfig"
+      - "tune"
+      - "type"
   - name: authbackends.jwt.vault.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "boundIssuer"
+      - "defaultRole"
+      - "description"
+      - "disableRemount"
+      - "jwksCaPem"
+      - "jwksPairs"
+      - "jwksUrl"
+      - "jwtSupportedAlgs"
+      - "jwtValidationPubkeys"
+      - "local"
+      - "namespace"
+      - "namespaceInState"
+      - "oidcClientId"
+      - "oidcClientSecretSecretRef"
+      - "oidcDiscoveryCaPem"
+      - "oidcDiscoveryUrl"
+      - "oidcResponseMode"
+      - "oidcResponseTypes"
+      - "path"
+      - "providerConfig"
+      - "tune"
+      - "type"
   - name: authbackends.ldap.vault.m.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "binddn"
+      - "bindpassSecretRef"
+      - "caseSensitiveNames"
+      - "certificate"
+      - "clientTlsCert"
+      - "clientTlsKeySecretRef"
+      - "connectionTimeout"
+      - "denyNullBind"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "discoverdn"
+      - "groupattr"
+      - "groupdn"
+      - "groupfilter"
+      - "insecureTls"
+      - "local"
+      - "maxPageSize"
+      - "namespace"
+      - "path"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "starttls"
+      - "tlsMaxVersion"
+      - "tlsMinVersion"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "upndomain"
+      - "url"
+      - "useTokenGroups"
+      - "userattr"
+      - "userdn"
+      - "userfilter"
+      - "usernameAsAlias"
   - name: authbackends.ldap.vault.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "binddn"
+      - "bindpassSecretRef"
+      - "caseSensitiveNames"
+      - "certificate"
+      - "clientTlsCert"
+      - "clientTlsKeySecretRef"
+      - "connectionTimeout"
+      - "denyNullBind"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "discoverdn"
+      - "groupattr"
+      - "groupdn"
+      - "groupfilter"
+      - "insecureTls"
+      - "local"
+      - "maxPageSize"
+      - "namespace"
+      - "path"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "starttls"
+      - "tlsMaxVersion"
+      - "tlsMinVersion"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenTtl"
+      - "tokenType"
+      - "upndomain"
+      - "url"
+      - "useTokenGroups"
+      - "userattr"
+      - "userdn"
+      - "userfilter"
+      - "usernameAsAlias"
   - name: authbackends.okta.vault.m.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "baseUrl"
+      - "bypassOktaMfa"
+      - "description"
+      - "disableRemount"
+      - "group"
+      - "namespace"
+      - "organization"
+      - "path"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenSecretRef"
+      - "tokenTtl"
+      - "tokenType"
+      - "user"
   - name: authbackends.okta.vault.upbound.io
     kind: AuthBackend
     singular: authbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "baseUrl"
+      - "bypassOktaMfa"
+      - "description"
+      - "disableRemount"
+      - "group"
+      - "namespace"
+      - "organization"
+      - "path"
+      - "tokenBoundCidrs"
+      - "tokenExplicitMaxTtl"
+      - "tokenMaxTtl"
+      - "tokenNoDefaultPolicy"
+      - "tokenNumUses"
+      - "tokenPeriod"
+      - "tokenPolicies"
+      - "tokenSecretRef"
+      - "tokenTtl"
+      - "tokenType"
+      - "user"
   - name: authbackendstsroles.aws.vault.m.upbound.io
     kind: AuthBackendStsRole
     singular: authbackendstsrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "accountId"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "externalId"
+      - "namespace"
+      - "stsRole"
   - name: authbackendstsroles.aws.vault.upbound.io
     kind: AuthBackendStsRole
     singular: authbackendstsrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "accountId"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "externalId"
+      - "namespace"
+      - "stsRole"
   - name: authbackendusers.ldap.vault.m.upbound.io
     kind: AuthBackendUser
     singular: authbackenduser
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "groups"
+      - "namespace"
+      - "policies"
+      - "username"
   - name: authbackendusers.ldap.vault.upbound.io
     kind: AuthBackendUser
     singular: authbackenduser
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "groups"
+      - "namespace"
+      - "policies"
+      - "username"
   - name: authbackendusers.okta.vault.m.upbound.io
     kind: AuthBackendUser
     singular: authbackenduser
     scope: Namespaced
     managed: true
+    forProvider:
+      - "groups"
+      - "namespace"
+      - "path"
+      - "policies"
+      - "username"
   - name: authbackendusers.okta.vault.upbound.io
     kind: AuthBackendUser
     singular: authbackenduser
     scope: Cluster
     managed: true
+    forProvider:
+      - "groups"
+      - "namespace"
+      - "path"
+      - "policies"
+      - "username"
   - name: autopilots.raft.vault.m.upbound.io
     kind: Autopilot
     singular: autopilot
     scope: Namespaced
     managed: true
+    forProvider:
+      - "cleanupDeadServers"
+      - "deadServerLastContactThreshold"
+      - "disableUpgradeMigration"
+      - "lastContactThreshold"
+      - "maxTrailingLogs"
+      - "minQuorum"
+      - "namespace"
+      - "serverStabilizationTime"
   - name: autopilots.raft.vault.upbound.io
     kind: Autopilot
     singular: autopilot
     scope: Cluster
     managed: true
+    forProvider:
+      - "cleanupDeadServers"
+      - "deadServerLastContactThreshold"
+      - "disableUpgradeMigration"
+      - "lastContactThreshold"
+      - "maxTrailingLogs"
+      - "minQuorum"
+      - "namespace"
+      - "serverStabilizationTime"
   - name: backends.auth.vault.m.upbound.io
     kind: Backend
     singular: backend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "description"
+      - "disableRemount"
+      - "identityTokenKey"
+      - "local"
+      - "namespace"
+      - "path"
+      - "tune"
+      - "type"
   - name: backends.auth.vault.upbound.io
     kind: Backend
     singular: backend
     scope: Cluster
     managed: true
+    forProvider:
+      - "description"
+      - "disableRemount"
+      - "identityTokenKey"
+      - "local"
+      - "namespace"
+      - "path"
+      - "tune"
+      - "type"
   - name: cloudsecretbackends.terraform.vault.m.upbound.io
     kind: CloudSecretBackend
     singular: cloudsecretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "address"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "backend"
+      - "basePath"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "pluginVersion"
+      - "sealWrap"
+      - "tokenSecretRef"
   - name: cloudsecretbackends.terraform.vault.upbound.io
     kind: CloudSecretBackend
     singular: cloudsecretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "address"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "backend"
+      - "basePath"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "pluginVersion"
+      - "sealWrap"
+      - "tokenSecretRef"
   - name: cloudsecretcreds.terraform.vault.m.upbound.io
     kind: CloudSecretCreds
     singular: cloudsecretcreds
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
   - name: cloudsecretcreds.terraform.vault.upbound.io
     kind: CloudSecretCreds
     singular: cloudsecretcreds
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
   - name: cloudsecretroles.terraform.vault.m.upbound.io
     kind: CloudSecretRole
     singular: cloudsecretrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "organization"
+      - "teamId"
+      - "ttl"
+      - "userId"
   - name: cloudsecretroles.terraform.vault.upbound.io
     kind: CloudSecretRole
     singular: cloudsecretrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "organization"
+      - "teamId"
+      - "ttl"
+      - "userId"
   - name: clusterproviderconfigs.vault.m.upbound.io
     kind: ClusterProviderConfig
     singular: clusterproviderconfig
@@ -390,321 +1546,835 @@ types:
     singular: duo
     scope: Namespaced
     managed: true
+    forProvider:
+      - "apiHostname"
+      - "integrationKeySecretRef"
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
+      - "pushInfo"
+      - "secretKeySecretRef"
+      - "usernameFormat"
   - name: duoes.mfa.vault.upbound.io
     kind: Duo
     singular: duo
     scope: Cluster
     managed: true
+    forProvider:
+      - "apiHostname"
+      - "integrationKeySecretRef"
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
+      - "pushInfo"
+      - "secretKeySecretRef"
+      - "usernameFormat"
   - name: endpoints.generic.vault.m.upbound.io
     kind: Endpoint
     singular: endpoint
     scope: Namespaced
     managed: true
+    forProvider:
+      - "dataJsonSecretRef"
+      - "disableDelete"
+      - "disableRead"
+      - "ignoreAbsentFields"
+      - "namespace"
+      - "path"
+      - "writeFields"
   - name: endpoints.generic.vault.upbound.io
     kind: Endpoint
     singular: endpoint
     scope: Cluster
     managed: true
+    forProvider:
+      - "dataJsonSecretRef"
+      - "disableDelete"
+      - "disableRead"
+      - "ignoreAbsentFields"
+      - "namespace"
+      - "path"
+      - "writeFields"
   - name: entities.identity.vault.m.upbound.io
     kind: Entity
     singular: entity
     scope: Namespaced
     managed: true
+    forProvider:
+      - "disabled"
+      - "externalPolicies"
+      - "metadata"
+      - "name"
+      - "namespace"
+      - "policies"
   - name: entities.identity.vault.upbound.io
     kind: Entity
     singular: entity
     scope: Cluster
     managed: true
+    forProvider:
+      - "disabled"
+      - "externalPolicies"
+      - "metadata"
+      - "name"
+      - "namespace"
+      - "policies"
   - name: entityaliases.identity.vault.m.upbound.io
     kind: EntityAlias
     singular: entityalias
     scope: Namespaced
     managed: true
+    forProvider:
+      - "canonicalId"
+      - "customMetadata"
+      - "mountAccessor"
+      - "name"
+      - "namespace"
   - name: entityaliases.identity.vault.upbound.io
     kind: EntityAlias
     singular: entityalias
     scope: Cluster
     managed: true
+    forProvider:
+      - "canonicalId"
+      - "customMetadata"
+      - "mountAccessor"
+      - "name"
+      - "namespace"
   - name: entitypolicies.identity.vault.m.upbound.io
     kind: EntityPolicies
     singular: entitypolicies
     scope: Namespaced
     managed: true
+    forProvider:
+      - "entityId"
+      - "entityIdRef"
+      - "entityIdSelector"
+      - "exclusive"
+      - "namespace"
+      - "policies"
   - name: entitypolicies.identity.vault.upbound.io
     kind: EntityPolicies
     singular: entitypolicies
     scope: Cluster
     managed: true
+    forProvider:
+      - "entityId"
+      - "entityIdRef"
+      - "entityIdSelector"
+      - "exclusive"
+      - "namespace"
+      - "policies"
   - name: groupaliases.identity.vault.m.upbound.io
     kind: GroupAlias
     singular: groupalias
     scope: Namespaced
     managed: true
+    forProvider:
+      - "canonicalId"
+      - "canonicalIdRef"
+      - "canonicalIdSelector"
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
   - name: groupaliases.identity.vault.upbound.io
     kind: GroupAlias
     singular: groupalias
     scope: Cluster
     managed: true
+    forProvider:
+      - "canonicalId"
+      - "canonicalIdRef"
+      - "canonicalIdSelector"
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
   - name: groupmemberentityidsidses.identity.vault.m.upbound.io
     kind: GroupMemberEntityIds
     singular: groupmemberentityids
     scope: Namespaced
     managed: true
+    forProvider:
+      - "exclusive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "memberEntityIds"
+      - "memberEntityIdsRefs"
+      - "memberEntityIdsSelector"
+      - "namespace"
   - name: groupmemberentityidsidses.identity.vault.upbound.io
     kind: GroupMemberEntityIds
     singular: groupmemberentityids
     scope: Cluster
     managed: true
+    forProvider:
+      - "exclusive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "memberEntityIds"
+      - "memberEntityIdsRefs"
+      - "memberEntityIdsSelector"
+      - "namespace"
   - name: groupmembergroupidsidses.identity.vault.m.upbound.io
     kind: GroupMemberGroupIds
     singular: groupmembergroupids
     scope: Namespaced
     managed: true
+    forProvider:
+      - "exclusive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "memberGroupIds"
+      - "memberGroupIdsRefs"
+      - "memberGroupIdsSelector"
+      - "namespace"
   - name: groupmembergroupidsidses.identity.vault.upbound.io
     kind: GroupMemberGroupIds
     singular: groupmembergroupids
     scope: Cluster
     managed: true
+    forProvider:
+      - "exclusive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "memberGroupIds"
+      - "memberGroupIdsRefs"
+      - "memberGroupIdsSelector"
+      - "namespace"
   - name: grouppolicies.identity.vault.m.upbound.io
     kind: GroupPolicies
     singular: grouppolicies
     scope: Namespaced
     managed: true
+    forProvider:
+      - "exclusive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "namespace"
+      - "policies"
   - name: grouppolicies.identity.vault.upbound.io
     kind: GroupPolicies
     singular: grouppolicies
     scope: Cluster
     managed: true
+    forProvider:
+      - "exclusive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "namespace"
+      - "policies"
   - name: groups.identity.vault.m.upbound.io
     kind: Group
     singular: group
     scope: Namespaced
     managed: true
+    forProvider:
+      - "externalMemberEntityIds"
+      - "externalMemberGroupIds"
+      - "externalPolicies"
+      - "memberEntityIds"
+      - "memberGroupIds"
+      - "metadata"
+      - "name"
+      - "namespace"
+      - "policies"
+      - "type"
   - name: groups.identity.vault.upbound.io
     kind: Group
     singular: group
     scope: Cluster
     managed: true
+    forProvider:
+      - "externalMemberEntityIds"
+      - "externalMemberGroupIds"
+      - "externalPolicies"
+      - "memberEntityIds"
+      - "memberGroupIds"
+      - "metadata"
+      - "name"
+      - "namespace"
+      - "policies"
+      - "type"
   - name: keys.managed.vault.m.upbound.io
     kind: Keys
     singular: keys
     scope: Namespaced
     managed: true
+    forProvider:
+      - "aws"
+      - "azure"
+      - "namespace"
+      - "pkcs"
   - name: keys.managed.vault.upbound.io
     kind: Keys
     singular: keys
     scope: Cluster
     managed: true
+    forProvider:
+      - "aws"
+      - "azure"
+      - "namespace"
+      - "pkcs"
   - name: leasecounts.quota.vault.m.upbound.io
     kind: LeaseCount
     singular: leasecount
     scope: Namespaced
     managed: true
+    forProvider:
+      - "inheritable"
+      - "maxLeases"
+      - "name"
+      - "namespace"
+      - "path"
+      - "role"
   - name: leasecounts.quota.vault.upbound.io
     kind: LeaseCount
     singular: leasecount
     scope: Cluster
     managed: true
+    forProvider:
+      - "inheritable"
+      - "maxLeases"
+      - "name"
+      - "namespace"
+      - "path"
+      - "role"
   - name: mfaduoes.identity.vault.m.upbound.io
     kind: MfaDuo
     singular: mfaduo
     scope: Namespaced
     managed: true
+    forProvider:
+      - "apiHostname"
+      - "integrationKeySecretRef"
+      - "namespace"
+      - "pushInfo"
+      - "secretKeySecretRef"
+      - "usePasscode"
+      - "usernameFormat"
   - name: mfaduoes.identity.vault.upbound.io
     kind: MfaDuo
     singular: mfaduo
     scope: Cluster
     managed: true
+    forProvider:
+      - "apiHostname"
+      - "integrationKeySecretRef"
+      - "namespace"
+      - "pushInfo"
+      - "secretKeySecretRef"
+      - "usePasscode"
+      - "usernameFormat"
   - name: mfaloginenforcements.identity.vault.m.upbound.io
     kind: MfaLoginEnforcement
     singular: mfaloginenforcement
     scope: Namespaced
     managed: true
+    forProvider:
+      - "authMethodAccessors"
+      - "authMethodTypes"
+      - "identityEntityIds"
+      - "identityGroupIds"
+      - "mfaMethodIds"
+      - "mfaMethodIdsRefs"
+      - "mfaMethodIdsSelector"
+      - "name"
+      - "namespace"
   - name: mfaloginenforcements.identity.vault.upbound.io
     kind: MfaLoginEnforcement
     singular: mfaloginenforcement
     scope: Cluster
     managed: true
+    forProvider:
+      - "authMethodAccessors"
+      - "authMethodTypes"
+      - "identityEntityIds"
+      - "identityGroupIds"
+      - "mfaMethodIds"
+      - "mfaMethodIdsRefs"
+      - "mfaMethodIdsSelector"
+      - "name"
+      - "namespace"
   - name: mfaoktas.identity.vault.m.upbound.io
     kind: MfaOkta
     singular: mfaokta
     scope: Namespaced
     managed: true
+    forProvider:
+      - "apiTokenSecretRef"
+      - "baseUrl"
+      - "namespace"
+      - "orgName"
+      - "primaryEmail"
+      - "usernameFormat"
   - name: mfaoktas.identity.vault.upbound.io
     kind: MfaOkta
     singular: mfaokta
     scope: Cluster
     managed: true
+    forProvider:
+      - "apiTokenSecretRef"
+      - "baseUrl"
+      - "namespace"
+      - "orgName"
+      - "primaryEmail"
+      - "usernameFormat"
   - name: mfapingids.identity.vault.m.upbound.io
     kind: MfaPingid
     singular: mfapingid
     scope: Namespaced
     managed: true
+    forProvider:
+      - "namespace"
+      - "settingsFileBase64"
+      - "usernameFormat"
   - name: mfapingids.identity.vault.upbound.io
     kind: MfaPingid
     singular: mfapingid
     scope: Cluster
     managed: true
+    forProvider:
+      - "namespace"
+      - "settingsFileBase64"
+      - "usernameFormat"
   - name: mfatotps.identity.vault.m.upbound.io
     kind: MfaTotp
     singular: mfatotp
     scope: Namespaced
     managed: true
+    forProvider:
+      - "algorithm"
+      - "digits"
+      - "issuer"
+      - "keySize"
+      - "maxValidationAttempts"
+      - "namespace"
+      - "period"
+      - "qrSize"
+      - "skew"
   - name: mfatotps.identity.vault.upbound.io
     kind: MfaTotp
     singular: mfatotp
     scope: Cluster
     managed: true
+    forProvider:
+      - "algorithm"
+      - "digits"
+      - "issuer"
+      - "keySize"
+      - "maxValidationAttempts"
+      - "namespace"
+      - "period"
+      - "qrSize"
+      - "skew"
   - name: mounts.vault.vault.m.upbound.io
     kind: Mount
     singular: mount
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "type"
   - name: mounts.vault.vault.upbound.io
     kind: Mount
     singular: mount
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "type"
   - name: oidcassignments.identity.vault.m.upbound.io
     kind: OidcAssignment
     singular: oidcassignment
     scope: Namespaced
     managed: true
+    forProvider:
+      - "entityIds"
+      - "entityIdsRefs"
+      - "entityIdsSelector"
+      - "groupIds"
+      - "groupIdsRefs"
+      - "groupIdsSelector"
+      - "name"
+      - "namespace"
   - name: oidcassignments.identity.vault.upbound.io
     kind: OidcAssignment
     singular: oidcassignment
     scope: Cluster
     managed: true
+    forProvider:
+      - "entityIds"
+      - "entityIdsRefs"
+      - "entityIdsSelector"
+      - "groupIds"
+      - "groupIdsRefs"
+      - "groupIdsSelector"
+      - "name"
+      - "namespace"
   - name: oidcclients.identity.vault.m.upbound.io
     kind: OidcClient
     singular: oidcclient
     scope: Namespaced
     managed: true
+    forProvider:
+      - "accessTokenTtl"
+      - "assignments"
+      - "assignmentsRefs"
+      - "assignmentsSelector"
+      - "clientType"
+      - "idTokenTtl"
+      - "key"
+      - "name"
+      - "namespace"
+      - "redirectUris"
   - name: oidcclients.identity.vault.upbound.io
     kind: OidcClient
     singular: oidcclient
     scope: Cluster
     managed: true
+    forProvider:
+      - "accessTokenTtl"
+      - "assignments"
+      - "assignmentsRefs"
+      - "assignmentsSelector"
+      - "clientType"
+      - "idTokenTtl"
+      - "key"
+      - "name"
+      - "namespace"
+      - "redirectUris"
   - name: oidckeyallowedclientids.identity.vault.m.upbound.io
     kind: OidcKeyAllowedClientID
     singular: oidckeyallowedclientid
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedClientId"
+      - "allowedClientIdRef"
+      - "allowedClientIdSelector"
+      - "keyName"
+      - "keyNameRef"
+      - "keyNameSelector"
+      - "namespace"
   - name: oidckeyallowedclientids.identity.vault.upbound.io
     kind: OidcKeyAllowedClientID
     singular: oidckeyallowedclientid
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedClientId"
+      - "allowedClientIdRef"
+      - "allowedClientIdSelector"
+      - "keyName"
+      - "keyNameRef"
+      - "keyNameSelector"
+      - "namespace"
   - name: oidckeys.identity.vault.m.upbound.io
     kind: OidcKey
     singular: oidckey
     scope: Namespaced
     managed: true
+    forProvider:
+      - "algorithm"
+      - "allowedClientIds"
+      - "name"
+      - "namespace"
+      - "rotationPeriod"
+      - "verificationTtl"
   - name: oidckeys.identity.vault.upbound.io
     kind: OidcKey
     singular: oidckey
     scope: Cluster
     managed: true
+    forProvider:
+      - "algorithm"
+      - "allowedClientIds"
+      - "name"
+      - "namespace"
+      - "rotationPeriod"
+      - "verificationTtl"
   - name: oidcproviders.identity.vault.m.upbound.io
     kind: OidcProvider
     singular: oidcprovider
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedClientIds"
+      - "allowedClientIdsRefs"
+      - "allowedClientIdsSelector"
+      - "httpsEnabled"
+      - "issuerHost"
+      - "name"
+      - "namespace"
+      - "scopesSupported"
+      - "scopesSupportedRefs"
+      - "scopesSupportedSelector"
   - name: oidcproviders.identity.vault.upbound.io
     kind: OidcProvider
     singular: oidcprovider
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedClientIds"
+      - "allowedClientIdsRefs"
+      - "allowedClientIdsSelector"
+      - "httpsEnabled"
+      - "issuerHost"
+      - "name"
+      - "namespace"
+      - "scopesSupported"
+      - "scopesSupportedRefs"
+      - "scopesSupportedSelector"
   - name: oidcroles.identity.vault.m.upbound.io
     kind: OidcRole
     singular: oidcrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "clientId"
+      - "key"
+      - "keyRef"
+      - "keySelector"
+      - "name"
+      - "namespace"
+      - "template"
+      - "ttl"
   - name: oidcroles.identity.vault.upbound.io
     kind: OidcRole
     singular: oidcrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "clientId"
+      - "key"
+      - "keyRef"
+      - "keySelector"
+      - "name"
+      - "namespace"
+      - "template"
+      - "ttl"
   - name: oidcs.identity.vault.m.upbound.io
     kind: Oidc
     singular: oidc
     scope: Namespaced
     managed: true
+    forProvider:
+      - "issuer"
+      - "namespace"
   - name: oidcs.identity.vault.upbound.io
     kind: Oidc
     singular: oidc
     scope: Cluster
     managed: true
+    forProvider:
+      - "issuer"
+      - "namespace"
   - name: oidcscopes.identity.vault.m.upbound.io
     kind: OidcScope
     singular: oidcscope
     scope: Namespaced
     managed: true
+    forProvider:
+      - "description"
+      - "name"
+      - "namespace"
+      - "template"
   - name: oidcscopes.identity.vault.upbound.io
     kind: OidcScope
     singular: oidcscope
     scope: Cluster
     managed: true
+    forProvider:
+      - "description"
+      - "name"
+      - "namespace"
+      - "template"
   - name: oktas.mfa.vault.m.upbound.io
     kind: Okta
     singular: okta
     scope: Namespaced
     managed: true
+    forProvider:
+      - "apiTokenSecretRef"
+      - "baseUrl"
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
+      - "orgName"
+      - "primaryEmail"
+      - "usernameFormat"
   - name: oktas.mfa.vault.upbound.io
     kind: Okta
     singular: okta
     scope: Cluster
     managed: true
+    forProvider:
+      - "apiTokenSecretRef"
+      - "baseUrl"
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
+      - "orgName"
+      - "primaryEmail"
+      - "usernameFormat"
   - name: pingids.mfa.vault.m.upbound.io
     kind: Pingid
     singular: pingid
     scope: Namespaced
     managed: true
+    forProvider:
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
+      - "settingsFileBase64"
+      - "usernameFormat"
   - name: pingids.mfa.vault.upbound.io
     kind: Pingid
     singular: pingid
     scope: Cluster
     managed: true
+    forProvider:
+      - "mountAccessor"
+      - "mountAccessorRef"
+      - "mountAccessorSelector"
+      - "name"
+      - "namespace"
+      - "settingsFileBase64"
+      - "usernameFormat"
   - name: policies.egp.vault.m.upbound.io
     kind: Policy
     singular: policy
     scope: Namespaced
     managed: true
+    forProvider:
+      - "enforcementLevel"
+      - "name"
+      - "namespace"
+      - "paths"
+      - "policy"
   - name: policies.egp.vault.upbound.io
     kind: Policy
     singular: policy
     scope: Cluster
     managed: true
+    forProvider:
+      - "enforcementLevel"
+      - "name"
+      - "namespace"
+      - "paths"
+      - "policy"
   - name: policies.password.vault.m.upbound.io
     kind: Policy
     singular: policy
     scope: Namespaced
     managed: true
+    forProvider:
+      - "name"
+      - "namespace"
+      - "policy"
   - name: policies.password.vault.upbound.io
     kind: Policy
     singular: policy
     scope: Cluster
     managed: true
+    forProvider:
+      - "name"
+      - "namespace"
+      - "policy"
   - name: policies.rgp.vault.m.upbound.io
     kind: Policy
     singular: policy
     scope: Namespaced
     managed: true
+    forProvider:
+      - "enforcementLevel"
+      - "name"
+      - "namespace"
+      - "policy"
   - name: policies.rgp.vault.upbound.io
     kind: Policy
     singular: policy
     scope: Cluster
     managed: true
+    forProvider:
+      - "enforcementLevel"
+      - "name"
+      - "namespace"
+      - "policy"
   - name: policies.vault.vault.m.upbound.io
     kind: Policy
     singular: policy
     scope: Namespaced
     managed: true
+    forProvider:
+      - "name"
+      - "namespace"
+      - "policy"
   - name: policies.vault.vault.upbound.io
     kind: Policy
     singular: policy
     scope: Cluster
     managed: true
+    forProvider:
+      - "name"
+      - "namespace"
+      - "policy"
   - name: providerconfigs.vault.m.upbound.io
     kind: ProviderConfig
     singular: providerconfig
@@ -730,548 +2400,2590 @@ types:
     singular: ratelimit
     scope: Namespaced
     managed: true
+    forProvider:
+      - "blockInterval"
+      - "groupBy"
+      - "inheritable"
+      - "interval"
+      - "name"
+      - "namespace"
+      - "path"
+      - "rate"
+      - "role"
+      - "secondaryRate"
   - name: ratelimits.quota.vault.upbound.io
     kind: RateLimit
     singular: ratelimit
     scope: Cluster
     managed: true
+    forProvider:
+      - "blockInterval"
+      - "groupBy"
+      - "inheritable"
+      - "interval"
+      - "name"
+      - "namespace"
+      - "path"
+      - "rate"
+      - "role"
+      - "secondaryRate"
   - name: requestheaders.audit.vault.m.upbound.io
     kind: RequestHeader
     singular: requestheader
     scope: Namespaced
     managed: true
+    forProvider:
+      - "hmac"
+      - "name"
+      - "namespace"
   - name: requestheaders.audit.vault.upbound.io
     kind: RequestHeader
     singular: requestheader
     scope: Cluster
     managed: true
+    forProvider:
+      - "hmac"
+      - "name"
+      - "namespace"
   - name: roles.transform.vault.m.upbound.io
     kind: Role
     singular: role
     scope: Namespaced
     managed: true
+    forProvider:
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "transformations"
   - name: roles.transform.vault.upbound.io
     kind: Role
     singular: role
     scope: Cluster
     managed: true
+    forProvider:
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "transformations"
   - name: secretbackendcas.ssh.vault.m.upbound.io
     kind: SecretBackendCA
     singular: secretbackendca
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "generateSigningKey"
+      - "keyBits"
+      - "keyType"
+      - "managedKeyId"
+      - "managedKeyName"
+      - "namespace"
+      - "privateKeySecretRef"
+      - "publicKey"
   - name: secretbackendcas.ssh.vault.upbound.io
     kind: SecretBackendCA
     singular: secretbackendca
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "generateSigningKey"
+      - "keyBits"
+      - "keyType"
+      - "managedKeyId"
+      - "managedKeyName"
+      - "namespace"
+      - "privateKeySecretRef"
+      - "publicKey"
   - name: secretbackendcerts.pki.vault.m.upbound.io
     kind: SecretBackendCert
     singular: secretbackendcert
     scope: Namespaced
     managed: true
+    forProvider:
+      - "altNames"
+      - "autoRenew"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certMetadata"
+      - "commonName"
+      - "excludeCnFromSans"
+      - "format"
+      - "ipSans"
+      - "issuerRef"
+      - "minSecondsRemaining"
+      - "name"
+      - "nameRef"
+      - "nameSelector"
+      - "namespace"
+      - "notAfter"
+      - "otherSans"
+      - "privateKeyFormat"
+      - "revoke"
+      - "revokeWithKey"
+      - "ttl"
+      - "uriSans"
+      - "userIds"
   - name: secretbackendcerts.pki.vault.upbound.io
     kind: SecretBackendCert
     singular: secretbackendcert
     scope: Cluster
     managed: true
+    forProvider:
+      - "altNames"
+      - "autoRenew"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certMetadata"
+      - "commonName"
+      - "excludeCnFromSans"
+      - "format"
+      - "ipSans"
+      - "issuerRef"
+      - "minSecondsRemaining"
+      - "name"
+      - "nameRef"
+      - "nameSelector"
+      - "namespace"
+      - "notAfter"
+      - "otherSans"
+      - "privateKeyFormat"
+      - "revoke"
+      - "revokeWithKey"
+      - "ttl"
+      - "uriSans"
+      - "userIds"
   - name: secretbackendconfigcas.pki.vault.m.upbound.io
     kind: SecretBackendConfigCA
     singular: secretbackendconfigca
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "pemBundleSecretRef"
   - name: secretbackendconfigcas.pki.vault.upbound.io
     kind: SecretBackendConfigCA
     singular: secretbackendconfigca
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "pemBundleSecretRef"
   - name: secretbackendconfigurls.pki.vault.m.upbound.io
     kind: SecretBackendConfigUrls
     singular: secretbackendconfigurls
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "crlDistributionPoints"
+      - "enableTemplating"
+      - "issuingCertificates"
+      - "namespace"
+      - "ocspServers"
   - name: secretbackendconfigurls.pki.vault.upbound.io
     kind: SecretBackendConfigUrls
     singular: secretbackendconfigurls
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "crlDistributionPoints"
+      - "enableTemplating"
+      - "issuingCertificates"
+      - "namespace"
+      - "ocspServers"
   - name: secretbackendconnections.database.vault.m.upbound.io
     kind: SecretBackendConnection
     singular: secretbackendconnection
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedRoles"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "cassandra"
+      - "couchbase"
+      - "data"
+      - "disableAutomatedRotation"
+      - "elasticsearch"
+      - "hana"
+      - "influxdb"
+      - "mongodb"
+      - "mongodbatlas"
+      - "mssql"
+      - "mysql"
+      - "mysqlAurora"
+      - "mysqlLegacy"
+      - "mysqlRds"
+      - "name"
+      - "namespace"
+      - "oracle"
+      - "pluginName"
+      - "postgresql"
+      - "redis"
+      - "redisElasticache"
+      - "redshift"
+      - "rootRotationStatements"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "snowflake"
+      - "verifyConnection"
   - name: secretbackendconnections.database.vault.upbound.io
     kind: SecretBackendConnection
     singular: secretbackendconnection
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedRoles"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "cassandra"
+      - "couchbase"
+      - "data"
+      - "disableAutomatedRotation"
+      - "elasticsearch"
+      - "hana"
+      - "influxdb"
+      - "mongodb"
+      - "mongodbatlas"
+      - "mssql"
+      - "mysql"
+      - "mysqlAurora"
+      - "mysqlLegacy"
+      - "mysqlRds"
+      - "name"
+      - "namespace"
+      - "oracle"
+      - "pluginName"
+      - "postgresql"
+      - "redis"
+      - "redisElasticache"
+      - "redshift"
+      - "rootRotationStatements"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "snowflake"
+      - "verifyConnection"
   - name: secretbackendcrlconfigs.pki.vault.m.upbound.io
     kind: SecretBackendCrlConfig
     singular: secretbackendcrlconfig
     scope: Namespaced
     managed: true
+    forProvider:
+      - "autoRebuild"
+      - "autoRebuildGracePeriod"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "crossClusterRevocation"
+      - "deltaRebuildInterval"
+      - "disable"
+      - "enableDelta"
+      - "expiry"
+      - "maxCrlEntries"
+      - "namespace"
+      - "ocspDisable"
+      - "ocspExpiry"
+      - "unifiedCrl"
+      - "unifiedCrlOnExistingPaths"
   - name: secretbackendcrlconfigs.pki.vault.upbound.io
     kind: SecretBackendCrlConfig
     singular: secretbackendcrlconfig
     scope: Cluster
     managed: true
+    forProvider:
+      - "autoRebuild"
+      - "autoRebuildGracePeriod"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "crossClusterRevocation"
+      - "deltaRebuildInterval"
+      - "disable"
+      - "enableDelta"
+      - "expiry"
+      - "maxCrlEntries"
+      - "namespace"
+      - "ocspDisable"
+      - "ocspExpiry"
+      - "unifiedCrl"
+      - "unifiedCrlOnExistingPaths"
   - name: secretbackendintermediatecertrequests.pki.vault.m.upbound.io
     kind: SecretBackendIntermediateCertRequest
     singular: secretbackendintermediatecertrequest
     scope: Namespaced
     managed: true
+    forProvider:
+      - "addBasicConstraints"
+      - "altNames"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "commonName"
+      - "country"
+      - "excludeCnFromSans"
+      - "format"
+      - "ipSans"
+      - "keyBits"
+      - "keyName"
+      - "keyRef"
+      - "keyType"
+      - "keyUsage"
+      - "locality"
+      - "managedKeyId"
+      - "managedKeyName"
+      - "namespace"
+      - "organization"
+      - "otherSans"
+      - "ou"
+      - "postalCode"
+      - "privateKeyFormat"
+      - "province"
+      - "serialNumber"
+      - "signatureBits"
+      - "streetAddress"
+      - "type"
+      - "uriSans"
   - name: secretbackendintermediatecertrequests.pki.vault.upbound.io
     kind: SecretBackendIntermediateCertRequest
     singular: secretbackendintermediatecertrequest
     scope: Cluster
     managed: true
+    forProvider:
+      - "addBasicConstraints"
+      - "altNames"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "commonName"
+      - "country"
+      - "excludeCnFromSans"
+      - "format"
+      - "ipSans"
+      - "keyBits"
+      - "keyName"
+      - "keyRef"
+      - "keyType"
+      - "keyUsage"
+      - "locality"
+      - "managedKeyId"
+      - "managedKeyName"
+      - "namespace"
+      - "organization"
+      - "otherSans"
+      - "ou"
+      - "postalCode"
+      - "privateKeyFormat"
+      - "province"
+      - "serialNumber"
+      - "signatureBits"
+      - "streetAddress"
+      - "type"
+      - "uriSans"
   - name: secretbackendintermediatesetsigneds.pki.vault.m.upbound.io
     kind: SecretBackendIntermediateSetSigned
     singular: secretbackendintermediatesetsigned
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certificate"
+      - "certificateRef"
+      - "certificateSelector"
+      - "namespace"
   - name: secretbackendintermediatesetsigneds.pki.vault.upbound.io
     kind: SecretBackendIntermediateSetSigned
     singular: secretbackendintermediatesetsigned
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certificate"
+      - "certificateRef"
+      - "certificateSelector"
+      - "namespace"
   - name: secretbackendkeys.transit.vault.m.upbound.io
     kind: SecretBackendKey
     singular: secretbackendkey
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowPlaintextBackup"
+      - "autoRotatePeriod"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "convergentEncryption"
+      - "deletionAllowed"
+      - "derived"
+      - "exportable"
+      - "hybridKeyTypeEc"
+      - "hybridKeyTypePqc"
+      - "keySize"
+      - "minDecryptionVersion"
+      - "minEncryptionVersion"
+      - "name"
+      - "namespace"
+      - "parameterSet"
+      - "type"
   - name: secretbackendkeys.transit.vault.upbound.io
     kind: SecretBackendKey
     singular: secretbackendkey
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowPlaintextBackup"
+      - "autoRotatePeriod"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "convergentEncryption"
+      - "deletionAllowed"
+      - "derived"
+      - "exportable"
+      - "hybridKeyTypeEc"
+      - "hybridKeyTypePqc"
+      - "keySize"
+      - "minDecryptionVersion"
+      - "minEncryptionVersion"
+      - "name"
+      - "namespace"
+      - "parameterSet"
+      - "type"
   - name: secretbackendroles.aws.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "credentialType"
+      - "defaultStsTtl"
+      - "externalId"
+      - "iamGroups"
+      - "iamTags"
+      - "maxStsTtl"
+      - "name"
+      - "namespace"
+      - "permissionsBoundaryArn"
+      - "policyArns"
+      - "policyDocument"
+      - "roleArns"
+      - "sessionTags"
+      - "userPath"
   - name: secretbackendroles.aws.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "credentialType"
+      - "defaultStsTtl"
+      - "externalId"
+      - "iamGroups"
+      - "iamTags"
+      - "maxStsTtl"
+      - "name"
+      - "namespace"
+      - "permissionsBoundaryArn"
+      - "policyArns"
+      - "policyDocument"
+      - "roleArns"
+      - "sessionTags"
+      - "userPath"
   - name: secretbackendroles.azure.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "applicationObjectId"
+      - "azureGroups"
+      - "azureRoles"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "description"
+      - "explicitMaxTtl"
+      - "maxTtl"
+      - "namespace"
+      - "permanentlyDelete"
+      - "role"
+      - "signInAudience"
+      - "tags"
+      - "ttl"
   - name: secretbackendroles.azure.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "applicationObjectId"
+      - "azureGroups"
+      - "azureRoles"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "description"
+      - "explicitMaxTtl"
+      - "maxTtl"
+      - "namespace"
+      - "permanentlyDelete"
+      - "role"
+      - "signInAudience"
+      - "tags"
+      - "ttl"
   - name: secretbackendroles.consul.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "consulNamespace"
+      - "consulPolicies"
+      - "consulRoles"
+      - "local"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "nodeIdentities"
+      - "partition"
+      - "policies"
+      - "serviceIdentities"
+      - "ttl"
   - name: secretbackendroles.consul.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "consulNamespace"
+      - "consulPolicies"
+      - "consulRoles"
+      - "local"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "nodeIdentities"
+      - "partition"
+      - "policies"
+      - "serviceIdentities"
+      - "ttl"
   - name: secretbackendroles.database.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "creationStatements"
+      - "credentialConfig"
+      - "credentialType"
+      - "dbName"
+      - "dbNameRef"
+      - "dbNameSelector"
+      - "defaultTtl"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "renewStatements"
+      - "revocationStatements"
+      - "rollbackStatements"
   - name: secretbackendroles.database.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "creationStatements"
+      - "credentialConfig"
+      - "credentialType"
+      - "dbName"
+      - "dbNameRef"
+      - "dbNameSelector"
+      - "defaultTtl"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "renewStatements"
+      - "revocationStatements"
+      - "rollbackStatements"
   - name: secretbackendroles.kubernetes.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedKubernetesNamespaceSelector"
+      - "allowedKubernetesNamespaces"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "extraAnnotations"
+      - "extraLabels"
+      - "generatedRoleRules"
+      - "kubernetesRoleName"
+      - "kubernetesRoleType"
+      - "name"
+      - "nameTemplate"
+      - "namespace"
+      - "serviceAccountName"
+      - "tokenDefaultTtl"
+      - "tokenMaxTtl"
   - name: secretbackendroles.kubernetes.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedKubernetesNamespaceSelector"
+      - "allowedKubernetesNamespaces"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "extraAnnotations"
+      - "extraLabels"
+      - "generatedRoleRules"
+      - "kubernetesRoleName"
+      - "kubernetesRoleType"
+      - "name"
+      - "nameTemplate"
+      - "namespace"
+      - "serviceAccountName"
+      - "tokenDefaultTtl"
+      - "tokenMaxTtl"
   - name: secretbackendroles.pki.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowAnyName"
+      - "allowBareDomains"
+      - "allowGlobDomains"
+      - "allowIpSans"
+      - "allowLocalhost"
+      - "allowSubdomains"
+      - "allowWildcardCertificates"
+      - "allowedDomains"
+      - "allowedDomainsTemplate"
+      - "allowedOtherSans"
+      - "allowedSerialNumbers"
+      - "allowedUriSans"
+      - "allowedUriSansTemplate"
+      - "allowedUserIds"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "basicConstraintsValidForNonCa"
+      - "clientFlag"
+      - "cnValidations"
+      - "codeSigningFlag"
+      - "country"
+      - "emailProtectionFlag"
+      - "enforceHostnames"
+      - "extKeyUsage"
+      - "extKeyUsageOids"
+      - "generateLease"
+      - "issuerRef"
+      - "keyBits"
+      - "keyType"
+      - "keyUsage"
+      - "locality"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "noStore"
+      - "noStoreMetadata"
+      - "notAfter"
+      - "notBeforeDuration"
+      - "organization"
+      - "ou"
+      - "policyIdentifier"
+      - "policyIdentifiers"
+      - "postalCode"
+      - "province"
+      - "requireCn"
+      - "serialNumberSource"
+      - "serverFlag"
+      - "signatureBits"
+      - "streetAddress"
+      - "ttl"
+      - "useCsrCommonName"
+      - "useCsrSans"
+      - "usePss"
   - name: secretbackendroles.pki.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowAnyName"
+      - "allowBareDomains"
+      - "allowGlobDomains"
+      - "allowIpSans"
+      - "allowLocalhost"
+      - "allowSubdomains"
+      - "allowWildcardCertificates"
+      - "allowedDomains"
+      - "allowedDomainsTemplate"
+      - "allowedOtherSans"
+      - "allowedSerialNumbers"
+      - "allowedUriSans"
+      - "allowedUriSansTemplate"
+      - "allowedUserIds"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "basicConstraintsValidForNonCa"
+      - "clientFlag"
+      - "cnValidations"
+      - "codeSigningFlag"
+      - "country"
+      - "emailProtectionFlag"
+      - "enforceHostnames"
+      - "extKeyUsage"
+      - "extKeyUsageOids"
+      - "generateLease"
+      - "issuerRef"
+      - "keyBits"
+      - "keyType"
+      - "keyUsage"
+      - "locality"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "noStore"
+      - "noStoreMetadata"
+      - "notAfter"
+      - "notBeforeDuration"
+      - "organization"
+      - "ou"
+      - "policyIdentifier"
+      - "policyIdentifiers"
+      - "postalCode"
+      - "province"
+      - "requireCn"
+      - "serialNumberSource"
+      - "serverFlag"
+      - "signatureBits"
+      - "streetAddress"
+      - "ttl"
+      - "useCsrCommonName"
+      - "useCsrSans"
+      - "usePss"
   - name: secretbackendroles.rabbitmq.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "name"
+      - "namespace"
+      - "tags"
+      - "vhost"
+      - "vhostTopic"
   - name: secretbackendroles.rabbitmq.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "name"
+      - "namespace"
+      - "tags"
+      - "vhost"
+      - "vhostTopic"
   - name: secretbackendroles.ssh.vault.m.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "algorithmSigner"
+      - "allowBareDomains"
+      - "allowEmptyPrincipals"
+      - "allowHostCertificates"
+      - "allowSubdomains"
+      - "allowUserCertificates"
+      - "allowUserKeyIds"
+      - "allowedCriticalOptions"
+      - "allowedDomains"
+      - "allowedDomainsTemplate"
+      - "allowedExtensions"
+      - "allowedUserKeyConfig"
+      - "allowedUsers"
+      - "allowedUsersTemplate"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "cidrList"
+      - "defaultCriticalOptions"
+      - "defaultExtensions"
+      - "defaultUser"
+      - "defaultUserTemplate"
+      - "keyIdFormat"
+      - "keyType"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "notBeforeDuration"
+      - "ttl"
   - name: secretbackendroles.ssh.vault.upbound.io
     kind: SecretBackendRole
     singular: secretbackendrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "algorithmSigner"
+      - "allowBareDomains"
+      - "allowEmptyPrincipals"
+      - "allowHostCertificates"
+      - "allowSubdomains"
+      - "allowUserCertificates"
+      - "allowUserKeyIds"
+      - "allowedCriticalOptions"
+      - "allowedDomains"
+      - "allowedDomainsTemplate"
+      - "allowedExtensions"
+      - "allowedUserKeyConfig"
+      - "allowedUsers"
+      - "allowedUsersTemplate"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "cidrList"
+      - "defaultCriticalOptions"
+      - "defaultExtensions"
+      - "defaultUser"
+      - "defaultUserTemplate"
+      - "keyIdFormat"
+      - "keyType"
+      - "maxTtl"
+      - "name"
+      - "namespace"
+      - "notBeforeDuration"
+      - "ttl"
   - name: secretbackendrootcerts.pki.vault.m.upbound.io
     kind: SecretBackendRootCert
     singular: secretbackendrootcert
     scope: Namespaced
     managed: true
+    forProvider:
+      - "altNames"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "commonName"
+      - "country"
+      - "excludeCnFromSans"
+      - "excludedDnsDomains"
+      - "excludedEmailAddresses"
+      - "excludedIpRanges"
+      - "excludedUriDomains"
+      - "format"
+      - "ipSans"
+      - "issuerName"
+      - "keyBits"
+      - "keyName"
+      - "keyRef"
+      - "keyType"
+      - "locality"
+      - "managedKeyId"
+      - "managedKeyName"
+      - "maxPathLength"
+      - "namespace"
+      - "notAfter"
+      - "organization"
+      - "otherSans"
+      - "ou"
+      - "permittedDnsDomains"
+      - "permittedEmailAddresses"
+      - "permittedIpRanges"
+      - "permittedUriDomains"
+      - "postalCode"
+      - "privateKeyFormat"
+      - "province"
+      - "signatureBits"
+      - "streetAddress"
+      - "ttl"
+      - "type"
+      - "uriSans"
   - name: secretbackendrootcerts.pki.vault.upbound.io
     kind: SecretBackendRootCert
     singular: secretbackendrootcert
     scope: Cluster
     managed: true
+    forProvider:
+      - "altNames"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "commonName"
+      - "country"
+      - "excludeCnFromSans"
+      - "excludedDnsDomains"
+      - "excludedEmailAddresses"
+      - "excludedIpRanges"
+      - "excludedUriDomains"
+      - "format"
+      - "ipSans"
+      - "issuerName"
+      - "keyBits"
+      - "keyName"
+      - "keyRef"
+      - "keyType"
+      - "locality"
+      - "managedKeyId"
+      - "managedKeyName"
+      - "maxPathLength"
+      - "namespace"
+      - "notAfter"
+      - "organization"
+      - "otherSans"
+      - "ou"
+      - "permittedDnsDomains"
+      - "permittedEmailAddresses"
+      - "permittedIpRanges"
+      - "permittedUriDomains"
+      - "postalCode"
+      - "privateKeyFormat"
+      - "province"
+      - "signatureBits"
+      - "streetAddress"
+      - "ttl"
+      - "type"
+      - "uriSans"
   - name: secretbackendrootsignintermediates.pki.vault.m.upbound.io
     kind: SecretBackendRootSignIntermediate
     singular: secretbackendrootsignintermediate
     scope: Namespaced
     managed: true
+    forProvider:
+      - "altNames"
+      - "backend"
+      - "commonName"
+      - "country"
+      - "csr"
+      - "excludeCnFromSans"
+      - "excludedDnsDomains"
+      - "excludedEmailAddresses"
+      - "excludedIpRanges"
+      - "excludedUriDomains"
+      - "format"
+      - "ipSans"
+      - "issuerRef"
+      - "keyUsage"
+      - "locality"
+      - "maxPathLength"
+      - "namespace"
+      - "notAfter"
+      - "notBeforeDuration"
+      - "organization"
+      - "otherSans"
+      - "ou"
+      - "permittedDnsDomains"
+      - "permittedEmailAddresses"
+      - "permittedIpRanges"
+      - "permittedUriDomains"
+      - "postalCode"
+      - "province"
+      - "revoke"
+      - "signatureBits"
+      - "skid"
+      - "streetAddress"
+      - "ttl"
+      - "uriSans"
+      - "useCsrValues"
+      - "usePss"
   - name: secretbackendrootsignintermediates.pki.vault.upbound.io
     kind: SecretBackendRootSignIntermediate
     singular: secretbackendrootsignintermediate
     scope: Cluster
     managed: true
+    forProvider:
+      - "altNames"
+      - "backend"
+      - "commonName"
+      - "country"
+      - "csr"
+      - "excludeCnFromSans"
+      - "excludedDnsDomains"
+      - "excludedEmailAddresses"
+      - "excludedIpRanges"
+      - "excludedUriDomains"
+      - "format"
+      - "ipSans"
+      - "issuerRef"
+      - "keyUsage"
+      - "locality"
+      - "maxPathLength"
+      - "namespace"
+      - "notAfter"
+      - "notBeforeDuration"
+      - "organization"
+      - "otherSans"
+      - "ou"
+      - "permittedDnsDomains"
+      - "permittedEmailAddresses"
+      - "permittedIpRanges"
+      - "permittedUriDomains"
+      - "postalCode"
+      - "province"
+      - "revoke"
+      - "signatureBits"
+      - "skid"
+      - "streetAddress"
+      - "ttl"
+      - "uriSans"
+      - "useCsrValues"
+      - "usePss"
   - name: secretbackends.ad.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "anonymousGroupSearch"
+      - "backend"
+      - "binddn"
+      - "bindpassSecretRef"
+      - "caseSensitiveNames"
+      - "certificate"
+      - "clientTlsCertSecretRef"
+      - "clientTlsKeySecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "denyNullBind"
+      - "description"
+      - "disableRemount"
+      - "discoverdn"
+      - "groupattr"
+      - "groupdn"
+      - "groupfilter"
+      - "insecureTls"
+      - "lastRotationTolerance"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "maxTtl"
+      - "namespace"
+      - "passwordPolicy"
+      - "requestTimeout"
+      - "starttls"
+      - "tlsMaxVersion"
+      - "tlsMinVersion"
+      - "ttl"
+      - "upndomain"
+      - "url"
+      - "usePre111GroupCnBehavior"
+      - "useTokenGroups"
+      - "userattr"
+      - "userdn"
   - name: secretbackends.ad.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "anonymousGroupSearch"
+      - "backend"
+      - "binddn"
+      - "bindpassSecretRef"
+      - "caseSensitiveNames"
+      - "certificate"
+      - "clientTlsCertSecretRef"
+      - "clientTlsKeySecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "denyNullBind"
+      - "description"
+      - "disableRemount"
+      - "discoverdn"
+      - "groupattr"
+      - "groupdn"
+      - "groupfilter"
+      - "insecureTls"
+      - "lastRotationTolerance"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "maxTtl"
+      - "namespace"
+      - "passwordPolicy"
+      - "requestTimeout"
+      - "starttls"
+      - "tlsMaxVersion"
+      - "tlsMinVersion"
+      - "ttl"
+      - "upndomain"
+      - "url"
+      - "usePre111GroupCnBehavior"
+      - "useTokenGroups"
+      - "userattr"
+      - "userdn"
   - name: secretbackends.aws.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "accessKeySecretRef"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "iamEndpoint"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "region"
+      - "roleArn"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "sealWrap"
+      - "secretKeySecretRef"
+      - "stsEndpoint"
+      - "stsFallbackEndpoints"
+      - "stsFallbackRegions"
+      - "stsRegion"
+      - "usernameTemplate"
   - name: secretbackends.aws.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "accessKeySecretRef"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "iamEndpoint"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "region"
+      - "roleArn"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "sealWrap"
+      - "secretKeySecretRef"
+      - "stsEndpoint"
+      - "stsFallbackEndpoints"
+      - "stsFallbackRegions"
+      - "stsRegion"
+      - "usernameTemplate"
   - name: secretbackends.azure.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "environment"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "rootPasswordTtl"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "sealWrap"
+      - "subscriptionIdSecretRef"
+      - "tenantIdSecretRef"
   - name: secretbackends.azure.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "environment"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "rootPasswordTtl"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "sealWrap"
+      - "subscriptionIdSecretRef"
+      - "tenantIdSecretRef"
   - name: secretbackends.consul.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "address"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "bootstrap"
+      - "caCert"
+      - "clientCertSecretRef"
+      - "clientKeySecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "scheme"
+      - "sealWrap"
+      - "tokenSecretRef"
   - name: secretbackends.consul.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "address"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "bootstrap"
+      - "caCert"
+      - "clientCertSecretRef"
+      - "clientKeySecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "scheme"
+      - "sealWrap"
+      - "tokenSecretRef"
   - name: secretbackends.gcp.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "credentialsSecretRef"
+      - "credentialsWoSecretRef"
+      - "credentialsWoVersion"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "sealWrap"
+      - "serviceAccountEmail"
   - name: secretbackends.gcp.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "credentialsSecretRef"
+      - "credentialsWoSecretRef"
+      - "credentialsWoVersion"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableAutomatedRotation"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenAudience"
+      - "identityTokenKey"
+      - "identityTokenTtl"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationWindow"
+      - "sealWrap"
+      - "serviceAccountEmail"
   - name: secretbackends.kmip.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "defaultTlsClientKeyBits"
+      - "defaultTlsClientKeyType"
+      - "defaultTlsClientTtl"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listenAddrs"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "serverHostnames"
+      - "serverIps"
+      - "tlsCaKeyBits"
+      - "tlsCaKeyType"
+      - "tlsMinVersion"
   - name: secretbackends.kmip.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "defaultTlsClientKeyBits"
+      - "defaultTlsClientKeyType"
+      - "defaultTlsClientTtl"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listenAddrs"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "serverHostnames"
+      - "serverIps"
+      - "tlsCaKeyBits"
+      - "tlsCaKeyType"
+      - "tlsMinVersion"
   - name: secretbackends.kubernetes.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableLocalCaJwt"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "kubernetesCaCert"
+      - "kubernetesHost"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "serviceAccountJwtSecretRef"
   - name: secretbackends.kubernetes.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableLocalCaJwt"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "kubernetesCaCert"
+      - "kubernetesHost"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "serviceAccountJwtSecretRef"
   - name: secretbackends.mongodbatlas.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "namespace"
+      - "privateKey"
+      - "publicKey"
   - name: secretbackends.mongodbatlas.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "namespace"
+      - "privateKey"
+      - "publicKey"
   - name: secretbackends.nomad.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "address"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "backend"
+      - "caCert"
+      - "clientCertSecretRef"
+      - "clientKeySecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "maxTokenNameLength"
+      - "maxTtl"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "pluginVersion"
+      - "sealWrap"
+      - "tokenSecretRef"
+      - "ttl"
   - name: secretbackends.nomad.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "address"
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "backend"
+      - "caCert"
+      - "clientCertSecretRef"
+      - "clientKeySecretRef"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "maxTokenNameLength"
+      - "maxTtl"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "pluginVersion"
+      - "sealWrap"
+      - "tokenSecretRef"
+      - "ttl"
   - name: secretbackends.rabbitmq.vault.m.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "connectionUri"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "passwordPolicy"
+      - "passwordSecretRef"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "usernameSecretRef"
+      - "usernameTemplate"
+      - "verifyConnection"
   - name: secretbackends.rabbitmq.vault.upbound.io
     kind: SecretBackend
     singular: secretbackend
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "connectionUri"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "disableRemount"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "identityTokenKey"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "namespace"
+      - "options"
+      - "passthroughRequestHeaders"
+      - "passwordPolicy"
+      - "passwordSecretRef"
+      - "path"
+      - "pluginVersion"
+      - "sealWrap"
+      - "usernameSecretRef"
+      - "usernameTemplate"
+      - "verifyConnection"
   - name: secretbackendsigns.pki.vault.m.upbound.io
     kind: SecretBackendSign
     singular: secretbackendsign
     scope: Namespaced
     managed: true
+    forProvider:
+      - "altNames"
+      - "autoRenew"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certMetadata"
+      - "commonName"
+      - "csr"
+      - "excludeCnFromSans"
+      - "format"
+      - "ipSans"
+      - "issuerRef"
+      - "minSecondsRemaining"
+      - "name"
+      - "nameRef"
+      - "nameSelector"
+      - "namespace"
+      - "notAfter"
+      - "otherSans"
+      - "ttl"
+      - "uriSans"
   - name: secretbackendsigns.pki.vault.upbound.io
     kind: SecretBackendSign
     singular: secretbackendsign
     scope: Cluster
     managed: true
+    forProvider:
+      - "altNames"
+      - "autoRenew"
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "certMetadata"
+      - "commonName"
+      - "csr"
+      - "excludeCnFromSans"
+      - "format"
+      - "ipSans"
+      - "issuerRef"
+      - "minSecondsRemaining"
+      - "name"
+      - "nameRef"
+      - "nameSelector"
+      - "namespace"
+      - "notAfter"
+      - "otherSans"
+      - "ttl"
+      - "uriSans"
   - name: secretbackendstaticroles.database.vault.m.upbound.io
     kind: SecretBackendStaticRole
     singular: secretbackendstaticrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "credentialConfig"
+      - "credentialType"
+      - "dbName"
+      - "dbNameRef"
+      - "dbNameSelector"
+      - "name"
+      - "namespace"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationStatements"
+      - "rotationWindow"
+      - "selfManagedPasswordSecretRef"
+      - "skipImportRotation"
+      - "username"
   - name: secretbackendstaticroles.database.vault.upbound.io
     kind: SecretBackendStaticRole
     singular: secretbackendstaticrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "credentialConfig"
+      - "credentialType"
+      - "dbName"
+      - "dbNameRef"
+      - "dbNameSelector"
+      - "name"
+      - "namespace"
+      - "rotationPeriod"
+      - "rotationSchedule"
+      - "rotationStatements"
+      - "rotationWindow"
+      - "selfManagedPasswordSecretRef"
+      - "skipImportRotation"
+      - "username"
   - name: secretbackendv2s.kv.vault.m.upbound.io
     kind: SecretBackendV2
     singular: secretbackendv2
     scope: Namespaced
     managed: true
+    forProvider:
+      - "casRequired"
+      - "deleteVersionAfter"
+      - "maxVersions"
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "namespace"
   - name: secretbackendv2s.kv.vault.upbound.io
     kind: SecretBackendV2
     singular: secretbackendv2
     scope: Cluster
     managed: true
+    forProvider:
+      - "casRequired"
+      - "deleteVersionAfter"
+      - "maxVersions"
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "namespace"
   - name: secretimpersonatedaccounts.gcp.vault.m.upbound.io
     kind: SecretImpersonatedAccount
     singular: secretimpersonatedaccount
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "impersonatedAccount"
+      - "namespace"
+      - "serviceAccountEmail"
+      - "tokenScopes"
+      - "ttl"
   - name: secretimpersonatedaccounts.gcp.vault.upbound.io
     kind: SecretImpersonatedAccount
     singular: secretimpersonatedaccount
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "impersonatedAccount"
+      - "namespace"
+      - "serviceAccountEmail"
+      - "tokenScopes"
+      - "ttl"
   - name: secretroles.ad.vault.m.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "role"
+      - "serviceAccountName"
+      - "ttl"
   - name: secretroles.ad.vault.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "role"
+      - "serviceAccountName"
+      - "ttl"
   - name: secretroles.kmip.vault.m.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "namespace"
+      - "operationActivate"
+      - "operationAddAttribute"
+      - "operationAll"
+      - "operationCreate"
+      - "operationDestroy"
+      - "operationDiscoverVersions"
+      - "operationGet"
+      - "operationGetAttributeList"
+      - "operationGetAttributes"
+      - "operationLocate"
+      - "operationNone"
+      - "operationRegister"
+      - "operationRekey"
+      - "operationRevoke"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "role"
+      - "scope"
+      - "scopeRef"
+      - "scopeSelector"
+      - "tlsClientKeyBits"
+      - "tlsClientKeyType"
+      - "tlsClientTtl"
   - name: secretroles.kmip.vault.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "namespace"
+      - "operationActivate"
+      - "operationAddAttribute"
+      - "operationAll"
+      - "operationCreate"
+      - "operationDestroy"
+      - "operationDiscoverVersions"
+      - "operationGet"
+      - "operationGetAttributeList"
+      - "operationGetAttributes"
+      - "operationLocate"
+      - "operationNone"
+      - "operationRegister"
+      - "operationRekey"
+      - "operationRevoke"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "role"
+      - "scope"
+      - "scopeRef"
+      - "scopeSelector"
+      - "tlsClientKeyBits"
+      - "tlsClientKeyType"
+      - "tlsClientTtl"
   - name: secretroles.mongodbatlas.vault.m.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "cidrBlocks"
+      - "ipAddresses"
+      - "maxTtl"
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "name"
+      - "namespace"
+      - "organizationId"
+      - "projectId"
+      - "projectRoles"
+      - "roles"
+      - "ttl"
   - name: secretroles.mongodbatlas.vault.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "cidrBlocks"
+      - "ipAddresses"
+      - "maxTtl"
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "name"
+      - "namespace"
+      - "organizationId"
+      - "projectId"
+      - "projectRoles"
+      - "roles"
+      - "ttl"
   - name: secretroles.nomad.vault.m.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "global"
+      - "namespace"
+      - "policies"
+      - "role"
+      - "type"
   - name: secretroles.nomad.vault.upbound.io
     kind: SecretRole
     singular: secretrole
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "global"
+      - "namespace"
+      - "policies"
+      - "role"
+      - "type"
   - name: secretrolesets.gcp.vault.m.upbound.io
     kind: SecretRoleset
     singular: secretroleset
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "binding"
+      - "namespace"
+      - "project"
+      - "roleset"
+      - "secretType"
+      - "tokenScopes"
   - name: secretrolesets.gcp.vault.upbound.io
     kind: SecretRoleset
     singular: secretroleset
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "binding"
+      - "namespace"
+      - "project"
+      - "roleset"
+      - "secretType"
+      - "tokenScopes"
   - name: secrets.generic.vault.m.upbound.io
     kind: Secret
     singular: secret
     scope: Namespaced
     managed: true
+    forProvider:
+      - "dataJsonSecretRef"
+      - "deleteAllVersions"
+      - "disableRead"
+      - "namespace"
+      - "path"
   - name: secrets.generic.vault.upbound.io
     kind: Secret
     singular: secret
     scope: Cluster
     managed: true
+    forProvider:
+      - "dataJsonSecretRef"
+      - "deleteAllVersions"
+      - "disableRead"
+      - "namespace"
+      - "path"
   - name: secrets.kv.vault.m.upbound.io
     kind: Secret
     singular: secret
     scope: Namespaced
     managed: true
+    forProvider:
+      - "dataJsonSecretRef"
+      - "namespace"
+      - "path"
   - name: secrets.kv.vault.upbound.io
     kind: Secret
     singular: secret
     scope: Cluster
     managed: true
+    forProvider:
+      - "dataJsonSecretRef"
+      - "namespace"
+      - "path"
   - name: secretscopes.kmip.vault.m.upbound.io
     kind: SecretScope
     singular: secretscope
     scope: Namespaced
     managed: true
+    forProvider:
+      - "force"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "scope"
   - name: secretscopes.kmip.vault.upbound.io
     kind: SecretScope
     singular: secretscope
     scope: Cluster
     managed: true
+    forProvider:
+      - "force"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "scope"
   - name: secretsmounts.database.vault.m.upbound.io
     kind: SecretsMount
     singular: secretsmount
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "cassandra"
+      - "couchbase"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "elasticsearch"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "hana"
+      - "identityTokenKey"
+      - "influxdb"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "mongodb"
+      - "mongodbatlas"
+      - "mssql"
+      - "mysql"
+      - "mysqlAurora"
+      - "mysqlLegacy"
+      - "mysqlRds"
+      - "namespace"
+      - "options"
+      - "oracle"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "postgresql"
+      - "redis"
+      - "redisElasticache"
+      - "redshift"
+      - "sealWrap"
+      - "snowflake"
   - name: secretsmounts.database.vault.upbound.io
     kind: SecretsMount
     singular: secretsmount
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedManagedKeys"
+      - "allowedResponseHeaders"
+      - "auditNonHmacRequestKeys"
+      - "auditNonHmacResponseKeys"
+      - "cassandra"
+      - "couchbase"
+      - "defaultLeaseTtlSeconds"
+      - "delegatedAuthAccessors"
+      - "description"
+      - "elasticsearch"
+      - "externalEntropyAccess"
+      - "forceNoCache"
+      - "hana"
+      - "identityTokenKey"
+      - "influxdb"
+      - "listingVisibility"
+      - "local"
+      - "maxLeaseTtlSeconds"
+      - "mongodb"
+      - "mongodbatlas"
+      - "mssql"
+      - "mysql"
+      - "mysqlAurora"
+      - "mysqlLegacy"
+      - "mysqlRds"
+      - "namespace"
+      - "options"
+      - "oracle"
+      - "passthroughRequestHeaders"
+      - "path"
+      - "pluginVersion"
+      - "postgresql"
+      - "redis"
+      - "redisElasticache"
+      - "redshift"
+      - "sealWrap"
+      - "snowflake"
   - name: secretstaticaccounts.gcp.vault.m.upbound.io
     kind: SecretStaticAccount
     singular: secretstaticaccount
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "binding"
+      - "namespace"
+      - "secretType"
+      - "serviceAccountEmail"
+      - "staticAccount"
+      - "tokenScopes"
   - name: secretstaticaccounts.gcp.vault.upbound.io
     kind: SecretStaticAccount
     singular: secretstaticaccount
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "binding"
+      - "namespace"
+      - "secretType"
+      - "serviceAccountEmail"
+      - "staticAccount"
+      - "tokenScopes"
   - name: secretv2s.kv.vault.m.upbound.io
     kind: SecretV2
     singular: secretv2
     scope: Namespaced
     managed: true
+    forProvider:
+      - "cas"
+      - "customMetadata"
+      - "dataJsonSecretRef"
+      - "dataJsonWo"
+      - "dataJsonWoVersion"
+      - "deleteAllVersions"
+      - "disableRead"
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "name"
+      - "namespace"
+      - "options"
   - name: secretv2s.kv.vault.upbound.io
     kind: SecretV2
     singular: secretv2
     scope: Cluster
     managed: true
+    forProvider:
+      - "cas"
+      - "customMetadata"
+      - "dataJsonSecretRef"
+      - "dataJsonWo"
+      - "dataJsonWoVersion"
+      - "deleteAllVersions"
+      - "disableRead"
+      - "mount"
+      - "mountRef"
+      - "mountSelector"
+      - "name"
+      - "namespace"
+      - "options"
   - name: snapshotagentconfigs.raft.vault.m.upbound.io
     kind: SnapshotAgentConfig
     singular: snapshotagentconfig
     scope: Namespaced
     managed: true
+    forProvider:
+      - "awsAccessKeyId"
+      - "awsS3Bucket"
+      - "awsS3DisableTls"
+      - "awsS3EnableKms"
+      - "awsS3Endpoint"
+      - "awsS3ForcePathStyle"
+      - "awsS3KmsKey"
+      - "awsS3Region"
+      - "awsS3ServerSideEncryption"
+      - "awsSecretAccessKey"
+      - "awsSessionToken"
+      - "azureAccountKey"
+      - "azureAccountName"
+      - "azureBlobEnvironment"
+      - "azureContainerName"
+      - "azureEndpoint"
+      - "filePrefix"
+      - "googleDisableTls"
+      - "googleEndpoint"
+      - "googleGcsBucket"
+      - "googleServiceAccountKey"
+      - "intervalSeconds"
+      - "localMaxSpace"
+      - "name"
+      - "namespace"
+      - "pathPrefix"
+      - "retain"
+      - "storageType"
   - name: snapshotagentconfigs.raft.vault.upbound.io
     kind: SnapshotAgentConfig
     singular: snapshotagentconfig
     scope: Cluster
     managed: true
+    forProvider:
+      - "awsAccessKeyId"
+      - "awsS3Bucket"
+      - "awsS3DisableTls"
+      - "awsS3EnableKms"
+      - "awsS3Endpoint"
+      - "awsS3ForcePathStyle"
+      - "awsS3KmsKey"
+      - "awsS3Region"
+      - "awsS3ServerSideEncryption"
+      - "awsSecretAccessKey"
+      - "awsSessionToken"
+      - "azureAccountKey"
+      - "azureAccountName"
+      - "azureBlobEnvironment"
+      - "azureContainerName"
+      - "azureEndpoint"
+      - "filePrefix"
+      - "googleDisableTls"
+      - "googleEndpoint"
+      - "googleGcsBucket"
+      - "googleServiceAccountKey"
+      - "intervalSeconds"
+      - "localMaxSpace"
+      - "name"
+      - "namespace"
+      - "pathPrefix"
+      - "retain"
+      - "storageType"
   - name: teams.github.vault.m.upbound.io
     kind: Team
     singular: team
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "policies"
+      - "team"
   - name: teams.github.vault.upbound.io
     kind: Team
     singular: team
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "policies"
+      - "team"
   - name: templates.transform.vault.m.upbound.io
     kind: Template
     singular: template
     scope: Namespaced
     managed: true
+    forProvider:
+      - "alphabet"
+      - "decodeFormats"
+      - "encodeFormat"
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "pattern"
+      - "type"
   - name: templates.transform.vault.upbound.io
     kind: Template
     singular: template
     scope: Cluster
     managed: true
+    forProvider:
+      - "alphabet"
+      - "decodeFormats"
+      - "encodeFormat"
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "pattern"
+      - "type"
   - name: tokens.vault.vault.m.upbound.io
     kind: Token
     singular: token
     scope: Namespaced
     managed: true
+    forProvider:
+      - "displayName"
+      - "explicitMaxTtl"
+      - "metadata"
+      - "namespace"
+      - "noDefaultPolicy"
+      - "noParent"
+      - "numUses"
+      - "period"
+      - "policies"
+      - "renewIncrement"
+      - "renewMinLease"
+      - "renewable"
+      - "roleName"
+      - "ttl"
+      - "wrappingTtl"
   - name: tokens.vault.vault.upbound.io
     kind: Token
     singular: token
     scope: Cluster
     managed: true
+    forProvider:
+      - "displayName"
+      - "explicitMaxTtl"
+      - "metadata"
+      - "namespace"
+      - "noDefaultPolicy"
+      - "noParent"
+      - "numUses"
+      - "period"
+      - "policies"
+      - "renewIncrement"
+      - "renewMinLease"
+      - "renewable"
+      - "roleName"
+      - "ttl"
+      - "wrappingTtl"
   - name: totps.mfa.vault.m.upbound.io
     kind: Totp
     singular: totp
     scope: Namespaced
     managed: true
+    forProvider:
+      - "algorithm"
+      - "digits"
+      - "issuer"
+      - "keySize"
+      - "name"
+      - "namespace"
+      - "period"
+      - "qrSize"
+      - "skew"
   - name: totps.mfa.vault.upbound.io
     kind: Totp
     singular: totp
     scope: Cluster
     managed: true
+    forProvider:
+      - "algorithm"
+      - "digits"
+      - "issuer"
+      - "keySize"
+      - "name"
+      - "namespace"
+      - "period"
+      - "qrSize"
+      - "skew"
   - name: transformations.transform.vault.m.upbound.io
     kind: Transformation
     singular: transformation
     scope: Namespaced
     managed: true
+    forProvider:
+      - "allowedRoles"
+      - "deletionAllowed"
+      - "maskingCharacter"
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "template"
+      - "templates"
+      - "tweakSource"
+      - "type"
   - name: transformations.transform.vault.upbound.io
     kind: Transformation
     singular: transformation
     scope: Cluster
     managed: true
+    forProvider:
+      - "allowedRoles"
+      - "deletionAllowed"
+      - "maskingCharacter"
+      - "name"
+      - "namespace"
+      - "path"
+      - "pathRef"
+      - "pathSelector"
+      - "template"
+      - "templates"
+      - "tweakSource"
+      - "type"
   - name: users.github.vault.m.upbound.io
     kind: User
     singular: user
     scope: Namespaced
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "policies"
+      - "user"
   - name: users.github.vault.upbound.io
     kind: User
     singular: user
     scope: Cluster
     managed: true
+    forProvider:
+      - "backend"
+      - "backendRef"
+      - "backendSelector"
+      - "namespace"
+      - "policies"
+      - "user"
   - name: vaultnamespaces.vault.vault.m.upbound.io
     kind: VaultNamespace
     singular: vaultnamespace
     scope: Namespaced
     managed: true
+    forProvider:
+      - "customMetadata"
+      - "namespace"
+      - "namespaceRef"
+      - "namespaceSelector"
+      - "path"
+      - "pathFq"
   - name: vaultnamespaces.vault.vault.upbound.io
     kind: VaultNamespace
     singular: vaultnamespace
     scope: Cluster
     managed: true
+    forProvider:
+      - "customMetadata"
+      - "namespace"
+      - "namespaceRef"
+      - "namespaceSelector"
+      - "path"
+      - "pathFq"

@@ -4,13 +4,17 @@
 Writes crossplane/providers/types/<provider>.yaml: for every provider in
 crossplane/providers/providers.yaml, the package it was read from, whether the
 package declares the safe-start capability, and every CustomResourceDefinition
-in it -- name (<plural>.<group>), kind, singular, scope, and whether Crossplane
-turns it into a ManagedResourceDefinition.
+in it -- name (<plural>.<group>), kind, singular, scope, whether Crossplane
+turns it into a ManagedResourceDefinition, and for a managed resource the
+fields its spec.forProvider declares.
 
 That data is what scripts/lint/lint-provider-activation.py judges
 crossplane/providers/activation.yaml against: a kind is turned into its plural
 by reading it here, never by guessing, and an activation entry that names a
-type the pinned package does not ship is an error.
+type the pinned package does not ship is an error. The forProvider fields are
+what scripts/lint/lint-composed-provider-fields.py holds every composed
+resource to: a field the pinned provider does not declare is refused when the
+composite applies it, and the composite stops syncing.
 
 Which CRDs become ManagedResourceDefinitions is Crossplane's rule, not ours
 (internal/converter/custom_to_managed.go at the pinned version): every CRD of
@@ -29,6 +33,7 @@ Usage:
 """
 
 import gzip
+import json
 import subprocess
 import sys
 import tempfile
@@ -60,6 +65,8 @@ HEADER = """\
 #                   the package declares safe-start it becomes a CRD only if an
 #                   activation policy names it (crossplane/providers/activation.yaml).
 # managed: false -> a provider configuration kind; always a plain CRD.
+# forProvider: the top-level fields spec.forProvider declares, for a managed
+#              kind (scripts/lint/lint-composed-provider-fields.py).
 """
 
 
@@ -92,6 +99,17 @@ def safe_start(docs: list[dict]) -> bool:
     raise SystemExit("package carries no meta.pkg.crossplane.io Provider document")
 
 
+def for_provider(doc: dict) -> list[str]:
+    """The top-level fields of spec.forProvider, over every served version."""
+    fields: set[str] = set()
+    for version in doc["spec"].get("versions") or []:
+        schema = (version.get("schema") or {}).get("openAPIV3Schema") or {}
+        spec = (schema.get("properties") or {}).get("spec") or {}
+        block = (spec.get("properties") or {}).get("forProvider") or {}
+        fields |= set(block.get("properties") or {})
+    return sorted(fields)
+
+
 def render(name: str, package: str, docs: list[dict]) -> str:
     rows = []
     for doc in docs:
@@ -105,6 +123,7 @@ def render(name: str, package: str, docs: list[dict]) -> str:
                 names.get("singular", names["kind"].lower()),
                 doc["spec"]["scope"],
                 names["kind"] not in NOT_MANAGED,
+                for_provider(doc),
             )
         )
     if not rows:
@@ -114,12 +133,16 @@ def render(name: str, package: str, docs: list[dict]) -> str:
     lines.append(f"package: {package}")
     lines.append(f"safeStart: {'true' if safe_start(docs) else 'false'}")
     lines.append("types:")
-    for crd, kind, singular, scope, managed in sorted(rows):
+    for crd, kind, singular, scope, managed, fields in sorted(rows):
         lines.append(f"  - name: {crd}")
         lines.append(f"    kind: {kind}")
         lines.append(f"    singular: {singular}")
         lines.append(f"    scope: {scope}")
         lines.append(f"    managed: {'true' if managed else 'false'}")
+        if managed and fields:
+            # Quoted: a field named like a YAML boolean stays a name.
+            lines.append("    forProvider:")
+            lines.extend(f"      - {json.dumps(f)}" for f in fields)
     return "\n".join(lines) + "\n"
 
 

@@ -6,6 +6,8 @@
 #                   the package declares safe-start it becomes a CRD only if an
 #                   activation policy names it (crossplane/providers/activation.yaml).
 # managed: false -> a provider configuration kind; always a plain CRD.
+# forProvider: the top-level fields spec.forProvider declares, for a managed
+#              kind (scripts/lint/lint-composed-provider-fields.py).
 provider: provider-kubernetes
 package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v0.15.0
 safeStart: false
@@ -15,6 +17,8 @@ types:
     singular: object
     scope: Cluster
     managed: true
+    forProvider:
+      - "manifest"
   - name: observedobjectcollections.kubernetes.crossplane.io
     kind: ObservedObjectCollection
     singular: observedobjectcollection

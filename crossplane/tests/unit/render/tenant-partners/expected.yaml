@@ -1288,7 +1288,6 @@ spec:
     alias: kubernetes
     displayName: Kubernetes service accounts
     enabled: true
-    hideOnLoginPage: true
     issuer: https://kubernetes.default.svc.cluster.local
     realm: render-fixture
   managementPolicies:
