@@ -298,9 +298,9 @@ func run(log *slog.Logger) error {
 	}
 	if storeURL == "" {
 		// Worth one line: without it the cluster's own catalogue view can
-		// list its ce and pe entries but has nowhere to send anybody for the
-		// rest, which looks like the platform having no store at all.
-		log.Info("the Cluster claim names no App Store; nothing points anywhere for maintained or licensed entries",
+		// list its ce, me and ie entries but has nowhere to send anybody for
+		// the rest, which looks like the platform having no store at all.
+		log.Info("the Cluster claim names no App Store; nothing points anywhere for proprietary entries",
 			"setting", "spec.catalogue.storeUrl")
 	}
 

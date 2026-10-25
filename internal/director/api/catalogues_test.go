@@ -47,23 +47,27 @@ func sampleIndex(digest string) string {
     digest: %q
   - name: timesheets
     version: "2.1.0"
-    edition: pe
+    edition: ie
     trustTier: experimental
     digest: %q
-  - name: activepieces-me
+  - name: nextcloud-base-ce
     version: "3.0.0"
     edition: me
+    digest: %q
+  - name: center-pe
+    version: "3.5.0"
+    edition: pe
     digest: %q
   - name: odoo-ee
     version: "4.0.0"
     edition: ee
     digest: %q
-`, digest, digest, digest, digest)
+`, digest, digest, digest, digest, digest)
 }
 
-// A cluster lists its own catalogues' community and private entries, and
-// nothing else: a maintained or licensed entry is the App Store's to describe
-// and the cluster only says how many there are (AD-14).
+// A cluster lists its own catalogues' community, maintained and internal
+// entries, and nothing else: a proprietary entry is the App Store's to
+// describe and the cluster only says how many there are (AD-14).
 func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
 	h := startWithCatalogue(t, src, map[string]string{"in-house": src.URL},
@@ -80,8 +84,8 @@ func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
 		names = append(names, raw.(map[string]any)["coordinate"].(string))
 	}
 	// Sorted by name, which is why timesheets follows element.
-	if strings.Join(names, ",") != "in-house/element,in-house/timesheets" {
-		t.Fatalf("listed %v -- me and ee must not be listed", names)
+	if strings.Join(names, ",") != "in-house/element,in-house/nextcloud-base-ce,in-house/timesheets" {
+		t.Fatalf("listed %v -- pe and ee must not be listed", names)
 	}
 	if out["storeOnly"] != float64(2) {
 		t.Fatalf("storeOnly = %v, want the two the store owns", out["storeOnly"])
@@ -116,7 +120,7 @@ func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
 func TestAnEntryIsInstallableWhenItStatesItsDigest(t *testing.T) {
 	index := "entries:\n" +
 		"  - {name: element, version: \"1.0.0\", edition: ce, digest: \"" + sha(elementProfile) + "\"}\n" +
-		"  - {name: timesheets, version: \"0.3.0\", edition: pe}\n"
+		"  - {name: timesheets, version: \"0.3.0\", edition: ie}\n"
 	src := indexedSource(t, index)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 

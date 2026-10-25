@@ -2176,7 +2176,7 @@ _claim_catalogue_section() {
     printf '    sources:\n'
     printf '      - name: gentian\n'
     # The public catalogue of the gentian-apps repository, which is where the
-    # ce and pe profiles are published: the released one or the development
+    # ce and me profiles are published: the released one or the development
     # one, by what is being installed (gentian_catalogue_url).
     printf '        # %s\n' "$(gentian_catalogue_reason)"
     printf '        url: %s\n' "$(gentian_catalogue_url)"

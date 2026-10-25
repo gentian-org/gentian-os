@@ -185,7 +185,7 @@ func TestATenantInstallsFromItsOwnArtifact(t *testing.T) {
 	reg.Token = "pull-token"
 	reg.BlobsAt = "storage.example.net"
 	reg.Push(t, "registry.example.com", "acme/catalogue", "1", dt.CatalogueLayer(t, map[string]string{
-		"index.yaml":               "entries:\n  - name: demo-notes\n    version: \"1.0.0\"\n    edition: pe\n    digest: " + sha(app) + "\n",
+		"index.yaml":               "entries:\n  - name: demo-notes\n    version: \"1.0.0\"\n    edition: ie\n    digest: " + sha(app) + "\n",
 		"profiles/demo-notes.yaml": app,
 	}))
 	vault := &fakeVault{data: map[string]map[string]string{

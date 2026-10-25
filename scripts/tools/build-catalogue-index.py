@@ -41,7 +41,7 @@ from pathlib import Path
 import yaml
 
 # The editions a profile may declare. See gentian-os's api/v1alpha1 Edition.
-EDITIONS = ("ce", "pe", "me", "ee")
+EDITIONS = ("ce", "me", "ie", "pe", "ee")
 
 # What a bundle may hold beside its profile, and how large it may be. The
 # cluster's rules, of which these are the two a file's own bytes show:
@@ -170,10 +170,10 @@ def main() -> int:
         by_edition[e["edition"]] = by_edition.get(e["edition"], 0) + 1
     shown = ", ".join(f"{n} {ed}" for ed, n in sorted(by_edition.items()))
     print(f"wrote {out} ({len(entries)} entries: {shown or 'none'})")
-    # A cluster lists ce and pe; the rest is the store's. Saying so here is
-    # what stops somebody publishing a catalogue of me entries and wondering
-    # why no cluster shows them.
-    local = by_edition.get("ce", 0) + by_edition.get("pe", 0)
+    # A cluster lists ce, me and ie; pe and ee are the store's. Saying so here
+    # is what stops somebody publishing a catalogue of pe entries and
+    # wondering why no cluster shows them.
+    local = sum(by_edition.get(ed, 0) for ed in ("ce", "me", "ie"))
     print(f"  a cluster browsing this source will list {local}; "
           f"the other {len(entries) - local} are the App Store's to present.")
     return 1 if complaints else 0
