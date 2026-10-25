@@ -27,4 +27,15 @@ types:
     singular: release
     scope: Cluster
     managed: true
-    forProvider: ["chart", "insecureSkipTLSVerify", "namespace", "patchesFrom", "set", "skipCRDs", "skipCreateNamespace", "values", "valuesFrom", "wait", "waitTimeout"]
+    forProvider:
+      - "chart"
+      - "insecureSkipTLSVerify"
+      - "namespace"
+      - "patchesFrom"
+      - "set"
+      - "skipCRDs"
+      - "skipCreateNamespace"
+      - "values"
+      - "valuesFrom"
+      - "wait"
+      - "waitTimeout"

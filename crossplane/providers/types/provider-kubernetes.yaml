@@ -17,7 +17,8 @@ types:
     singular: object
     scope: Cluster
     managed: true
-    forProvider: ["manifest"]
+    forProvider:
+      - "manifest"
   - name: observedobjectcollections.kubernetes.crossplane.io
     kind: ObservedObjectCollection
     singular: observedobjectcollection

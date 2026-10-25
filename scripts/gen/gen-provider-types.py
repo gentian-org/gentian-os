@@ -141,7 +141,8 @@ def render(name: str, package: str, docs: list[dict]) -> str:
         lines.append(f"    managed: {'true' if managed else 'false'}")
         if managed and fields:
             # Quoted: a field named like a YAML boolean stays a name.
-            lines.append(f"    forProvider: {json.dumps(fields)}")
+            lines.append("    forProvider:")
+            lines.extend(f"      - {json.dumps(f)}" for f in fields)
     return "\n".join(lines) + "\n"
 
 

@@ -17,229 +17,801 @@ types:
     singular: bindings
     scope: Cluster
     managed: true
-    forProvider: ["browserFlow", "browserFlowRef", "browserFlowSelector", "clientAuthenticationFlow", "clientAuthenticationFlowRef", "clientAuthenticationFlowSelector", "directGrantFlow", "directGrantFlowRef", "directGrantFlowSelector", "dockerAuthenticationFlow", "dockerAuthenticationFlowRef", "dockerAuthenticationFlowSelector", "firstBrokerLoginFlow", "realmId", "realmIdRef", "realmIdSelector", "registrationFlow", "registrationFlowRef", "registrationFlowSelector", "resetCredentialsFlow", "resetCredentialsFlowRef", "resetCredentialsFlowSelector"]
+    forProvider:
+      - "browserFlow"
+      - "browserFlowRef"
+      - "browserFlowSelector"
+      - "clientAuthenticationFlow"
+      - "clientAuthenticationFlowRef"
+      - "clientAuthenticationFlowSelector"
+      - "directGrantFlow"
+      - "directGrantFlowRef"
+      - "directGrantFlowSelector"
+      - "dockerAuthenticationFlow"
+      - "dockerAuthenticationFlowRef"
+      - "dockerAuthenticationFlowSelector"
+      - "firstBrokerLoginFlow"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "registrationFlow"
+      - "registrationFlowRef"
+      - "registrationFlowSelector"
+      - "resetCredentialsFlow"
+      - "resetCredentialsFlowRef"
+      - "resetCredentialsFlowSelector"
   - name: bindings.authenticationflow.keycloak.m.crossplane.io
     kind: Bindings
     singular: bindings
     scope: Namespaced
     managed: true
-    forProvider: ["browserFlow", "browserFlowRef", "browserFlowSelector", "clientAuthenticationFlow", "clientAuthenticationFlowRef", "clientAuthenticationFlowSelector", "directGrantFlow", "directGrantFlowRef", "directGrantFlowSelector", "dockerAuthenticationFlow", "dockerAuthenticationFlowRef", "dockerAuthenticationFlowSelector", "firstBrokerLoginFlow", "realmId", "realmIdRef", "realmIdSelector", "registrationFlow", "registrationFlowRef", "registrationFlowSelector", "resetCredentialsFlow", "resetCredentialsFlowRef", "resetCredentialsFlowSelector"]
+    forProvider:
+      - "browserFlow"
+      - "browserFlowRef"
+      - "browserFlowSelector"
+      - "clientAuthenticationFlow"
+      - "clientAuthenticationFlowRef"
+      - "clientAuthenticationFlowSelector"
+      - "directGrantFlow"
+      - "directGrantFlowRef"
+      - "directGrantFlowSelector"
+      - "dockerAuthenticationFlow"
+      - "dockerAuthenticationFlowRef"
+      - "dockerAuthenticationFlowSelector"
+      - "firstBrokerLoginFlow"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "registrationFlow"
+      - "registrationFlowRef"
+      - "registrationFlowSelector"
+      - "resetCredentialsFlow"
+      - "resetCredentialsFlowRef"
+      - "resetCredentialsFlowSelector"
   - name: clientauthorizationpermissions.openidclient.keycloak.crossplane.io
     kind: ClientAuthorizationPermission
     singular: clientauthorizationpermission
     scope: Cluster
     managed: true
-    forProvider: ["decisionStrategy", "description", "name", "policies", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "resourceType", "resources", "scopes", "type"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "name"
+      - "policies"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "resourceType"
+      - "resources"
+      - "scopes"
+      - "type"
   - name: clientauthorizationpermissions.openidclient.keycloak.m.crossplane.io
     kind: ClientAuthorizationPermission
     singular: clientauthorizationpermission
     scope: Namespaced
     managed: true
-    forProvider: ["decisionStrategy", "description", "name", "policies", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "resourceType", "resources", "scopes", "type"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "name"
+      - "policies"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "resourceType"
+      - "resources"
+      - "scopes"
+      - "type"
   - name: clientauthorizationresources.openidclient.keycloak.crossplane.io
     kind: ClientAuthorizationResource
     singular: clientauthorizationresource
     scope: Cluster
     managed: true
-    forProvider: ["attributes", "displayName", "iconUri", "name", "ownerManagedAccess", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "scopes", "type", "uris"]
+    forProvider:
+      - "attributes"
+      - "displayName"
+      - "iconUri"
+      - "name"
+      - "ownerManagedAccess"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "scopes"
+      - "type"
+      - "uris"
   - name: clientauthorizationresources.openidclient.keycloak.m.crossplane.io
     kind: ClientAuthorizationResource
     singular: clientauthorizationresource
     scope: Namespaced
     managed: true
-    forProvider: ["attributes", "displayName", "iconUri", "name", "ownerManagedAccess", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "scopes", "type", "uris"]
+    forProvider:
+      - "attributes"
+      - "displayName"
+      - "iconUri"
+      - "name"
+      - "ownerManagedAccess"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "scopes"
+      - "type"
+      - "uris"
   - name: clientclientpolicies.openidclient.keycloak.crossplane.io
     kind: ClientClientPolicy
     singular: clientclientpolicy
     scope: Cluster
     managed: true
-    forProvider: ["clients", "clientsRefs", "clientsSelector", "decisionStrategy", "description", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "samlClients", "samlClientsRefs", "samlClientsSelector"]
+    forProvider:
+      - "clients"
+      - "clientsRefs"
+      - "clientsSelector"
+      - "decisionStrategy"
+      - "description"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "samlClients"
+      - "samlClientsRefs"
+      - "samlClientsSelector"
   - name: clientclientpolicies.openidclient.keycloak.m.crossplane.io
     kind: ClientClientPolicy
     singular: clientclientpolicy
     scope: Namespaced
     managed: true
-    forProvider: ["clients", "clientsRefs", "clientsSelector", "decisionStrategy", "description", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "samlClients", "samlClientsRefs", "samlClientsSelector"]
+    forProvider:
+      - "clients"
+      - "clientsRefs"
+      - "clientsSelector"
+      - "decisionStrategy"
+      - "description"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "samlClients"
+      - "samlClientsRefs"
+      - "samlClientsSelector"
   - name: clientdefaultscopes.openidclient.keycloak.crossplane.io
     kind: ClientDefaultScopes
     singular: clientdefaultscopes
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "defaultScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "defaultScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientdefaultscopes.openidclient.keycloak.m.crossplane.io
     kind: ClientDefaultScopes
     singular: clientdefaultscopes
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "defaultScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "defaultScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientdefaultscopes.samlclient.keycloak.crossplane.io
     kind: ClientDefaultScopes
     singular: clientdefaultscopes
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "defaultScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "defaultScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientdefaultscopes.samlclient.keycloak.m.crossplane.io
     kind: ClientDefaultScopes
     singular: clientdefaultscopes
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "defaultScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "defaultScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientgrouppolicies.openidclient.keycloak.crossplane.io
     kind: ClientGroupPolicy
     singular: clientgrouppolicy
     scope: Cluster
     managed: true
-    forProvider: ["decisionStrategy", "description", "groups", "groupsClaim", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "groups"
+      - "groupsClaim"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
   - name: clientgrouppolicies.openidclient.keycloak.m.crossplane.io
     kind: ClientGroupPolicy
     singular: clientgrouppolicy
     scope: Namespaced
     managed: true
-    forProvider: ["decisionStrategy", "description", "groups", "groupsClaim", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "groups"
+      - "groupsClaim"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
   - name: clientoptionalscopes.openidclient.keycloak.crossplane.io
     kind: ClientOptionalScopes
     singular: clientoptionalscopes
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "optionalScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "optionalScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientoptionalscopes.openidclient.keycloak.m.crossplane.io
     kind: ClientOptionalScopes
     singular: clientoptionalscopes
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "optionalScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "optionalScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientpermissions.openidclient.keycloak.crossplane.io
     kind: ClientPermissions
     singular: clientpermissions
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "configureScope", "manageScope", "mapRolesClientScopeScope", "mapRolesCompositeScope", "mapRolesScope", "realmId", "realmIdRef", "realmIdSelector", "tokenExchangeScope", "viewScope"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "configureScope"
+      - "manageScope"
+      - "mapRolesClientScopeScope"
+      - "mapRolesCompositeScope"
+      - "mapRolesScope"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "tokenExchangeScope"
+      - "viewScope"
   - name: clientpermissions.openidclient.keycloak.m.crossplane.io
     kind: ClientPermissions
     singular: clientpermissions
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "configureScope", "manageScope", "mapRolesClientScopeScope", "mapRolesCompositeScope", "mapRolesScope", "realmId", "realmIdRef", "realmIdSelector", "tokenExchangeScope", "viewScope"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "configureScope"
+      - "manageScope"
+      - "mapRolesClientScopeScope"
+      - "mapRolesCompositeScope"
+      - "mapRolesScope"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "tokenExchangeScope"
+      - "viewScope"
   - name: clientpolicyprofilepolicies.realm.keycloak.crossplane.io
     kind: ClientPolicyProfilePolicy
     singular: clientpolicyprofilepolicy
     scope: Cluster
     managed: true
-    forProvider: ["condition", "description", "enabled", "name", "profiles", "profilesRefs", "profilesSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "condition"
+      - "description"
+      - "enabled"
+      - "name"
+      - "profiles"
+      - "profilesRefs"
+      - "profilesSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientpolicyprofilepolicies.realm.keycloak.m.crossplane.io
     kind: ClientPolicyProfilePolicy
     singular: clientpolicyprofilepolicy
     scope: Namespaced
     managed: true
-    forProvider: ["condition", "description", "enabled", "name", "profiles", "profilesRefs", "profilesSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "condition"
+      - "description"
+      - "enabled"
+      - "name"
+      - "profiles"
+      - "profilesRefs"
+      - "profilesSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientpolicyprofiles.realm.keycloak.crossplane.io
     kind: ClientPolicyProfile
     singular: clientpolicyprofile
     scope: Cluster
     managed: true
-    forProvider: ["description", "executor", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "description"
+      - "executor"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientpolicyprofiles.realm.keycloak.m.crossplane.io
     kind: ClientPolicyProfile
     singular: clientpolicyprofile
     scope: Namespaced
     managed: true
-    forProvider: ["description", "executor", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "description"
+      - "executor"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientrolepolicies.openidclient.keycloak.crossplane.io
     kind: ClientRolePolicy
     singular: clientrolepolicy
     scope: Cluster
     managed: true
-    forProvider: ["decisionStrategy", "description", "fetchRoles", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "role", "type"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "fetchRoles"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "role"
+      - "type"
   - name: clientrolepolicies.openidclient.keycloak.m.crossplane.io
     kind: ClientRolePolicy
     singular: clientrolepolicy
     scope: Namespaced
     managed: true
-    forProvider: ["decisionStrategy", "description", "fetchRoles", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "role", "type"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "fetchRoles"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "role"
+      - "type"
   - name: clients.openidclient.keycloak.crossplane.io
     kind: Client
     singular: client
     scope: Cluster
     managed: true
-    forProvider: ["accessTokenLifespan", "accessType", "adminUrl", "allowRefreshTokenInStandardTokenExchange", "alwaysDisplayInConsole", "authenticationFlowBindingOverrides", "authorization", "backchannelLogoutRevokeOfflineSessions", "backchannelLogoutSessionRequired", "backchannelLogoutUrl", "baseUrl", "clientAuthenticatorType", "clientId", "clientOfflineSessionIdleTimeout", "clientOfflineSessionMaxLifespan", "clientSecretRegenerateWhenChanged", "clientSecretSecretRef", "clientSecretWoSecretRef", "clientSecretWoVersion", "clientSessionIdleTimeout", "clientSessionMaxLifespan", "consentRequired", "consentScreenText", "description", "directAccessGrantsEnabled", "displayOnConsentScreen", "enabled", "excludeIssuerFromAuthResponse", "excludeSessionStateFromAuthResponse", "extraConfig", "frontchannelLogoutEnabled", "frontchannelLogoutUrl", "fullScopeAllowed", "implicitFlowEnabled", "import", "loginTheme", "name", "oauth2DeviceAuthorizationGrantEnabled", "oauth2DeviceCodeLifespan", "oauth2DevicePollingInterval", "pkceCodeChallengeMethod", "realmId", "realmIdRef", "realmIdSelector", "requireDpopBoundTokens", "rootUrl", "serviceAccountsEnabled", "standardFlowEnabled", "standardTokenExchangeEnabled", "useRefreshTokens", "useRefreshTokensClientCredentials", "validPostLogoutRedirectUris", "validRedirectUris", "webOrigins"]
+    forProvider:
+      - "accessTokenLifespan"
+      - "accessType"
+      - "adminUrl"
+      - "allowRefreshTokenInStandardTokenExchange"
+      - "alwaysDisplayInConsole"
+      - "authenticationFlowBindingOverrides"
+      - "authorization"
+      - "backchannelLogoutRevokeOfflineSessions"
+      - "backchannelLogoutSessionRequired"
+      - "backchannelLogoutUrl"
+      - "baseUrl"
+      - "clientAuthenticatorType"
+      - "clientId"
+      - "clientOfflineSessionIdleTimeout"
+      - "clientOfflineSessionMaxLifespan"
+      - "clientSecretRegenerateWhenChanged"
+      - "clientSecretSecretRef"
+      - "clientSecretWoSecretRef"
+      - "clientSecretWoVersion"
+      - "clientSessionIdleTimeout"
+      - "clientSessionMaxLifespan"
+      - "consentRequired"
+      - "consentScreenText"
+      - "description"
+      - "directAccessGrantsEnabled"
+      - "displayOnConsentScreen"
+      - "enabled"
+      - "excludeIssuerFromAuthResponse"
+      - "excludeSessionStateFromAuthResponse"
+      - "extraConfig"
+      - "frontchannelLogoutEnabled"
+      - "frontchannelLogoutUrl"
+      - "fullScopeAllowed"
+      - "implicitFlowEnabled"
+      - "import"
+      - "loginTheme"
+      - "name"
+      - "oauth2DeviceAuthorizationGrantEnabled"
+      - "oauth2DeviceCodeLifespan"
+      - "oauth2DevicePollingInterval"
+      - "pkceCodeChallengeMethod"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requireDpopBoundTokens"
+      - "rootUrl"
+      - "serviceAccountsEnabled"
+      - "standardFlowEnabled"
+      - "standardTokenExchangeEnabled"
+      - "useRefreshTokens"
+      - "useRefreshTokensClientCredentials"
+      - "validPostLogoutRedirectUris"
+      - "validRedirectUris"
+      - "webOrigins"
   - name: clients.openidclient.keycloak.m.crossplane.io
     kind: Client
     singular: client
     scope: Namespaced
     managed: true
-    forProvider: ["accessTokenLifespan", "accessType", "adminUrl", "allowRefreshTokenInStandardTokenExchange", "alwaysDisplayInConsole", "authenticationFlowBindingOverrides", "authorization", "backchannelLogoutRevokeOfflineSessions", "backchannelLogoutSessionRequired", "backchannelLogoutUrl", "baseUrl", "clientAuthenticatorType", "clientId", "clientOfflineSessionIdleTimeout", "clientOfflineSessionMaxLifespan", "clientSecretRegenerateWhenChanged", "clientSecretSecretRef", "clientSecretWoSecretRef", "clientSecretWoVersion", "clientSessionIdleTimeout", "clientSessionMaxLifespan", "consentRequired", "consentScreenText", "description", "directAccessGrantsEnabled", "displayOnConsentScreen", "enabled", "excludeIssuerFromAuthResponse", "excludeSessionStateFromAuthResponse", "extraConfig", "frontchannelLogoutEnabled", "frontchannelLogoutUrl", "fullScopeAllowed", "implicitFlowEnabled", "import", "loginTheme", "name", "oauth2DeviceAuthorizationGrantEnabled", "oauth2DeviceCodeLifespan", "oauth2DevicePollingInterval", "pkceCodeChallengeMethod", "realmId", "realmIdRef", "realmIdSelector", "requireDpopBoundTokens", "rootUrl", "serviceAccountsEnabled", "standardFlowEnabled", "standardTokenExchangeEnabled", "useRefreshTokens", "useRefreshTokensClientCredentials", "validPostLogoutRedirectUris", "validRedirectUris", "webOrigins"]
+    forProvider:
+      - "accessTokenLifespan"
+      - "accessType"
+      - "adminUrl"
+      - "allowRefreshTokenInStandardTokenExchange"
+      - "alwaysDisplayInConsole"
+      - "authenticationFlowBindingOverrides"
+      - "authorization"
+      - "backchannelLogoutRevokeOfflineSessions"
+      - "backchannelLogoutSessionRequired"
+      - "backchannelLogoutUrl"
+      - "baseUrl"
+      - "clientAuthenticatorType"
+      - "clientId"
+      - "clientOfflineSessionIdleTimeout"
+      - "clientOfflineSessionMaxLifespan"
+      - "clientSecretRegenerateWhenChanged"
+      - "clientSecretSecretRef"
+      - "clientSecretWoSecretRef"
+      - "clientSecretWoVersion"
+      - "clientSessionIdleTimeout"
+      - "clientSessionMaxLifespan"
+      - "consentRequired"
+      - "consentScreenText"
+      - "description"
+      - "directAccessGrantsEnabled"
+      - "displayOnConsentScreen"
+      - "enabled"
+      - "excludeIssuerFromAuthResponse"
+      - "excludeSessionStateFromAuthResponse"
+      - "extraConfig"
+      - "frontchannelLogoutEnabled"
+      - "frontchannelLogoutUrl"
+      - "fullScopeAllowed"
+      - "implicitFlowEnabled"
+      - "import"
+      - "loginTheme"
+      - "name"
+      - "oauth2DeviceAuthorizationGrantEnabled"
+      - "oauth2DeviceCodeLifespan"
+      - "oauth2DevicePollingInterval"
+      - "pkceCodeChallengeMethod"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requireDpopBoundTokens"
+      - "rootUrl"
+      - "serviceAccountsEnabled"
+      - "standardFlowEnabled"
+      - "standardTokenExchangeEnabled"
+      - "useRefreshTokens"
+      - "useRefreshTokensClientCredentials"
+      - "validPostLogoutRedirectUris"
+      - "validRedirectUris"
+      - "webOrigins"
   - name: clients.samlclient.keycloak.crossplane.io
     kind: Client
     singular: client
     scope: Cluster
     managed: true
-    forProvider: ["alwaysDisplayInConsole", "assertionConsumerPostUrl", "assertionConsumerRedirectUrl", "authenticationFlowBindingOverrides", "baseUrl", "canonicalizationMethod", "clientId", "clientSignatureRequired", "consentRequired", "description", "enabled", "encryptAssertions", "encryptionAlgorithm", "encryptionCertificateSecretRef", "encryptionDigestMethod", "encryptionKeyAlgorithm", "encryptionMaskGenerationFunction", "extraConfig", "forceNameIdFormat", "forcePostBinding", "frontChannelLogout", "fullScopeAllowed", "idpInitiatedSsoRelayState", "idpInitiatedSsoUrlName", "includeAuthnStatement", "loginTheme", "logoutServicePostBindingUrl", "logoutServiceRedirectBindingUrl", "masterSamlProcessingUrl", "name", "nameIdFormat", "realmId", "realmIdRef", "realmIdSelector", "rootUrl", "signAssertions", "signDocuments", "signatureAlgorithm", "signatureKeyName", "signingCertificateSecretRef", "signingPrivateKeySecretRef", "validRedirectUris"]
+    forProvider:
+      - "alwaysDisplayInConsole"
+      - "assertionConsumerPostUrl"
+      - "assertionConsumerRedirectUrl"
+      - "authenticationFlowBindingOverrides"
+      - "baseUrl"
+      - "canonicalizationMethod"
+      - "clientId"
+      - "clientSignatureRequired"
+      - "consentRequired"
+      - "description"
+      - "enabled"
+      - "encryptAssertions"
+      - "encryptionAlgorithm"
+      - "encryptionCertificateSecretRef"
+      - "encryptionDigestMethod"
+      - "encryptionKeyAlgorithm"
+      - "encryptionMaskGenerationFunction"
+      - "extraConfig"
+      - "forceNameIdFormat"
+      - "forcePostBinding"
+      - "frontChannelLogout"
+      - "fullScopeAllowed"
+      - "idpInitiatedSsoRelayState"
+      - "idpInitiatedSsoUrlName"
+      - "includeAuthnStatement"
+      - "loginTheme"
+      - "logoutServicePostBindingUrl"
+      - "logoutServiceRedirectBindingUrl"
+      - "masterSamlProcessingUrl"
+      - "name"
+      - "nameIdFormat"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "rootUrl"
+      - "signAssertions"
+      - "signDocuments"
+      - "signatureAlgorithm"
+      - "signatureKeyName"
+      - "signingCertificateSecretRef"
+      - "signingPrivateKeySecretRef"
+      - "validRedirectUris"
   - name: clients.samlclient.keycloak.m.crossplane.io
     kind: Client
     singular: client
     scope: Namespaced
     managed: true
-    forProvider: ["alwaysDisplayInConsole", "assertionConsumerPostUrl", "assertionConsumerRedirectUrl", "authenticationFlowBindingOverrides", "baseUrl", "canonicalizationMethod", "clientId", "clientSignatureRequired", "consentRequired", "description", "enabled", "encryptAssertions", "encryptionAlgorithm", "encryptionCertificateSecretRef", "encryptionDigestMethod", "encryptionKeyAlgorithm", "encryptionMaskGenerationFunction", "extraConfig", "forceNameIdFormat", "forcePostBinding", "frontChannelLogout", "fullScopeAllowed", "idpInitiatedSsoRelayState", "idpInitiatedSsoUrlName", "includeAuthnStatement", "loginTheme", "logoutServicePostBindingUrl", "logoutServiceRedirectBindingUrl", "masterSamlProcessingUrl", "name", "nameIdFormat", "realmId", "realmIdRef", "realmIdSelector", "rootUrl", "signAssertions", "signDocuments", "signatureAlgorithm", "signatureKeyName", "signingCertificateSecretRef", "signingPrivateKeySecretRef", "validRedirectUris"]
+    forProvider:
+      - "alwaysDisplayInConsole"
+      - "assertionConsumerPostUrl"
+      - "assertionConsumerRedirectUrl"
+      - "authenticationFlowBindingOverrides"
+      - "baseUrl"
+      - "canonicalizationMethod"
+      - "clientId"
+      - "clientSignatureRequired"
+      - "consentRequired"
+      - "description"
+      - "enabled"
+      - "encryptAssertions"
+      - "encryptionAlgorithm"
+      - "encryptionCertificateSecretRef"
+      - "encryptionDigestMethod"
+      - "encryptionKeyAlgorithm"
+      - "encryptionMaskGenerationFunction"
+      - "extraConfig"
+      - "forceNameIdFormat"
+      - "forcePostBinding"
+      - "frontChannelLogout"
+      - "fullScopeAllowed"
+      - "idpInitiatedSsoRelayState"
+      - "idpInitiatedSsoUrlName"
+      - "includeAuthnStatement"
+      - "loginTheme"
+      - "logoutServicePostBindingUrl"
+      - "logoutServiceRedirectBindingUrl"
+      - "masterSamlProcessingUrl"
+      - "name"
+      - "nameIdFormat"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "rootUrl"
+      - "signAssertions"
+      - "signDocuments"
+      - "signatureAlgorithm"
+      - "signatureKeyName"
+      - "signingCertificateSecretRef"
+      - "signingPrivateKeySecretRef"
+      - "validRedirectUris"
   - name: clientscopes.openidclient.keycloak.crossplane.io
     kind: ClientScope
     singular: clientscope
     scope: Cluster
     managed: true
-    forProvider: ["consentScreenText", "description", "extraConfig", "guiOrder", "includeInTokenScope", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "consentScreenText"
+      - "description"
+      - "extraConfig"
+      - "guiOrder"
+      - "includeInTokenScope"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientscopes.openidclient.keycloak.m.crossplane.io
     kind: ClientScope
     singular: clientscope
     scope: Namespaced
     managed: true
-    forProvider: ["consentScreenText", "description", "extraConfig", "guiOrder", "includeInTokenScope", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "consentScreenText"
+      - "description"
+      - "extraConfig"
+      - "guiOrder"
+      - "includeInTokenScope"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientscopes.samlclient.keycloak.crossplane.io
     kind: ClientScope
     singular: clientscope
     scope: Cluster
     managed: true
-    forProvider: ["consentScreenText", "description", "extraConfig", "guiOrder", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "consentScreenText"
+      - "description"
+      - "extraConfig"
+      - "guiOrder"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientscopes.samlclient.keycloak.m.crossplane.io
     kind: ClientScope
     singular: clientscope
     scope: Namespaced
     managed: true
-    forProvider: ["consentScreenText", "description", "extraConfig", "guiOrder", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "consentScreenText"
+      - "description"
+      - "extraConfig"
+      - "guiOrder"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: clientserviceaccountrealmroles.openidclient.keycloak.crossplane.io
     kind: ClientServiceAccountRealmRole
     singular: clientserviceaccountrealmrole
     scope: Cluster
     managed: true
-    forProvider: ["realmId", "realmIdRef", "realmIdSelector", "role", "serviceAccountUserClientIdRef", "serviceAccountUserClientIdSelector", "serviceAccountUserId"]
+    forProvider:
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "role"
+      - "serviceAccountUserClientIdRef"
+      - "serviceAccountUserClientIdSelector"
+      - "serviceAccountUserId"
   - name: clientserviceaccountrealmroles.openidclient.keycloak.m.crossplane.io
     kind: ClientServiceAccountRealmRole
     singular: clientserviceaccountrealmrole
     scope: Namespaced
     managed: true
-    forProvider: ["realmId", "realmIdRef", "realmIdSelector", "role", "serviceAccountUserClientIdRef", "serviceAccountUserClientIdSelector", "serviceAccountUserId"]
+    forProvider:
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "role"
+      - "serviceAccountUserClientIdRef"
+      - "serviceAccountUserClientIdSelector"
+      - "serviceAccountUserId"
   - name: clientserviceaccountroles.openidclient.keycloak.crossplane.io
     kind: ClientServiceAccountRole
     singular: clientserviceaccountrole
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "realmId", "realmIdRef", "realmIdSelector", "role", "roleRef", "roleSelector", "serviceAccountUserClientIdRef", "serviceAccountUserClientIdSelector", "serviceAccountUserId"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
+      - "serviceAccountUserClientIdRef"
+      - "serviceAccountUserClientIdSelector"
+      - "serviceAccountUserId"
   - name: clientserviceaccountroles.openidclient.keycloak.m.crossplane.io
     kind: ClientServiceAccountRole
     singular: clientserviceaccountrole
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "realmId", "realmIdRef", "realmIdSelector", "role", "roleRef", "roleSelector", "serviceAccountUserClientIdRef", "serviceAccountUserClientIdSelector", "serviceAccountUserId"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
+      - "serviceAccountUserClientIdRef"
+      - "serviceAccountUserClientIdSelector"
+      - "serviceAccountUserId"
   - name: clientuserpolicies.openidclient.keycloak.crossplane.io
     kind: ClientUserPolicy
     singular: clientuserpolicy
     scope: Cluster
     managed: true
-    forProvider: ["decisionStrategy", "description", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "users", "usersRefs", "usersSelector"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "users"
+      - "usersRefs"
+      - "usersSelector"
   - name: clientuserpolicies.openidclient.keycloak.m.crossplane.io
     kind: ClientUserPolicy
     singular: clientuserpolicy
     scope: Namespaced
     managed: true
-    forProvider: ["decisionStrategy", "description", "logic", "name", "realmId", "realmIdRef", "realmIdSelector", "resourceServerId", "resourceServerIdRef", "resourceServerIdSelector", "users", "usersRefs", "usersSelector"]
+    forProvider:
+      - "decisionStrategy"
+      - "description"
+      - "logic"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "resourceServerId"
+      - "resourceServerIdRef"
+      - "resourceServerIdSelector"
+      - "users"
+      - "usersRefs"
+      - "usersSelector"
   - name: clusterproviderconfigs.keycloak.m.crossplane.io
     kind: ClusterProviderConfig
     singular: clusterproviderconfig
@@ -250,337 +822,1099 @@ types:
     singular: custommapper
     scope: Cluster
     managed: true
-    forProvider: ["config", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "providerId", "providerType", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "config"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "providerId"
+      - "providerType"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: custommappers.ldap.keycloak.m.crossplane.io
     kind: CustomMapper
     singular: custommapper
     scope: Namespaced
     managed: true
-    forProvider: ["config", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "providerId", "providerType", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "config"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "providerId"
+      - "providerType"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: defaultclientscopes.realm.keycloak.crossplane.io
     kind: DefaultClientScopes
     singular: defaultclientscopes
     scope: Cluster
     managed: true
-    forProvider: ["defaultScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "defaultScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: defaultclientscopes.realm.keycloak.m.crossplane.io
     kind: DefaultClientScopes
     singular: defaultclientscopes
     scope: Namespaced
     managed: true
-    forProvider: ["defaultScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "defaultScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: defaultgroups.defaults.keycloak.crossplane.io
     kind: DefaultGroups
     singular: defaultgroups
     scope: Cluster
     managed: true
-    forProvider: ["groupIds", "groupIdsRefs", "groupIdsSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "groupIds"
+      - "groupIdsRefs"
+      - "groupIdsSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: defaultgroups.defaults.keycloak.m.crossplane.io
     kind: DefaultGroups
     singular: defaultgroups
     scope: Namespaced
     managed: true
-    forProvider: ["groupIds", "groupIdsRefs", "groupIdsSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "groupIds"
+      - "groupIdsRefs"
+      - "groupIdsSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: executionconfigs.authenticationflow.keycloak.crossplane.io
     kind: ExecutionConfig
     singular: executionconfig
     scope: Cluster
     managed: true
-    forProvider: ["alias", "config", "executionId", "executionIdRef", "executionIdSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "alias"
+      - "config"
+      - "executionId"
+      - "executionIdRef"
+      - "executionIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: executionconfigs.authenticationflow.keycloak.m.crossplane.io
     kind: ExecutionConfig
     singular: executionconfig
     scope: Namespaced
     managed: true
-    forProvider: ["alias", "config", "executionId", "executionIdRef", "executionIdSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "alias"
+      - "config"
+      - "executionId"
+      - "executionIdRef"
+      - "executionIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: executions.authenticationflow.keycloak.crossplane.io
     kind: Execution
     singular: execution
     scope: Cluster
     managed: true
-    forProvider: ["authenticator", "parentFlowAlias", "parentFlowAliasRef", "parentFlowAliasSelector", "parentSubflowAlias", "parentSubflowAliasRef", "parentSubflowAliasSelector", "priority", "realmId", "realmIdRef", "realmIdSelector", "requirement"]
+    forProvider:
+      - "authenticator"
+      - "parentFlowAlias"
+      - "parentFlowAliasRef"
+      - "parentFlowAliasSelector"
+      - "parentSubflowAlias"
+      - "parentSubflowAliasRef"
+      - "parentSubflowAliasSelector"
+      - "priority"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requirement"
   - name: executions.authenticationflow.keycloak.m.crossplane.io
     kind: Execution
     singular: execution
     scope: Namespaced
     managed: true
-    forProvider: ["authenticator", "parentFlowAlias", "parentFlowAliasRef", "parentFlowAliasSelector", "parentSubflowAlias", "parentSubflowAliasRef", "parentSubflowAliasSelector", "priority", "realmId", "realmIdRef", "realmIdSelector", "requirement"]
+    forProvider:
+      - "authenticator"
+      - "parentFlowAlias"
+      - "parentFlowAliasRef"
+      - "parentFlowAliasSelector"
+      - "parentSubflowAlias"
+      - "parentSubflowAliasRef"
+      - "parentSubflowAliasSelector"
+      - "priority"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requirement"
   - name: flows.authenticationflow.keycloak.crossplane.io
     kind: Flow
     singular: flow
     scope: Cluster
     managed: true
-    forProvider: ["alias", "description", "providerId", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "alias"
+      - "description"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: flows.authenticationflow.keycloak.m.crossplane.io
     kind: Flow
     singular: flow
     scope: Namespaced
     managed: true
-    forProvider: ["alias", "description", "providerId", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "alias"
+      - "description"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: fullnamemappers.ldap.keycloak.crossplane.io
     kind: FullNameMapper
     singular: fullnamemapper
     scope: Cluster
     managed: true
-    forProvider: ["ldapFullNameAttribute", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "readOnly", "realmId", "realmIdRef", "realmIdSelector", "writeOnly"]
+    forProvider:
+      - "ldapFullNameAttribute"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "readOnly"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "writeOnly"
   - name: fullnamemappers.ldap.keycloak.m.crossplane.io
     kind: FullNameMapper
     singular: fullnamemapper
     scope: Namespaced
     managed: true
-    forProvider: ["ldapFullNameAttribute", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "readOnly", "realmId", "realmIdRef", "realmIdSelector", "writeOnly"]
+    forProvider:
+      - "ldapFullNameAttribute"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "readOnly"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "writeOnly"
   - name: googleidentityproviders.oidc.keycloak.crossplane.io
     kind: GoogleIdentityProvider
     singular: googleidentityprovider
     scope: Cluster
     managed: true
-    forProvider: ["acceptsPromptNoneForwardFromClient", "addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "clientIdSecretRef", "clientSecretSecretRef", "defaultScopes", "disableUserInfo", "displayName", "enabled", "extraConfig", "firstBrokerLoginFlowAlias", "firstBrokerLoginFlowAliasRef", "firstBrokerLoginFlowAliasSelector", "guiOrder", "hideOnLoginPage", "hostedDomain", "linkOnly", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBrokerLoginFlowAlias", "providerId", "realm", "realmRef", "realmSelector", "requestRefreshToken", "storeToken", "syncMode", "trustEmail", "useUserIpParam"]
+    forProvider:
+      - "acceptsPromptNoneForwardFromClient"
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "defaultScopes"
+      - "disableUserInfo"
+      - "displayName"
+      - "enabled"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "firstBrokerLoginFlowAliasRef"
+      - "firstBrokerLoginFlowAliasSelector"
+      - "guiOrder"
+      - "hideOnLoginPage"
+      - "hostedDomain"
+      - "linkOnly"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBrokerLoginFlowAlias"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "requestRefreshToken"
+      - "storeToken"
+      - "syncMode"
+      - "trustEmail"
+      - "useUserIpParam"
   - name: googleidentityproviders.oidc.keycloak.m.crossplane.io
     kind: GoogleIdentityProvider
     singular: googleidentityprovider
     scope: Namespaced
     managed: true
-    forProvider: ["acceptsPromptNoneForwardFromClient", "addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "clientIdSecretRef", "clientSecretSecretRef", "defaultScopes", "disableUserInfo", "displayName", "enabled", "extraConfig", "firstBrokerLoginFlowAlias", "firstBrokerLoginFlowAliasRef", "firstBrokerLoginFlowAliasSelector", "guiOrder", "hideOnLoginPage", "hostedDomain", "linkOnly", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBrokerLoginFlowAlias", "providerId", "realm", "realmRef", "realmSelector", "requestRefreshToken", "storeToken", "syncMode", "trustEmail", "useUserIpParam"]
+    forProvider:
+      - "acceptsPromptNoneForwardFromClient"
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "defaultScopes"
+      - "disableUserInfo"
+      - "displayName"
+      - "enabled"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "firstBrokerLoginFlowAliasRef"
+      - "firstBrokerLoginFlowAliasSelector"
+      - "guiOrder"
+      - "hideOnLoginPage"
+      - "hostedDomain"
+      - "linkOnly"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBrokerLoginFlowAlias"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "requestRefreshToken"
+      - "storeToken"
+      - "syncMode"
+      - "trustEmail"
+      - "useUserIpParam"
   - name: groupmappers.ldap.keycloak.crossplane.io
     kind: GroupMapper
     singular: groupmapper
     scope: Cluster
     managed: true
-    forProvider: ["dropNonExistingGroupsDuringSync", "groupNameLdapAttribute", "groupObjectClasses", "groupsLdapFilter", "groupsPath", "ignoreMissingGroups", "ldapGroupsDn", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "mappedGroupAttributes", "memberofLdapAttribute", "membershipAttributeType", "membershipLdapAttribute", "membershipUserLdapAttribute", "mode", "name", "preserveGroupInheritance", "realmId", "realmIdRef", "realmIdSelector", "userRolesRetrieveStrategy"]
+    forProvider:
+      - "dropNonExistingGroupsDuringSync"
+      - "groupNameLdapAttribute"
+      - "groupObjectClasses"
+      - "groupsLdapFilter"
+      - "groupsPath"
+      - "ignoreMissingGroups"
+      - "ldapGroupsDn"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "mappedGroupAttributes"
+      - "memberofLdapAttribute"
+      - "membershipAttributeType"
+      - "membershipLdapAttribute"
+      - "membershipUserLdapAttribute"
+      - "mode"
+      - "name"
+      - "preserveGroupInheritance"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userRolesRetrieveStrategy"
   - name: groupmappers.ldap.keycloak.m.crossplane.io
     kind: GroupMapper
     singular: groupmapper
     scope: Namespaced
     managed: true
-    forProvider: ["dropNonExistingGroupsDuringSync", "groupNameLdapAttribute", "groupObjectClasses", "groupsLdapFilter", "groupsPath", "ignoreMissingGroups", "ldapGroupsDn", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "mappedGroupAttributes", "memberofLdapAttribute", "membershipAttributeType", "membershipLdapAttribute", "membershipUserLdapAttribute", "mode", "name", "preserveGroupInheritance", "realmId", "realmIdRef", "realmIdSelector", "userRolesRetrieveStrategy"]
+    forProvider:
+      - "dropNonExistingGroupsDuringSync"
+      - "groupNameLdapAttribute"
+      - "groupObjectClasses"
+      - "groupsLdapFilter"
+      - "groupsPath"
+      - "ignoreMissingGroups"
+      - "ldapGroupsDn"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "mappedGroupAttributes"
+      - "memberofLdapAttribute"
+      - "membershipAttributeType"
+      - "membershipLdapAttribute"
+      - "membershipUserLdapAttribute"
+      - "mode"
+      - "name"
+      - "preserveGroupInheritance"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userRolesRetrieveStrategy"
   - name: groupmembershipprotocolmappers.openidgroup.keycloak.crossplane.io
     kind: GroupMembershipProtocolMapper
     singular: groupmembershipprotocolmapper
     scope: Cluster
     managed: true
-    forProvider: ["addToAccessToken", "addToIdToken", "addToUserinfo", "claimName", "clientId", "clientIdRef", "clientIdSelector", "clientScopeId", "clientScopeIdRef", "clientScopeIdSelector", "fullPath", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "addToAccessToken"
+      - "addToIdToken"
+      - "addToUserinfo"
+      - "claimName"
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "clientScopeId"
+      - "clientScopeIdRef"
+      - "clientScopeIdSelector"
+      - "fullPath"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: groupmembershipprotocolmappers.openidgroup.keycloak.m.crossplane.io
     kind: GroupMembershipProtocolMapper
     singular: groupmembershipprotocolmapper
     scope: Namespaced
     managed: true
-    forProvider: ["addToAccessToken", "addToIdToken", "addToUserinfo", "claimName", "clientId", "clientIdRef", "clientIdSelector", "clientScopeId", "clientScopeIdRef", "clientScopeIdSelector", "fullPath", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "addToAccessToken"
+      - "addToIdToken"
+      - "addToUserinfo"
+      - "claimName"
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "clientScopeId"
+      - "clientScopeIdRef"
+      - "clientScopeIdSelector"
+      - "fullPath"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: groups.group.keycloak.crossplane.io
     kind: Group
     singular: group
     scope: Cluster
     managed: true
-    forProvider: ["attributes", "description", "name", "parentId", "parentIdRef", "parentIdSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "attributes"
+      - "description"
+      - "name"
+      - "parentId"
+      - "parentIdRef"
+      - "parentIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: groups.group.keycloak.m.crossplane.io
     kind: Group
     singular: group
     scope: Namespaced
     managed: true
-    forProvider: ["attributes", "description", "name", "parentId", "parentIdRef", "parentIdSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "attributes"
+      - "description"
+      - "name"
+      - "parentId"
+      - "parentIdRef"
+      - "parentIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: groups.user.keycloak.crossplane.io
     kind: Groups
     singular: groups
     scope: Cluster
     managed: true
-    forProvider: ["exhaustive", "groupIds", "groupIdsRefs", "groupIdsSelector", "realmId", "realmIdRef", "realmIdSelector", "userId", "userIdRef", "userIdSelector"]
+    forProvider:
+      - "exhaustive"
+      - "groupIds"
+      - "groupIdsRefs"
+      - "groupIdsSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userId"
+      - "userIdRef"
+      - "userIdSelector"
   - name: groups.user.keycloak.m.crossplane.io
     kind: Groups
     singular: groups
     scope: Namespaced
     managed: true
-    forProvider: ["exhaustive", "groupIds", "groupIdsRefs", "groupIdsSelector", "realmId", "realmIdRef", "realmIdSelector", "userId", "userIdRef", "userIdSelector"]
+    forProvider:
+      - "exhaustive"
+      - "groupIds"
+      - "groupIdsRefs"
+      - "groupIdsSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userId"
+      - "userIdRef"
+      - "userIdSelector"
   - name: hardcodedattributemappers.ldap.keycloak.crossplane.io
     kind: HardcodedAttributeMapper
     singular: hardcodedattributemapper
     scope: Cluster
     managed: true
-    forProvider: ["attributeName", "attributeValue", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "attributeName"
+      - "attributeValue"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: hardcodedattributemappers.ldap.keycloak.m.crossplane.io
     kind: HardcodedAttributeMapper
     singular: hardcodedattributemapper
     scope: Namespaced
     managed: true
-    forProvider: ["attributeName", "attributeValue", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "attributeName"
+      - "attributeValue"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: hardcodedgroupmappers.ldap.keycloak.crossplane.io
     kind: HardcodedGroupMapper
     singular: hardcodedgroupmapper
     scope: Cluster
     managed: true
-    forProvider: ["group", "groupRef", "groupSelector", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "group"
+      - "groupRef"
+      - "groupSelector"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: hardcodedgroupmappers.ldap.keycloak.m.crossplane.io
     kind: HardcodedGroupMapper
     singular: hardcodedgroupmapper
     scope: Namespaced
     managed: true
-    forProvider: ["group", "groupRef", "groupSelector", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "group"
+      - "groupRef"
+      - "groupSelector"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: hardcodedrolemappers.ldap.keycloak.crossplane.io
     kind: HardcodedRoleMapper
     singular: hardcodedrolemapper
     scope: Cluster
     managed: true
-    forProvider: ["ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector", "role", "roleRef", "roleSelector"]
+    forProvider:
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
   - name: hardcodedrolemappers.ldap.keycloak.m.crossplane.io
     kind: HardcodedRoleMapper
     singular: hardcodedrolemapper
     scope: Namespaced
     managed: true
-    forProvider: ["ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector", "role", "roleRef", "roleSelector"]
+    forProvider:
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "role"
+      - "roleRef"
+      - "roleSelector"
   - name: identityprovidermappers.identityprovider.keycloak.crossplane.io
     kind: IdentityProviderMapper
     singular: identityprovidermapper
     scope: Cluster
     managed: true
-    forProvider: ["extraConfig", "identityProviderAlias", "identityProviderMapper", "name", "realm", "realmRef", "realmSelector"]
+    forProvider:
+      - "extraConfig"
+      - "identityProviderAlias"
+      - "identityProviderMapper"
+      - "name"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
   - name: identityprovidermappers.identityprovider.keycloak.m.crossplane.io
     kind: IdentityProviderMapper
     singular: identityprovidermapper
     scope: Namespaced
     managed: true
-    forProvider: ["extraConfig", "identityProviderAlias", "identityProviderMapper", "name", "realm", "realmRef", "realmSelector"]
+    forProvider:
+      - "extraConfig"
+      - "identityProviderAlias"
+      - "identityProviderMapper"
+      - "name"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
   - name: identityproviders.oidc.keycloak.crossplane.io
     kind: IdentityProvider
     singular: identityprovider
     scope: Cluster
     managed: true
-    forProvider: ["acceptsPromptNoneForwardFromClient", "addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "authorizationUrl", "backchannelSupported", "clientIdSecretRef", "clientSecretSecretRef", "clientSecretWoSecretRef", "clientSecretWoVersion", "defaultScopes", "disableTypeClaimCheck", "disableUserInfo", "displayName", "enabled", "extraConfig", "firstBrokerLoginFlowAlias", "firstBrokerLoginFlowAliasRef", "firstBrokerLoginFlowAliasSelector", "guiOrder", "hideOnLoginPage", "issuer", "jwksUrl", "linkOnly", "loginHint", "logoutUrl", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBrokerLoginFlowAlias", "providerId", "realm", "realmRef", "realmSelector", "storeToken", "syncMode", "tokenUrl", "trustEmail", "uiLocales", "userInfoUrl", "validateSignature"]
+    forProvider:
+      - "acceptsPromptNoneForwardFromClient"
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "authorizationUrl"
+      - "backchannelSupported"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "clientSecretWoSecretRef"
+      - "clientSecretWoVersion"
+      - "defaultScopes"
+      - "disableTypeClaimCheck"
+      - "disableUserInfo"
+      - "displayName"
+      - "enabled"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "firstBrokerLoginFlowAliasRef"
+      - "firstBrokerLoginFlowAliasSelector"
+      - "guiOrder"
+      - "hideOnLoginPage"
+      - "issuer"
+      - "jwksUrl"
+      - "linkOnly"
+      - "loginHint"
+      - "logoutUrl"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBrokerLoginFlowAlias"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "storeToken"
+      - "syncMode"
+      - "tokenUrl"
+      - "trustEmail"
+      - "uiLocales"
+      - "userInfoUrl"
+      - "validateSignature"
   - name: identityproviders.oidc.keycloak.m.crossplane.io
     kind: IdentityProvider
     singular: identityprovider
     scope: Namespaced
     managed: true
-    forProvider: ["acceptsPromptNoneForwardFromClient", "addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "authorizationUrl", "backchannelSupported", "clientIdSecretRef", "clientSecretSecretRef", "clientSecretWoSecretRef", "clientSecretWoVersion", "defaultScopes", "disableTypeClaimCheck", "disableUserInfo", "displayName", "enabled", "extraConfig", "firstBrokerLoginFlowAlias", "firstBrokerLoginFlowAliasRef", "firstBrokerLoginFlowAliasSelector", "guiOrder", "hideOnLoginPage", "issuer", "jwksUrl", "linkOnly", "loginHint", "logoutUrl", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBrokerLoginFlowAlias", "providerId", "realm", "realmRef", "realmSelector", "storeToken", "syncMode", "tokenUrl", "trustEmail", "uiLocales", "userInfoUrl", "validateSignature"]
+    forProvider:
+      - "acceptsPromptNoneForwardFromClient"
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "authorizationUrl"
+      - "backchannelSupported"
+      - "clientIdSecretRef"
+      - "clientSecretSecretRef"
+      - "clientSecretWoSecretRef"
+      - "clientSecretWoVersion"
+      - "defaultScopes"
+      - "disableTypeClaimCheck"
+      - "disableUserInfo"
+      - "displayName"
+      - "enabled"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "firstBrokerLoginFlowAliasRef"
+      - "firstBrokerLoginFlowAliasSelector"
+      - "guiOrder"
+      - "hideOnLoginPage"
+      - "issuer"
+      - "jwksUrl"
+      - "linkOnly"
+      - "loginHint"
+      - "logoutUrl"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBrokerLoginFlowAlias"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "storeToken"
+      - "syncMode"
+      - "tokenUrl"
+      - "trustEmail"
+      - "uiLocales"
+      - "userInfoUrl"
+      - "validateSignature"
   - name: identityproviders.saml.keycloak.crossplane.io
     kind: IdentityProvider
     singular: identityprovider
     scope: Cluster
     managed: true
-    forProvider: ["addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "authnContextClassRefs", "authnContextComparisonType", "authnContextDeclRefs", "backchannelSupported", "displayName", "enabled", "entityId", "extraConfig", "firstBrokerLoginFlowAlias", "forceAuthn", "guiOrder", "hideOnLoginPage", "linkOnly", "loginHint", "nameIdPolicyFormat", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBindingAuthnRequest", "postBindingLogout", "postBindingResponse", "postBrokerLoginFlowAlias", "principalAttribute", "principalType", "providerId", "realm", "realmRef", "realmSelector", "signatureAlgorithm", "signingCertificate", "singleLogoutServiceUrl", "singleSignOnServiceUrl", "storeToken", "syncMode", "trustEmail", "validateSignature", "wantAssertionsEncrypted", "wantAssertionsSigned", "wantAuthnRequestsSigned", "xmlSignKeyInfoKeyNameTransformer"]
+    forProvider:
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "authnContextClassRefs"
+      - "authnContextComparisonType"
+      - "authnContextDeclRefs"
+      - "backchannelSupported"
+      - "displayName"
+      - "enabled"
+      - "entityId"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "forceAuthn"
+      - "guiOrder"
+      - "hideOnLoginPage"
+      - "linkOnly"
+      - "loginHint"
+      - "nameIdPolicyFormat"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBindingAuthnRequest"
+      - "postBindingLogout"
+      - "postBindingResponse"
+      - "postBrokerLoginFlowAlias"
+      - "principalAttribute"
+      - "principalType"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "signatureAlgorithm"
+      - "signingCertificate"
+      - "singleLogoutServiceUrl"
+      - "singleSignOnServiceUrl"
+      - "storeToken"
+      - "syncMode"
+      - "trustEmail"
+      - "validateSignature"
+      - "wantAssertionsEncrypted"
+      - "wantAssertionsSigned"
+      - "wantAuthnRequestsSigned"
+      - "xmlSignKeyInfoKeyNameTransformer"
   - name: identityproviders.saml.keycloak.m.crossplane.io
     kind: IdentityProvider
     singular: identityprovider
     scope: Namespaced
     managed: true
-    forProvider: ["addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "authnContextClassRefs", "authnContextComparisonType", "authnContextDeclRefs", "backchannelSupported", "displayName", "enabled", "entityId", "extraConfig", "firstBrokerLoginFlowAlias", "forceAuthn", "guiOrder", "hideOnLoginPage", "linkOnly", "loginHint", "nameIdPolicyFormat", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBindingAuthnRequest", "postBindingLogout", "postBindingResponse", "postBrokerLoginFlowAlias", "principalAttribute", "principalType", "providerId", "realm", "realmRef", "realmSelector", "signatureAlgorithm", "signingCertificate", "singleLogoutServiceUrl", "singleSignOnServiceUrl", "storeToken", "syncMode", "trustEmail", "validateSignature", "wantAssertionsEncrypted", "wantAssertionsSigned", "wantAuthnRequestsSigned", "xmlSignKeyInfoKeyNameTransformer"]
+    forProvider:
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "authnContextClassRefs"
+      - "authnContextComparisonType"
+      - "authnContextDeclRefs"
+      - "backchannelSupported"
+      - "displayName"
+      - "enabled"
+      - "entityId"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "forceAuthn"
+      - "guiOrder"
+      - "hideOnLoginPage"
+      - "linkOnly"
+      - "loginHint"
+      - "nameIdPolicyFormat"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBindingAuthnRequest"
+      - "postBindingLogout"
+      - "postBindingResponse"
+      - "postBrokerLoginFlowAlias"
+      - "principalAttribute"
+      - "principalType"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "signatureAlgorithm"
+      - "signingCertificate"
+      - "singleLogoutServiceUrl"
+      - "singleSignOnServiceUrl"
+      - "storeToken"
+      - "syncMode"
+      - "trustEmail"
+      - "validateSignature"
+      - "wantAssertionsEncrypted"
+      - "wantAssertionsSigned"
+      - "wantAuthnRequestsSigned"
+      - "xmlSignKeyInfoKeyNameTransformer"
   - name: keystorersas.realm.keycloak.crossplane.io
     kind: KeystoreRsa
     singular: keystorersa
     scope: Cluster
     managed: true
-    forProvider: ["active", "algorithm", "certificateSecretRef", "enabled", "extraConfig", "name", "priority", "privateKeySecretRef", "providerId", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "active"
+      - "algorithm"
+      - "certificateSecretRef"
+      - "enabled"
+      - "extraConfig"
+      - "name"
+      - "priority"
+      - "privateKeySecretRef"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: keystorersas.realm.keycloak.m.crossplane.io
     kind: KeystoreRsa
     singular: keystorersa
     scope: Namespaced
     managed: true
-    forProvider: ["active", "algorithm", "certificateSecretRef", "enabled", "extraConfig", "name", "priority", "privateKeySecretRef", "providerId", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "active"
+      - "algorithm"
+      - "certificateSecretRef"
+      - "enabled"
+      - "extraConfig"
+      - "name"
+      - "priority"
+      - "privateKeySecretRef"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: kubernetesidentityproviders.identityprovider.keycloak.crossplane.io
     kind: KubernetesIdentityProvider
     singular: kubernetesidentityprovider
     scope: Cluster
     managed: true
-    forProvider: ["addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "displayName", "enabled", "extraConfig", "firstBrokerLoginFlowAlias", "firstBrokerLoginFlowAliasRef", "firstBrokerLoginFlowAliasSelector", "guiOrder", "issuer", "linkOnly", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBrokerLoginFlowAlias", "providerId", "realm", "realmRef", "realmSelector", "storeToken", "syncMode", "trustEmail"]
+    forProvider:
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "displayName"
+      - "enabled"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "firstBrokerLoginFlowAliasRef"
+      - "firstBrokerLoginFlowAliasSelector"
+      - "guiOrder"
+      - "issuer"
+      - "linkOnly"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBrokerLoginFlowAlias"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "storeToken"
+      - "syncMode"
+      - "trustEmail"
   - name: kubernetesidentityproviders.identityprovider.keycloak.m.crossplane.io
     kind: KubernetesIdentityProvider
     singular: kubernetesidentityprovider
     scope: Namespaced
     managed: true
-    forProvider: ["addReadTokenRoleOnCreate", "alias", "authenticateByDefault", "displayName", "enabled", "extraConfig", "firstBrokerLoginFlowAlias", "firstBrokerLoginFlowAliasRef", "firstBrokerLoginFlowAliasSelector", "guiOrder", "issuer", "linkOnly", "orgDomain", "orgRedirectModeEmailMatches", "organizationId", "organizationIdRef", "organizationIdSelector", "postBrokerLoginFlowAlias", "providerId", "realm", "realmRef", "realmSelector", "storeToken", "syncMode", "trustEmail"]
+    forProvider:
+      - "addReadTokenRoleOnCreate"
+      - "alias"
+      - "authenticateByDefault"
+      - "displayName"
+      - "enabled"
+      - "extraConfig"
+      - "firstBrokerLoginFlowAlias"
+      - "firstBrokerLoginFlowAliasRef"
+      - "firstBrokerLoginFlowAliasSelector"
+      - "guiOrder"
+      - "issuer"
+      - "linkOnly"
+      - "orgDomain"
+      - "orgRedirectModeEmailMatches"
+      - "organizationId"
+      - "organizationIdRef"
+      - "organizationIdSelector"
+      - "postBrokerLoginFlowAlias"
+      - "providerId"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "storeToken"
+      - "syncMode"
+      - "trustEmail"
   - name: memberships.group.keycloak.crossplane.io
     kind: Memberships
     singular: memberships
     scope: Cluster
     managed: true
-    forProvider: ["groupId", "groupIdRef", "groupIdSelector", "members", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "members"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: memberships.group.keycloak.m.crossplane.io
     kind: Memberships
     singular: memberships
     scope: Namespaced
     managed: true
-    forProvider: ["groupId", "groupIdRef", "groupIdSelector", "members", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "members"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: msadldsuseraccountcontrolmappers.ldap.keycloak.crossplane.io
     kind: MsadLdsUserAccountControlMapper
     singular: msadldsuseraccountcontrolmapper
     scope: Cluster
     managed: true
-    forProvider: ["ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: msadldsuseraccountcontrolmappers.ldap.keycloak.m.crossplane.io
     kind: MsadLdsUserAccountControlMapper
     singular: msadldsuseraccountcontrolmapper
     scope: Namespaced
     managed: true
-    forProvider: ["ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: msaduseraccountcontrolmappers.ldap.keycloak.crossplane.io
     kind: MsadUserAccountControlMapper
     singular: msaduseraccountcontrolmapper
     scope: Cluster
     managed: true
-    forProvider: ["ldapPasswordPolicyHintsEnabled", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "ldapPasswordPolicyHintsEnabled"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: msaduseraccountcontrolmappers.ldap.keycloak.m.crossplane.io
     kind: MsadUserAccountControlMapper
     singular: msaduseraccountcontrolmapper
     scope: Namespaced
     managed: true
-    forProvider: ["ldapPasswordPolicyHintsEnabled", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "ldapPasswordPolicyHintsEnabled"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: optionalclientscopes.realm.keycloak.crossplane.io
     kind: OptionalClientScopes
     singular: optionalclientscopes
     scope: Cluster
     managed: true
-    forProvider: ["optionalScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "optionalScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: optionalclientscopes.realm.keycloak.m.crossplane.io
     kind: OptionalClientScopes
     singular: optionalclientscopes
     scope: Namespaced
     managed: true
-    forProvider: ["optionalScopes", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "optionalScopes"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: organizations.organization.keycloak.crossplane.io
     kind: Organization
     singular: organization
     scope: Cluster
     managed: true
-    forProvider: ["alias", "attributes", "description", "domain", "enabled", "name", "realm", "realmRef", "realmSelector", "redirectUrl"]
+    forProvider:
+      - "alias"
+      - "attributes"
+      - "description"
+      - "domain"
+      - "enabled"
+      - "name"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "redirectUrl"
   - name: organizations.organization.keycloak.m.crossplane.io
     kind: Organization
     singular: organization
     scope: Namespaced
     managed: true
-    forProvider: ["alias", "attributes", "description", "domain", "enabled", "name", "realm", "realmRef", "realmSelector", "redirectUrl"]
+    forProvider:
+      - "alias"
+      - "attributes"
+      - "description"
+      - "domain"
+      - "enabled"
+      - "name"
+      - "realm"
+      - "realmRef"
+      - "realmSelector"
+      - "redirectUrl"
   - name: permissions.group.keycloak.crossplane.io
     kind: Permissions
     singular: permissions
     scope: Cluster
     managed: true
-    forProvider: ["groupId", "groupIdRef", "groupIdSelector", "manageMembersScope", "manageMembershipScope", "manageScope", "realmId", "realmIdRef", "realmIdSelector", "viewMembersScope", "viewScope"]
+    forProvider:
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "manageMembersScope"
+      - "manageMembershipScope"
+      - "manageScope"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "viewMembersScope"
+      - "viewScope"
   - name: permissions.group.keycloak.m.crossplane.io
     kind: Permissions
     singular: permissions
     scope: Namespaced
     managed: true
-    forProvider: ["groupId", "groupIdRef", "groupIdSelector", "manageMembersScope", "manageMembershipScope", "manageScope", "realmId", "realmIdRef", "realmIdSelector", "viewMembersScope", "viewScope"]
+    forProvider:
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "manageMembersScope"
+      - "manageMembershipScope"
+      - "manageScope"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "viewMembersScope"
+      - "viewScope"
   - name: permissions.user.keycloak.crossplane.io
     kind: Permissions
     singular: permissions
     scope: Cluster
     managed: true
-    forProvider: ["impersonateScope", "manageGroupMembershipScope", "manageScope", "mapRolesScope", "realmId", "realmIdRef", "realmIdSelector", "userImpersonatedScope", "viewScope"]
+    forProvider:
+      - "impersonateScope"
+      - "manageGroupMembershipScope"
+      - "manageScope"
+      - "mapRolesScope"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userImpersonatedScope"
+      - "viewScope"
   - name: permissions.user.keycloak.m.crossplane.io
     kind: Permissions
     singular: permissions
     scope: Namespaced
     managed: true
-    forProvider: ["impersonateScope", "manageGroupMembershipScope", "manageScope", "mapRolesScope", "realmId", "realmIdRef", "realmIdSelector", "userImpersonatedScope", "viewScope"]
+    forProvider:
+      - "impersonateScope"
+      - "manageGroupMembershipScope"
+      - "manageScope"
+      - "mapRolesScope"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userImpersonatedScope"
+      - "viewScope"
   - name: protocolmappers.client.keycloak.crossplane.io
     kind: ProtocolMapper
     singular: protocolmapper
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "clientScopeId", "clientScopeIdRef", "clientScopeIdSelector", "config", "name", "protocol", "protocolMapper", "realmId", "realmIdRef", "realmIdSelector", "samlClientId", "samlClientIdRef", "samlClientIdSelector", "samlClientScopeId", "samlClientScopeIdRef", "samlClientScopeIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "clientScopeId"
+      - "clientScopeIdRef"
+      - "clientScopeIdSelector"
+      - "config"
+      - "name"
+      - "protocol"
+      - "protocolMapper"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "samlClientId"
+      - "samlClientIdRef"
+      - "samlClientIdSelector"
+      - "samlClientScopeId"
+      - "samlClientScopeIdRef"
+      - "samlClientScopeIdSelector"
   - name: protocolmappers.client.keycloak.m.crossplane.io
     kind: ProtocolMapper
     singular: protocolmapper
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "clientScopeId", "clientScopeIdRef", "clientScopeIdSelector", "config", "name", "protocol", "protocolMapper", "realmId", "realmIdRef", "realmIdSelector", "samlClientId", "samlClientIdRef", "samlClientIdSelector", "samlClientScopeId", "samlClientScopeIdRef", "samlClientScopeIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "clientScopeId"
+      - "clientScopeIdRef"
+      - "clientScopeIdSelector"
+      - "config"
+      - "name"
+      - "protocol"
+      - "protocolMapper"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "samlClientId"
+      - "samlClientIdRef"
+      - "samlClientIdSelector"
+      - "samlClientScopeId"
+      - "samlClientScopeIdRef"
+      - "samlClientScopeIdSelector"
   - name: providerconfigs.keycloak.crossplane.io
     kind: ProviderConfig
     singular: providerconfig
@@ -606,190 +1940,720 @@ types:
     singular: providertokenexchangescopepermission
     scope: Cluster
     managed: true
-    forProvider: ["clients", "clientsRefs", "clientsSelector", "policyType", "providerAlias", "providerAliasRef", "providerAliasSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clients"
+      - "clientsRefs"
+      - "clientsSelector"
+      - "policyType"
+      - "providerAlias"
+      - "providerAliasRef"
+      - "providerAliasSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: providertokenexchangescopepermissions.identityprovider.keycloak.m.crossplane.io
     kind: ProviderTokenExchangeScopePermission
     singular: providertokenexchangescopepermission
     scope: Namespaced
     managed: true
-    forProvider: ["clients", "clientsRefs", "clientsSelector", "policyType", "providerAlias", "providerAliasRef", "providerAliasSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "clients"
+      - "clientsRefs"
+      - "clientsSelector"
+      - "policyType"
+      - "providerAlias"
+      - "providerAliasRef"
+      - "providerAliasSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: realmevents.realm.keycloak.crossplane.io
     kind: RealmEvents
     singular: realmevents
     scope: Cluster
     managed: true
-    forProvider: ["adminEventsDetailsEnabled", "adminEventsEnabled", "enabledEventTypes", "eventsEnabled", "eventsExpiration", "eventsListeners", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "adminEventsDetailsEnabled"
+      - "adminEventsEnabled"
+      - "enabledEventTypes"
+      - "eventsEnabled"
+      - "eventsExpiration"
+      - "eventsListeners"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: realmevents.realm.keycloak.m.crossplane.io
     kind: RealmEvents
     singular: realmevents
     scope: Namespaced
     managed: true
-    forProvider: ["adminEventsDetailsEnabled", "adminEventsEnabled", "enabledEventTypes", "eventsEnabled", "eventsExpiration", "eventsListeners", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "adminEventsDetailsEnabled"
+      - "adminEventsEnabled"
+      - "enabledEventTypes"
+      - "eventsEnabled"
+      - "eventsExpiration"
+      - "eventsListeners"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: realms.realm.keycloak.crossplane.io
     kind: Realm
     singular: realm
     scope: Cluster
     managed: true
-    forProvider: ["accessCodeLifespan", "accessCodeLifespanLogin", "accessCodeLifespanUserAction", "accessTokenLifespan", "accessTokenLifespanForImplicitFlow", "accountTheme", "actionTokenGeneratedByAdminLifespan", "actionTokenGeneratedByUserLifespan", "adminPermissionsEnabled", "adminTheme", "attributes", "browserFlow", "clientAuthenticationFlow", "clientSessionIdleTimeout", "clientSessionMaxLifespan", "defaultDefaultClientScopes", "defaultOptionalClientScopes", "defaultSignatureAlgorithm", "directGrantFlow", "displayName", "displayNameHtml", "dockerAuthenticationFlow", "duplicateEmailsAllowed", "editUsernameAllowed", "emailTheme", "enabled", "firstBrokerLoginFlow", "internalId", "internationalization", "loginTheme", "loginWithEmailAllowed", "oauth2DeviceCodeLifespan", "oauth2DevicePollingInterval", "offlineSessionIdleTimeout", "offlineSessionMaxLifespan", "offlineSessionMaxLifespanEnabled", "organizationsEnabled", "otpPolicy", "passwordPolicy", "realm", "refreshTokenMaxReuse", "registrationAllowed", "registrationEmailAsUsername", "registrationFlow", "rememberMe", "resetCredentialsFlow", "resetPasswordAllowed", "revokeRefreshToken", "securityDefenses", "smtpServer", "sslRequired", "ssoSessionIdleTimeout", "ssoSessionIdleTimeoutRememberMe", "ssoSessionMaxLifespan", "ssoSessionMaxLifespanRememberMe", "terraformDeletionProtection", "userManagedAccess", "verifyEmail", "webAuthnPasswordlessPolicy", "webAuthnPolicy"]
+    forProvider:
+      - "accessCodeLifespan"
+      - "accessCodeLifespanLogin"
+      - "accessCodeLifespanUserAction"
+      - "accessTokenLifespan"
+      - "accessTokenLifespanForImplicitFlow"
+      - "accountTheme"
+      - "actionTokenGeneratedByAdminLifespan"
+      - "actionTokenGeneratedByUserLifespan"
+      - "adminPermissionsEnabled"
+      - "adminTheme"
+      - "attributes"
+      - "browserFlow"
+      - "clientAuthenticationFlow"
+      - "clientSessionIdleTimeout"
+      - "clientSessionMaxLifespan"
+      - "defaultDefaultClientScopes"
+      - "defaultOptionalClientScopes"
+      - "defaultSignatureAlgorithm"
+      - "directGrantFlow"
+      - "displayName"
+      - "displayNameHtml"
+      - "dockerAuthenticationFlow"
+      - "duplicateEmailsAllowed"
+      - "editUsernameAllowed"
+      - "emailTheme"
+      - "enabled"
+      - "firstBrokerLoginFlow"
+      - "internalId"
+      - "internationalization"
+      - "loginTheme"
+      - "loginWithEmailAllowed"
+      - "oauth2DeviceCodeLifespan"
+      - "oauth2DevicePollingInterval"
+      - "offlineSessionIdleTimeout"
+      - "offlineSessionMaxLifespan"
+      - "offlineSessionMaxLifespanEnabled"
+      - "organizationsEnabled"
+      - "otpPolicy"
+      - "passwordPolicy"
+      - "realm"
+      - "refreshTokenMaxReuse"
+      - "registrationAllowed"
+      - "registrationEmailAsUsername"
+      - "registrationFlow"
+      - "rememberMe"
+      - "resetCredentialsFlow"
+      - "resetPasswordAllowed"
+      - "revokeRefreshToken"
+      - "securityDefenses"
+      - "smtpServer"
+      - "sslRequired"
+      - "ssoSessionIdleTimeout"
+      - "ssoSessionIdleTimeoutRememberMe"
+      - "ssoSessionMaxLifespan"
+      - "ssoSessionMaxLifespanRememberMe"
+      - "terraformDeletionProtection"
+      - "userManagedAccess"
+      - "verifyEmail"
+      - "webAuthnPasswordlessPolicy"
+      - "webAuthnPolicy"
   - name: realms.realm.keycloak.m.crossplane.io
     kind: Realm
     singular: realm
     scope: Namespaced
     managed: true
-    forProvider: ["accessCodeLifespan", "accessCodeLifespanLogin", "accessCodeLifespanUserAction", "accessTokenLifespan", "accessTokenLifespanForImplicitFlow", "accountTheme", "actionTokenGeneratedByAdminLifespan", "actionTokenGeneratedByUserLifespan", "adminPermissionsEnabled", "adminTheme", "attributes", "browserFlow", "clientAuthenticationFlow", "clientSessionIdleTimeout", "clientSessionMaxLifespan", "defaultDefaultClientScopes", "defaultOptionalClientScopes", "defaultSignatureAlgorithm", "directGrantFlow", "displayName", "displayNameHtml", "dockerAuthenticationFlow", "duplicateEmailsAllowed", "editUsernameAllowed", "emailTheme", "enabled", "firstBrokerLoginFlow", "internalId", "internationalization", "loginTheme", "loginWithEmailAllowed", "oauth2DeviceCodeLifespan", "oauth2DevicePollingInterval", "offlineSessionIdleTimeout", "offlineSessionMaxLifespan", "offlineSessionMaxLifespanEnabled", "organizationsEnabled", "otpPolicy", "passwordPolicy", "realm", "refreshTokenMaxReuse", "registrationAllowed", "registrationEmailAsUsername", "registrationFlow", "rememberMe", "resetCredentialsFlow", "resetPasswordAllowed", "revokeRefreshToken", "securityDefenses", "smtpServer", "sslRequired", "ssoSessionIdleTimeout", "ssoSessionIdleTimeoutRememberMe", "ssoSessionMaxLifespan", "ssoSessionMaxLifespanRememberMe", "terraformDeletionProtection", "userManagedAccess", "verifyEmail", "webAuthnPasswordlessPolicy", "webAuthnPolicy"]
+    forProvider:
+      - "accessCodeLifespan"
+      - "accessCodeLifespanLogin"
+      - "accessCodeLifespanUserAction"
+      - "accessTokenLifespan"
+      - "accessTokenLifespanForImplicitFlow"
+      - "accountTheme"
+      - "actionTokenGeneratedByAdminLifespan"
+      - "actionTokenGeneratedByUserLifespan"
+      - "adminPermissionsEnabled"
+      - "adminTheme"
+      - "attributes"
+      - "browserFlow"
+      - "clientAuthenticationFlow"
+      - "clientSessionIdleTimeout"
+      - "clientSessionMaxLifespan"
+      - "defaultDefaultClientScopes"
+      - "defaultOptionalClientScopes"
+      - "defaultSignatureAlgorithm"
+      - "directGrantFlow"
+      - "displayName"
+      - "displayNameHtml"
+      - "dockerAuthenticationFlow"
+      - "duplicateEmailsAllowed"
+      - "editUsernameAllowed"
+      - "emailTheme"
+      - "enabled"
+      - "firstBrokerLoginFlow"
+      - "internalId"
+      - "internationalization"
+      - "loginTheme"
+      - "loginWithEmailAllowed"
+      - "oauth2DeviceCodeLifespan"
+      - "oauth2DevicePollingInterval"
+      - "offlineSessionIdleTimeout"
+      - "offlineSessionMaxLifespan"
+      - "offlineSessionMaxLifespanEnabled"
+      - "organizationsEnabled"
+      - "otpPolicy"
+      - "passwordPolicy"
+      - "realm"
+      - "refreshTokenMaxReuse"
+      - "registrationAllowed"
+      - "registrationEmailAsUsername"
+      - "registrationFlow"
+      - "rememberMe"
+      - "resetCredentialsFlow"
+      - "resetPasswordAllowed"
+      - "revokeRefreshToken"
+      - "securityDefenses"
+      - "smtpServer"
+      - "sslRequired"
+      - "ssoSessionIdleTimeout"
+      - "ssoSessionIdleTimeoutRememberMe"
+      - "ssoSessionMaxLifespan"
+      - "ssoSessionMaxLifespanRememberMe"
+      - "terraformDeletionProtection"
+      - "userManagedAccess"
+      - "verifyEmail"
+      - "webAuthnPasswordlessPolicy"
+      - "webAuthnPolicy"
   - name: requiredactions.realm.keycloak.crossplane.io
     kind: RequiredAction
     singular: requiredaction
     scope: Cluster
     managed: true
-    forProvider: ["alias", "config", "defaultAction", "enabled", "name", "priority", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "alias"
+      - "config"
+      - "defaultAction"
+      - "enabled"
+      - "name"
+      - "priority"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: requiredactions.realm.keycloak.m.crossplane.io
     kind: RequiredAction
     singular: requiredaction
     scope: Namespaced
     managed: true
-    forProvider: ["alias", "config", "defaultAction", "enabled", "name", "priority", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "alias"
+      - "config"
+      - "defaultAction"
+      - "enabled"
+      - "name"
+      - "priority"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: rolemappers.client.keycloak.crossplane.io
     kind: RoleMapper
     singular: rolemapper
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "clientScopeId", "clientScopeIdRef", "clientScopeIdSelector", "realmId", "realmIdRef", "realmIdSelector", "roleId", "roleIdRef", "roleIdSelector", "samlClientId", "samlClientIdRef", "samlClientIdSelector", "samlClientScopeId", "samlClientScopeIdRef", "samlClientScopeIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "clientScopeId"
+      - "clientScopeIdRef"
+      - "clientScopeIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleId"
+      - "roleIdRef"
+      - "roleIdSelector"
+      - "samlClientId"
+      - "samlClientIdRef"
+      - "samlClientIdSelector"
+      - "samlClientScopeId"
+      - "samlClientScopeIdRef"
+      - "samlClientScopeIdSelector"
   - name: rolemappers.client.keycloak.m.crossplane.io
     kind: RoleMapper
     singular: rolemapper
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "clientScopeId", "clientScopeIdRef", "clientScopeIdSelector", "realmId", "realmIdRef", "realmIdSelector", "roleId", "roleIdRef", "roleIdSelector", "samlClientId", "samlClientIdRef", "samlClientIdSelector", "samlClientScopeId", "samlClientScopeIdRef", "samlClientScopeIdSelector"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "clientScopeId"
+      - "clientScopeIdRef"
+      - "clientScopeIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleId"
+      - "roleIdRef"
+      - "roleIdSelector"
+      - "samlClientId"
+      - "samlClientIdRef"
+      - "samlClientIdSelector"
+      - "samlClientScopeId"
+      - "samlClientScopeIdRef"
+      - "samlClientScopeIdSelector"
   - name: rolemappers.ldap.keycloak.crossplane.io
     kind: RoleMapper
     singular: rolemapper
     scope: Cluster
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "ldapRolesDn", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "memberofLdapAttribute", "membershipAttributeType", "membershipLdapAttribute", "membershipUserLdapAttribute", "mode", "name", "realmId", "realmIdRef", "realmIdSelector", "roleNameLdapAttribute", "roleObjectClasses", "rolesLdapFilter", "useRealmRolesMapping", "userRolesRetrieveStrategy"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "ldapRolesDn"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "memberofLdapAttribute"
+      - "membershipAttributeType"
+      - "membershipLdapAttribute"
+      - "membershipUserLdapAttribute"
+      - "mode"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleNameLdapAttribute"
+      - "roleObjectClasses"
+      - "rolesLdapFilter"
+      - "useRealmRolesMapping"
+      - "userRolesRetrieveStrategy"
   - name: rolemappers.ldap.keycloak.m.crossplane.io
     kind: RoleMapper
     singular: rolemapper
     scope: Namespaced
     managed: true
-    forProvider: ["clientId", "clientIdRef", "clientIdSelector", "ldapRolesDn", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "memberofLdapAttribute", "membershipAttributeType", "membershipLdapAttribute", "membershipUserLdapAttribute", "mode", "name", "realmId", "realmIdRef", "realmIdSelector", "roleNameLdapAttribute", "roleObjectClasses", "rolesLdapFilter", "useRealmRolesMapping", "userRolesRetrieveStrategy"]
+    forProvider:
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "ldapRolesDn"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "memberofLdapAttribute"
+      - "membershipAttributeType"
+      - "membershipLdapAttribute"
+      - "membershipUserLdapAttribute"
+      - "mode"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleNameLdapAttribute"
+      - "roleObjectClasses"
+      - "rolesLdapFilter"
+      - "useRealmRolesMapping"
+      - "userRolesRetrieveStrategy"
   - name: roles.defaults.keycloak.crossplane.io
     kind: Roles
     singular: roles
     scope: Cluster
     managed: true
-    forProvider: ["defaultRoles", "defaultRolesRefs", "defaultRolesSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "defaultRoles"
+      - "defaultRolesRefs"
+      - "defaultRolesSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: roles.defaults.keycloak.m.crossplane.io
     kind: Roles
     singular: roles
     scope: Namespaced
     managed: true
-    forProvider: ["defaultRoles", "defaultRolesRefs", "defaultRolesSelector", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "defaultRoles"
+      - "defaultRolesRefs"
+      - "defaultRolesSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: roles.group.keycloak.crossplane.io
     kind: Roles
     singular: roles
     scope: Cluster
     managed: true
-    forProvider: ["exhaustive", "groupId", "groupIdRef", "groupIdSelector", "realmId", "realmIdRef", "realmIdSelector", "roleIds", "roleIdsRefs", "roleIdsSelector"]
+    forProvider:
+      - "exhaustive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleIds"
+      - "roleIdsRefs"
+      - "roleIdsSelector"
   - name: roles.group.keycloak.m.crossplane.io
     kind: Roles
     singular: roles
     scope: Namespaced
     managed: true
-    forProvider: ["exhaustive", "groupId", "groupIdRef", "groupIdSelector", "realmId", "realmIdRef", "realmIdSelector", "roleIds", "roleIdsRefs", "roleIdsSelector"]
+    forProvider:
+      - "exhaustive"
+      - "groupId"
+      - "groupIdRef"
+      - "groupIdSelector"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleIds"
+      - "roleIdsRefs"
+      - "roleIdsSelector"
   - name: roles.role.keycloak.crossplane.io
     kind: Role
     singular: role
     scope: Cluster
     managed: true
-    forProvider: ["attributes", "clientId", "clientIdRef", "clientIdSelector", "compositeRoles", "compositeRolesRefs", "compositeRolesSelector", "description", "import", "name", "realmId", "realmIdRef", "realmIdSelector", "samlClientId", "samlClientIdRef", "samlClientIdSelector"]
+    forProvider:
+      - "attributes"
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "compositeRoles"
+      - "compositeRolesRefs"
+      - "compositeRolesSelector"
+      - "description"
+      - "import"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "samlClientId"
+      - "samlClientIdRef"
+      - "samlClientIdSelector"
   - name: roles.role.keycloak.m.crossplane.io
     kind: Role
     singular: role
     scope: Namespaced
     managed: true
-    forProvider: ["attributes", "clientId", "clientIdRef", "clientIdSelector", "compositeRoles", "compositeRolesRefs", "compositeRolesSelector", "description", "import", "name", "realmId", "realmIdRef", "realmIdSelector", "samlClientId", "samlClientIdRef", "samlClientIdSelector"]
+    forProvider:
+      - "attributes"
+      - "clientId"
+      - "clientIdRef"
+      - "clientIdSelector"
+      - "compositeRoles"
+      - "compositeRolesRefs"
+      - "compositeRolesSelector"
+      - "description"
+      - "import"
+      - "name"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "samlClientId"
+      - "samlClientIdRef"
+      - "samlClientIdSelector"
   - name: roles.user.keycloak.crossplane.io
     kind: Roles
     singular: roles
     scope: Cluster
     managed: true
-    forProvider: ["exhaustive", "realmId", "realmIdRef", "realmIdSelector", "roleIds", "roleIdsRefs", "roleIdsSelector", "userId", "userIdRef", "userIdSelector"]
+    forProvider:
+      - "exhaustive"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleIds"
+      - "roleIdsRefs"
+      - "roleIdsSelector"
+      - "userId"
+      - "userIdRef"
+      - "userIdSelector"
   - name: roles.user.keycloak.m.crossplane.io
     kind: Roles
     singular: roles
     scope: Namespaced
     managed: true
-    forProvider: ["exhaustive", "realmId", "realmIdRef", "realmIdSelector", "roleIds", "roleIdsRefs", "roleIdsSelector", "userId", "userIdRef", "userIdSelector"]
+    forProvider:
+      - "exhaustive"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "roleIds"
+      - "roleIdsRefs"
+      - "roleIdsSelector"
+      - "userId"
+      - "userIdRef"
+      - "userIdSelector"
   - name: subflows.authenticationflow.keycloak.crossplane.io
     kind: Subflow
     singular: subflow
     scope: Cluster
     managed: true
-    forProvider: ["alias", "authenticator", "description", "parentFlowAlias", "parentFlowAliasRef", "parentFlowAliasSelector", "priority", "providerId", "realmId", "realmIdRef", "realmIdSelector", "requirement"]
+    forProvider:
+      - "alias"
+      - "authenticator"
+      - "description"
+      - "parentFlowAlias"
+      - "parentFlowAliasRef"
+      - "parentFlowAliasSelector"
+      - "priority"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requirement"
   - name: subflows.authenticationflow.keycloak.m.crossplane.io
     kind: Subflow
     singular: subflow
     scope: Namespaced
     managed: true
-    forProvider: ["alias", "authenticator", "description", "parentFlowAlias", "parentFlowAliasRef", "parentFlowAliasSelector", "priority", "providerId", "realmId", "realmIdRef", "realmIdSelector", "requirement"]
+    forProvider:
+      - "alias"
+      - "authenticator"
+      - "description"
+      - "parentFlowAlias"
+      - "parentFlowAliasRef"
+      - "parentFlowAliasSelector"
+      - "priority"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requirement"
   - name: userattributemappers.ldap.keycloak.crossplane.io
     kind: UserAttributeMapper
     singular: userattributemapper
     scope: Cluster
     managed: true
-    forProvider: ["alwaysReadValueFromLdap", "attributeDefaultValue", "attributeForceDefault", "isBinaryAttribute", "isMandatoryInLdap", "ldapAttribute", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "readOnly", "realmId", "realmIdRef", "realmIdSelector", "userModelAttribute"]
+    forProvider:
+      - "alwaysReadValueFromLdap"
+      - "attributeDefaultValue"
+      - "attributeForceDefault"
+      - "isBinaryAttribute"
+      - "isMandatoryInLdap"
+      - "ldapAttribute"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "readOnly"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userModelAttribute"
   - name: userattributemappers.ldap.keycloak.m.crossplane.io
     kind: UserAttributeMapper
     singular: userattributemapper
     scope: Namespaced
     managed: true
-    forProvider: ["alwaysReadValueFromLdap", "attributeDefaultValue", "attributeForceDefault", "isBinaryAttribute", "isMandatoryInLdap", "ldapAttribute", "ldapUserFederationId", "ldapUserFederationIdRef", "ldapUserFederationIdSelector", "name", "readOnly", "realmId", "realmIdRef", "realmIdSelector", "userModelAttribute"]
+    forProvider:
+      - "alwaysReadValueFromLdap"
+      - "attributeDefaultValue"
+      - "attributeForceDefault"
+      - "isBinaryAttribute"
+      - "isMandatoryInLdap"
+      - "ldapAttribute"
+      - "ldapUserFederationId"
+      - "ldapUserFederationIdRef"
+      - "ldapUserFederationIdSelector"
+      - "name"
+      - "readOnly"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "userModelAttribute"
   - name: userfederations.ldap.keycloak.crossplane.io
     kind: UserFederation
     singular: userfederation
     scope: Cluster
     managed: true
-    forProvider: ["batchSizeForSync", "bindCredentialSecretRef", "bindDn", "cache", "changedSyncPeriod", "connectionPooling", "connectionTimeout", "connectionUrl", "customUserSearchFilter", "debug", "deleteDefaultMappers", "editMode", "enabled", "fullSyncPeriod", "importEnabled", "kerberos", "krbPrincipalAttribute", "name", "pagination", "priority", "rdnLdapAttribute", "readTimeout", "realmId", "realmIdRef", "realmIdSelector", "searchScope", "startTls", "syncRegistrations", "trustEmail", "usePasswordModifyExtendedOp", "useTruststoreSpi", "userObjectClasses", "usernameLdapAttribute", "usersDn", "uuidLdapAttribute", "validatePasswordPolicy", "vendor"]
+    forProvider:
+      - "batchSizeForSync"
+      - "bindCredentialSecretRef"
+      - "bindDn"
+      - "cache"
+      - "changedSyncPeriod"
+      - "connectionPooling"
+      - "connectionTimeout"
+      - "connectionUrl"
+      - "customUserSearchFilter"
+      - "debug"
+      - "deleteDefaultMappers"
+      - "editMode"
+      - "enabled"
+      - "fullSyncPeriod"
+      - "importEnabled"
+      - "kerberos"
+      - "krbPrincipalAttribute"
+      - "name"
+      - "pagination"
+      - "priority"
+      - "rdnLdapAttribute"
+      - "readTimeout"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "searchScope"
+      - "startTls"
+      - "syncRegistrations"
+      - "trustEmail"
+      - "usePasswordModifyExtendedOp"
+      - "useTruststoreSpi"
+      - "userObjectClasses"
+      - "usernameLdapAttribute"
+      - "usersDn"
+      - "uuidLdapAttribute"
+      - "validatePasswordPolicy"
+      - "vendor"
   - name: userfederations.ldap.keycloak.m.crossplane.io
     kind: UserFederation
     singular: userfederation
     scope: Namespaced
     managed: true
-    forProvider: ["batchSizeForSync", "bindCredentialSecretRef", "bindDn", "cache", "changedSyncPeriod", "connectionPooling", "connectionTimeout", "connectionUrl", "customUserSearchFilter", "debug", "deleteDefaultMappers", "editMode", "enabled", "fullSyncPeriod", "importEnabled", "kerberos", "krbPrincipalAttribute", "name", "pagination", "priority", "rdnLdapAttribute", "readTimeout", "realmId", "realmIdRef", "realmIdSelector", "searchScope", "startTls", "syncRegistrations", "trustEmail", "usePasswordModifyExtendedOp", "useTruststoreSpi", "userObjectClasses", "usernameLdapAttribute", "usersDn", "uuidLdapAttribute", "validatePasswordPolicy", "vendor"]
+    forProvider:
+      - "batchSizeForSync"
+      - "bindCredentialSecretRef"
+      - "bindDn"
+      - "cache"
+      - "changedSyncPeriod"
+      - "connectionPooling"
+      - "connectionTimeout"
+      - "connectionUrl"
+      - "customUserSearchFilter"
+      - "debug"
+      - "deleteDefaultMappers"
+      - "editMode"
+      - "enabled"
+      - "fullSyncPeriod"
+      - "importEnabled"
+      - "kerberos"
+      - "krbPrincipalAttribute"
+      - "name"
+      - "pagination"
+      - "priority"
+      - "rdnLdapAttribute"
+      - "readTimeout"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "searchScope"
+      - "startTls"
+      - "syncRegistrations"
+      - "trustEmail"
+      - "usePasswordModifyExtendedOp"
+      - "useTruststoreSpi"
+      - "userObjectClasses"
+      - "usernameLdapAttribute"
+      - "usersDn"
+      - "uuidLdapAttribute"
+      - "validatePasswordPolicy"
+      - "vendor"
   - name: userfederations.user.keycloak.crossplane.io
     kind: UserFederation
     singular: userfederation
     scope: Cluster
     managed: true
-    forProvider: ["cachePolicy", "changedSyncPeriod", "config", "enabled", "fullSyncPeriod", "name", "parentId", "priority", "providerId", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "cachePolicy"
+      - "changedSyncPeriod"
+      - "config"
+      - "enabled"
+      - "fullSyncPeriod"
+      - "name"
+      - "parentId"
+      - "priority"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: userfederations.user.keycloak.m.crossplane.io
     kind: UserFederation
     singular: userfederation
     scope: Namespaced
     managed: true
-    forProvider: ["cachePolicy", "changedSyncPeriod", "config", "enabled", "fullSyncPeriod", "name", "parentId", "priority", "providerId", "realmId", "realmIdRef", "realmIdSelector"]
+    forProvider:
+      - "cachePolicy"
+      - "changedSyncPeriod"
+      - "config"
+      - "enabled"
+      - "fullSyncPeriod"
+      - "name"
+      - "parentId"
+      - "priority"
+      - "providerId"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
   - name: userprofiles.realm.keycloak.crossplane.io
     kind: UserProfile
     singular: userprofile
     scope: Cluster
     managed: true
-    forProvider: ["attribute", "group", "realmId", "realmIdRef", "realmIdSelector", "unmanagedAttributePolicy"]
+    forProvider:
+      - "attribute"
+      - "group"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "unmanagedAttributePolicy"
   - name: userprofiles.realm.keycloak.m.crossplane.io
     kind: UserProfile
     singular: userprofile
     scope: Namespaced
     managed: true
-    forProvider: ["attribute", "group", "realmId", "realmIdRef", "realmIdSelector", "unmanagedAttributePolicy"]
+    forProvider:
+      - "attribute"
+      - "group"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "unmanagedAttributePolicy"
   - name: users.user.keycloak.crossplane.io
     kind: User
     singular: user
     scope: Cluster
     managed: true
-    forProvider: ["attributes", "email", "emailVerified", "enabled", "federatedIdentity", "firstName", "import", "initialPassword", "lastName", "realmId", "realmIdRef", "realmIdSelector", "requiredActions", "username"]
+    forProvider:
+      - "attributes"
+      - "email"
+      - "emailVerified"
+      - "enabled"
+      - "federatedIdentity"
+      - "firstName"
+      - "import"
+      - "initialPassword"
+      - "lastName"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requiredActions"
+      - "username"
   - name: users.user.keycloak.m.crossplane.io
     kind: User
     singular: user
     scope: Namespaced
     managed: true
-    forProvider: ["attributes", "email", "emailVerified", "enabled", "federatedIdentity", "firstName", "import", "initialPassword", "lastName", "realmId", "realmIdRef", "realmIdSelector", "requiredActions", "username"]
+    forProvider:
+      - "attributes"
+      - "email"
+      - "emailVerified"
+      - "enabled"
+      - "federatedIdentity"
+      - "firstName"
+      - "import"
+      - "initialPassword"
+      - "lastName"
+      - "realmId"
+      - "realmIdRef"
+      - "realmIdSelector"
+      - "requiredActions"
+      - "username"
