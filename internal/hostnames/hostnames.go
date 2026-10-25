@@ -36,7 +36,9 @@ type Reserved struct {
 	// Label is the host label: <Label>.<domain>, and everything under it.
 	Label string
 	// Owner is the ComponentProfile the platform ships that answers there,
-	// or "" for a name nothing may take.
+	// or "" for a name nothing may take. A profile named for its edition
+	// (app-store-pe, edition label pe) is the owner too: the edition is not
+	// part of what the component is.
 	Owner string
 	// FromClusterCatalogue admits the owner from a catalogue of the cluster
 	// itself (origin cluster/<source>: the installer's default profiles, or
@@ -274,11 +276,26 @@ func Check(component string, profile *gentianov1alpha1.ComponentProfile, zone Zo
 		}
 		if reserved := match(platformLabels, label); reserved != nil {
 			admitted := shipped || (reserved.FromClusterCatalogue && fromClusterCatalogue(profile))
-			own := admitted && reserved.Owner != "" && profile.Name == reserved.Owner && label == reserved.Label
+			own := admitted && reserved.Owner != "" && ownedBy(profile, reserved.Owner) && label == reserved.Label
 			if !own {
 				return &Refusal{Exposure: e.Name, Label: label, Reserved: *reserved, domain: zone.Domain}
 			}
 		}
 	}
 	return nil
+}
+
+// ownedBy reports whether the profile is the owner: named so, or named so
+// with the edition its gentianos.io/profile-edition label states.
+func ownedBy(profile *gentianov1alpha1.ComponentProfile, owner string) bool {
+	if profile.Name == owner {
+		return true
+	}
+	edition := gentianov1alpha1.Edition(profile.Labels[gentianov1alpha1.LabelProfileEdition])
+	switch edition {
+	case gentianov1alpha1.EditionCE, gentianov1alpha1.EditionME, gentianov1alpha1.EditionIE,
+		gentianov1alpha1.EditionPE, gentianov1alpha1.EditionEE:
+		return profile.Name == owner+"-"+string(edition)
+	}
+	return false
 }

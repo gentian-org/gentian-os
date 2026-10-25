@@ -347,5 +347,19 @@ func TestTheStoreNameIsAdmittedFromTheClustersCatalogueOnly(t *testing.T) {
 		if Check("app-store", from("app-store", "admin", "cluster/aluvian"), zone) == nil {
 			t.Error("the App Store app was admitted to admin")
 		}
+		// Named for its edition, it is the owner still; named for another
+		// edition than its label states, or for none, it is not.
+		pe := from("app-store-pe", "store", "cluster/aluvian")
+		pe.Labels = map[string]string{gentianov1alpha1.LabelProfileEdition: "pe"}
+		if r := Check("app-store-pe", pe, zone); r != nil {
+			t.Errorf("app-store-pe from the cluster's catalogue was refused: %s", r.Message())
+		}
+		pe.Labels[gentianov1alpha1.LabelProfileEdition] = "ee"
+		if Check("app-store-pe", pe, zone) == nil {
+			t.Error("app-store-pe labelled ee was admitted to store")
+		}
+		if Check("app-store-x", from("app-store-x", "store", "cluster/aluvian"), zone) == nil {
+			t.Error("app-store-x was admitted to store")
+		}
 	}
 }

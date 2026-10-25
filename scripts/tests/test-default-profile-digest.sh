@@ -574,7 +574,7 @@ CLAIM_OF() { printf '%s' "${CHECKOUT}/clusters/${CLUSTER}/kernel/claims/cluster.
 
 new_world; publish something-else 1.0.0
 out="$(scaffold)"
-if [[ "${out}" == *"rc=0"* && "${out}" == *"lists no app-store; that extra service is not placed"* ]] && nothing_written; then
+if [[ "${out}" == *"rc=0"* && "${out}" == *"lists no app-store-pe; that extra service is not placed"* ]] && nothing_written; then
     ok "the default list, at a catalogue that lists none of them: warned, nothing placed, the install goes on"
 else
     bad "the default list, at a catalogue that lists none of them: warned, nothing placed, the install goes on" "${out}"

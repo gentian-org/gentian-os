@@ -484,7 +484,7 @@ GENTIAN_USAGE_STATISTICS_URL="${GENTIAN_USAGE_STATISTICS_URL:-}"
 # addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
 # comma separated, each optionally pinned with @sha256:<digest>. Unset means
 # the store's extra services from its catalogue -- the Operations Console,
-# the App Store app and the Subscription Center -- at the digests that
+# the App Store app and the Aluvian Center -- at the digests that
 # catalogue's index lists; empty means none.
 #
 # --no-extra-services (GENTIAN_NO_EXTRA_SERVICES=1) leaves those three out,
@@ -2543,7 +2543,7 @@ gentian_usage_statistics_enabled() {
 # =============================================================================
 # gentian_extra_services_enabled [claim file] — "true" or "false": does this
 # cluster get the store's extra services (the Operations Console, the App
-# Store app, the Subscription Center) by default?
+# Store app, the Aluvian Center) by default?
 #
 # --no-extra-services (GENTIAN_NO_EXTRA_SERVICES=1) says no and
 # GENTIAN_NO_EXTRA_SERVICES=0 says yes. A run that says neither keeps what
