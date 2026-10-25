@@ -338,9 +338,15 @@ _default_profile_origin() {
             2>/dev/null | head -1 || true)"
     fi
     if [[ ! "${name}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-        name="$(printf '%s' "${base#https://}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+        name="$(_address_origin_name "${base}")"
     fi
     printf 'cluster/%s' "${name}"
+}
+
+# _address_origin_name <catalogue address> -- the source name made of the
+# address itself, for a catalogue the Cluster claim does not name.
+_address_origin_name() {
+    printf '%s' "${1#https://}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//'
 }
 
 # The store's extra services: the profiles an installation places from the
@@ -349,7 +355,15 @@ _default_profile_origin() {
 # (defaultForPlatform), the App Store app and the Subscription Center in every
 # other tenant while the cluster offers a store (defaultWhereStoreOffered),
 # tenants made later included.
-_EXTRA_SERVICE_PROFILES="operations-console app-store subscription-center"
+_EXTRA_SERVICE_PROFILES="operations-console-ee app-store subscription-center"
+
+# Names the extra services were placed under before the catalogue renamed
+# them. A profile an earlier run placed under one of them from the store's
+# catalogue leaves the cluster's catalogue on the next run, as the extra
+# services do with --no-extra-services: the catalogue no longer lists it, so
+# it would otherwise stay at its last build for good, and the Components the
+# operator placed of it with it. One placed from anywhere else stays.
+_RETIRED_EXTRA_SERVICE_PROFILES="operations-console"
 
 # _default_profiles_configured [cluster] -- the list, as GENTIAN_DEFAULT_PROFILES
 # gives it or, unset, the extra services at the store's catalogue. Without the
@@ -393,15 +407,48 @@ _default_profile_is_extra_service() {
     return 1
 }
 
-# _default_extra_services_remove <catalogue dir> -- without the extra services,
-# the profiles an earlier run placed for them leave the cluster's catalogue:
-# the profile, its bundle patch and their lines in the kustomization. The
-# ProfileBuilds stay: a tenant that runs a build keeps it. The Components the
-# operator placed of them go once the profiles do (ensureDefaultComponents).
+# _store_catalogue_base -- the store's catalogue, without a trailing slash.
+_store_catalogue_base() {
+    printf '%s' "${GENTIAN_STORE_CATALOGUE_URL:-https://catalogue.aluvian.io}" | sed 's:/*$::'
+}
+
+# _is_store_catalogue_origin <cluster> <origin> -- whether a recorded origin
+# is the store's catalogue: under the name the Cluster claim gives it, or
+# under the one made of its address, which a run before the claim named it
+# recorded.
+_is_store_catalogue_origin() {
+    local base
+    base="$(_store_catalogue_base)"
+    [[ "$2" == "$(_default_profile_origin "${base}" "$1")" || "$2" == "cluster/$(_address_origin_name "${base}")" ]]
+}
+
+# _retired_extra_services_remove <cluster> <catalogue dir> -- the profiles
+# placed under a name the extra services no longer have
+# (_RETIRED_EXTRA_SERVICE_PROFILES) leave the cluster's catalogue, when their
+# recorded origin is the store's catalogue.
+_retired_extra_services_remove() {
+    local cluster="$1" dir="$2" name recorded names=""
+    for name in ${_RETIRED_EXTRA_SERVICE_PROFILES}; do
+        [[ -f "${dir}/${name}.yaml" ]] || continue
+        recorded="$(_profile_bundle_recorded "${dir}" "${name}")"
+        _is_store_catalogue_origin "${cluster}" "${recorded#* }" || continue
+        names="${names:+${names} }${name}"
+    done
+    [[ -n "${names}" ]] || return 0
+    _default_extra_services_remove "${dir}" "${names}" quiet
+    info "Removed ${names} from the cluster's catalogue: the store's catalogue no longer has the extra service under that name."
+}
+
+# _default_extra_services_remove <catalogue dir> [names] [quiet] -- without the
+# extra services, the profiles an earlier run placed for them leave the
+# cluster's catalogue: the profile, its bundle patch and their lines in the
+# kustomization. The ProfileBuilds stay: a tenant that runs a build keeps it.
+# The Components the operator placed of them go once the profiles do
+# (ensureDefaultComponents).
 _default_extra_services_remove() {
-    local dir="$1" name kust tmp removed=""
+    local dir="$1" names="${2:-${_EXTRA_SERVICE_PROFILES} ${_RETIRED_EXTRA_SERVICE_PROFILES}}" quiet="${3:-}" name kust tmp removed=""
     kust="${dir}/kustomization.yaml"
-    for name in ${_EXTRA_SERVICE_PROFILES}; do
+    for name in ${names}; do
         [[ -f "${dir}/${name}.yaml" ]] || continue
         rm -f "${dir}/${name}.yaml" "${dir}/${name}.bundle.yaml"
         if [[ -f "${kust}" ]]; then
@@ -431,7 +478,7 @@ _default_extra_services_remove() {
         ' "${kust}" > "${tmp}" && cat "${tmp}" > "${kust}"
         rm -f "${tmp}"
     fi
-    info "Extra services off (--no-extra-services): removed ${removed} from the cluster's catalogue."
+    [[ -n "${quiet}" ]] || info "Extra services off (--no-extra-services): removed ${removed} from the cluster's catalogue."
 }
 
 # _default_profile_parse <entry> -- reads one entry of the list into
@@ -499,7 +546,7 @@ _GENTIAN_DEFAULT_PROFILE_NOTES=""
 #   returns 1   everything else, and nothing of the profile was written
 _default_profile_place() {
     local cluster="$1" dir="$2" entry="$3"
-    local name base url pin listed="" want how index body rc recorded have have_origin origin refusal size unrecorded=""
+    local name base url pin listed="" want how index body rc recorded have have_origin origin refusal size unrecorded="" superseded=""
 
     _default_profile_parse "${entry}" || return 1
     name="${_DP_NAME}"; base="${_DP_BASE}"; url="${_DP_URL}"; pin="${_DP_PIN}"
@@ -552,14 +599,25 @@ _default_profile_place() {
         return 1
     fi
 
-    # What the cluster's definition already holds under that name. It is
-    # never replaced here: a build that differs from the one wanted is
-    # somebody's, or an earlier decision, and is kept and said.
+    # What the cluster's definition already holds under that name. A build
+    # that differs from the one wanted is somebody's, or an earlier decision,
+    # and is kept and said -- except an extra service this installer placed
+    # from the store's catalogue and nobody pinned: that follows the
+    # catalogue, and is replaced by the build its index lists.
     body="$(mktemp)"
     if [[ -f "${dir}/${name}.yaml" ]]; then
         recorded="$(_profile_bundle_recorded "${dir}" "${name}")"
         if [[ -n "${recorded}" ]]; then
             have="${recorded%% *}"; have_origin="${recorded#* }"
+            if [[ "${have}" != "${want}" && -z "${pin}" && -n "${listed}" ]] \
+                && _default_profile_is_extra_service "${entry}" \
+                && [[ "${base}" == "$(_store_catalogue_base)" ]] \
+                && _is_store_catalogue_origin "${cluster}" "${have_origin}"; then
+                superseded="${have}"
+                recorded=""
+            fi
+        fi
+        if [[ -n "${recorded}" ]]; then
             rm -f "${body}"
             if [[ "${have}" == "${want}" ]]; then
                 _kustomization_list "${dir}/kustomization.yaml" resource "${name}.yaml" || return 1
@@ -581,11 +639,13 @@ _default_profile_place() {
         # wanted, the record is added and the profile is not touched. When
         # they are not, it is replaced as it always was -- now by a file held
         # to the digest, and said: nobody decided on a copy nothing recorded.
-        have="sha256:$(sha256_of "${dir}/${name}.yaml")"
-        if [[ "${have}" == "${want}" ]]; then
-            cat "${dir}/${name}.yaml" > "${body}"
-        else
-            unrecorded="${have}"
+        if [[ -z "${superseded}" ]]; then
+            have="sha256:$(sha256_of "${dir}/${name}.yaml")"
+            if [[ "${have}" == "${want}" ]]; then
+                cat "${dir}/${name}.yaml" > "${body}"
+            else
+                unrecorded="${have}"
+            fi
         fi
     fi
     if [[ ! -s "${body}" ]]; then
@@ -648,6 +708,14 @@ _default_profile_place() {
     _GENTIAN_DEFAULT_PROFILE_NOTES+="Default profile ${name}: ${want}, ${how}.
   Fetched from ${url}; recorded as ${origin}.
 "
+    if [[ -n "${superseded}" ]]; then
+        _GENTIAN_DEFAULT_PROFILE_NOTES+="  Replaces ${superseded}: an extra service follows the catalogue of the store.
+"
+    fi
+    if [[ -n "${superseded}" ]]; then
+        info "  default profile ${name} follows the store's catalogue: ${superseded:0:19} replaced by ${want:0:19}, ${how}"
+        return 0
+    fi
     info "  default profile ${name} at ${want:0:19} (${how}), recorded as ${origin}"
     if [[ -n "${unrecorded}" ]]; then
         warn "  It replaces the copy an earlier install wrote with no digest (${unrecorded})."

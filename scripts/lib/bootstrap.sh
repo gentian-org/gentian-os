@@ -3490,6 +3490,7 @@ _scaffold_default_profiles() {
     if [[ "$(gentian_extra_services_enabled "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml")" != "true" ]]; then
         _default_extra_services_remove "${dir}"
     fi
+    _retired_extra_services_remove "${cluster}" "${dir}"
     list="$(_default_profiles_configured "${cluster}")"
     [[ -n "${list}" ]] || return 0
     IFS=',' read -r -a entries <<< "${list}"
