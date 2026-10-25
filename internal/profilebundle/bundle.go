@@ -22,6 +22,8 @@ import (
 
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	yamlv3 "sigs.k8s.io/yaml/goyaml.v3"
+
+	"github.com/gentian-org/gentian-os/internal/arbiter"
 )
 
 // What a bundle is, and what it may hold.
@@ -225,7 +227,28 @@ func checkProfile(b *Bundle) error {
 		return fmt.Errorf("%w: the profile %s must carry the label %s: %s; the app Composition selects it by that label",
 			ErrRefused, b.Name, ProfileLabel, b.Name)
 	}
+	// An authorization model that does not compile is a failed install, here,
+	// before anything is committed: never a store without a model.
+	if authorization, ok := dig(b.Profile, "spec", "requires", "services", "authorization").(map[string]any); ok {
+		model, _ := authorization["model"].(string)
+		if _, err := arbiter.Compile(model); err != nil {
+			return fmt.Errorf("%w: its requires.services.authorization.model: %v", ErrRefused, err)
+		}
+	}
 	return nil
+}
+
+// dig is the value at path in a document, nil where any step is missing.
+func dig(doc map[string]any, path ...string) any {
+	var v any = doc
+	for _, key := range path {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil
+		}
+		v = m[key]
+	}
+	return v
 }
 
 // argoPrefix is the namespace of what Argo CD reads from an object it applies.

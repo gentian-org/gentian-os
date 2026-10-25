@@ -72,8 +72,9 @@ const (
 // data on the one, and every backup, bundle and export is written to the
 // other.
 const (
-	EngineMariaDB = "mariadb"
-	EngineCache   = "cache"
+	EngineMariaDB       = "mariadb"
+	EngineCache         = "cache"
+	EngineAuthorization = "authorization"
 )
 
 // systemEngines are the on-demand engines, by name, each with what decides
@@ -89,6 +90,7 @@ var systemEngines = []struct {
 	{EngineCache, func(p *gentianov1alpha1.ComponentProfile) bool {
 		return provisioner.CacheEngineOf(p) == gentianov1alpha1.CacheEngineRedis
 	}},
+	{EngineAuthorization, wantsAuthorization},
 }
 
 // declaredEngines are the on-demand engines a profile declares.

@@ -476,6 +476,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// the Composition's, and nothing of them is written here as well.
 	composed := composedDelivery(profile)
 
+	// An authorization model that does not compile holds the install before
+	// anything is written: the store would be decided against something the
+	// profile does not say.
+	if refusal := authorizationModelRefusal(profile); refusal != "" {
+		if r.Recorder != nil && !componentReports(comp, reasonAuthorizationModelInvalid, refusal) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonAuthorizationModelInvalid, refusal)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonAuthorizationModelInvalid, refusal, 0)
+	}
 	// The system engines it declares, before anything that needs one: a
 	// component's first install is what asks for an engine that was not
 	// running, and until the engine answers the component waits under a
@@ -523,6 +532,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// and a chart reads it by its name.
 	if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("rights check: %w", err)
+	}
+	// The key for its authorization store, for a component that declares
+	// one, for the same reason and in the same way.
+	if err := r.ensureAuthorization(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("authorization: %w", err)
 	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.

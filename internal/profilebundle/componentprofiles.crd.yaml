@@ -1306,6 +1306,23 @@ spec:
                       description: ServiceRequirements declares kernel services the
                         sidecar needs.
                       properties:
+                        authorization:
+                          description: |-
+                            Authorization declares that the component keeps its own relations in
+                            an authorization store the platform makes for it. See
+                            AuthorizationRequirement.
+                          properties:
+                            model:
+                              description: |-
+                                Model is the store's authorization model in the OpenFGA DSL
+                                ("model / schema 1.1 / type user / ..."). A profile whose model does
+                                not compile is refused.
+                              maxLength: 65536
+                              minLength: 1
+                              type: string
+                          required:
+                          - model
+                          type: object
                         cache:
                           description: Cache specifies a caching backend requirement.
                           properties:
@@ -3219,6 +3236,23 @@ spec:
                       and then contracts, which is the word the open named set in Provides
                       already holds.
                     properties:
+                      authorization:
+                        description: |-
+                          Authorization declares that the component keeps its own relations in
+                          an authorization store the platform makes for it. See
+                          AuthorizationRequirement.
+                        properties:
+                          model:
+                            description: |-
+                              Model is the store's authorization model in the OpenFGA DSL
+                              ("model / schema 1.1 / type user / ..."). A profile whose model does
+                              not compile is refused.
+                            maxLength: 65536
+                            minLength: 1
+                            type: string
+                        required:
+                        - model
+                        type: object
                       cache:
                         description: Cache specifies a caching backend requirement.
                         properties:
@@ -4062,6 +4096,10 @@ spec:
               rule: '!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements)
                 || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc)
                 || !has(x.kernelRequirements.identity.oidc.backchannelLogout))'
+            - message: an authorization store is the component's own (requires.services.authorization),
+                not an extension's
+              rule: '!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements)
+                || !has(x.kernelRequirements.authorization))'
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
               rule: '[has(self.__package__.chart) || (has(self.__package__.composition)

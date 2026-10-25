@@ -239,6 +239,39 @@ type ServiceRequirements struct {
 	// tenants. See PartnersRequirement.
 	// +optional
 	Partners *PartnersRequirement `json:"partners,omitempty"`
+
+	// Authorization declares that the component keeps its own relations in
+	// an authorization store the platform makes for it. See
+	// AuthorizationRequirement.
+	// +optional
+	Authorization *AuthorizationRequirement `json:"authorization,omitempty"`
+}
+
+// AuthorizationRequirement declares an authorization store of the
+// component's own: one per tenant and component, with the component's own
+// model, kept with the tenant's data.
+//
+// The platform then, for each install:
+//
+//   - gives the component a key for that store and nothing else, in the
+//     Secret authorization-<component> of the tenant's namespace
+//     (AUTHORIZATION_URL, AUTHORIZATION_KEY);
+//   - opens a network path from its pods to the arbiter's port, and to
+//     nothing else of the namespace the arbiter runs in;
+//   - creates the store on the component's first call, and writes a new
+//     model of the same store, keeping every tuple, when a new build of the
+//     profile changes the model.
+//
+// The arbiter speaks OpenFGA's API with the store and the model taken from
+// the key. The store holds only the component's own relations, and nothing
+// in it is read by the platform, so every trust tier may declare it.
+type AuthorizationRequirement struct {
+	// Model is the store's authorization model in the OpenFGA DSL
+	// ("model / schema 1.1 / type user / ..."). A profile whose model does
+	// not compile is refused.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=65536
+	Model string `json:"model"`
 }
 
 // PartnersRequirement declares a component's part in the partner relations of

@@ -479,9 +479,16 @@ func main() {
 		Definitions: held,
 		Client:      mgr.GetClient(),
 		Namespace:   envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
-		Recorder:    mgr.GetEventRecorderFor("system-engines"),
+		Recorder:    mgr.GetEventRecorderFor("system-engines"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SystemEngines")
+		os.Exit(1)
+	}
+
+	// The arbiter's table: which component's key opens which authorization
+	// store, and the model each is decided against.
+	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationTable")
 		os.Exit(1)
 	}
 

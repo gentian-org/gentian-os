@@ -33,7 +33,7 @@ import (
 func TestTheEngineSetIsLatchedAndAPurgeRefusesWhileDeclared(t *testing.T) {
 	declared := map[string][]string{EngineMariaDB: {"tenant-a/shop"}}
 	got, refused := engineSet(map[string]string{
-		EngineCache:                             engineWanted,
+		EngineCache:                              engineWanted,
 		enginePurgeRequestPrefix + EngineMariaDB: "yes",
 	}, declared, declared)
 	want := map[string]string{EngineMariaDB: engineWanted, EngineCache: engineWanted}
@@ -45,7 +45,7 @@ func TestTheEngineSetIsLatchedAndAPurgeRefusesWhileDeclared(t *testing.T) {
 	}
 
 	got, refused = engineSet(map[string]string{
-		EngineCache:                           engineWanted,
+		EngineCache:                            engineWanted,
 		enginePurgeRequestPrefix + EngineCache: "yes",
 		// A request for an engine the set never held does nothing.
 		enginePurgeRequestPrefix + "mariadb": "yes",

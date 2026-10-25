@@ -24,6 +24,16 @@ import (
 // (cmd/bouncer, BOUNCER_CHECK_LISTEN: the two must agree).
 const RightsCheckPort = int32(8082)
 
+// ArbiterPort is the arbiter's listener, where a component's authorization
+// store is asked and written (internal/arbiter, Port: the two must agree).
+const ArbiterPort = int32(8080)
+
+// ArbiterPodLabels are the labels of the arbiter's pods, which the way to it
+// selects on (the operator's Deployment of it carries them).
+func ArbiterPodLabels() map[string]string {
+	return map[string]string{"app.kubernetes.io/name": "arbiter", "app.kubernetes.io/part-of": "gentian-os"}
+}
+
 // RegistrarPort is the registrar's listener (internal/registrar, REGISTRAR_ADDR:
 // the two must agree).
 const RegistrarPort = int32(9445)

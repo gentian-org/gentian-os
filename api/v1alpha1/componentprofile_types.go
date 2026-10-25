@@ -114,6 +114,7 @@ const (
 // An extension's client is not told of a sign-out: nothing builds an address
 // for it, and a declaration that did nothing would read as one that works.
 // +kubebuilder:validation:XValidation:rule="!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements) || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc) || !has(x.kernelRequirements.identity.oidc.backchannelLogout))",message="backchannelLogout is served for the component's own client (requires.services.identity.oidc), not for an extension's"
+// +kubebuilder:validation:XValidation:rule="!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements) || !has(x.kernelRequirements.authorization))",message="an authorization store is the component's own (requires.services.authorization), not an extension's"
 // One delivery, and nothing outside package to reach for. The OR this replaces
 // admitted a chart beside an API integration, and deploymentMethod could
 // contradict whichever was set.

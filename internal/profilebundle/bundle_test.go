@@ -336,3 +336,20 @@ func TestTheComparedKindsStateNoDefaults(t *testing.T) {
 		}
 	}
 }
+
+// A profile's authorization model is compiled when the bundle is read: one
+// that does not compile is a failed install, never a store without a model.
+func TestAnAuthorizationModelIsCompiledWhenTheBundleIsRead(t *testing.T) {
+	with := func(model string) string {
+		return strings.Replace(shop, "      identity:\n", "      authorization:\n        model: |\n"+model+"      identity:\n", 1)
+	}
+	good := "          model\n            schema 1.1\n          type user\n          type ledger\n            relations\n              define owner: [user]\n"
+	if _, err := Check([]byte(with(good)), "shop", ""); err != nil {
+		t.Fatalf("a model that compiles was refused: %v", err)
+	}
+	bad := "          model\n            schema 1.1\n          type ledger\n            relations\n              define owner [user]\n"
+	_, err := Check([]byte(with(bad)), "shop", "")
+	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "requires.services.authorization.model") {
+		t.Fatalf("a model that does not compile: %v", err)
+	}
+}
