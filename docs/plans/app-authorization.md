@@ -139,7 +139,10 @@ The shapes, in JSON, every tuple `{user, relation, object}`:
 A refusal is `{code, message}`. The arbiter runs once, from the operator's
 image with its own command; the operator deploys it, so that the arbiter is
 always the build that matches the table it reads. The instance's preshared
-key is made by the arbiter on its first start, and nothing else is handed it.
+key and its database password are kernel credentials in the vault
+(`gentian-os/kernel/authz/openfga-apps`, `gentian-os/kernel/database/openfga-apps`),
+seeded once by the operator and delivered by ExternalSecrets to the
+instance, the role Job and the arbiter; no other workload is handed the key.
 
 ### 2.4 The platform's path
 

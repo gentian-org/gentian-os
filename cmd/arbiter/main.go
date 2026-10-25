@@ -15,9 +15,9 @@ SPDX-License-Identifier: MPL-2.0
 //
 // It runs in the system namespace beside the instance, from the operator's
 // image with its own command and its own ServiceAccount, which may read and
-// write two objects of that namespace: the record of the stores it created,
-// and the instance's key, which it makes on its first start and nobody else
-// is handed.
+// write one object of that namespace, the record of the stores it created.
+// The instance's key reaches it from the vault, delivered by the secrets
+// operator into a Secret of that namespace.
 package main
 
 import (
@@ -64,9 +64,11 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	key, err := arbiter.EnsureInstanceKey(ctx, kube, namespace)
-	if err != nil {
-		return err
+	// The instance's preshared key, which the secrets operator delivered
+	// from the vault into the one Secret this pod reads it from.
+	key := os.Getenv("OPENFGA_API_TOKEN")
+	if key == "" {
+		return errors.New("OPENFGA_API_TOKEN is required: the app instance's key, from the Secret " + arbiter.KeySecret)
 	}
 	fga := arbiter.NewOpenFGA(envOr("OPENFGA_API_URL",
 		"http://"+arbiter.InstanceRelease+"."+namespace+".svc.cluster.local:8080"), key)

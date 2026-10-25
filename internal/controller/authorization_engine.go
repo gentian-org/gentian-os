@@ -12,8 +12,8 @@ package controller
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -21,9 +21,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -36,6 +38,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -49,26 +52,27 @@ import (
 // made here, as the operator makes every component's stores:
 //
 //   - its database and role on the tenants' PostgreSQL, by the role Job every
-//     database is made with (buildRoleScript), with a password made once and
-//     kept in the Secret the instance reads its datastore URI from;
+//     database is made with (buildRoleScript), with the password the vault
+//     keeps for it, which an ExternalSecret delivers to the instance as its
+//     datastore URI;
+//   - its preshared key, kept in the vault and delivered to the instance and
+//     to the arbiter, and to nothing else, by an ExternalSecret;
 //   - the arbiter, from the operator's own image with its own command and
 //     ServiceAccount, which may read and write the record of its stores and
-//     the instance's key, and nothing else;
+//     nothing else;
 //   - the two NetworkPolicies of the namespace: the instance admits the
 //     arbiter and nothing else, and the arbiter admits the tenants' namespaces
 //     on its one port, which their own policies narrow to the components that
 //     declared a store.
 //
-// The instance's key is not made here. The arbiter makes it on its first
-// start (arbiter.EnsureInstanceKey), so that nothing else is ever handed it.
 const (
 	// arbiterRoleJob is the Job that makes the instance's role and database.
 	arbiterRoleJob = "openfga-apps-role"
 	// openfgaAppsDatabase is the instance's database, and its role's name.
 	openfgaAppsDatabase = "openfga_apps"
-	// roleProvisionedAnnotation on the datastore Secret records that the
-	// role Job succeeded with the password in it; the Job is not run again
-	// for as long as the Secret is that one.
+	// roleProvisionedAnnotation on the datastore's ExternalSecret records
+	// the hash of the password the role Job succeeded with; the Job is not
+	// run again for as long as the vault holds that one.
 	roleProvisionedAnnotation = "gentianos.io/role-provisioned"
 )
 
@@ -78,6 +82,8 @@ type AuthorizationEngineReconciler struct {
 	client.Client
 	// Namespace is the control namespace, where the engine set is.
 	Namespace string
+	// Seeder keeps the instance's credentials in the vault.
+	Seeder *secrets.Seeder
 	// Image is the operator's own image, which the arbiter runs.
 	Image string
 	// PlatformCaller is the operator's ServiceAccount, as the API server
@@ -113,9 +119,9 @@ func (r *AuthorizationEngineReconciler) Reconcile(ctx context.Context, _ ctrl.Re
 	if r.Image == "" {
 		return ctrl.Result{}, fmt.Errorf("no image for the arbiter: GENTIAN_IMAGE is not set")
 	}
-	password, err := r.ensureDatastore(ctx)
+	password, err := r.ensureCredentials(ctx)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("the app instance's datastore: %w", err)
+		return ctrl.Result{}, fmt.Errorf("the app instance's credentials: %w", err)
 	}
 	if done, err := r.ensureRole(ctx, password); err != nil {
 		return ctrl.Result{}, fmt.Errorf("the app instance's role: %w", err)
@@ -130,48 +136,108 @@ func (r *AuthorizationEngineReconciler) Reconcile(ctx context.Context, _ ctrl.Re
 	return ctrl.Result{}, nil
 }
 
-// ensureDatastore is the role's password, from the Secret the instance reads
-// its datastore URI from, made the first time and kept.
-func (r *AuthorizationEngineReconciler) ensureDatastore(ctx context.Context) (string, error) {
-	key := types.NamespacedName{Name: arbiter.DatastoreSecret, Namespace: arbiter.Namespace}
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, key, existing)
-	if err == nil {
-		if pw := string(existing.Data["password"]); pw != "" {
-			return pw, nil
+// The app instance's two credentials, kept in the vault as the kernel's own
+// services' are and delivered by the secrets operator from it: the role's
+// password, in the database record gentian-os/kernel/database/openfga-apps,
+// and the instance's preshared key, at gentian-os/kernel/authz/openfga-apps.
+// The operator seeds both once (secrets.Seeder: derived from the master
+// password, or random, as the cluster's secretMode says) and never writes
+// them again; the Secrets the instance and the arbiter read are the
+// ExternalSecrets' copies.
+const (
+	openfgaAppsCategory = "openfga-apps"
+	instanceKeyProperty = "preshared_key"
+)
+
+// ensureCredentials seeds the instance's credentials and the ExternalSecrets
+// that deliver them, and returns the role's password for the role Job.
+func (r *AuthorizationEngineReconciler) ensureCredentials(ctx context.Context) (string, error) {
+	if r.Seeder == nil {
+		return "", fmt.Errorf("the operator has no vault to keep the app instance's credentials in")
+	}
+	creds, err := r.Seeder.SeedKernelDatabase(ctx, openfgaAppsCategory, secrets.DatabaseCreds{
+		Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
+		Port: "5432", Name: openfgaAppsDatabase, User: openfgaAppsDatabase,
+	})
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.Seeder.SeedKernelKey(ctx, "authz", openfgaAppsCategory, instanceKeyProperty); err != nil {
+		return "", err
+	}
+	dbPath := secrets.KernelPath("database", openfgaAppsCategory)
+	keyPath := secrets.KernelPath("authz", openfgaAppsCategory)
+	ref := func(key, path, property string) any {
+		return map[string]any{"secretKey": key, "remoteRef": map[string]any{"key": path, "property": property}}
+	}
+	if err := r.applyExternalSecret(ctx, arbiter.DatastoreSecret,
+		map[string]any{"uri": "postgres://{{ .user }}:{{ .password }}@{{ .host }}:{{ .port }}/{{ .name }}?sslmode=disable"},
+		[]any{ref("user", dbPath, "user"), ref("password", dbPath, "password"), ref("host", dbPath, "host"),
+			ref("port", dbPath, "port"), ref("name", dbPath, "name")}); err != nil {
+		return "", err
+	}
+	if err := r.applyExternalSecret(ctx, arbiter.KeySecret,
+		map[string]any{"keys": "{{ .preshared_key }}"},
+		[]any{ref(instanceKeyProperty, keyPath, instanceKeyProperty)}); err != nil {
+		return "", err
+	}
+	return creds.Password, nil
+}
+
+// applyExternalSecret keeps one ExternalSecret of the namespace, reading the
+// kernel's store, with the Secret it makes templated as given.
+func (r *AuthorizationEngineReconciler) applyExternalSecret(ctx context.Context, name string, template map[string]any, data []any) error {
+	spec := map[string]any{
+		"refreshInterval": "1h",
+		"secretStoreRef":  secrets.StoreRef(secrets.KernelStore),
+		"target": map[string]any{
+			"name":           name,
+			"creationPolicy": "Owner",
+			"template":       map[string]any{"engineVersion": "v2", "data": template},
+		},
+		"data": data,
+	}
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(externalSecretGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: arbiter.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		desired := &unstructured.Unstructured{}
+		desired.SetGroupVersionKind(externalSecretGVK)
+		desired.SetName(name)
+		desired.SetNamespace(arbiter.Namespace)
+		desired.SetLabels(map[string]string{managedByLabel: managedByValue})
+		if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+			return err
 		}
-	} else if !errors.IsNotFound(err) {
-		return "", err
+		return r.Create(ctx, desired)
 	}
-	raw := make([]byte, 24)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
+	if err != nil {
+		return err
 	}
-	// URL-safe without padding, so the password needs no escaping in the URI.
-	pw := base64.RawURLEncoding.EncodeToString(raw)
-	uri := fmt.Sprintf("postgres://%s:%s@%s-rw.%s.svc.cluster.local:5432/%s?sslmode=disable",
-		openfgaAppsDatabase, pw, cnpgClusterName, postgresNamespace, openfgaAppsDatabase)
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: map[string]string{managedByLabel: managedByValue}},
-		Type:       corev1.SecretTypeOpaque,
-		Data:       map[string][]byte{"uri": []byte(uri), "password": []byte(pw)},
+	if equality.Semantic.DeepEqual(existing.Object["spec"], spec) {
+		return nil
 	}
-	if err == nil {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Data, existing.Annotations = secret.Data, nil
-		return pw, r.Patch(ctx, existing, patch)
+	patch := client.MergeFrom(existing.DeepCopy())
+	if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+		return err
 	}
-	return pw, r.Create(ctx, secret)
+	return r.Patch(ctx, existing, patch)
 }
 
 // ensureRole runs the role Job until it has succeeded once with the
-// password the Secret holds, and reports whether it has.
+// password the vault holds, and reports whether it has. That it has is
+// written on the datastore's ExternalSecret, as the hash of the password it
+// succeeded with: the operator's object, where a vault record replaced by a
+// person would show as a hash that is not the record's.
 func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password string) (bool, error) {
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: arbiter.DatastoreSecret, Namespace: arbiter.Namespace}, secret); err != nil {
+	es := &unstructured.Unstructured{}
+	es.SetGroupVersionKind(externalSecretGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: arbiter.DatastoreSecret, Namespace: arbiter.Namespace}, es); err != nil {
 		return false, err
 	}
-	if secret.Annotations[roleProvisionedAnnotation] == "true" {
+	sum := sha256.Sum256([]byte(password))
+	done := hex.EncodeToString(sum[:])
+	if es.GetAnnotations()[roleProvisionedAnnotation] == done {
 		return true, nil
 	}
 	job := &batchv1.Job{}
@@ -189,12 +255,14 @@ func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password
 	}
 	switch {
 	case job.Status.Succeeded > 0:
-		patch := client.MergeFrom(secret.DeepCopy())
-		if secret.Annotations == nil {
-			secret.Annotations = map[string]string{}
+		patch := client.MergeFrom(es.DeepCopy())
+		annotations := es.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
 		}
-		secret.Annotations[roleProvisionedAnnotation] = "true"
-		return true, r.Patch(ctx, secret, patch)
+		annotations[roleProvisionedAnnotation] = done
+		es.SetAnnotations(annotations)
+		return true, r.Patch(ctx, es, patch)
 	case jobFailed(job):
 		// Run again, from a new Job: the script is idempotent.
 		prop := metav1.DeletePropagationBackground
@@ -253,16 +321,15 @@ func arbiterObjects(image, control, caller string) []client.Object {
 
 	sa := &corev1.ServiceAccount{ObjectMeta: om(arbiter.ServiceName)}
 	// What the arbiter may do with the API server: keep the record of its
-	// stores and make and read the instance's key. A ConfigMap or Secret
-	// cannot be created by name, so create is the namespace's; read and
-	// write are those two objects'.
+	// stores. A ConfigMap cannot be created by name, so create is the
+	// namespace's; read and write are that object's. The instance's key
+	// reaches it as an environment variable from the delivered Secret, and
+	// no permission here reads a Secret.
 	role := &rbacv1.Role{
 		ObjectMeta: om(arbiter.ServiceName),
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{arbiter.StoresConfigMap}, Verbs: []string{"get", "update"}},
 			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"create"}},
-			{APIGroups: []string{""}, Resources: []string{"secrets"}, ResourceNames: []string{arbiter.KeySecret}, Verbs: []string{"get"}},
-			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create"}},
 		},
 	}
 	binding := &rbacv1.RoleBinding{
@@ -293,6 +360,11 @@ func arbiterObjects(image, control, caller string) []client.Object {
 							{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
 							{Name: "ARBITER_TABLE", Value: "/etc/arbiter/" + arbiter.TableKey},
 							{Name: "ARBITER_PLATFORM_CALLER", Value: caller},
+							// The instance's preshared key, as the secrets
+							// operator delivered it from the vault.
+							{Name: "OPENFGA_API_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{Name: arbiter.KeySecret}, Key: "keys",
+							}}},
 						},
 						Ports: []corev1.ContainerPort{
 							{Name: "api", ContainerPort: arbiter.Port, Protocol: tcp},

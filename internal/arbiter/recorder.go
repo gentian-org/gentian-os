@@ -12,8 +12,6 @@ package arbiter
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -122,45 +120,4 @@ func (r *ConfigMapRecorder) Forget(ctx context.Context, key string) error {
 		delete(data, key)
 		return true, nil
 	})
-}
-
-// EnsureInstanceKey is the app instance's preshared key, made on the
-// arbiter's first start in KeySecret and read from there afterwards.
-//
-// The arbiter makes it so that it is the only holder: nothing else is handed
-// the key, and the instance reads it from the Secret by name. A key that
-// opened the instance would open every component's store.
-func EnsureInstanceKey(ctx context.Context, c kubernetes.Interface, namespace string) (string, error) {
-	secrets := c.CoreV1().Secrets(namespace)
-	existing, err := secrets.Get(ctx, KeySecret, metav1.GetOptions{})
-	if err == nil {
-		if key := string(existing.Data["keys"]); key != "" {
-			return key, nil
-		}
-		return "", fmt.Errorf("the Secret %s holds no key", KeySecret)
-	}
-	if !apierrors.IsNotFound(err) {
-		return "", err
-	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	key := base64.RawURLEncoding.EncodeToString(raw)
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: KeySecret, Namespace: namespace,
-			Labels: map[string]string{"app.kubernetes.io/managed-by": ServiceName},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{"keys": []byte(key)},
-	}
-	if _, err := secrets.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// Another replica made it first; its key is the key.
-			return EnsureInstanceKey(ctx, c, namespace)
-		}
-		return "", err
-	}
-	return key, nil
 }

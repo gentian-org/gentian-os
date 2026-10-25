@@ -281,9 +281,10 @@ spec:
                  chart of the kernel's instance, packaged with the engines;
                  its values here, because nothing of them is a secret and the
                  namespace has no Argo CD Application to sync them. The two
-                 Secrets it reads are the operator's datastore URI and the
-                 arbiter's key (authorization_engine.go), and its one client
-                 is the arbiter. */}}
+                 Secrets it reads, its datastore URI and its preshared key,
+                 are delivered from the vault by the operator's
+                 ExternalSecrets (authorization_engine.go), and its one
+                 client is the arbiter. */}}
             {{- if $authzEngine }}
             ---
             apiVersion: helm.crossplane.io/v1beta1

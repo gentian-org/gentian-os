@@ -493,7 +493,9 @@ func main() {
 	// The app instance of OpenFGA's database and the arbiter, while a
 	// component declares an authorization store.
 	if err := (&controller.AuthorizationEngineReconciler{
-		Client:    mgr.GetClient(),
+		Client: mgr.GetClient(),
+		// The instance's credentials, in the vault the tenants' are kept in.
+		Seeder:    tenantReconciler.Seeder,
 		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		Image:     os.Getenv("GENTIAN_IMAGE"),
 		PlatformCaller: applifecycle.ServiceAccountUsername(

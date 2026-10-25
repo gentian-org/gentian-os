@@ -45,12 +45,12 @@ const (
 	// its Service and its pods' instance label.
 	InstanceRelease = "openfga-apps"
 	// DatastoreSecret holds the app instance's datastore URI under the key
-	// `uri`, its database and role on the tenants' PostgreSQL. The operator
-	// makes it once, with the role.
+	// `uri`: its database and role on the tenants' PostgreSQL, from the
+	// vault record the operator seeds, delivered by an ExternalSecret.
 	DatastoreSecret = "openfga-apps-datastore"
 	// KeySecret holds the app instance's preshared key under the key
-	// `keys`. The arbiter makes it, on its first start, and is the only
-	// holder of it beside the instance: the key opens every store.
+	// `keys`, delivered from the vault by an ExternalSecret. Only the
+	// instance and the arbiter read it: the key opens every store.
 	KeySecret = "openfga-apps-key"
 )
 
