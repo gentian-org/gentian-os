@@ -300,7 +300,7 @@ func TestTheAppClaimCarriesThePullSecrets(t *testing.T) {
 		return got, has
 	}
 
-	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pull, "", "", false, nil); err != nil {
+	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pull, "", "", false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := claimed()
@@ -314,7 +314,7 @@ func TestTheAppClaimCarriesThePullSecrets(t *testing.T) {
 		t.Fatalf("pullSecrets = %v", got)
 	}
 
-	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", "", false, nil); err != nil {
+	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", "", false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, has := claimed(); has {
