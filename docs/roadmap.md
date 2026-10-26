@@ -1260,15 +1260,15 @@ mappers and flow, nor the broker client is made any more
 * **Context**: The model gateway offers a model for each entry of
   `spec.llm.instances` and calls it at `vllm-<name>-inference` in the
   gateway's namespace. The gateway's chart runs that instance from the same
-  claim ([llms.md §6](design/llms.md)); GPU time slicing, the Hugging Face
-  token and a cluster that has served a model are what is left.
+  claim ([llms.md §6](design/llms.md)); the Hugging Face token and a
+  cluster that has served a model are what is left.
 * **Proposed Solution**: Deliver the instances the way the gateway's models
   are delivered — the Cluster claim handed to a chart as a values file.
 * **Backlog Items**:
   - `[x]` An Application that delivers the instances from the claim, with `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`, `imageTag` and `toolCallParser`.
   - `[x]` A NetworkPolicy for an instance's pods, and the pod settings the admission baseline requires.
   - `[x]` A named release of the vLLM image in place of the default `latest`.
-  - `[ ]` Decide who owns GPU time slicing (`gpuTimeSliceReplicas`): its ConfigMap belongs to the GPU operator and to every GPU workload of the node.
+  - `[x]` Decide who owns GPU time slicing: the GPU operator, installed outside the platform; the claim has no field for it.
   - `[ ]` Decide where the Hugging Face token for gated models is kept.
   - `[ ]` A report when a provider's token is missing, refused, or its endpoint cannot be reached from the cluster, in place of a failing call.
   - `[ ]` Serve a model on a cluster with a GPU and call it with an app's key.

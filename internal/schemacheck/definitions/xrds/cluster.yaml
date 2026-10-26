@@ -777,13 +777,6 @@ spec:
                         what a CPU-only cluster wants; the sizing fields below
                         are read only when it is true.
                       default: false
-                    gpuTimeSliceReplicas:
-                      type: integer
-                      description: >
-                        How many workloads share one physical GPU. Time slicing,
-                        not partitioning — they contend for the whole device
-                        rather than getting a fraction of it.
-                      default: 1
                     instances:
                       type: array
                       description: >

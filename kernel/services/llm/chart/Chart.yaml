@@ -1,5 +1,0 @@
-apiVersion: v2
-name: gentian-llm
-description: GPU time-slicing for a Gentian cluster
-type: application
-version: 0.1.0

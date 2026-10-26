@@ -1783,11 +1783,6 @@ _claim_cluster_fields() {
             printf '    # console:\n'
             printf '    #   enabled: true\n'
         fi
-        if [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]]; then
-            printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
-        else
-            printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
-        fi
         printf '    # The models this cluster serves on its own GPUs: one vLLM instance\n'
         printf '    # and one model of the gateway per entry.\n'
         printf '    instances: []\n'
@@ -1822,7 +1817,6 @@ _claim_cluster_fields() {
         printf '  #   gpuAcceleration: false    set true when the cluster has GPUs\n'
         printf '  #   console:\n'
         printf '  #     enabled: false          set true to serve the console of the gateway at llm.<kernelDomain>\n'
-        printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         printf '  #   instances: []             the models to serve; see the XRD for fields\n'
     fi
 

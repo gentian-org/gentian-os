@@ -42,7 +42,8 @@ This document details the architecture for integrating Large Language Model (LLM
 *   **Built:** the vLLM instances. Each entry of `spec.llm.instances` is a
     model of the gateway and a `vllm-<name>-inference` Deployment, Service,
     PVC and NetworkPolicy in `system-llm`, from the same chart (§6).
-*   **Not built:** GPU time slicing (§6). LocalAI was never added.
+*   **Not the platform's:** the NVIDIA GPU operator and how it shares a
+    GPU (time slicing, MIG) (§6). LocalAI was never added.
 
 ---
 
@@ -249,11 +250,10 @@ gateway, whoever wrote it there. The director holds the body to the schema of
 `spec.llm` it was built with — names, `https` addresses, the modes — and also
 refuses an empty model id, text over more than one line, and two entries that
 would give the gateway one model name twice. A body with any other field is
-refused unread: GPU time slicing and a provider's token are not set here. The
+refused unread: a provider's token is not set here. The
 gateway's console switch (`console.enabled`, "Operator access" below) is part
 of the settings; a body that leaves it out leaves it as the claim has it.
-GPU time slicing (`gpuTimeSliceReplicas`) is not, because nothing reads it:
-the chart that would is delivered by nothing (§6). The rest of the claim, its
+How a GPU is shared is not a setting of the platform at all (§6). The rest of the claim, its
 comments included, stays as it was; a comment written inside the list of
 instances or of providers is lost when that list changes.
 
@@ -493,13 +493,16 @@ read from the same claim: per entry a Deployment on a node with
 weights that is kept when the entry is removed. The pod runs as a user that is
 not root with the kernel's admission baseline, its caches under the PVC
 (`HOME`, `HF_HOME`), and the NetworkPolicy `llm-vllm-ingress` admits the
-gateway alone. Still open:
+gateway alone. Still open: where the Hugging Face token for gated models
+comes from; the optional Secret `vllm-hf-token` is created by hand.
 
-- GPU time slicing (`gpuTimeSliceReplicas`): its ConfigMap is the GPU
-  operator's and shared with every GPU workload of the node, and nothing
-  delivers `kernel/services/llm/chart`, which renders it;
-- where the Hugging Face token for gated models comes from: the optional
-  Secret `vllm-hf-token` is created by hand.
+**The GPU operator is not the platform's.** The NVIDIA GPU operator is
+installed and configured outside the platform, by whoever runs the nodes, and
+the platform neither installs nor changes it. That includes how a card is
+shared: time slicing and MIG are the operator's configuration (its
+ClusterPolicy and the ConfigMap it names), shared with every GPU workload of
+the node, so the claim has no field for them. An instance asks for one
+`nvidia.com/gpu` and gets whatever the operator advertises as one.
 
 With `gpuAcceleration` true the mock model server is not started. With it
 false the mock runs, and the gateway does not offer it as a model: a cluster

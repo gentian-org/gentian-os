@@ -133,9 +133,6 @@ func TestModelSettingsAreHeldToTheSchemaBeforeAnythingIsWritten(t *testing.T) {
 	if code != http.StatusBadRequest || strings.Contains(out["error"].(string), "sk-secret") {
 		t.Errorf("a token in the body: %d %v", code, out)
 	}
-	if code, _ := h.do(t, "PUT", clusterModels, alice, `{"enabled": true, "gpuTimeSliceReplicas": 4}`); code != http.StatusBadRequest {
-		t.Errorf("GPU time slicing set by this route: %d", code)
-	}
 	code, out = h.do(t, "PUT", clusterModels, alice, strings.Replace(modelsBody, `"infomaniak_api_key"`, `"other_api_key"`, 1))
 	if code != http.StatusUnprocessableEntity || !strings.Contains(out["error"].(string), "apiKeyProperty must be infomaniak_api_key") {
 		t.Errorf("another provider's token: %d %v", code, out)
