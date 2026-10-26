@@ -115,11 +115,11 @@ type tenant
     #
     #   - the tenant's perimeter approver: an administrator of this tenant the
     #     cluster's administrator named, or the cluster's perimeter approver;
-    #   - the cluster's administrators, while the tenant is operated by its
-    #     cluster: `admin from operated_by` is the cluster's admin relation
-    #     alone, not the tenant's, and it goes with the consent tuple like
-    #     every other platform-admin verb here.
-    define can_expose: perimeter_approver or admin from operated_by
+    #   - the cluster's administrators, on every tenant. It derives through
+    #     `cluster`, not `operated_by`: the perimeter is the cluster's, so a
+    #     tenant that administers itself still has its perimeter answered for
+    #     by the cluster. It grants nothing else in the tenant.
+    define can_expose: perimeter_approver or admin from cluster
     define can_approve_privilege: can_expose
     define can_view: member or admin or perimeter_approver or can_audit from cluster
 

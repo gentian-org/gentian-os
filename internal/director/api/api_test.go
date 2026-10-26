@@ -617,10 +617,10 @@ var facts = dt.Table{
 	// (AD-6): the administrator of the tenant the claim names, as the
 	// account of the tenant's realm, and nobody by running the tenant. tom
 	// is demo's, as the account of tenant-demo's realm -- the same tom
-	// asked as user:tom holds neither; alice holds both because she
-	// administers the cluster that operates demo and user. In solo, which
-	// administers itself, paul is its approver and neither tina, its other
-	// administrator, nor alice is.
+	// asked as user:tom holds neither; alice holds both on every tenant
+	// because she administers the cluster, whose perimeter it is. In solo,
+	// which administers itself, paul is its approver too and tina, its other
+	// administrator, is not.
 	"user:tenant-demo/tom can_expose tenant:demo":            true,
 	"user:tenant-demo/tom can_approve_privilege tenant:demo": true,
 	// 7d0f3c2e is an administrator of demo, as the store holds its admins
@@ -634,6 +634,9 @@ var facts = dt.Table{
 	"user:alice can_expose tenant:demo":                    true,
 	"user:alice can_approve_privilege tenant:demo":         true,
 	"user:alice can_expose tenant:user":                    true,
+	"user:alice can_expose tenant:solo":                    true,
+	"user:alice can_approve_privilege tenant:solo":         true,
+	"user:alice can_view tenant:solo":                      true,
 	"user:tenant-solo/paul can_expose tenant:solo":         true,
 	// sam is the security officer: cluster#can_approve, and can_view on every
 	// tenant because can_audit reaches it. Deliberately NOT a tenant
