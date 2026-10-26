@@ -170,6 +170,10 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindSignInScope, MadeBy: "the tenant's identity Job, from the OIDC pack the app's profile names",
+		// The purge of the scope also deletes the app's client, if one is
+		// left: the identity Job makes it before the App claim exists, so an
+		// install that never reached the claim leaves a client its uninstall
+		// does not remove (KindSignInClient is the claim's).
 		Export: Omits, ExportNote: "configuration with nothing of a person's in it; the identity Job makes it again when the app is installed",
 		// Kept at an uninstall although it means nothing without the client:
 		// taking it away there would need the uninstall to talk to the identity
@@ -178,7 +182,7 @@ var AppKinds = []KindRule{
 		// asked for, answers, and already talks to the provider for the group.
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the realm",
-		FoundBy:          "the pack the app's profile names, which names the scope",
+		FoundBy:          "the pack the app's profile names, which names the scope; the profile's client ID names the client",
 	},
 	{
 		Kind: KindDatabase, MadeBy: "the tenant reconciler: a role Job and a CloudNativePG Database, or a MariaDB setup Job",

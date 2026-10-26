@@ -29,6 +29,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
@@ -322,6 +323,23 @@ func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenan
 
 	nsName := tenantNamespaceName(tenant)
 	prop := metav1.DeletePropagationBackground
+
+	// What a removed app's composite composed and left when it went
+	// (internal/composed): nothing else deletes it, and a Release among it
+	// keeps the app's Helm release for itself. Only an orphan, whose
+	// composite is gone; the rest goes with its composite.
+	leftovers, err := composed.Find(ctx, r.Client, nsName, "", "")
+	if err != nil {
+		return err
+	}
+	for _, l := range leftovers {
+		if _, wanted := desired[l.Object.GetLabels()[composed.ClaimNameLabel]]; wanted {
+			continue
+		}
+		if _, err := composed.Remove(ctx, r.Client, l, false); err != nil {
+			return err
+		}
+	}
 
 	jobList := &batchv1.JobList{}
 	if err := r.List(ctx, jobList,

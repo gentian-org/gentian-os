@@ -69,7 +69,6 @@ REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
 SCOPE_DESC=%q
-CLIENT_ROLE=%q
 ENTITLEMENT_GROUP=%q
 REDIRECT_URIS='%s'
 PUBLIC_CLIENT=%s
@@ -113,20 +112,15 @@ fi
 # restate.
 
 # --- Client role ---
-# Not created here. app-default composes a Role, which adopted the existing one
-# by its Keycloak id rather than making a second — verified on corp, where the
-# role kept its id.
+# Neither created nor read here. app-default composes a Role, which adopted the
+# existing one by its Keycloak id rather than making a second -- verified on
+# corp, where the role kept its id -- and maps the entitlement group to it.
 #
-# Still READ, because the group-to-role mapping below needs the role's id and
-# that mapping has no declarative form yet: it needs the entitlement group's
-# id, and the group is still made by the gentian-groups Job.
-ROLE_JSON=$(kc_curl -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles/${CLIENT_ROLE}")
-if [ -z "${ROLE_JSON}" ]; then
-  echo "ERROR: client role ${CLIENT_ROLE} not found; the Composition has not created it yet" >&2
-  exit 1
-fi
-ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+# The read that stayed behind for that mapping outlived it, and it deadlocked:
+# this Job is waited on before the App claim that composes the role is created,
+# so wherever the client was there and the role was not -- a reinstall after a
+# purge, any first install -- the Job failed on a 404 for ever and the claim
+# never came. Nothing in this Job needs the role.
 
 # The entitlement group is NOT mapped to the client role here. app-default
 # composes a group Roles for it, with exhaustive false so it grants that one
@@ -144,7 +138,7 @@ ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 # identical to one that did.
 
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
-		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
+		realmName, clientID, pack.ScopeName, pack.ScopeDescription, groupName,
 		string(redirectJSON), publicClient, fullScope,
 		// One secretClause, not two: the second filled the client PUT that this
 		// Job no longer makes.

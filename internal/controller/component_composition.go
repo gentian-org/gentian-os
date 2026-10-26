@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -256,10 +258,20 @@ func (r *ComponentReconciler) ensureAppClaim(
 	existing.SetGroupVersionKind(appClaimGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, existing)
 	if errors.IsNotFound(err) {
+		// Not beside what an earlier install left composed: its Release
+		// names the same Helm release and the two would fight over it.
+		if waiting, err := r.composedLeftovers(ctx, comp, ""); err != nil || waiting != "" {
+			return false, waiting, err
+		}
 		return false, "claim created; waiting for the app to be composed", r.Create(ctx, desired)
 	}
 	if err != nil {
 		return false, "", err
+	}
+	if current, _, _ := unstructured.NestedString(existing.Object, "spec", "resourceRef", "name"); current != "" {
+		if waiting, err := r.composedLeftovers(ctx, comp, current); err != nil || waiting != "" {
+			return false, waiting, err
+		}
 	}
 	// A claim something else controls is not taken from it. On a cluster
 	// installed before components owned their claims that something is the
@@ -311,6 +323,30 @@ func (r *ComponentReconciler) ensureAppClaim(
 		return false, "waiting for the app to be composed and its release to deploy", nil
 	}
 	return true, "composed and deployed", nil
+}
+
+// composedLeftovers removes what an earlier composite of the app's claim
+// composed and left behind, and says what the claim is waiting for while any
+// of it is there ("" when nothing is). current is the composite the live
+// claim names, "" before there is a claim.
+//
+// With a current composite the leftover's external resource is kept: the
+// current composite manages the same Helm release, and deleting the leftover
+// with its own policy would uninstall it. Before the claim exists nothing
+// manages it, and the leftover takes what it made with it.
+func (r *ComponentReconciler) composedLeftovers(ctx context.Context, comp *gentianov1alpha1.Component, current string) (string, error) {
+	leftovers, err := composed.Find(ctx, r.Client, comp.Namespace, comp.Name, current)
+	if err != nil || len(leftovers) == 0 {
+		return "", err
+	}
+	names := make([]string, 0, len(leftovers))
+	for _, l := range leftovers {
+		if _, err := composed.Remove(ctx, r.Client, l, current != ""); err != nil {
+			return "", err
+		}
+		names = append(names, l.String())
+	}
+	return "waiting for what an earlier install left composed to be removed: " + strings.Join(names, ", "), nil
 }
 
 func ownedBy(obj client.Object, owner client.Object) bool {

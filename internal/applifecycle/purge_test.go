@@ -37,6 +37,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -108,6 +109,23 @@ type fakeGroups struct {
 	// be removed.
 	scopes        map[string]bool
 	scopesDeleted []string
+	// clients are the realm's clients; clientsDeleted the ones asked to be
+	// removed.
+	clients        map[string]bool
+	clientsDeleted []string
+}
+
+func (g *fakeGroups) DeleteClient(_ context.Context, realm string, clientID string) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.realms = append(g.realms, realm)
+	if g.fail || g.failDelete {
+		return false, errors.New("keycloak GET /admin/realms/demo/clients: 503 Service Unavailable")
+	}
+	existed := g.clients[clientID]
+	delete(g.clients, clientID)
+	g.clientsDeleted = append(g.clientsDeleted, clientID)
+	return existed, nil
 }
 
 func (g *fakeGroups) DeleteGroup(_ context.Context, realm string, name string) (bool, error) {
@@ -1064,5 +1082,104 @@ func TestAPurgeRemovesTheAppsSignInScope(t *testing.T) {
 				t.Error("the identity provider's own profile scope was deleted")
 			}
 		})
+	}
+}
+
+// The identity Job makes an app's client before the App claim exists, so an
+// install that never reached the claim leaves a client the uninstall does
+// not remove, and the next install found it half-made and waited on a role
+// only the claim makes. A purge removes the app's own clients -- its own and
+// an extension's, OIDC and SAML -- and leaves one an installed app signs in
+// with too.
+func TestAPurgeRemovesTheAppsLeftoverClients(t *testing.T) {
+	profile := func(name, clientID string) *gentianov1alpha1.ComponentProfile {
+		p := wikiProfile()
+		p.Name = name
+		p.Spec.Extensions = nil
+		p.Spec.Requires.Services.Identity = &gentianov1alpha1.IdentityRequirement{
+			OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: clientID}}
+		return p
+	}
+	withExtensions := profile("wiki", "")
+	withExtensions.Spec.Extensions = []gentianov1alpha1.AppSidecarSpec{
+		{Name: "sso", ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+			Identity: &gentianov1alpha1.IdentityRequirement{SAML: &gentianov1alpha1.SAMLClientSpec{EntityID: "https://wiki.example/saml"}}}},
+		{Name: "chat", ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+			Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{}}}},
+	}
+	cases := []struct {
+		name      string
+		purged    *gentianov1alpha1.ComponentProfile
+		installed *gentianov1alpha1.ComponentProfile
+		deleted   []string
+	}{
+		{"its own client, named by the profile", profile("wiki", "gentian-wiki"), nil, []string{"gentian-wiki"}},
+		{"its own and its extensions', by the default names", withExtensions, nil,
+			[]string{"demo-wiki", "https://wiki.example/saml", "demo-" + gentianov1alpha1.SidecarAppName("wiki", "chat")}},
+		{"a client an installed app signs in with too", profile("wiki", "shared"), profile("drive", "shared"), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			objects := []client.Object{c.purged}
+			if c.installed != nil {
+				objects = append(objects, c.installed)
+			}
+			w := newPurgeWorld(t, nil, objects)
+			w.groups.clients = map[string]bool{"gentian-wiki": true, "demo-wiki": true, "shared": true}
+			res, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(res.Destroyed, KindSignInScope) {
+				t.Errorf("destroyed = %v, want the sign-in step among them", res.Destroyed)
+			}
+			if !reflect.DeepEqual(w.groups.clientsDeleted, c.deleted) {
+				t.Errorf("clients deleted = %v, want %v", w.groups.clientsDeleted, c.deleted)
+			}
+		})
+	}
+}
+
+// A Release the app's composite left composed when it went -- an install cut
+// short leaves one stuck on an unfinished create, which its provider never
+// deletes -- holds the purge back like a release still being uninstalled.
+// The purge does not wait for nothing: it unblocks and deletes the leftover,
+// with its own policy so its Helm release goes too, and refuses with
+// everything in place until it is gone. Once it is, the purge completes.
+func TestAPurgeRemovesWhatTheAppsCompositeLeftComposed(t *testing.T) {
+	leftover := &unstructured.Unstructured{}
+	leftover.SetGroupVersionKind(composed.Kinds[0])
+	leftover.SetName("wiki-vkrw4-release")
+	leftover.SetLabels(map[string]string{composed.ClaimNamespaceLabel: "tenant-demo", composed.ClaimNameLabel: "wiki", composed.CompositeLabel: "wiki-vkrw4"})
+	leftover.SetAnnotations(map[string]string{"crossplane.io/external-create-pending": "2026-10-26T14:44:10Z"})
+	leftover.SetFinalizers([]string{"finalizer.managedresource.crossplane.io"})
+	_ = unstructured.SetNestedField(leftover.Object, "Delete", "spec", "deletionPolicy")
+
+	w := newPurgeWorld(t, nil, []client.Object{wikiProfile(), leftover})
+	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); !errors.Is(err, ErrStillRemoving) || !strings.Contains(err.Error(), "wiki-vkrw4-release") {
+		t.Fatalf("err = %v, want the leftover holding the purge back", err)
+	}
+	if !w.untouched(t) {
+		t.Error("the purge destroyed data beside the leftover")
+	}
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(composed.Kinds[0])
+	if err := w.objs.Get(context.Background(), client.ObjectKey{Name: "wiki-vkrw4-release"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.GetDeletionTimestamp() == nil {
+		t.Fatal("the leftover was not deleted")
+	}
+	if _, pending := got.GetAnnotations()["crossplane.io/external-create-pending"]; pending {
+		t.Error("the unfinished create was not unblocked, so its provider never deletes it")
+	}
+
+	// The provider finishes with it.
+	got.SetFinalizers(nil)
+	if err := w.objs.Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
+		t.Fatal(err)
 	}
 }

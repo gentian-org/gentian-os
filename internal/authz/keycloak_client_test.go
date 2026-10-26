@@ -275,3 +275,50 @@ func TestDeleteClientScope(t *testing.T) {
 		t.Fatal("a scope that is still there was reported deleted")
 	}
 }
+
+// An app's client is removed by its clientId, only the one asked for; a
+// second removal finds nothing, and a client still there afterwards is an
+// error whatever the delete answered.
+func TestDeleteClient(t *testing.T) {
+	clients := map[string]bool{"gentian-wiki": true, "gentian-wiki-extra": true}
+	refuse := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const base = "/admin/realms/demo/clients"
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 300})
+		case r.Method == http.MethodGet && r.URL.Path == base:
+			// Loose on purpose: every client whose id starts with the one
+			// asked for, which the lookup must not take for an exact match.
+			out := []map[string]any{}
+			for name := range clients {
+				if strings.HasPrefix(name, r.URL.Query().Get("clientId")) {
+					out = append(out, map[string]any{"id": "id-" + name, "clientId": name})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, base+"/id-"):
+			if !refuse {
+				delete(clients, strings.TrimPrefix(r.URL.Path, base+"/id-"))
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := testAdminClient(srv, "admin", "pw")
+	ctx := context.Background()
+
+	existed, err := c.DeleteClient(ctx, "demo", "gentian-wiki")
+	if err != nil || !existed || clients["gentian-wiki"] || !clients["gentian-wiki-extra"] {
+		t.Fatalf("existed = %v, err = %v, clients = %v", existed, err, clients)
+	}
+	if existed, err := c.DeleteClient(ctx, "demo", "gentian-wiki"); err != nil || existed {
+		t.Fatalf("a second removal: %v %v", existed, err)
+	}
+	refuse = true
+	if _, err := c.DeleteClient(ctx, "demo", "gentian-wiki-extra"); err == nil {
+		t.Fatal("a client that is still there was reported deleted")
+	}
+}

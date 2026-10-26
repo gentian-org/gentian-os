@@ -466,6 +466,65 @@ func (c *KeycloakAdminClient) DeleteClientScope(ctx context.Context, realm, name
 	return true, nil
 }
 
+// DeleteClient removes a realm's client by its clientId, and with it what is
+// part of the client: its roles, every group's and user's mapping to them,
+// its protocol mappers and its scope assignments. existed is false, with no
+// error, when the realm has no such client.
+//
+// Like DeleteGroup it looks again afterwards: a client that is still there is
+// an error whatever the delete answered.
+func (c *KeycloakAdminClient) DeleteClient(ctx context.Context, realm, clientID string) (existed bool, err error) {
+	id, err := c.findClientUUID(ctx, realm, clientID)
+	if err != nil {
+		return false, err
+	}
+	if id == "" {
+		return false, nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return true, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/clients/%s", url.PathEscape(realm), url.PathEscape(id))
+	status, err := c.doAdmin(ctx, token, http.MethodDelete, path, nil)
+	if err != nil && status != http.StatusNotFound {
+		return true, fmt.Errorf("keycloak delete client %s: %w", clientID, err)
+	}
+	left, err := c.findClientUUID(ctx, realm, clientID)
+	if err != nil {
+		return true, err
+	}
+	if left != "" {
+		return true, fmt.Errorf("keycloak still has the client %s after deleting it", clientID)
+	}
+	return true, nil
+}
+
+// findClientUUID looks a client up by its exact clientId. Keycloak's
+// clientId query matches exactly unless search=true is asked for; the
+// answer is still compared, so a server that matched loosely deletes
+// nothing it was not asked to.
+func (c *KeycloakAdminClient) findClientUUID(ctx context.Context, realm, clientID string) (string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	var clients []struct {
+		ID       string `json:"id"`
+		ClientID string `json:"clientId"`
+	}
+	path := fmt.Sprintf("/admin/realms/%s/clients?clientId=%s", url.PathEscape(realm), url.QueryEscape(clientID))
+	if err := c.getAdminJSON(ctx, token, path, &clients); err != nil {
+		return "", fmt.Errorf("keycloak find client %s: %w", clientID, err)
+	}
+	for _, cl := range clients {
+		if cl.ClientID == clientID && cl.ID != "" {
+			return cl.ID, nil
+		}
+	}
+	return "", nil
+}
+
 // findClientScopeID looks a client scope up by its exact name. The endpoint
 // answers with every scope of the realm; it does not page.
 func (c *KeycloakAdminClient) findClientScopeID(ctx context.Context, realm, name string) (string, error) {
