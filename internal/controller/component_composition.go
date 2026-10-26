@@ -24,9 +24,11 @@ import (
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/composed"
+	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -137,6 +139,38 @@ func appComposition(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.
 	return ""
 }
 
+// addonIDs answers what the app calls each addon the component lists, from
+// the addon profiles' package.addon (customization.ResolveAddons). One that
+// does not resolve -- no such profile, or an addon of another base -- is
+// left out and logged, as the tenant's app list resolves them: one bad
+// addon does not hold back the app or the others.
+func (r *ComponentReconciler) addonIDs(ctx context.Context, comp *gentianov1alpha1.Component) ([]string, error) {
+	if len(comp.Spec.Addons) == 0 {
+		return nil, nil
+	}
+	base := &gentianov1alpha1.ComponentProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, base); err != nil {
+		return nil, err
+	}
+	index := map[string]*gentianov1alpha1.ComponentProfile{}
+	for _, name := range comp.Spec.Addons {
+		addon := &gentianov1alpha1.ComponentProfile{}
+		err := r.Get(ctx, types.NamespacedName{Name: name}, addon)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		index[name] = addon
+	}
+	resolved, problems := customization.ResolveAddons(base, comp.Spec.Addons, index)
+	for _, problem := range problems {
+		log.FromContext(ctx).Error(problem, "addon left out of the app claim", "component", comp.Name)
+	}
+	return customization.AddonIDs(resolved), nil
+}
+
 // ensureAppClaim keeps the App claim the app Composition renders this
 // component from, and reports whether what it rendered is ready.
 //
@@ -190,12 +224,18 @@ func (r *ComponentReconciler) ensureAppClaim(
 	if signIn != nil {
 		spec["signInSidecar"] = signIn.claim
 	}
-	if len(comp.Spec.Addons) > 0 {
-		addons := make([]interface{}, 0, len(comp.Spec.Addons))
-		for _, a := range comp.Spec.Addons {
-			addons = append(addons, a)
-		}
-		spec["addons"] = addons
+	// The addons by what the app calls them, as the claim's addons field is
+	// defined: the Composition matches the base's addonValues on them and
+	// hands them to its activation script. The Component lists profile
+	// names, and passing those through had Nextcloud asked to enable
+	// "nextcloud-calendar-ce" -- an app it does not have -- and never
+	// started Collabora, whose overlay waits for "richdocuments".
+	ids, addonErr := r.addonIDs(ctx, comp)
+	if addonErr != nil {
+		return false, "", addonErr
+	}
+	if len(ids) > 0 {
+		spec["addons"] = toInterfaceSlice(ids)
 	}
 	config := map[string]interface{}{}
 	values := map[string]interface{}{}
