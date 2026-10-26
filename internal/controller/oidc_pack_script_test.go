@@ -47,7 +47,6 @@ func TestBuildOIDCPackScript(t *testing.T) {
 		[]string{"https://app.demo.platform.example.test/*"}, false, "gentian:tenant:demo:app:catalogue-test-client")
 	for _, want := range []string{
 		"catalogue-test-client-scope",
-		"catalogue-test-client-access-control",
 		"gentian:tenant:demo:app:catalogue-test-client",
 		"PUBLIC_CLIENT=true",
 		"https://app.demo.platform.example.test/*",
@@ -85,6 +84,15 @@ func TestBuildOIDCPackScript(t *testing.T) {
 	if !strings.Contains(script, "removed corrupt mapper") {
 		t.Fatal("the corrupt-mapper cleanup must stay")
 	}
+	// The client role is the Composition's, and the Composition is created
+	// only once this Job has completed: a Job that needs the role waits for
+	// itself. A client that exists without its role -- the reinstall after a
+	// purge -- must complete here.
+	for _, gone := range []string{"/roles/", "catalogue-test-client-access-control", "CLIENT_ROLE"} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("oidc pack script still depends on the client role: %s", gone)
+		}
+	}
 	if !strings.Contains(script, `keycloak_json_id_by_attr "${EXISTING}" "clientId"`) {
 		t.Fatal("client UUID lookup must quote EXISTING JSON")
 	}
@@ -107,5 +115,80 @@ func TestSubstituteTenantDomainInURIs(t *testing.T) {
 		[]string{"https://app.${TENANT_DOMAIN}/*"}, "platform.example.test", gentianov1alpha1.TenancyModeMulti)
 	if len(uris) != 1 || uris[0] != "https://app.demo.platform.example.test/*" {
 		t.Fatalf("redirects: %v", uris)
+	}
+}
+
+// fakeKeycloakCurl answers the pack script's calls the way Keycloak does for a
+// realm where the client and its scope exist and the client role does not:
+// the reinstall after a purge, before the App claim composes the role. Every
+// call is logged to $CURL_LOG.
+const fakeKeycloakCurl = `#!/bin/sh
+out=""; method=GET; url=""; w=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift ;;
+    -w) w=$2; shift ;;
+    -X) method=$2; shift ;;
+    -H|-d|--max-time) shift ;;
+    http*) url=$1 ;;
+  esac
+  shift
+done
+echo "${method} ${url}" >> "${CURL_LOG}"
+code=200
+case "${url}" in
+  */protocol/openid-connect/token) body='{"access_token":"t"}' ;;
+  */client-scopes) body='[{"id":"scope-1","name":"catalogue-test-client-scope"}]' ;;
+  */protocol-mappers/models) body='[]' ;;
+  *"/clients?clientId="*) body='[{"id":"client-1","clientId":"catalogue-test-client"}]' ;;
+  */roles/*) code=404; body='{"error":"Could not find role"}' ;;
+  *) code=404; body='{}' ;;
+esac
+if [ -n "${out}" ]; then printf '%s' "${body}" > "${out}"; else printf '%s' "${body}"; fi
+if [ -n "${w}" ]; then printf '%s' "${code}"; fi
+if [ "${code}" -ge 400 ] && [ -z "${w}" ]; then exit 22; fi
+exit 0
+`
+
+// The Job is waited on before the App claim exists, and the claim's
+// Composition is what makes the client role. A client found without its role
+// must therefore complete the Job: failing on it waited for itself, and the
+// tenant never reached the app (nextcloud on test, after a purge).
+func TestTheOIDCPackScriptCompletesWhenTheClientRoleIsNotThereYet(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not installed; the script resolves ids with it")
+	}
+	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")
+	if err != nil || !ok {
+		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
+	}
+	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
+		[]string{"https://app.demo.platform.example.test/*"}, false, "gentian:tenant:demo:app:catalogue-test-client")
+
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/curl", []byte(fakeKeycloakCurl), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/pack.sh", []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", dir+"/pack.sh")
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"CURL_LOG="+dir+"/calls",
+		"KEYCLOAK_URL=http://keycloak.test",
+		"KEYCLOAK_ADMIN_USERNAME=admin", "KEYCLOAK_ADMIN_PASSWORD=pw")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the script failed where the client exists without its role: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "client catalogue-test-client already exists") ||
+		!strings.Contains(string(out), "oidc pack catalogue-test-client provisioned") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+	calls, _ := os.ReadFile(dir + "/calls")
+	if strings.Contains(string(calls), "/roles/") {
+		t.Fatalf("the script still asks for the client role:\n%s", calls)
 	}
 }

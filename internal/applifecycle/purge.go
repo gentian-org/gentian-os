@@ -213,11 +213,11 @@ func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov
 			return s.authorization.Purge(ctx, tenant.Name, app)
 		}
 	}
-	// The client scope the app's sign-in pack describes, when its profile
-	// signs anybody in.
+	// The app's clients and the client scopes its sign-in packs describe,
+	// when its profile signs anybody in.
 	if signsIn(profile) {
 		how[backup.KindSignInScope] = func(ctx context.Context) error {
-			return s.purgeSignInScopes(ctx, tenant, app, profile)
+			return s.purgeSignIn(ctx, tenant, app, profile)
 		}
 	}
 	for kind, job := range stores {
@@ -596,89 +596,112 @@ type AccessGroups interface {
 	DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error)
 	GroupNames(ctx context.Context, realm, prefix string) ([]string, error)
 	DeleteClientScope(ctx context.Context, realm, name string) (existed bool, err error)
+	DeleteClient(ctx context.Context, realm, clientID string) (existed bool, err error)
 }
 
 // --- sign-in scope ----------------------------------------------------------
 
 // signsIn reports whether an app, or one of its extensions, signs people in
-// through an OIDC client.
+// through an OIDC or a SAML client.
 func signsIn(profile *gentianov1alpha1.ComponentProfile) bool {
 	if profile == nil {
 		return false
 	}
-	if svc := profile.Services(); svc != nil && svc.Identity != nil && svc.Identity.OIDC != nil {
+	signs := func(id *gentianov1alpha1.IdentityRequirement) bool {
+		return id != nil && (id.OIDC != nil || (id.SAML != nil && id.SAML.EntityID != ""))
+	}
+	if svc := profile.Services(); svc != nil && signs(svc.Identity) {
 		return true
 	}
 	for _, ext := range profile.Spec.Extensions {
-		if ext.ServiceRequirements != nil && ext.ServiceRequirements.Identity != nil && ext.ServiceRequirements.Identity.OIDC != nil {
+		if ext.ServiceRequirements != nil && signs(ext.ServiceRequirements.Identity) {
 			return true
 		}
 	}
 	return false
 }
 
-// packScopes are the client scopes the sign-in packs of an app and of its
-// extensions describe: what the tenant's identity Job made in the realm for
-// them. A client with no pack, or a pack that is a service client, has none.
-func (s *Service) packScopes(ctx context.Context, tenantName, app string, profile *gentianov1alpha1.ComponentProfile) ([]string, error) {
-	var scopes []string
-	// Looked up in the profile's own catalogue, an extension's too, where
-	// the identity Job and the app Composition look.
-	add := func(key string) error {
-		pack, _, found, err := oidc.ResolvePack(ctx, s.client, profile.Name, key)
+// signIn is what the tenant's identity Jobs make in the realm for an app and
+// for its extensions: the clients, and the client scopes their sign-in packs
+// describe.
+type signIn struct {
+	clients, scopes []string
+}
+
+// signInOf resolves an app's clients and pack scopes the way provisioning
+// does. A client is called what the profile says, else after the tenant and
+// the app; its pack is the one the profile names, else the one called what
+// the client is, looked up in the profile's own catalogue, an extension's
+// too. A SAML client is called its entity ID. A pack that is a service client
+// has no scope.
+func (s *Service) signInOf(ctx context.Context, tenantName, app string, profile *gentianov1alpha1.ComponentProfile) (signIn, error) {
+	var out signIn
+	if profile == nil {
+		return out, nil
+	}
+	add := func(id *gentianov1alpha1.IdentityRequirement, name string) error {
+		if id == nil {
+			return nil
+		}
+		if id.SAML != nil && id.SAML.EntityID != "" {
+			out.clients = append(out.clients, id.SAML.EntityID)
+		}
+		spec := id.OIDC
+		if spec == nil {
+			return nil
+		}
+		clientID := spec.ClientID
+		if clientID == "" {
+			clientID = tenantName + "-" + name
+		}
+		out.clients = append(out.clients, clientID)
+		packKey := clientID
+		if spec.OIDCPackRef != "" {
+			packKey = spec.OIDCPackRef
+		}
+		pack, _, found, err := oidc.ResolvePack(ctx, s.client, profile.Name, packKey)
 		if err != nil {
-			return fmt.Errorf("read the sign-in pack %s: %w", key, err)
+			return fmt.Errorf("read the sign-in pack %s: %w", packKey, err)
 		}
 		if found && !pack.ServiceClient && pack.ScopeName != "" {
-			scopes = append(scopes, pack.ScopeName)
+			out.scopes = append(out.scopes, pack.ScopeName)
 		}
 		return nil
 	}
-	// The pack is the one the profile names, else the one called what the
-	// client is; a client is called what the profile says, else after the
-	// tenant and the app. The same resolution provisioning makes.
-	packKey := func(spec *gentianov1alpha1.OIDCClientSpec, name string) string {
-		switch {
-		case spec.OIDCPackRef != "":
-			return spec.OIDCPackRef
-		case spec.ClientID != "":
-			return spec.ClientID
-		}
-		return tenantName + "-" + name
-	}
-	if profile == nil {
-		return nil, nil
-	}
-	if svc := profile.Services(); svc != nil && svc.Identity != nil && svc.Identity.OIDC != nil {
-		if err := add(packKey(svc.Identity.OIDC, app)); err != nil {
-			return nil, err
+	if svc := profile.Services(); svc != nil {
+		if err := add(svc.Identity, app); err != nil {
+			return signIn{}, err
 		}
 	}
 	for _, ext := range profile.Spec.Extensions {
-		if ext.ServiceRequirements == nil || ext.ServiceRequirements.Identity == nil || ext.ServiceRequirements.Identity.OIDC == nil {
+		if ext.ServiceRequirements == nil {
 			continue
 		}
-		if err := add(packKey(ext.ServiceRequirements.Identity.OIDC, gentianov1alpha1.SidecarAppName(app, ext.Name))); err != nil {
-			return nil, err
+		if err := add(ext.ServiceRequirements.Identity, gentianov1alpha1.SidecarAppName(app, ext.Name)); err != nil {
+			return signIn{}, err
 		}
 	}
-	return scopes, nil
+	return out, nil
 }
 
-// purgeSignInScopes removes the client scopes the app's sign-in packs
-// describe from the tenant's realm, with their protocol mappers.
+// purgeSignIn removes from the tenant's realm what the app's sign-in left
+// there: its clients, with the client roles, role mappings and mappers that
+// are part of them, and the client scopes its packs describe, with their
+// protocol mappers.
 //
-// The app's client went when it was uninstalled, and what was part of the
-// client -- its role, its default scopes, the group's mapping to the role --
-// went with it. The scope did not: it is the realm's, made by the tenant's
-// identity Job, and nothing ever removed one.
+// The client normally goes at the uninstall, with the App claim whose
+// Composition holds it. It does not when the claim never existed: the
+// identity Job makes the client before the claim is created, so an install
+// that never got that far, uninstalled, left a client nothing else removes,
+// and the next install found it half-made. The scope is the realm's, made by
+// the same Job, and nothing else ever removed one.
 //
-// A scope is left where an app the tenant still has uses a pack that names
-// the same one -- two profiles may name one pack -- and one of Keycloak's own
-// scopes is never touched, whatever a catalogue called its pack's.
-func (s *Service) purgeSignInScopes(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) error {
-	scopes, err := s.packScopes(ctx, tenant.Name, app, profile)
-	if err != nil || len(scopes) == 0 {
+// A client or scope is left where an app the tenant still has names the same
+// one -- two profiles may name one pack -- and one of Keycloak's own scopes is
+// never touched, whatever a catalogue called its pack's.
+func (s *Service) purgeSignIn(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) error {
+	mine, err := s.signInOf(ctx, tenant.Name, app, profile)
+	if err != nil || (len(mine.clients) == 0 && len(mine.scopes) == 0) {
 		return err
 	}
 	inUse := map[string]bool{}
@@ -688,11 +711,11 @@ func (s *Service) purgeSignInScopes(ctx context.Context, tenant *gentianov1alpha
 		if err != nil {
 			return err
 		}
-		used, err := s.packScopes(ctx, tenant.Name, installed.Profile, other)
+		used, err := s.signInOf(ctx, tenant.Name, installed.Profile, other)
 		if err != nil {
 			return err
 		}
-		for _, name := range used {
+		for _, name := range append(used.clients, used.scopes...) {
 			inUse[name] = true
 		}
 	}
@@ -702,7 +725,16 @@ func (s *Service) purgeSignInScopes(ctx context.Context, tenant *gentianov1alpha
 	}
 	realm := keycloak.RealmName(tenant)
 	logger := log.FromContext(ctx).WithName("purge").WithValues("app", app, "realm", realm)
-	for _, name := range scopes {
+	for _, name := range mine.clients {
+		if inUse[name] {
+			logger.Info("leaving a client an installed app signs in with too", "client", name)
+			continue
+		}
+		if _, err := groups.DeleteClient(ctx, realm, name); err != nil {
+			return fmt.Errorf("delete the client %s in realm %s: %w", name, realm, err)
+		}
+	}
+	for _, name := range mine.scopes {
 		switch {
 		case inUse[name]:
 			logger.Info("leaving a client scope an installed app's sign-in pack names too", "scope", name)

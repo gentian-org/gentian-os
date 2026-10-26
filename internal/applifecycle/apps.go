@@ -30,6 +30,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/security"
@@ -529,7 +530,8 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 }
 
 // appRemnants names what is still on the cluster of an app's workloads: its
-// Component, and the Helm releases it was installed as.
+// Component, the Helm releases it was installed as, and what its composites
+// left composed -- which it also removes.
 //
 // The Component alone is not the answer. It goes as soon as its App claim is
 // handed to the garbage collector, and the release the claim composed is
@@ -558,6 +560,21 @@ func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tena
 		if ownsRelease(tenant, profile, cp, release) {
 			left = append(left, "Helm release "+release)
 		}
+	}
+	// What the app's composites composed and left when they went: a Release
+	// whose install was cut short is never deleted by its provider, and it
+	// stays bound to the app's Helm release for the next install to fight
+	// over. Nothing else removes one, so this does, and waits for it to go:
+	// with its own deletion policy, which uninstalls what it manages.
+	leftovers, err := composed.Find(ctx, s.client, ns, profile, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range leftovers {
+		if _, err := composed.Remove(ctx, s.client, l, false); err != nil {
+			return nil, err
+		}
+		left = append(left, "composed "+l.String())
 	}
 	return left, nil
 }
