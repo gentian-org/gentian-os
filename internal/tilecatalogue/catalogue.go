@@ -87,6 +87,12 @@ type Tile struct {
 	// page. Any one of them is enough, which is how a console reached by
 	// several roles stays one tile rather than three.
 	AnyOf []string `json:"anyOf"`
+
+	// Preopen is whether the portal opens the tile hidden when the desktop
+	// mounts, so the app is signed in before a person first reaches it. The
+	// profile asks for it (gentianos.io/portal-preopen); the portal reads
+	// nothing else about the app to decide.
+	Preopen bool `json:"preopen,omitempty"`
 }
 
 // Catalogue is the file's whole content.

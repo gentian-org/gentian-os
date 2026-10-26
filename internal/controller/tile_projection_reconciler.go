@@ -388,8 +388,9 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				// app:<tenant>/<profile>, where an installed app's own
 				// permissions hang off (authorization-model.md §4), or the
 				// tenant itself, where administering it is decided.
-				Object: tileObject(e.Tile, tenant, comp.Spec.ProfileRef.Name, r.Cluster),
-				AnyOf:  []string{e.Tile.Relation},
+				Object:  tileObject(e.Tile, tenant, comp.Spec.ProfileRef.Name, r.Cluster),
+				AnyOf:   []string{e.Tile.Relation},
+				Preopen: profile.Annotations[portalPreopenAnnotation] == "true",
 			})
 		}
 	}
@@ -398,6 +399,11 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
 	return out, nil
 }
+
+// portalPreopenAnnotation is a profile asking the portal to open its tile
+// hidden at desktop mount. Only a routed tile carries it: a link tile leads
+// off the cluster, and there is no session of ours to warm there.
+const portalPreopenAnnotation = "gentianos.io/portal-preopen"
 
 // linkTile is the tile of an entry that runs nothing, or nil.
 //

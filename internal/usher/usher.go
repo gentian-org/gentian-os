@@ -205,6 +205,7 @@ type tileOut struct {
 	Description  string            `json:"description"`
 	URL          string            `json:"url"`
 	Icon         string            `json:"icon"`
+	Preopen      bool              `json:"preopen,omitempty"`
 }
 
 // catalogue is what the operator projected.
@@ -264,7 +265,7 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 			if ok {
 				out = append(out, tileOut{
 					Name: t.Name, DisplayName: t.DisplayName, DisplayNames: t.DisplayNames,
-					Description: t.Description, URL: t.URL, Icon: t.Icon,
+					Description: t.Description, URL: t.URL, Icon: t.Icon, Preopen: t.Preopen,
 				})
 				break
 			}
