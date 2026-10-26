@@ -12,11 +12,16 @@ package custodian
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // consumer is an ExternalSecret reading one property of one vault path, which
@@ -107,4 +112,108 @@ func TestRefreshIsHarmlessWithoutAClient(t *testing.T) {
 	scheme := testScheme(t)
 	s = &Server{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 	s.refreshConsumers(context.Background(), "")
+}
+
+// probeAt is a probe whose Ready condition last changed at `since` and which
+// the custodian nudged at `nudged` (zero: never).
+func probeAt(name string, ready bool, since, nudged time.Time) *unstructured.Unstructured {
+	u := probe(name, ready)
+	conds, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	cond := conds[0].(map[string]any)
+	cond["lastTransitionTime"] = since.UTC().Format(time.RFC3339)
+	_ = unstructured.SetNestedSlice(u.Object, conds, "status", "conditions")
+	if !nudged.IsZero() {
+		u.SetAnnotations(map[string]string{
+			forceSyncAnnotation: strconv.FormatInt(nudged.Unix(), 10),
+		})
+	}
+	return u
+}
+
+// A value stored a moment ago is not "missing": ESO has been told to read it
+// and has not answered. Reporting the probe's previous verdict told the person
+// who had just supplied it that it was lost, for as long as a refresh interval.
+func TestAFreshWriteIsPendingUntilTheProbeAnswers(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	before := now.Add(-time.Hour)
+
+	cases := []struct {
+		name          string
+		probe         *unstructured.Unstructured
+		wantSatisfied bool
+		wantPending   bool
+	}{
+		{"nudged, probe still on the old verdict",
+			probeAt("p", false, before, now.Add(-10*time.Second)), false, true},
+		{"nudged, ESO has confirmed",
+			probeAt("p", true, now.Add(-5*time.Second), now.Add(-10*time.Second)), true, false},
+		{"nudged, ESO has refused the new value",
+			probeAt("p", false, now.Add(-5*time.Second), now.Add(-10*time.Second)), false, false},
+		{"nudged too long ago: ESO's verdict stands",
+			probeAt("p", false, before, now.Add(-pendingWindow-time.Second)), false, false},
+		{"never nudged",
+			probeAt("p", false, before, time.Time{}), false, false},
+		{"nudged before ESO ever reported",
+			func() *unstructured.Unstructured {
+				u := probeAt("p", false, before, now.Add(-10*time.Second))
+				unstructured.RemoveNestedField(u.Object, "status")
+				return u
+			}(), false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Catalogue{
+				Client:         fake.NewClientBuilder().WithScheme(testScheme(t)).WithRuntimeObjects(tc.probe).Build(),
+				ProbeNamespace: "kernel-control",
+				Now:            func() time.Time { return now },
+			}
+			satisfied, pending, reason := c.probeStatus(context.Background(), "p")
+			if satisfied != tc.wantSatisfied || pending != tc.wantPending {
+				t.Fatalf("satisfied=%v pending=%v (reason %q), want satisfied=%v pending=%v",
+					satisfied, pending, reason, tc.wantSatisfied, tc.wantPending)
+			}
+			if pending && satisfied {
+				t.Fatal("pending and satisfied at once")
+			}
+		})
+	}
+}
+
+// The nudge is a merge patch of one annotation. The role grants patch and not
+// update, so an Update here would fail on the cluster while passing against a
+// fake client; and an Update would rewrite fields this service does not own.
+func TestRefreshPatchesOnlyTheAnnotation(t *testing.T) {
+	const path = "gentian-os/kernel/mail/postfix"
+	es := consumer("kernel-authentication", "keycloak-smtp-credentials", path)
+	es.SetAnnotations(map[string]string{"owner.example/keep": "yes"})
+
+	var patched, updated int
+	s := &Server{Client: interceptor.NewClient(
+		fake.NewClientBuilder().WithScheme(testScheme(t)).WithRuntimeObjects(es).Build(),
+		interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
+				patched++
+				if p.Type() != types.MergePatchType {
+					t.Errorf("patch type %s, want a merge patch", p.Type())
+				}
+				body, _ := p.Data(obj)
+				if strings.Contains(string(body), "spec") || strings.Contains(string(body), "owner.example") {
+					t.Errorf("the patch carries more than the force-sync annotation: %s", body)
+				}
+				return c.Patch(ctx, obj, p, opts...)
+			},
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				updated++
+				return c.Update(ctx, obj, opts...)
+			},
+		})}
+
+	s.refreshConsumers(context.Background(), path)
+
+	if patched != 1 || updated != 0 {
+		t.Fatalf("patched %d, updated %d; want one patch and no update", patched, updated)
+	}
+	if annotationOf(t, s, "kernel-authentication", "keycloak-smtp-credentials") == "" {
+		t.Fatal("the consumer was not stamped")
+	}
 }
