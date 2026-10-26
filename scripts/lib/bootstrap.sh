@@ -1796,7 +1796,7 @@ _claim_cluster_fields() {
         printf '    #    gpuMemoryUtilization: "0.85"   fraction of GPU memory\n'
         printf '    #    maxModelLen: "8192"            context window, tokens\n'
         printf '    #    modelCacheSize: 60Gi           PVC for the weights\n'
-        printf '    #    imageTag: latest               vLLM image tag\n'
+        printf '    #    imageTag: v0.32.0-cu129        another vLLM release than the pinned one\n'
         printf '    #    toolCallParser: hermes         empty disables tool calling\n'
         printf '    # External OpenAI-compatible providers, routed through the same\n'
         printf '    # gateway. Independent of gpuAcceleration -- a cluster with no GPU\n'

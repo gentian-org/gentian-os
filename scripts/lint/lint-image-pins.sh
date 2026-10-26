@@ -36,17 +36,13 @@ fail=0
 # Images that are named by digest as well as by tag. One per line.
 DIGEST_REQUIRED=(
     ghcr.io/berriai/litellm
+    docker.io/vllm/vllm-openai
 )
 
 # `latest` that is known and not yet removed, as file:pattern. The list is
 # for shrinking: an entry is a floating image somebody still has to choose a
 # release for, not a decision that floating is fine there.
-#
-#   vllm.yaml  the model server of a GPU cluster; its tag comes from the
-#              claim's llm.instances[].imageTag and falls back to latest.
-KNOWN_LATEST=(
-    'kernel/services/llm/manifests/templates/vllm.yaml:default "latest"'
-)
+KNOWN_LATEST=()
 
 _known_latest() {
     local file="$1" text="$2" entry

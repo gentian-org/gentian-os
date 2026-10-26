@@ -827,8 +827,11 @@ spec:
                             default: 60Gi
                           imageTag:
                             type: string
-                            description: vLLM image tag.
-                            default: latest
+                            description: >
+                              Another release of vLLM's image than the
+                              platform's, by tag (e.g. v0.32.0-cu129 for a
+                              node whose NVIDIA driver predates CUDA 13).
+                              Absent runs the release the platform pins.
                           toolCallParser:
                             type: string
                             description: >

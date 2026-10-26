@@ -495,7 +495,6 @@ not root with the kernel's admission baseline, its caches under the PVC
 (`HOME`, `HF_HOME`), and the NetworkPolicy `llm-vllm-ingress` admits the
 gateway alone. Still open:
 
-- a named release of the vLLM image: `imageTag` defaults to `latest`;
 - GPU time slicing (`gpuTimeSliceReplicas`): its ConfigMap is the GPU
   operator's and shared with every GPU workload of the node, and nothing
   delivers `kernel/services/llm/chart`, which renders it;
