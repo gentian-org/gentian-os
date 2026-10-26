@@ -542,6 +542,9 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// The same for an app installed for everyone: granted here, once, and
 	// noted on the status this writes.
 	state.defaultGrantRetry = r.applyDefaultGrants(ctx, tenant)
+	if r.inheritAddonGrants(ctx, tenant) {
+		state.defaultGrantRetry = true
+	}
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

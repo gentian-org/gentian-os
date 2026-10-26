@@ -59,7 +59,7 @@ type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
-	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
+	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
 	Tenants(ctx context.Context) ([]string, error)
 	IsPlatformTenant(ctx context.Context, tenant string) (bool, error)
@@ -1005,7 +1005,12 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 			if pins == nil {
 				pins = []gitops.AddonPin{}
 			}
-			s.json(w, http.StatusOK, map[string]any{"profile": a.Profile, "addons": addons, "addonPins": pins})
+			// Who has each addon by default, as the entry declares it.
+			grants := a.AddonGrants
+			if grants == nil {
+				grants = []gitops.AddonGrant{}
+			}
+			s.json(w, http.StatusOK, map[string]any{"profile": a.Profile, "addons": addons, "addonPins": pins, "addonGrants": grants})
 			return
 		}
 	}
@@ -1559,10 +1564,16 @@ type addonsRequest struct {
 // {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"} -- an item
 // of the store's confirmation, sent on -- and the addon it names is the
 // second half of the coordinate.
+//
+// Either object may say who has the addon: "defaultGrant": true makes it an
+// addon for everyone, as an app's install does, and false one given per
+// person. {"name": "<addon>", "defaultGrant": ...} says it of an addon named
+// with no build. An addon that does not say keeps the grant it had.
 type addonEntry struct {
-	Name       string
-	Coordinate string
-	Digest     string
+	Name         string
+	Coordinate   string
+	Digest       string
+	DefaultGrant *bool
 }
 
 func (a *addonEntry) UnmarshalJSON(raw []byte) error {
@@ -1570,15 +1581,20 @@ func (a *addonEntry) UnmarshalJSON(raw []byte) error {
 		return json.Unmarshal(raw, &a.Name)
 	}
 	var pinned struct {
-		Coordinate string `json:"coordinate"`
-		Digest     string `json:"digest"`
+		Name         string `json:"name"`
+		Coordinate   string `json:"coordinate"`
+		Digest       string `json:"digest"`
+		DefaultGrant *bool  `json:"defaultGrant"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&pinned); err != nil {
 		return err
 	}
-	a.Coordinate, a.Digest = pinned.Coordinate, pinned.Digest
+	if pinned.Name != "" && (pinned.Coordinate != "" || pinned.Digest != "") {
+		return errors.New("an addon is named or given as a build, not both")
+	}
+	a.Name, a.Coordinate, a.Digest, a.DefaultGrant = pinned.Name, pinned.Coordinate, pinned.Digest, pinned.DefaultGrant
 	return nil
 }
 
@@ -1613,6 +1629,8 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 	var sources []visibleSource
 	var bare []string
 	var pins []gitops.AddonPin
+	var grants map[string]bool
+	forEveryone := false
 	for _, entry := range body.Addons {
 		name := entry.Name
 		if entry.Coordinate != "" || entry.Digest != "" {
@@ -1655,6 +1673,31 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		seen[name] = true
 		names = append(names, name)
+		if entry.DefaultGrant != nil {
+			if grants == nil {
+				grants = map[string]bool{}
+			}
+			grants[name] = *entry.DefaultGrant
+			forEveryone = forEveryone || *entry.DefaultGrant
+		}
+	}
+	// An addon for everyone gives people access to it, as an app installed
+	// for everyone does: the same second question, before anything is
+	// fetched or written.
+	if forEveryone {
+		target := authz.Tenant(tenant)
+		ok, err := s.can(ctx, c, "can_grant", target)
+		if err != nil {
+			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		if !ok {
+			s.fail(w, r, http.StatusForbidden,
+				"an add-on for everyone gives people access to it, which needs can_grant on the tenant; "+
+					"set it without defaultGrant, or ask somebody who may grant")
+			return
+		}
+		c.meta.Decision += " and can_grant " + target
 	}
 
 	// An add-on named with no build is one whose profile the cluster must
@@ -1743,7 +1786,7 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
-	res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, profile, names, pins, c.meta)
+	res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, profile, names, pins, grants, c.meta)
 	s.written(w, r, res, err)
 }
 

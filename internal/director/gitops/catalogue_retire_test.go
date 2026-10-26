@@ -91,7 +91,7 @@ func TestAProfileATenantNamesIsNotRetired(t *testing.T) {
 	ctx := context.Background()
 	digest := profilebundle.Digest([]byte(dt.ProfileYAML("deck")))
 	if _, err := g.SetAddonsPinned(ctx, "solo", "nextcloud", []string{"calendar", "deck"},
-		[]gitops.AddonPin{{Name: "deck", Digest: digest, Catalogue: "main"}}, meta("u-ada")); err != nil {
+		[]gitops.AddonPin{{Name: "deck", Digest: digest, Catalogue: "main"}}, nil, meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	tip := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
