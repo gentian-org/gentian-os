@@ -34,9 +34,10 @@ The current target. The sections below give the detail and the reasons.
 | **Operations Console** | on the cluster, where installed | whoever looks after the cluster | an add-on's own screens ([sovereignty-concept.md](sovereignty-concept.md) §5) | what the add-on does; it is not part of the OS and not changed by this document |
 | **Command line** | the administrator's machine | administrators | — | `kubectl gentian apps install …` through the director. With no store it is the only way to install an app |
 
-The three interfaces on the cluster are separate components in the
-`gentian-ui` repository — the desktop, `apps/admin-console`,
-`apps/app-store` — and none of them is a mode of another.
+The three interfaces on the cluster are separate components — the desktop
+and `apps/admin-console` in the `gentian-ui` repository, and the App Store
+app, which the store's vendor publishes — and none of them is a mode of
+another.
 
 **The desktop is a relay for tiles.** It is the app of people who hold no
 privilege. Code that installs, removes or grants, shipped to every member's
@@ -260,8 +261,9 @@ credential for the vendor's repository. It never calls the cluster and has
 no page inside the cluster's interface.
 
 **The App Store app** is the store's interface, and it is on the cluster: a
-platform UI of its own, component `app-store`, in the `gentian-ui`
-repository beside the desktop and the admin console.
+component of its own, `app-store-pe`, published by the store's vendor in the
+store's catalogue beside the desktop and the admin console the platform
+ships.
 
 - **Per tenant, for people who may install.** Installed for each tenant but
   the platform tenant; its tile is shown only to people who hold
@@ -270,8 +272,10 @@ repository beside the desktop and the admin console.
 - **Absent without usage statistics.** The store depends on the cluster's
   usage statistics report ([operations.md §6.2](../design/operations.md)). A cluster
   with reporting off, or one that names no store, has no App Store app.
-- **Placed by the operator.** Built: the operator chart ships its profile,
-  and the operator places and removes the component by those two conditions
+- **Placed by the installer and the operator.** Built: the installer places
+  its profile from the store's catalogue as one of the store's extra
+  services (`--no-extra-services` leaves it out), and the operator places
+  and removes the component by those two conditions
   ([store-contract.md §6](../design/store-contract.md)).
 - **It renders data.** What it fetches from the store's API is treated as
   data: plain text, a restricted Markdown subset for descriptions and
