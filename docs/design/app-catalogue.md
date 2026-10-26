@@ -51,8 +51,10 @@ flowchart TD
 
 Kernel and system services (Keycloak, OpenFGA, PostgreSQL, the gateway, …)
 are deployed by Argo CD from `kernel/`, not from a catalogue. The desktop, the
-administration console, the App Store app and the concierge are components
-too, from profiles the operator chart ships.
+administration console and the concierge are components too, from profiles
+the operator chart ships; the App Store app is one from the store's catalogue,
+placed by the installer as one of the store's extra services
+([store-contract.md §6](store-contract.md)).
 
 ---
 
