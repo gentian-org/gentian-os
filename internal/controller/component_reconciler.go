@@ -558,12 +558,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
-	if !composed {
-		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
-			return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
-		}
-	} else if err := r.ensureGrantedEgress(ctx, comp, profile); err != nil {
-		return ctrl.Result{}, fmt.Errorf("granted egress: %w", err)
+	// Whichever way the chart is delivered.
+	if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
+		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
 	}
 	// The way to the desktop's API, for a component that asked where it is.
 	if err := r.ensureDesktopAccess(ctx, comp, profile); err != nil {
@@ -603,6 +600,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			r.mailboxTokenSignIn(ctx, tenant, profile), signIn, operatorValues)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		// A partner app the Composition installs reads the same Secret the
+		// same way, and its pods roll on it the same way (partner_rollout.go).
+		if releaseReady && wantsPartners(profile) {
+			if err := r.rollOnPartnersSecret(ctx, comp, profile); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 		if !releaseReady {
 			releaseMessage = pull.withPullHint(releaseMessage, profile)

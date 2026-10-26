@@ -68,7 +68,10 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 		seen[ns] = struct{}{}
 		out = append(out, ns)
 	}
-	if profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
+	// The database, where this reconciler fulfilled it. For a chart the app
+	// Composition delivers, the Composition fulfils it and writes the way
+	// there itself (kernel-access-<app>), on the database's port only.
+	if !composedDelivery(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		add(r.componentDatabaseNamespace(tenant))
 	}
 	for i := range profile.Spec.Expose {
@@ -101,10 +104,11 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 }
 
 // buildComponentNetworkPolicy is the policy for one component: its pods, by
-// the release label the chart puts on them, may leave for the namespaces
-// given. Ports are the peer namespace's business; what is granted is the
-// function, as the baseline grants the edge.
-func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
+// the release label the chart puts on them (helmReleaseOf, which differs by
+// who installs the chart), may leave for the namespaces given. Ports are the
+// peer namespace's business; what is granted is the function, as the
+// baseline grants the edge.
+func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, release string, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
 	egress := make([]networkingv1.NetworkPolicyEgressRule, 0, len(egressNamespaces)+len(granted))
 	for _, ns := range egressNamespaces {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
@@ -128,7 +132,7 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{componentInstanceLabel: releaseName(comp)},
+				MatchLabels: map[string]string{componentInstanceLabel: release},
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress:      egress,
@@ -136,77 +140,22 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 	}
 }
 
-func grantedEgressPolicyName(comp *gentianov1alpha1.Component) string {
+// legacyGrantedEgressPolicyName is the policy that once held, for an app the
+// Composition installs, the rules a person granted on it. Those rules are in
+// the component's own policy now, as for any other component, and this name
+// is only ever removed.
+func legacyGrantedEgressPolicyName(comp *gentianov1alpha1.Component) string {
 	return "granted-egress-" + comp.Name
-}
-
-// ensureGrantedEgress keeps, for an app the Composition installs, the
-// outbound rules a person granted on the install, or removes the policy when
-// none is granted.
-//
-// The Composition writes such an app's policies from its requirements
-// (app-internal-<app>, kernel-access-<app>) and knows nothing of grants, and
-// ensureNetworkPolicy, which carries them for an app the operator installs
-// itself, is not asked for it. So a grant was recorded and opened nothing.
-// This policy holds the granted rules and only those: nothing is reachable
-// through it that a named person did not approve, and revoking the grant
-// takes the rule away. It selects the pods by the release the Composition
-// names (helmReleaseOf).
-func (r *ComponentReconciler) ensureGrantedEgress(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
-	granted := security.GrantedEgressRules(profile, comp, time.Now())
-	// And the cluster's own public address where a granted rule admits it,
-	// as for an app the operator installs itself (own_public_address.go).
-	// It follows from a grant, so it is in this policy and goes with it.
-	if own, err := r.ownPublicAddressRule(ctx, granted); err != nil {
-		logf.FromContext(ctx).Info("the edge's public address could not be read; the policy leaves it out",
-			"component", comp.Name, "error", err.Error())
-	} else {
-		granted = append(granted, own...)
-	}
-	key := types.NamespacedName{Name: grantedEgressPolicyName(comp), Namespace: comp.Namespace}
-	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, key, existing)
-	if len(granted) == 0 {
-		if err == nil {
-			return client.IgnoreNotFound(r.Delete(ctx, existing))
-		}
-		return client.IgnoreNotFound(err)
-	}
-	desired := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: componentLabels(comp)},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{componentInstanceLabel: helmReleaseOf(comp, profile)},
-			},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress:      granted,
-		},
-	}
-	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
-		return err
-	}
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return fmt.Errorf("create NetworkPolicy %s: %w", desired.Name, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Spec, existing.Labels = desired.Spec, desired.Labels
-	if err := r.Patch(ctx, existing, patch); err != nil {
-		return fmt.Errorf("patch NetworkPolicy %s: %w", desired.Name, err)
-	}
-	return nil
 }
 
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
+//
+// Whoever delivers the chart: the app Composition writes an app's policies
+// from the requirements it fulfils (app-internal-<app>, kernel-access-<app>)
+// and knows nothing of what this reconciler wires -- the realm for a partner
+// app, the control namespace, the rights check, granted privileges -- so a
+// composed app without this policy reached none of them.
 //
 // modelGateway says the component's key at the model gateway is delivered
 // (modelAccessFor): only then is the gateway's port opened to it.
@@ -251,7 +200,17 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 			"component", comp.Name, "error", err.Error())
 		own = nil
 	}
-	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
+	// The policy that held a composed app's granted rules on their own; they
+	// are in this one now.
+	legacy := &networkingv1.NetworkPolicy{}
+	if err := r.Get(ctx, types.NamespacedName{Name: legacyGrantedEgressPolicyName(comp), Namespace: comp.Namespace}, legacy); err == nil {
+		if err := r.Delete(ctx, legacy); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete NetworkPolicy %s: %w", legacy.Name, err)
+		}
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+	desired := buildComponentNetworkPolicy(comp, helmReleaseOf(comp, profile), r.componentEgressNamespaces(profile, tenant),
 		append(rules, own...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
