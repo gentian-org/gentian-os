@@ -185,7 +185,12 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	_ = unstructured.SetNestedField(old.Object, "xwiki-ce", "spec", "profileRef", "name")
 	_ = unstructured.SetNestedField(old.Object, "kept-by-crossplane", "spec", "resourceRef", "name")
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(old).Build()
+	// The addon's profile says what Odoo calls it: the claim carries that.
+	base := profileFixture("odoo-base-ce", false, gentianov1alpha1.ComponentClassApp)
+	crm := profileFixture("crm-ce", false, gentianov1alpha1.ComponentClassApp)
+	crm.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{ID: "crm", Of: "odoo-base-ce"}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(old, base, crm).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel"}
 	zone := edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}
 
@@ -228,7 +233,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	if got, _, _ := unstructured.NestedString(otherClaim.Object, "spec", "realm"); got != "acme-people" {
 		t.Errorf("realm of a tenant that names one = %q", got)
 	}
-	if addons, _, _ := unstructured.NestedStringSlice(spec, "addons"); strings.Join(addons, " ") != "crm-ce" {
+	if addons, _, _ := unstructured.NestedStringSlice(spec, "addons"); strings.Join(addons, " ") != "crm" {
 		t.Errorf("addons = %v", addons)
 	}
 	if n, _, _ := unstructured.NestedInt64(spec, "config", "replicas"); n != 3 {
@@ -387,5 +392,37 @@ func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
 	}
 	if get("openproject").Spec.Class != gentianov1alpha1.ComponentClassApp {
 		t.Fatal("an instance whose class was read from its profile was replaced")
+	}
+}
+
+// The claim names addons by what the app calls them, not by their profiles:
+// the Composition matches the base's addonValues on these ids and hands them
+// to its activation script. With profile names Nextcloud was asked to enable
+// "nextcloud-calendar-ce", and the richdocuments overlay that starts
+// Collabora never matched. An addon whose profile is not there is left out.
+func TestTheAppClaimNamesAddonsByWhatTheAppCallsThem(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace, comp.UID = "nextcloud-base-ce", tenantNamespaceName(tenant), "uid-nc"
+	comp.Spec.ProfileRef.Name = "nextcloud-base-ce"
+	comp.Spec.Addons = []string{"nextcloud-calendar-ce", "nextcloud-gone-ce"}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(nextcloudBaseProfile(), calendarAddonProfile()).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel"}
+	zone := edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}
+	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", "", false, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	claim := &unstructured.Unstructured{}
+	claim.SetGroupVersionKind(appClaimGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim); err != nil {
+		t.Fatal(err)
+	}
+	if addons, _, _ := unstructured.NestedStringSlice(claim.Object, "spec", "addons"); strings.Join(addons, " ") != "calendar" {
+		t.Fatalf("addons = %v, want [calendar]", addons)
 	}
 }
