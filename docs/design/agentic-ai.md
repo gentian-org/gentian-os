@@ -466,8 +466,6 @@ With `gpuAcceleration` true, each entry of `spec.llm.instances` (name,
 `imageTag`, `toolCallParser`) is a `vllm-<name>-inference` Deployment, Service
 and PVC (`kernel/services/llm/manifests/templates/vllm.yaml`) and a model of
 the gateway, delivered by the same ApplicationSet ([llms.md](llms.md) §6).
-How a card is shared is the GPU operator's configuration, installed outside
-the platform.
 
 What an instance needs:
 

@@ -1268,7 +1268,6 @@ mappers and flow, nor the broker client is made any more
   - `[x]` An Application that delivers the instances from the claim, with `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`, `imageTag` and `toolCallParser`.
   - `[x]` A NetworkPolicy for an instance's pods, and the pod settings the admission baseline requires.
   - `[x]` A named release of the vLLM image in place of the default `latest`.
-  - `[x]` Decide who owns GPU time slicing: the GPU operator, installed outside the platform; the claim has no field for it.
   - `[ ]` Decide where the Hugging Face token for gated models is kept.
   - `[ ]` A report when a provider's token is missing, refused, or its endpoint cannot be reached from the cluster, in place of a failing call.
   - `[ ]` Serve a model on a cluster with a GPU and call it with an app's key.
