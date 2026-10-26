@@ -84,7 +84,10 @@ own chart. Nextcloud calls it `nextcloud.mail.smtp.host`, OpenProject
 `environment.OPENPROJECT_SMTP__ADDRESS`. Only the packager knows that, and it is
 the whole of what they must supply. The values then reach the chart as
 `secretKeyRef` entries into a Secret the app never names, so a cluster can move
-from in-cluster Postfix to a relay and no profile changes.
+from in-cluster Postfix to a relay and no profile changes. Mail is optional: an
+SMTP value the cluster has not got (a relay without credentials) is left unset
+rather than blocking the install, so the chart's own default must mean "no
+mail", and the value arrives on the next sync once it exists.
 
 The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
 
