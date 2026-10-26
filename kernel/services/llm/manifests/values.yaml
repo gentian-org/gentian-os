@@ -17,10 +17,10 @@ env: dev
 #   gpuAcceleration  false runs the mock model server, so that the gateway's
 #                    namespace has a model server at all on a cluster without
 #                    GPUs. The mock is not a model the gateway offers.
-#   instances        with gpuAcceleration true, one model of the gateway each,
-#                    addressed at the Service a vLLM instance of that name has
-#                    in this namespace (vllm-<name>-inference, port 8000).
-#                    This chart does not start that instance.
+#   instances        with gpuAcceleration true, one vLLM instance each
+#                    (templates/vllm.yaml) and one model of the gateway each,
+#                    addressed at that instance's Service in this namespace
+#                    (vllm-<name>-inference, port 8000).
 #   providers        one model of the gateway per entry of a provider's models,
 #                    named <provider>/<model name>, and the ExternalSecret for
 #                    the providers' tokens when the list is not empty.
@@ -97,6 +97,8 @@ networkPolicy:
     redis: 6379
     # The mock model server.
     mock: 8000
+    # A vLLM instance (templates/vllm.yaml).
+    vllm: 8000
   namespaces:
     # The operator's.
     control: kernel-control

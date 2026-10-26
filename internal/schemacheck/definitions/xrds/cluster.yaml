@@ -788,17 +788,15 @@ spec:
                       type: array
                       description: >
                         The models this cluster serves on its own GPUs, one
-                        vLLM instance each. The model gateway offers a model
+                        vLLM instance each, which the platform runs in the
+                        gateway's namespace. The model gateway offers a model
                         per entry, named after modelId in lower case with "/"
                         as "-" (Qwen/Qwen2.5-7B-Instruct is
                         qwen-qwen2.5-7b-instruct), and calls it at the Service
                         vllm-<name>-inference, port 8000, in the gateway's
                         namespace. Removing an entry removes the model from
-                        the gateway.
-
-                        The platform does not start the instance itself: the
-                        vLLM workload behind that Service has to be running
-                        for the model to answer.
+                        the gateway and stops its instance; the instance's
+                        cached weights are kept.
 
                         Read only when gpuAcceleration is true. An empty list is
                         a CPU-only cluster, which is the default.

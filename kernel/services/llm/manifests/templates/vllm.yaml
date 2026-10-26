@@ -1,25 +1,35 @@
 {{- /*
-One PVC, Deployment and Service per entry in .Values.instances.
+The models this cluster serves on its own GPUs: one PVC, Deployment and
+Service per entry of the Cluster claim's spec.llm.instances, rendered only
+when spec.llm.gpuAcceleration is true. The gateway offers the same entries
+(gateway-config.yaml) and calls each at the Service named here, so a claim
+that lists an instance gets both the model and the server behind it.
 
-The loop is the point. This was a .tmpl rendered once per instance by sed, in a
-bash loop, followed by prune_stale_vllm_instances to delete what the loop no
-longer produced — because `kubectl apply` cannot remove what it was not given.
-Helm tracks the release, so removing an instance from values removes its
-objects, and the prune has no work left to do.
+Removing an entry removes its Deployment and Service with the next sync. The
+PVC is annotated to be kept, so a cached model survives and a re-added
+instance picks it back up.
+
+The pod meets the kernel's admission baseline like every other pod of the
+system tier: a user that is not root, a seccomp profile, no privilege
+escalation, no capabilities. vLLM's image runs as root and caches under
+/root by default; HOME and HF_HOME point it at the volume instead, which
+fsGroup makes the pod's to write.
 */ -}}
-{{- range $i := .Values.instances }}
+{{- if eq (toString .Values.spec.llm.gpuAcceleration) "true" }}
+{{- range $i := .Values.spec.llm.instances }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: vllm-{{ $i.name }}-model-cache
-  namespace: system-llm
+  namespace: {{ $.Values.servicesNamespace }}
   annotations:
     # Kept when an instance is removed. A cached model is tens of GB and many
-    # minutes to redownload, so re-adding the same instance id picks the cache
-    # back up. Delete by hand to reclaim the disk:
-    #   kubectl delete pvc -n system-llm -l gentianos.io/vllm-instance=<id>
+    # minutes to redownload, so re-adding the same instance name picks the
+    # cache back up. Delete by hand to reclaim the disk:
+    #   kubectl delete pvc -n system-llm -l gentianos.io/vllm-instance=<name>
     helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Delete=false
   labels:
     app.kubernetes.io/component: vllm-instance
     gentianos.io/vllm-instance: "{{ $i.name }}"
@@ -27,22 +37,21 @@ spec:
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
-      # HF model caches run 15-40GB per 7-8B model; bump (VLLM_<INSTANCE>_MODEL_CACHE_SIZE)
-      # for a larger model.
+      # A Hugging Face cache runs 15-40GB per 7-8B model.
       storage: {{ $i.modelCacheSize | default "60Gi" }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vllm-{{ $i.name }}-inference
-  namespace: system-llm
+  namespace: {{ $.Values.servicesNamespace }}
   labels:
     app.kubernetes.io/component: vllm-instance
     gentianos.io/vllm-instance: "{{ $i.name }}"
 spec:
   replicas: 1
   strategy:
-    type: Recreate # only one GPU slice budget is planned per replica; avoid two pods racing for it mid-rollout
+    type: Recreate # one GPU slice per replica; two pods must not race for it mid-rollout
   selector:
     matchLabels:
       app: vllm-{{ $i.name }}-inference
@@ -55,9 +64,20 @@ spec:
     spec:
       nodeSelector:
         nvidia.com/gpu.present: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: vllm-server
         image: vllm/vllm-openai:{{ $i.imageTag | default "latest" }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -72,29 +92,31 @@ spec:
               --enable-prefix-caching \
               ${TOOL_CALL_ARGS}
         env:
-        # Which model to swap in is cluster instance data (cluster-settings.env),
-        # not a gentian-os default — see the header comment above. Gated models
-        # (e.g. Llama) additionally need HUGGING_FACE_HUB_TOKEN below (create the
-        # vllm-hf-token Secret first — see agentic-ai.md §10.2; shared across
-        # every instance — one HF account token covers whatever it's licensed for).
+        # Every cache vLLM, Hugging Face, Triton and PyTorch write lives under
+        # HOME; HF_HOME is named too, because the image sets it to /root.
+        - name: HOME
+          value: /cache
+        - name: HF_HOME
+          value: /cache/huggingface
+        # The uid has no passwd entry in the image; PyTorch asks for a user
+        # name (getpass.getuser) and reads this before the passwd file.
+        - name: USER
+          value: vllm
         - name: VLLM_MODEL_ID
           value: "{{ $i.modelId }}"
-        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml.tmpl)
-        # and how many OTHER instances/workloads share the same card(s) — stay
-        # well under 1.0, and under what's left after every other instance's
-        # own budget, so this pod doesn't starve/OOM its neighbors.
+        # Stay well under 1.0, and under what is left after every other
+        # workload sharing the card, so this pod does not starve its neighbours.
         - name: VLLM_GPU_MEMORY_UTILIZATION
           value: "{{ $i.gpuMemoryUtilization | default "0.85" }}"
         - name: VLLM_MAX_MODEL_LEN
           value: "{{ $i.maxModelLen | default "8192" }}"
-        # Empty (default) disables tool calling entirely -- matches vLLM's
-        # own default and today's behaviour for every existing instance.
-        # The correct value is model-family-specific (e.g. "hermes" for
-        # Qwen2/Qwen2.5/Hermes-family models, "mistral" for Mistral,
-        # "llama3_json" for Llama 3) -- see vLLM's tool-calling docs for
-        # the model you're actually serving before setting this.
+        # Empty disables tool calling, vLLM's own default. The value is
+        # model-family-specific: "hermes" for Qwen2/Qwen2.5, "mistral" for
+        # Mistral, "llama3_json" for Llama 3.
         - name: VLLM_TOOL_CALL_PARSER
           value: "{{ $i.toolCallParser | default "" }}"
+        # Gated models (Llama) need a Hugging Face token: the Secret
+        # vllm-hf-token, one for every instance.
         - name: HUGGING_FACE_HUB_TOKEN
           valueFrom:
             secretKeyRef:
@@ -113,8 +135,12 @@ spec:
             memory: 8Gi
         volumeMounts:
         - name: model-cache
-          mountPath: /root/.cache/huggingface
-        # Model download + weight load can take minutes on first pull.
+          mountPath: /cache
+        # PyTorch's workers share tensors through /dev/shm, which a
+        # container gets at 64Mi unless it is given one.
+        - name: shm
+          mountPath: /dev/shm
+        # Model download and weight load take minutes on the first start.
         startupProbe:
           httpGet:
             path: /health
@@ -131,12 +157,16 @@ spec:
       - name: model-cache
         persistentVolumeClaim:
           claimName: vllm-{{ $i.name }}-model-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: vllm-{{ $i.name }}-inference
-  namespace: system-llm
+  namespace: {{ $.Values.servicesNamespace }}
   labels:
     app.kubernetes.io/component: vllm-instance
     gentianos.io/vllm-instance: "{{ $i.name }}"
@@ -146,4 +176,5 @@ spec:
     targetPort: 8000
   selector:
     app: vllm-{{ $i.name }}-inference
+{{- end }}
 {{- end }}

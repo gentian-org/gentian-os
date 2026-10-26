@@ -1788,9 +1788,8 @@ _claim_cluster_fields() {
         else
             printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         fi
-        printf '    # The models this cluster serves on its own GPUs. The gateway offers\n'
-        printf '    # one model per entry; the platform does not start the vLLM instance\n'
-        printf '    # behind it yet, so run one before listing it here.\n'
+        printf '    # The models this cluster serves on its own GPUs: one vLLM instance\n'
+        printf '    # and one model of the gateway per entry.\n'
         printf '    instances: []\n'
         printf '    #  - name: qwen\n'
         printf '    #    modelId: Qwen/Qwen2.5-7B-Instruct\n'

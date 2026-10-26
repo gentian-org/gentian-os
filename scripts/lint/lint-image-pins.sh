@@ -45,7 +45,7 @@ DIGEST_REQUIRED=(
 #   vllm.yaml  the model server of a GPU cluster; its tag comes from the
 #              claim's llm.instances[].imageTag and falls back to latest.
 KNOWN_LATEST=(
-    'kernel/services/llm/chart/templates/vllm.yaml:default "latest"'
+    'kernel/services/llm/manifests/templates/vllm.yaml:default "latest"'
 )
 
 _known_latest() {
