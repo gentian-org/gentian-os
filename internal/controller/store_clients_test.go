@@ -169,17 +169,17 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 					Database: &gentianov1alpha1.DatabaseRequirement{}}},
 			}}
 			r := &ComponentReconciler{KernelRealm: "kernel"}
-			np := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant), nil)
+			np := buildComponentNetworkPolicy(comp, releaseName(comp), r.componentEgressNamespaces(profile, tenant), nil)
 			return egressClient(t, np, layout.System("postgresql"), provisioner.PostgresPort)
 		},
 		"tenant-component-llm": func(t *testing.T) builtClient {
 			comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenant.NamespaceName()}}
-			np := buildComponentNetworkPolicy(comp, nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
+			np := buildComponentNetworkPolicy(comp, releaseName(comp), nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
 			return egressClient(t, np, layout.System("llm"), provisioner.ModelGatewayPort)
 		},
 		"kernel-realm-desktop-llm": func(t *testing.T) builtClient {
 			comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: "tenant-platform"}}
-			np := buildComponentNetworkPolicy(comp, nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
+			np := buildComponentNetworkPolicy(comp, releaseName(comp), nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
 			return egressClient(t, np, layout.System("llm"), provisioner.ModelGatewayPort)
 		},
 		"postgres-role-job":      job(makeRoleJob(tenant, tenant.NamespaceName(), "acme_wiki", "wiki", false, "", false)),

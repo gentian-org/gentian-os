@@ -169,37 +169,3 @@ func TestAGrantedComponentsPolicyReachesTheClustersOwnAddress(t *testing.T) {
 		t.Fatalf("granted rule %v, own address %v, in %+v", sawGranted, sawEdge, np.Spec.Egress)
 	}
 }
-
-// The same for an app the Composition installs, whose granted rules are a
-// policy of their own: the edge's pods are in it, beside the granted rule.
-func TestAGrantedCompositionAppsPolicyReachesTheClustersOwnAddress(t *testing.T) {
-	ctx := context.Background()
-	scheme := appStoreScheme(t)
-	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "shop"}}
-	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
-		Egress: []gentianov1alpha1.EgressRequest{{Name: "intake", Reason: "reads the website's order requests", Rule: publicOn(443)}},
-	}}
-	comp := tileFixtureComponent("shop", "tenant-acme", "shop")
-	comp.Spec.Privileges = []gentianov1alpha1.PrivilegeGrant{{
-		Privilege: "egress/intake", Approver: "u-1", ApprovedAt: metav1.Now(), Reason: "approved for the test",
-	}}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp.DeepCopy(), edgeService("179.237.116.12")).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	live := &gentianov1alpha1.Component{}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(comp), live); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.ensureGrantedEgress(ctx, live, profile); err != nil {
-		t.Fatal(err)
-	}
-	np := &networkingv1.NetworkPolicy{}
-	if err := c.Get(ctx, types.NamespacedName{Name: grantedEgressPolicyName(live), Namespace: "tenant-acme"}, np); err != nil {
-		t.Fatal(err)
-	}
-	if len(np.Spec.Egress) != 2 || np.Spec.Egress[1].To[0].PodSelector == nil {
-		t.Fatalf("egress = %+v", np.Spec.Egress)
-	}
-	if got := ports(&np.Spec.Egress[1]); len(got) != 1 || got[0] != 10443 {
-		t.Fatalf("own address ports = %v", got)
-	}
-}

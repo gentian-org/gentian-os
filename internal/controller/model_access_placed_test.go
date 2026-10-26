@@ -143,7 +143,7 @@ func TestAPlacedComponentThatDeclaresTheModelGatewayIsServed(t *testing.T) {
 		t.Error("the key is among the release values")
 	}
 
-	np := buildComponentNetworkPolicy(comp, nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
+	np := buildComponentNetworkPolicy(comp, releaseName(comp), nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
 	if len(np.Spec.Egress) != 1 {
 		t.Fatalf("egress = %+v", np.Spec.Egress)
 	}
