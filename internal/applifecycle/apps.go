@@ -507,7 +507,8 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 			"in a tenant puts its profile back -- then uninstall it here if it was installed here, and purge",
 			ErrProfileMissing, profile, tenantName, profile)
 	}
-	if err := s.waitForAppGone(ctx, tenant, profile, cp, purgeWait); err != nil {
+	uninstalling, err := s.waitForAppGone(ctx, tenant, profile, cp, purgeWait)
+	if err != nil {
 		return nil, err
 	}
 	// Everything that can be known beforehand about whether the purge can
@@ -525,8 +526,36 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 	if err != nil {
 		return nil, err
 	}
+	if uninstalling {
+		if err := s.finishUninstall(ctx, tenant, profile, cp, destroyed); err != nil {
+			return nil, err
+		}
+	}
 	return &Result{Status: "purged", Tenant: tenantName, Profile: profile, Purged: true,
 		Complete: ptr(true), Destroyed: destroyed, Message: "purged by " + actor}, nil
+}
+
+// remnants is what is still on the cluster of an app's workloads.
+type remnants struct {
+	components, releases, composed []string
+	// orphaned says every composed leftover's composite is gone.
+	orphaned bool
+}
+
+func (r remnants) all() []string {
+	out := append(append(append([]string{}, r.components...), r.releases...), r.composed...)
+	return out
+}
+
+// beingUninstalled says that all that is left is the app's Helm release
+// being uninstalled by what its composite composed, after the composite and
+// the Component went. Nothing of the app's is installed any more, and nothing
+// will be again under these resources: the purge need not wait for the
+// provider to get round to it before destroying the data. A provider that is
+// still waiting out an upgrade of the broken release (wait: true) does not get
+// to the deletion until that wait times out, which is minutes.
+func (r remnants) beingUninstalled() bool {
+	return len(r.components) == 0 && len(r.composed) > 0 && r.orphaned
 }
 
 // appRemnants names what is still on the cluster of an app's workloads: its
@@ -540,25 +569,25 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 // -- is there until `helm uninstall` has finished, and the release names are
 // the app's own (backup.AppRelease and its neighbours), so that record is
 // what says whether the workloads are gone.
-func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile) ([]string, error) {
+func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile) (remnants, error) {
 	ns := tenantNamespace(tenant)
-	var left []string
+	left := remnants{orphaned: true}
 	var list gentianov1alpha1.ComponentList
 	if err := s.client.List(ctx, &list, client.InNamespace(ns)); err != nil {
-		return nil, fmt.Errorf("list components: %w", err)
+		return left, fmt.Errorf("list components: %w", err)
 	}
 	for i := range list.Items {
 		if list.Items[i].Spec.ProfileRef.Name == profile {
-			left = append(left, "component "+list.Items[i].Name)
+			left.components = append(left.components, "component "+list.Items[i].Name)
 		}
 	}
 	releases, err := s.helmReleases(ctx, ns)
 	if err != nil {
-		return nil, err
+		return left, err
 	}
 	for _, release := range releases {
 		if ownsRelease(tenant, profile, cp, release) {
-			left = append(left, "Helm release "+release)
+			left.releases = append(left.releases, "Helm release "+release)
 		}
 	}
 	// What the app's composites composed and left when they went: a Release
@@ -568,13 +597,14 @@ func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tena
 	// with its own deletion policy, which uninstalls what it manages.
 	leftovers, err := composed.Find(ctx, s.client, ns, profile, "")
 	if err != nil {
-		return nil, err
+		return left, err
 	}
 	for _, l := range leftovers {
 		if _, err := composed.Remove(ctx, s.client, l, false); err != nil {
-			return nil, err
+			return left, err
 		}
-		left = append(left, "composed "+l.String())
+		left.composed = append(left.composed, "composed "+l.String())
+		left.orphaned = left.orphaned && l.Orphaned
 	}
 	return left, nil
 }
@@ -611,26 +641,63 @@ func (s *Service) helmReleases(ctx context.Context, ns string) ([]string, error)
 const helmReleaseSecretType = corev1.SecretType("helm.sh/release.v1")
 
 // waitForAppGone blocks until nothing of the app's workloads is left in the
-// tenant's namespace.
-func (s *Service) waitForAppGone(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile, timeout time.Duration) error {
+// tenant's namespace. uninstalling says the wait ended with the app's Helm
+// release still being uninstalled by what its gone composite composed
+// (remnants.beingUninstalled): the purge goes ahead, and finishUninstall
+// waits for the rest before it reports.
+func (s *Service) waitForAppGone(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile, timeout time.Duration) (uninstalling bool, err error) {
 	tenantName := tenant.Name
 	deadline := time.Now().Add(timeout)
 	for {
 		left, err := s.appRemnants(ctx, tenant, profile, cp)
 		if err != nil {
-			return err
+			return false, err
 		}
-		if len(left) == 0 {
-			return nil
+		if len(left.all()) == 0 {
+			return false, nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: %s in %s (%s); nothing was destroyed — purge it once it is gone",
-				ErrStillRemoving, profile, tenantName, strings.Join(left, ", "))
+			if left.beingUninstalled() {
+				return true, nil
+			}
+			return false, fmt.Errorf("%w: %s in %s (%s); nothing was destroyed — purge it once it is gone",
+				ErrStillRemoving, profile, tenantName, strings.Join(left.all(), ", "))
 		}
 		if err := wait(ctx); err != nil {
-			return err
+			return false, err
 		}
 	}
+}
+
+// finishUninstall waits, within what is left of the purge's budget, for the
+// app's Helm release to be uninstalled after the purge destroyed its data,
+// and then deletes the volume claims once more: the release's provider may
+// have rolled the release back while it was being purged, which puts back a
+// claim the purge had deleted, and the uninstall keeps a claim marked to be
+// kept. A purge is reported done only when nothing of the app is left; one
+// that runs out of time says so, and asking again finishes it.
+func (s *Service) finishUninstall(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile, destroyed []string) error {
+	fail := func(err error) error {
+		return &PurgeError{Tenant: tenant.Name, Profile: profile, Step: KindWorkloads,
+			Destroyed: destroyed, Err: err}
+	}
+	for {
+		left, err := s.appRemnants(ctx, tenant, profile, cp)
+		if err != nil {
+			return fail(err)
+		}
+		if len(left.all()) == 0 {
+			break
+		}
+		if err := wait(ctx); err != nil {
+			return fail(fmt.Errorf("its Helm release is still being uninstalled (%s) after %s: %w",
+				strings.Join(left.all(), ", "), purgeBudget, err))
+		}
+	}
+	if err := s.purgePVCs(ctx, tenant, profile, cp); err != nil {
+		return &PurgeError{Tenant: tenant.Name, Profile: profile, Step: KindFiles, Destroyed: destroyed, Err: err}
+	}
+	return nil
 }
 
 // ProvisionApp grants an installed app to everybody who is already a member

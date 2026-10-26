@@ -1142,11 +1142,15 @@ func TestAPurgeRemovesTheAppsLeftoverClients(t *testing.T) {
 
 // A Release the app's composite left composed when it went -- an install cut
 // short leaves one stuck on an unfinished create, which its provider never
-// deletes -- holds the purge back like a release still being uninstalled.
-// The purge does not wait for nothing: it unblocks and deletes the leftover,
-// with its own policy so its Helm release goes too, and refuses with
-// everything in place until it is gone. Once it is, the purge completes.
-func TestAPurgeRemovesWhatTheAppsCompositeLeftComposed(t *testing.T) {
+// deletes; a broken release leaves one whose provider is still waiting out an
+// upgrade -- is unblocked and deleted with its own policy, so its Helm release
+// goes too. The app is out of the tenant by then, so the purge does not wait
+// minutes for the provider before destroying the data. It does wait for the
+// release to be uninstalled before it reports, and deletes the volume claims
+// again once it is: a rollback while the purge ran puts one back, and the
+// uninstall keeps one marked to be kept. Done means nothing of the app left.
+func leftoverRelease(t *testing.T) *unstructured.Unstructured {
+	t.Helper()
 	leftover := &unstructured.Unstructured{}
 	leftover.SetGroupVersionKind(composed.Kinds[0])
 	leftover.SetName("wiki-vkrw4-release")
@@ -1154,13 +1158,81 @@ func TestAPurgeRemovesWhatTheAppsCompositeLeftComposed(t *testing.T) {
 	leftover.SetAnnotations(map[string]string{"crossplane.io/external-create-pending": "2026-10-26T14:44:10Z"})
 	leftover.SetFinalizers([]string{"finalizer.managedresource.crossplane.io"})
 	_ = unstructured.SetNestedField(leftover.Object, "Delete", "spec", "deletionPolicy")
+	return leftover
+}
 
-	w := newPurgeWorld(t, nil, []client.Object{wikiProfile(), leftover})
-	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); !errors.Is(err, ErrStillRemoving) || !strings.Contains(err.Error(), "wiki-vkrw4-release") {
-		t.Fatalf("err = %v, want the leftover holding the purge back", err)
+// providerFinishes is the provider uninstalling the leftover's Helm release:
+// the release record goes, and the Release with it.
+func (w *purgeWorld) providerFinishes(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	if err := w.kube.CoreV1().Secrets("tenant-demo").Delete(ctx, "sh.helm.release.v1.wiki-release.v1", metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		t.Error(err)
 	}
-	if !w.untouched(t) {
-		t.Error("the purge destroyed data beside the leftover")
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(composed.Kinds[0])
+	if err := w.objs.Get(ctx, client.ObjectKey{Name: "wiki-vkrw4-release"}, got); err != nil {
+		t.Error(err)
+		return
+	}
+	got.SetFinalizers(nil)
+	if err := w.objs.Update(ctx, got); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestAPurgeRemovesWhatTheAppsCompositeLeftComposed(t *testing.T) {
+	// The order seen on a cluster: the composite is gone, its Release is
+	// still there, deleting, and the Helm release with it.
+	w := newPurgeWorld(t, nil, []client.Object{wikiProfile(), leftoverRelease(t)}, helmRecord("wiki-release"))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// The provider gets to the deletion only after the purge destroyed
+		// the data, and rolled the release back first: the claim is back.
+		for w.claimExists(t, "wiki-release-data") {
+			time.Sleep(time.Millisecond)
+		}
+		if _, err := w.kube.CoreV1().PersistentVolumeClaims("tenant-demo").Create(context.Background(),
+			keptClaim("wiki-release-data", "wiki-release"), metav1.CreateOptions{}); err != nil {
+			t.Error(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+		w.providerFinishes(t)
+	}()
+	res, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Purged || w.recordExists(t, "wiki") {
+		t.Errorf("the data was not destroyed: %+v", res)
+	}
+	if w.claimExists(t, "wiki-release-data") {
+		t.Error("the purge reported done with a volume claim of the app left")
+	}
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(composed.Kinds[0])
+	if err := w.objs.Get(context.Background(), client.ObjectKey{Name: "wiki-vkrw4-release"}, got); !apierrors.IsNotFound(err) {
+		t.Errorf("the purge reported done with the leftover Release there: %v", err)
+	}
+}
+
+// A provider that has not uninstalled the release within the purge's budget
+// is the purge's failure to report, at the step it stopped: the data is
+// destroyed, the workloads are not gone, and asking again finishes it.
+func TestAPurgeSaysWhenTheReleaseOutlastsIt(t *testing.T) {
+	w := newPurgeWorld(t, nil, []client.Object{wikiProfile(), leftoverRelease(t)}, helmRecord("wiki-release"))
+	purgeBudget = 300 * time.Millisecond
+
+	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+	var perr *PurgeError
+	if !errors.As(err, &perr) || perr.Step != KindWorkloads || !strings.Contains(err.Error(), "wiki-vkrw4-release") {
+		t.Fatalf("err = %v, want the workloads named as what is left", err)
+	}
+	if w.recordExists(t, "wiki") {
+		t.Error("the data was not destroyed before the wait")
 	}
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(composed.Kinds[0])
@@ -1174,11 +1246,8 @@ func TestAPurgeRemovesWhatTheAppsCompositeLeftComposed(t *testing.T) {
 		t.Error("the unfinished create was not unblocked, so its provider never deletes it")
 	}
 
-	// The provider finishes with it.
-	got.SetFinalizers(nil)
-	if err := w.objs.Update(context.Background(), got); err != nil {
-		t.Fatal(err)
-	}
+	w.providerFinishes(t)
+	purgeBudget = 5 * time.Second
 	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
 		t.Fatal(err)
 	}
