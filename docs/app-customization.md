@@ -1267,6 +1267,16 @@ addon is activated only from a
 profile shown to be that build, and its base is held as it runs until it is.
 See [design/store-contract.md](design/store-contract.md) §3 and §4.
 
+An addon is **entitled on its own**: its group is
+`gentian:tenant:<t>:app:<addon>` and its tile asks `can_launch` on
+`app:<t>/<addon>`. An addon for everyone is listed in
+`Tenant.spec.apps[].addonGrants` (`name`, `defaultGrant: true`) and is granted
+once per install like an app's `defaultGrant`; any other addon is given per
+person. The director's `PUT .../apps/{p}/addons` takes `"defaultGrant"` on an
+object entry (`{coordinate, digest, defaultGrant}` or `{name, defaultGrant}`),
+and needs `can_grant` for `true`. An addon installed with its app takes the
+app's choice; one added later is asked for on its own.
+
 **Editions** are `ce · me · ie · pe · ee`, and say *who maintains and supports
 the entry*, not who publishes it:
 

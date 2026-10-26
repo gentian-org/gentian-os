@@ -938,6 +938,50 @@ type TenantApp struct {
 	// Absent or false, access is given per person.
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
+
+	// AddonGrants says which addons of this app every member of the tenant
+	// has access to by default. An addon is entitled by its own group, as an
+	// app is, and defaultGrant on an entry here is that addon's defaultGrant:
+	// applied once per install, noted with the apps' (status.defaultGrantedApps).
+	// Keyed by the addon's name and beside addons, as addonPins is; an addon
+	// with no entry is given per person. An entry naming an addon that is not
+	// in addons grants nothing.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonGrants []AddonGrant `json:"addonGrants,omitempty"`
+}
+
+// AddonGrant is who has one addon of an app by default.
+type AddonGrant struct {
+	// Name is the addon's profile name, as addons lists it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// DefaultGrant says every member of the tenant has access to this addon
+	// by default, as an app's defaultGrant does for the app.
+	// +optional
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
+}
+
+// AddonDefaultGranted answers whether an addon of this app is declared for
+// everyone: listed in addons and granted by default in addonGrants.
+func (a TenantApp) AddonDefaultGranted(addon string) bool {
+	listed := false
+	for _, name := range a.Addons {
+		listed = listed || name == addon
+	}
+	if !listed {
+		return false
+	}
+	for _, g := range a.AddonGrants {
+		if g.Name == addon && g.DefaultGrant {
+			return true
+		}
+	}
+	return false
 }
 
 // AddonPin is the build one addon was installed from.
@@ -1143,6 +1187,16 @@ type TenantStatus struct {
 	// +optional
 	// +listType=set
 	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
+
+	// AddonGrantsInherited is set once the addons this tenant had before
+	// addons were granted on their own have been given their app's access:
+	// each addon whose group had nobody in it got the app's grant, the
+	// tenant's members when the app is for everyone and the app's group's
+	// members otherwise. Done once per tenant; an addon added afterwards is
+	// granted as it is installed. A migration, to be removed once every
+	// tenant carries it.
+	// +optional
+	AddonGrantsInherited bool `json:"addonGrantsInherited,omitempty"`
 
 	// AppCount is the total number of apps requested in spec.
 	// +optional

@@ -722,6 +722,9 @@ func main() {
 		// with what this service already holds: the same function behind
 		// provision-app, and the same Keycloak credential.
 		tenantReconciler.DefaultGrant = lifecycle.Server.Service.GrantAppByDefault
+		// Once per tenant, the addons installed before an addon had a grant
+		// of its own are given their app's access. A migration.
+		tenantReconciler.InheritAddonGrant = lifecycle.Server.Service.InheritAddonGrant
 		// What the check found, for the director to ask before it commits
 		// and for an operations screen to show.
 		lifecycle.Server.Definitions = definitions

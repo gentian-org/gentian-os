@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -205,5 +206,78 @@ func TestWithoutTheLifecycleServiceTheGrantIsReportedNotRetried(t *testing.T) {
 	}
 	if c := grantCondition(t, tenant); c == nil || c.Status != metav1.ConditionFalse || c.Reason != reasonDefaultGrantNoMeans {
 		t.Fatalf("condition = %+v", c)
+	}
+}
+
+// An addon for everyone is granted on its own, from its own group, and noted
+// beside the apps; an addon of the same app that is not declared is not.
+func TestAnAddonForEveryoneIsGrantedFromItsOwnGroup(t *testing.T) {
+	kc := &groups{people: []string{"ada", "bob"}, members: map[string]map[string]bool{}}
+	kc.exists("cloud")
+	kc.exists("cloud-calendar")
+	kc.exists("cloud-deck")
+	r := &TenantReconciler{DefaultGrant: kc.grant}
+	tenant := grantTenant(gentianov1alpha1.TenantApp{
+		Profile: "cloud", DefaultGrant: true,
+		Addons:      []string{"cloud-calendar", "cloud-deck"},
+		AddonGrants: []gentianov1alpha1.AddonGrant{{Name: "cloud-calendar", DefaultGrant: true}, {Name: "gone", DefaultGrant: true}},
+	})
+	if retry := r.applyDefaultGrants(context.Background(), tenant); retry {
+		t.Fatal("asked to be retried with every group there")
+	}
+	if len(kc.members["cloud-calendar"]) != 2 || len(kc.members["cloud-deck"]) != 0 {
+		t.Fatalf("members = %v, want the declared addon granted and the other not", kc.members)
+	}
+	if got := strings.Join(tenant.Status.DefaultGrantedApps, ","); got != "cloud,cloud-calendar" {
+		t.Fatalf("noted %q, want the app and its addon", got)
+	}
+
+	// Switched off, the addon's note goes, so switching it on again grants it again.
+	tenant.Spec.Apps[0].Addons = []string{"cloud-deck"}
+	r.applyDefaultGrants(context.Background(), tenant)
+	if got := strings.Join(tenant.Status.DefaultGrantedApps, ","); got != "cloud" {
+		t.Fatalf("noted %q after the addon was switched off", got)
+	}
+}
+
+// The addons a tenant had before addons were granted on their own get their
+// app's access once: each call names the app and whether it is for everyone,
+// an addon declared for everyone is left to the default grant, and the note
+// is set only once nothing failed.
+func TestAddonsInstalledBeforeGetTheirAppsAccessOnce(t *testing.T) {
+	type call struct {
+		app, addon string
+		everyone   bool
+	}
+	var calls []call
+	fail := errors.New("keycloak is away")
+	var err error
+	r := &TenantReconciler{InheritAddonGrant: func(_ context.Context, _, app, addon string, everyone bool) (bool, error) {
+		calls = append(calls, call{app, addon, everyone})
+		return err == nil, err
+	}}
+	tenant := grantTenant(
+		gentianov1alpha1.TenantApp{Profile: "cloud", DefaultGrant: true, Addons: []string{"cloud-calendar", "cloud-deck"},
+			AddonGrants: []gentianov1alpha1.AddonGrant{{Name: "cloud-deck", DefaultGrant: true}}},
+		gentianov1alpha1.TenantApp{Profile: "erp", Addons: []string{"erp-crm"}},
+	)
+
+	err = fail
+	if retry := r.inheritAddonGrants(context.Background(), tenant); !retry || tenant.Status.AddonGrantsInherited {
+		t.Fatalf("a failed migration: retry=%v noted=%v", retry, tenant.Status.AddonGrantsInherited)
+	}
+	err = nil
+	calls = nil
+	if retry := r.inheritAddonGrants(context.Background(), tenant); retry || !tenant.Status.AddonGrantsInherited {
+		t.Fatalf("a migration that went through: retry=%v noted=%v", retry, tenant.Status.AddonGrantsInherited)
+	}
+	want := []call{{"cloud", "cloud-calendar", true}, {"erp", "erp-crm", false}}
+	if fmt.Sprint(calls) != fmt.Sprint(want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	calls = nil
+	r.inheritAddonGrants(context.Background(), tenant)
+	if len(calls) != 0 {
+		t.Fatalf("the migration ran again: %v", calls)
 	}
 }

@@ -874,7 +874,7 @@ may open it are facts the cluster holds.
 
 ```
 director   GET /v1/tenants/{t}/apps                  installed profiles, their digests, their addons and each addon's pin
-director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, and addonPins: {name, digest, catalogue} for each that is pinned
+director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, addonPins: {name, digest, catalogue} for each that is pinned, and addonGrants: {name, defaultGrant} for each that is for everyone
 usher      GET /v1/tenants/{t}/apps/status           what the cluster made of them
 usher      GET /v1/tenants/{t}/apps/retained         which uninstalled apps still hold data
 usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it

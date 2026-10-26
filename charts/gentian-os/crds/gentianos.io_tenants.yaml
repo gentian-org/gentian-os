@@ -84,6 +84,38 @@ spec:
                   description: TenantApp specifies a desired application installation
                     for a tenant.
                   properties:
+                    addonGrants:
+                      description: |-
+                        AddonGrants says which addons of this app every member of the tenant
+                        has access to by default. An addon is entitled by its own group, as an
+                        app is, and defaultGrant on an entry here is that addon's defaultGrant:
+                        applied once per install, noted with the apps' (status.defaultGrantedApps).
+                        Keyed by the addon's name and beside addons, as addonPins is; an addon
+                        with no entry is given per person. An entry naming an addon that is not
+                        in addons grants nothing.
+                      items:
+                        description: AddonGrant is who has one addon of an app by
+                          default.
+                        properties:
+                          defaultGrant:
+                            description: |-
+                              DefaultGrant says every member of the tenant has access to this addon
+                              by default, as an app's defaultGrant does for the app.
+                            type: boolean
+                          name:
+                            description: Name is the addon's profile name, as addons
+                              lists it.
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      maxItems: 128
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                     addonPins:
                       description: |-
                         AddonPins pins addons of this app to the build each was installed
@@ -1269,6 +1301,16 @@ spec:
           status:
             description: TenantStatus holds the observed state of a Tenant.
             properties:
+              addonGrantsInherited:
+                description: |-
+                  AddonGrantsInherited is set once the addons this tenant had before
+                  addons were granted on their own have been given their app's access:
+                  each addon whose group had nobody in it got the app's grant, the
+                  tenant's members when the app is for everyone and the app's group's
+                  members otherwise. Done once per tenant; an addon added afterwards is
+                  granted as it is installed. A migration, to be removed once every
+                  tenant carries it.
+                type: boolean
               adminEmail:
                 description: |-
                   AdminEmail is the resolved contact address for this tenant, and the

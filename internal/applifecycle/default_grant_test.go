@@ -71,6 +71,15 @@ func (k *realm) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			out = append(out, map[string]any{"id": u, "username": u, "enabled": true})
 		}
 		answer(out)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, base+"/groups/id-") && strings.HasSuffix(path, "/members"):
+		name := strings.TrimSuffix(strings.TrimPrefix(path, base+"/groups/id-"), "/members")
+		out := []map[string]any{}
+		if r.URL.Query().Get("first") == "" || r.URL.Query().Get("first") == "0" {
+			for _, u := range k.members[name] {
+				out = append(out, map[string]any{"id": u, "username": u, "enabled": true})
+			}
+		}
+		answer(out)
 	case strings.HasPrefix(path, base+"/groups/id-"):
 		name := strings.TrimPrefix(path, base+"/groups/id-")
 		if r.Method == http.MethodPut {

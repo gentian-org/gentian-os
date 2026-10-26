@@ -39,6 +39,9 @@ import (
 // The note is dropped when the app is uninstalled or stops declaring the
 // grant, so installing it again, or declaring the grant again, applies it
 // again: once per install, not once per name.
+//
+// An addon is granted the same way and on its own: its group is its own,
+// and spec.apps[].addonGrants says which addons are for everyone.
 
 const (
 	// conditionDefaultGrantsApplied says whether every app declaring
@@ -73,10 +76,24 @@ func (r *TenantReconciler) applyDefaultGrants(ctx context.Context, tenant *genti
 
 	declared := map[string]bool{}
 	var wanted []string
+	want := func(profile string) {
+		if profile != "" && !declared[profile] {
+			declared[profile] = true
+			wanted = append(wanted, profile)
+		}
+	}
 	for _, app := range tenant.Spec.Apps {
-		if app.DefaultGrant && app.Profile != "" && !declared[app.Profile] {
-			declared[app.Profile] = true
-			wanted = append(wanted, app.Profile)
+		if app.DefaultGrant {
+			want(app.Profile)
+		}
+		// An addon is entitled by its own group, and granted by default on
+		// its own (spec.apps[].addonGrants): noted beside the apps, by the
+		// addon's name, and dropped as an app's note is when the addon is
+		// switched off or no longer declares it.
+		for _, addon := range app.Addons {
+			if app.AddonDefaultGranted(addon) {
+				want(addon)
+			}
 		}
 	}
 
