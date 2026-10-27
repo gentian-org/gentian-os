@@ -101,6 +101,8 @@ spec:
     kubernetes:
       envoyDeployment:
         replicas: {{ .Values.envoy.replicas }}
+        container:
+          image: {{ .Values.envoy.image | quote }}
         pod:
           topologySpreadConstraints:
             # ScheduleAnyway: a hard constraint on a one-node or cordoned

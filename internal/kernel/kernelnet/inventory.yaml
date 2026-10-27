@@ -52,7 +52,7 @@ peers:
     namespace: kernel-edge
     podLabels: {app.kubernetes.io/name: envoy}
     evidence:
-      - "Envoy Gateway v1.9.2 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
+      - "Envoy Gateway v1.9.3 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
       - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
   edge:
@@ -623,7 +623,7 @@ namespaces:
     workloads:
       - name: envoy
         installedBy: step:A-05-envoy-gateway
-        readAt: envoy-gateway chart v1.9.2
+        readAt: envoy-gateway chart v1.9.3
         podLabels: {app.kubernetes.io/name: envoy}
         allIngress: >-
           The cluster's public listeners. A connection arrives from the
@@ -653,7 +653,7 @@ namespaces:
             open: see allIngress; the kubelet only
       - name: envoy-gateway
         installedBy: step:A-05-envoy-gateway
-        readAt: envoy-gateway chart v1.9.2
+        readAt: envoy-gateway chart v1.9.3
         podLabels: {control-plane: envoy-gateway}
         ports:
           - port: 18000

@@ -33,6 +33,12 @@ extraAnnotations: {}
 platforms: {}
 
 envoy:
+  # The proxy image, pinned here rather than left to the Envoy Gateway release:
+  # its default for v1.9.3 is distroless-v1.39.5, which still trusts the roots
+  # of the compromised eMudhra intermediate CAs, and a v1.39 before .4 can
+  # crash on a race in SDS, the stream the proxies' TLS secrets arrive on. A
+  # tag and its digest, so the image cannot change under the same name.
+  image: "docker.io/envoyproxy/envoy:distroless-v1.39.6@sha256:1cac8b3a2f72d5a0918f54d7b49e68aae0b0ba325c2d50c8a9a3fff7a4d1f994"
   # Two, spread across hosts. externalTrafficPolicy is Local, so a node serves
   # only if a pod runs on it; one replica means one node can serve, and draining
   # it takes every hostname offline.
