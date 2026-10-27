@@ -142,8 +142,13 @@ spec:
 ```
 
 `enabled: true` installs kube-prometheus-stack in `kernel-observability`:
-Prometheus, Alertmanager, Grafana behind the kernel Gateway's OIDC session
-under `can_audit`, node-exporter and kube-state-metrics. The operator's
+Prometheus, Alertmanager, node-exporter, kube-state-metrics and Grafana.
+Grafana answers at `monitoring.<kernel domain>` (a name for the function,
+so a tenant's own Grafana keeps its name), behind the kernel Gateway's
+session under `can_audit`, and asks for its own sign-in at the kernel realm
+like Argo CD and Headlamp; the platform administrator is Grafana's Admin,
+everyone else who reaches it a Viewer. Switched off on the claim, the
+installer removes the stack. The operator's
 `ServiceMonitor`, the vendored Redis and SeaweedFS monitors and the
 Keycloak and OpenFGA metrics switch on with it. The platform ships these
 rules:

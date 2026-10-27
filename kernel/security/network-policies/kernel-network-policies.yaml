@@ -356,6 +356,8 @@ spec:
         matchLabels:
           app.kubernetes.io/name: envoy
     ports:
+    - port: 3000
+      protocol: TCP
     - port: 4466
       protocol: TCP
   podSelector: {}

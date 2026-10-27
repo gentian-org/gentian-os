@@ -866,6 +866,23 @@ namespaces:
           - port: 10250
             what: the admission webhook for PrometheusRule objects
             open: the API server calls webhooks, and no portable rule names the API server
+      - name: grafana
+        installedBy: bootstrap-application:monitoring
+        readAt: kube-prometheus-stack chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: grafana}
+        ports:
+          - port: 3000
+            what: the dashboards
+            from:
+              - peer: envoy
+                why: the Gateway routes monitoring.<kernel> to it, behind the kernel session and can_audit
+                evidence: [internal/controller/kernel_gateway_routes.go:70]
+          - port: 9094
+            what: unified alerting's peer port
+            closed: one replica, and alerting is Alertmanager's
+          - port: 6060
+            what: profiling
+            closed: nothing reads it
       - name: kube-state-metrics
         installedBy: bootstrap-application:monitoring
         readAt: kube-prometheus-stack chart, pinned in versions.yaml
