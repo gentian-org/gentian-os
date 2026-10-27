@@ -83,6 +83,10 @@ spec:
         # certificate is ever issued, and no tenant host ever answers.
         tenantDNS01ClusterIssuer: {{ . | quote }}
         {{- end }}
+        # How traffic reaches the cluster, from the claim. The operator reads
+        # it as NETWORK_MODE to choose its edge ingress and whether a TURN
+        # edge can be reached; left out, a static-ip cluster reads as tunnel.
+        networkMode: {{ .Values.networkMode | quote }}
         # The Gateway, its routes and its reference grants live at the edge.
         servicesNamespace: {{ include "ns" (list . "edge") }}
         # The switch for the kernel's network rules, compared as a string
