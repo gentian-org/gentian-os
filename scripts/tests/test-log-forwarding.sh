@@ -110,7 +110,8 @@ docker_image() {
 }
 vector_image="timberio/vector:$(helm show chart vector/vector --version "$(sed -n '/^logForwarding:/,/^$/s/^  chart: "\(.*\)"/\1/p' versions.yaml)" 2>/dev/null | awk '/^appVersion:/{print $2}')"
 if [[ "${vector_image}" != "timberio/vector:" ]] && docker_image "${vector_image}"; then
-    out="$(docker run --rm -e LOG_DESTINATION_TOKEN=x -v "${SB}/vector.yaml:/etc/vector/vector.yaml:ro" \
+    mkdir -p "${SB}/secret" && printf x > "${SB}/secret/token"
+    out="$(docker run --rm -v "${SB}/vector.yaml:/etc/vector/vector.yaml:ro" -v "${SB}/secret:/etc/log-destination:ro" \
         "${vector_image}" test /etc/vector/vector.yaml 2>&1)"
     check "Vector's own tests of the transforms pass" '[[ "${out}" != *failed* && "${out}" == *passed* ]]' "${out}"
 else

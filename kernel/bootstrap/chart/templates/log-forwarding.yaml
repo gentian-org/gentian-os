@@ -17,8 +17,9 @@ a hostPath, which the Kyverno baseline permits there and nowhere else.
 {{- $streams := $lf.streams | default (list "audit" "operations") }}
 ---
 # The destination's bearer token, from the credential the cluster supplies
-# once (credentials.yaml: log-destination). Optional: a destination that
-# takes no token gets an empty one.
+# once (credentials.yaml: log-destination). Required where a destination is
+# named: the forwarder waits for it rather than send audit records to an
+# endpoint that asks nobody who is sending them.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -83,13 +84,19 @@ spec:
           readOnly: true
         - name: data
           mountPath: /vector-data-dir
-        env:
-        - name: LOG_DESTINATION_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: log-destination
-              key: token
-              optional: true
+        # The token as a file Vector's secret backend reads, not as an
+        # environment variable every process in the pod could print.
+        extraVolumes:
+        - name: log-destination
+          secret:
+            secretName: log-destination
+            items:
+            - key: token
+              path: token
+        extraVolumeMounts:
+        - name: log-destination
+          mountPath: /etc/log-destination
+          readOnly: true
         resources:
           requests: { cpu: 100m, memory: 128Mi }
           limits: { memory: 256Mi }
@@ -100,6 +107,10 @@ spec:
           data_dir: /vector-data-dir
           api:
             enabled: false
+          secret:
+            destination:
+              type: directory
+              path: /etc/log-destination
           sources:
             # The forwarder's own output is not read: the chart labels its
             # pods vector.dev/exclude, which this source honours. A sink error
@@ -185,7 +196,7 @@ spec:
                   X-Gentian-Stream: audit
               auth:
                 strategy: bearer
-                token: "${LOG_DESTINATION_TOKEN}"
+                token: "SECRET[destination.token]"
               # The audit stream waits on disk rather than being dropped when
               # the destination is away: a record lost here is the one an
               # auditor asks for.
@@ -210,7 +221,7 @@ spec:
                   X-Gentian-Stream: operations
               auth:
                 strategy: bearer
-                token: "${LOG_DESTINATION_TOKEN}"
+                token: "SECRET[destination.token]"
               buffer:
                 type: memory
                 max_events: 10000

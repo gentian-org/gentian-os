@@ -123,7 +123,8 @@ spec:
 
 The destination takes newline-delimited JSON over HTTPS POST, gzip
 compressed, one request per batch, with `X-Gentian-Stream: audit` or
-`operations` and the `log-destination` credential as its bearer token. The
+`operations` and the `log-destination` credential as its bearer token,
+which Vector reads from a mounted Secret and the forwarder waits for. The
 audit stream buffers on the node's disk when the destination is away and
 stops reading rather than drop a record; the operations stream drops the
 newest lines instead. The forwarder also counts each audit record as
