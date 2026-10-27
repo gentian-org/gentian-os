@@ -347,7 +347,7 @@ func (s *Server) newestFor(ctx context.Context, sources []visibleSource, app git
 			unread[src.Name] = true
 			continue
 		}
-		for _, e := range append(listing.Entries, listing.StoreOnly...) {
+		for _, e := range append(append(listing.Entries, listing.StoreOnly...), listing.Placed...) {
 			if e.Name == app.Profile {
 				return src, e, true
 			}
@@ -472,7 +472,7 @@ func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 			skipped = append(skipped, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Newest, Status: "under_way"})
 			continue
 		}
-		res, detail, err := s.moveTo(r.Context(), c, e.Tenant, e.Profile, e.Catalogue, e.Newest)
+		res, detail, err := s.moveTo(r.Context(), c, e.Tenant, e.Profile, e.Catalogue, e.Newest, nil)
 		switch {
 		case err != nil:
 			skipped = append(skipped, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Newest, Status: "refused", Detail: detail})
@@ -487,7 +487,8 @@ func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 // from the cluster's store, held to the floor, committed with its profile,
 // and the pin moved. The same path an install takes, without a response
 // writer: what would have been the refusal comes back as detail.
-func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueName, digest string) (gitops.Result, string, error) {
+// defaultGrant is the install's, as InstallFrom takes it: nil for a move.
+func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueName, digest string, defaultGrant *bool) (gitops.Result, string, error) {
 	rec := &recorder{}
 	req := (&http.Request{}).WithContext(ctx)
 	source, known, err := s.resolveSource(ctx, tenant, catalogueName)
@@ -514,7 +515,7 @@ func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueN
 	if _, ok := s.commitEntry(rec, req, c, tenant, source, fetched); !ok {
 		return gitops.Result{}, rec.detail(), fmt.Errorf("commit refused")
 	}
-	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, digest, source.Name, nil, c.meta)
+	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, digest, source.Name, defaultGrant, c.meta)
 	if err != nil {
 		return gitops.Result{}, err.Error(), err
 	}

@@ -68,6 +68,11 @@ type IndexEntry struct {
 	// listing can say which entries this cluster cannot install without a
 	// fetch. The bundle's own value is what an install is held to.
 	Platform string `json:"platform,omitempty"`
+	// PlacedWith names the capability of the cluster with which the platform
+	// keeps this entry in every tenant (llm: the cluster serves models). Such
+	// an entry is nobody's to install or uninstall by name; the director
+	// places and removes it (platform_apps.go).
+	PlacedWith string `json:"placedWith,omitempty"`
 }
 
 // Index is what a source says it holds.
@@ -86,6 +91,8 @@ type cachedIndex struct {
 	// which compares an app a tenant has already acquired and installed
 	// through the store with the build its catalogue offers now.
 	storeOnly []IndexEntry
+	// placed holds the entries the platform places itself (PlacedWith).
+	placed []IndexEntry
 }
 
 // Listing is a source's index as the director serves it.
@@ -98,6 +105,10 @@ type Listing struct {
 	// them. An app that was acquired and installed that way is already the
 	// tenant's, and these say what its newest build is.
 	StoreOnly []IndexEntry
+	// Placed are the entries the platform keeps in every tenant while the
+	// cluster has the capability each names, sorted by name. Not listed and
+	// not installed from a listing.
+	Placed []IndexEntry
 }
 
 // Index fetches and caches one source's index, keeping only the editions a
@@ -127,9 +138,14 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 // serve copies the cached index out, so a caller cannot change what the next
 // one is given.
 func serve(c cachedIndex) Listing {
-	out := Listing{Entries: make([]IndexEntry, len(c.entries)), StoreOnly: make([]IndexEntry, len(c.storeOnly))}
+	out := Listing{
+		Entries:   make([]IndexEntry, len(c.entries)),
+		StoreOnly: make([]IndexEntry, len(c.storeOnly)),
+		Placed:    make([]IndexEntry, len(c.placed)),
+	}
 	copy(out.Entries, c.entries)
 	copy(out.StoreOnly, c.storeOnly)
+	copy(out.Placed, c.placed)
 	return out
 }
 
@@ -183,8 +199,13 @@ func (f *Fetcher) fetchIndex(ctx context.Context, src Source) (cachedIndex, erro
 		if _, err := normaliseDigest(e.Digest); err != nil {
 			e.Digest = ""
 		}
+		e.PlacedWith = strings.TrimSpace(e.PlacedWith)
 		if !e.Edition.Local() {
 			out.storeOnly = append(out.storeOnly, e)
+			continue
+		}
+		if e.PlacedWith != "" {
+			out.placed = append(out.placed, e)
 			continue
 		}
 		out.entries = append(out.entries, e)
@@ -194,6 +215,7 @@ func (f *Fetcher) fetchIndex(ctx context.Context, src Source) (cachedIndex, erro
 	}
 	sort.Slice(out.entries, byName(out.entries))
 	sort.Slice(out.storeOnly, byName(out.storeOnly))
+	sort.Slice(out.placed, byName(out.placed))
 	return out, nil
 }
 

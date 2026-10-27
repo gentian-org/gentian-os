@@ -174,6 +174,8 @@ type Lifecycle interface {
 type Config struct {
 	// UpdaterOff keeps the platform's own mover (updater.go) from running:
 	// a test, or a cluster whose administrator moves everything by hand.
+	// It keeps the placement of the platform's apps (platform_apps.go) from
+	// running on its own too; PlacePlatformApps still places.
 	UpdaterOff bool
 	Authn      Authenticator
 	Authz      authz.Checker
@@ -226,6 +228,9 @@ type Server struct {
 	background context.Context
 	stop       context.CancelFunc
 	watchers   sync.WaitGroup
+	// platformApps keeps two placements of the platform's apps from
+	// running at once (platform_apps.go).
+	platformApps sync.Mutex
 }
 
 // New returns a Server with every route registered.
@@ -240,6 +245,7 @@ func New(cfg Config) (*Server, error) {
 	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
 	s.startUpdater()
+	s.startPlatformApps()
 	return s, nil
 }
 
@@ -1545,6 +1551,9 @@ const uninstallNote = "The app's data is kept, and backups taken from now on go 
 	"Deleting the tenant, or purging the app, destroys it."
 
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
+	if s.refusedAsPlatformApp(w, r, r.PathValue("p")) {
+		return
+	}
 	res, err := s.cfg.Repo.Uninstall(r.Context(), r.PathValue("t"), r.PathValue("p"), c.meta)
 	if err != nil || !res.Changed {
 		s.written(w, r, res, err)
@@ -1912,6 +1921,8 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	answer["commit"] = res.Commit
+	// A new tenant gets the apps the cluster's capabilities bring.
+	s.placePlatformAppsNow()
 	s.json(w, http.StatusAccepted, answer)
 }
 

@@ -53,6 +53,10 @@ var platformFloorLine = regexp.MustCompile(`(?m)^    platform: (\S+)$`)
 // any other byte. Without one the index says pe.
 var editionLine = regexp.MustCompile(`(?m)^# edition: (\S+)$`)
 
+// placedWithLine says, the same way, that the index marks the entry as one
+// the platform places with a capability of the cluster.
+var placedWithLine = regexp.MustCompile(`(?m)^# placedWith: (\S+)$`)
+
 func catalogues(t *testing.T, content served) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +77,9 @@ func catalogues(t *testing.T, content served) *httptest.Server {
 				// The floor, repeated in the index as the catalogue build does.
 				if m := platformFloorLine.FindStringSubmatch(body); m != nil {
 					index += "    platform: " + m[1] + "\n"
+				}
+				if m := placedWithLine.FindStringSubmatch(body); m != nil {
+					index += "    placedWith: " + m[1] + "\n"
 				}
 			}
 			_, _ = w.Write([]byte(index))

@@ -135,7 +135,7 @@ func (s *Server) runLatestMoves(ctx context.Context) (moved int) {
 		}
 		for i := 0; i < batch && i < len(tg.behind); i++ {
 			e := tg.behind[i]
-			res, detail, err := s.moveTo(ctx, c, e.Tenant, e.Profile, tg.catalogue, e.Newest)
+			res, detail, err := s.moveTo(ctx, c, e.Tenant, e.Profile, tg.catalogue, e.Newest, nil)
 			if err != nil {
 				log.WarnContext(ctx, "the platform could not move an app", "tenant", e.Tenant, "app", e.Profile, "to", e.Newest, "detail", detail)
 				continue
