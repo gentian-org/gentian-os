@@ -41,7 +41,7 @@ kernel:
     holds: Kyverno and the baseline policies
   - name: kernel-observability
     function: observability
-    holds: Headlamp (the cluster administrator's view of the cluster, with their own identity); the platform's monitoring when the claim switches it on; later the log forwarder
+    holds: Headlamp (the cluster administrator's view of the cluster, with their own identity); the platform's monitoring and log forwarder when switched on
 
 # The system tier: the data plane tenants are served from.
 #
