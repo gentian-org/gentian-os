@@ -52,7 +52,7 @@ func someModels() gitops.ModelSettings {
 		Enabled:         true,
 		GPUAcceleration: true,
 		Instances: []gitops.ModelInstance{
-			{Name: "qwen", ModelID: "Qwen/Qwen2.5-7B-Instruct", MaxModelLen: "8192", GPUMemoryUtilization: "0.85"},
+			{Name: "qwen", ModelID: "Qwen/Qwen2.5-7B-Instruct", MaxModelLen: "8192", GPUMemoryUtilization: "0.85", MemoryLimit: "24Gi"},
 		},
 		Providers: []gitops.ModelProvider{
 			{
@@ -163,7 +163,7 @@ func TestModelSettingsAreCommittedIntoTheClaimAndReadBack(t *testing.T) {
 	for _, kept := range []string{
 		"    # The console of the gateway, off by default.\n    # console:\n    #   enabled: true\n",
 		"    # The models this cluster serves on its own GPUs.\n    instances:\n      - name: qwen\n        modelId: Qwen/Qwen2.5-7B-Instruct\n",
-		"        gpuMemoryUtilization: \"0.85\"\n        maxModelLen: \"8192\"\n",
+		"        gpuMemoryUtilization: \"0.85\"\n        maxModelLen: \"8192\"\n        memoryLimit: 24Gi\n",
 		"    #  - name: infomaniak\n",
 		"            maxTokens: 8192\n",
 		"            mode: embedding\n",
@@ -180,7 +180,8 @@ func TestModelSettingsAreCommittedIntoTheClaimAndReadBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got.Instances) != 1 || len(got.Providers) != 2 || len(got.Providers[0].Models) != 2 ||
-		*got.Providers[0].Models[0].MaxTokens != 8192 || got.Instances[0].MaxModelLen != "8192" {
+		*got.Providers[0].Models[0].MaxTokens != 8192 || got.Instances[0].MaxModelLen != "8192" ||
+		got.Instances[0].MemoryLimit != "24Gi" {
 		t.Fatalf("read back: %+v", got)
 	}
 

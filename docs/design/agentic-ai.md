@@ -463,7 +463,7 @@ both delivered by the `gentian-llm` ApplicationSet.
 
 With `gpuAcceleration` true, each entry of `spec.llm.instances` (name,
 `modelId`, `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`,
-`imageTag`, `toolCallParser`) is a `vllm-<name>-inference` Deployment, Service
+`memoryLimit`, `imageTag`, `toolCallParser`) is a `vllm-<name>-inference` Deployment, Service
 and PVC (`kernel/services/llm/manifests/templates/vllm.yaml`) and a model of
 the gateway, delivered by the same ApplicationSet ([llms.md](llms.md) §6).
 
@@ -474,6 +474,11 @@ What an instance needs:
   one physical card's memory, and instances sharing a card draw from the same
   pool, so their values must sum to comfortably under 1.0. A 24GB card fits
   one 7B-class model at `0.85`; a second needs both quantized.
+- **Memory while loading.** Loading the weights takes about the model's size
+  on disk in memory, and then falls back. The container is
+  limited to `memoryLimit` (20Gi unless the entry says otherwise), so a
+  larger model needs a larger value; over it, the instance is killed rather
+  than the node's other pods.
 - **Gated models and the first download.** The Deployment reads
   `HUGGING_FACE_HUB_TOKEN` from an optional Secret `vllm-hf-token` (key
   `token`) in its namespace, shared by all instances. A gated model (e.g.

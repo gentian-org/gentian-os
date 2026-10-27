@@ -818,6 +818,13 @@ spec:
                             type: string
                             description: PVC size for the downloaded weights.
                             default: 60Gi
+                          memoryLimit:
+                            type: string
+                            description: >
+                              Memory the instance may use, e.g. 32Gi. Loading
+                              the weights is the peak, about the model's size
+                              on disk. Absent takes the platform's
+                              default, 20Gi, which fits a 7B-class model.
                           imageTag:
                             type: string
                             description: >
