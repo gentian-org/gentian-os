@@ -21,6 +21,8 @@ import (
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+
+	"github.com/gentian-org/gentian-os/internal/audit"
 )
 
 // Checker is one component the operator lets ask a single question of the
@@ -132,7 +134,17 @@ func (d *Decider) check(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization store unreachable", http.StatusServiceUnavailable)
 		return
 	}
-	d.log.InfoContext(r.Context(), "check", "checker", checker.Component, "tenant", checker.Tenant, "object", object, "allowed", ok)
+	outcome := audit.Refused
+	if ok {
+		outcome = audit.Allowed
+	}
+	// The person asked about is the subject: a component asked whether they
+	// may use the app, and the answer is a decision about them.
+	audit.Write(r.Context(), d.log, audit.Record{
+		Source: "bouncer", Kind: audit.KindDecision, RequestID: r.Header.Get("x-request-id"),
+		Tenant: checker.Tenant, Subject: req.Person, Object: object, Action: "can_use", Outcome: outcome,
+		Detail: map[string]any{"reason": "rights-check", "checker": checker.Component},
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(checkResponse{Allowed: ok})
 }

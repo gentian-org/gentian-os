@@ -11,8 +11,11 @@ SPDX-License-Identifier: MPL-2.0
 package bouncer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -579,5 +582,78 @@ func TestARoleHolderReachesTheHostAsTheAccountOfItsRealm(t *testing.T) {
 	d = decider(store)
 	if dec := d.Decide(context.Background(), Request{Host: "desktop.k.example", Authorization: "Bearer mia-token"}); dec.Allow {
 		t.Fatal("another realm's holder was let in")
+	}
+}
+
+// auditLines runs one decision on a decider whose logger is read back, and
+// returns the audit lines it wrote.
+func auditLines(t *testing.T, store *fakeStore, reqs ...Request) []map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	d := decider(store)
+	d.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	for _, r := range reqs {
+		d.Decide(context.Background(), r)
+	}
+	var out []map[string]any
+	for _, l := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		var m map[string]any
+		if err := json.Unmarshal(l, &m); err != nil {
+			t.Fatalf("not JSON: %s", l)
+		}
+		if m["audit"] == true {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func TestEveryDecisionWritesOneAuditRecordWithACodeNotTheRefusalsText(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_use|app:acme/odoo": true}}
+	lines := auditLines(t, store,
+		Request{ID: "r1", Host: "shop.k.example", Path: "/", Authorization: "Bearer root-token"},
+		Request{ID: "r2", Host: "shop.k.example", Path: "/", Authorization: "Bearer root-token"},
+		Request{ID: "r3", Host: "shop.k.example", Path: "/", Authorization: "Bearer mia-token"},
+		Request{ID: "r4", Host: "shop.k.example", Path: "/admin", Authorization: "Bearer root-token"},
+		Request{ID: "r5", Host: "shop.k.example", Path: "/", Authorization: "Bearer forged"},
+		Request{ID: "r6", Host: "nowhere.k.example", Path: "/"},
+	)
+	if len(lines) != 6 {
+		t.Fatalf("%d audit lines, want 6: %v", len(lines), lines)
+	}
+	type want struct {
+		outcome, reason, subject, object string
+		cached                           bool
+	}
+	for i, w := range []want{
+		{"allowed", "allowed", "root", "app:acme/odoo", false},
+		{"allowed", "allowed", "root", "app:acme/odoo", true},
+		{"refused", "refused", "mia", "app:acme/odoo", false},
+		{"refused", "refused", "", "app:acme/odoo", false},
+		{"refused", "unauthenticated", "", "app:acme/odoo", false},
+		{"refused", "refused", "", "", false},
+	} {
+		l := lines[i]
+		detail, _ := l["detail"].(map[string]any)
+		if l["source"] != "bouncer" || l["kind"] != "decision" || l["request_id"] != fmt.Sprintf("r%d", i+1) {
+			t.Errorf("line %d envelope: %v", i, l)
+		}
+		if l["outcome"] != w.outcome || detail["reason"] != w.reason || detail["cached"] != w.cached {
+			t.Errorf("line %d: outcome %v reason %v cached %v, want %+v", i, l["outcome"], detail["reason"], detail["cached"], w)
+		}
+		if (l["subject"] == nil && w.subject != "") || (w.subject != "" && l["subject"] != w.subject) || (w.subject == "" && l["subject"] != nil) {
+			t.Errorf("line %d: subject %v, want %q", i, l["subject"], w.subject)
+		}
+		if (w.object == "" && l["object"] != nil) || (w.object != "" && l["object"] != w.object) {
+			t.Errorf("line %d: object %v, want %q", i, l["object"], w.object)
+		}
+		for _, k := range []string{"email", "name", "authorization"} {
+			if _, ok := l[k]; ok {
+				t.Errorf("line %d carries %s", i, k)
+			}
+		}
+	}
+	if lines[0]["tenant"] != "acme" {
+		t.Errorf("tenant = %v, want acme from the object", lines[0]["tenant"])
 	}
 }
