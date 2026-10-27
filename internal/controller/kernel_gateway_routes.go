@@ -13,6 +13,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -134,6 +136,8 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		kernelConsolesRouted(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
+	homes := tenantHomes(tenantList.Items)
+	withTenantHomes(specs, homes)
 	// The identity provider's public route is held to a rate of sign-in
 	// posts per client address, and which address that is has to be asked of
 	// the cluster (edgeClientAddressHeader), so it is set here and not where
@@ -150,7 +154,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err := r.ensureBouncerExchangeSecrets(ctx); err != nil {
 		return err
 	}
-	if err := r.ensureBouncerRouteTable(ctx, specs); err != nil {
+	if err := r.ensureBouncerRouteTable(ctx, specs, deniedRedirects(tenantList.Items, homes, r.KernelDomain, r.TenancyMode)); err != nil {
 		return fmt.Errorf("ensure bouncer route table: %w", err)
 	}
 	// The registrar's list of the components that vouch for people, written
@@ -844,6 +848,65 @@ func hostRedirectRule(target string) gatewayv1.HTTPRouteRule {
 			},
 		},
 	}
+}
+
+// tenantHomes are the tenants that send their people somewhere other than
+// their desktop (spec.signUp.home), by name. A home that is not an https
+// address of the shape the CRD admits is no home: the tenant's apex and
+// desktop stay as for any tenant.
+func tenantHomes(tenants []gentianov1alpha1.Tenant) map[string]string {
+	homes := map[string]string{}
+	for i := range tenants {
+		if tenants[i].DeletionTimestamp != nil {
+			continue
+		}
+		home := tenants[i].SignUpHome()
+		if _, ok := urlRedirectRule(home); home != "" && ok {
+			homes[tenants[i].Name] = home
+		}
+	}
+	return homes
+}
+
+// withTenantHomes points the apex of a tenant with a home at that home
+// instead of at its desktop.
+func withTenantHomes(specs []kernelHTTPRouteSpec, homes map[string]string) {
+	for name, home := range homes {
+		rule, ok := urlRedirectRule(home)
+		if !ok {
+			continue
+		}
+		for i := range specs {
+			if specs[i].name == fmt.Sprintf("tenant-%s-apex", name) {
+				specs[i].rules = []gatewayv1.HTTPRouteRule{rule}
+			}
+		}
+	}
+}
+
+// urlRedirectRule sends every path of a host to one https address: its
+// host, port and path, the request's path dropped.
+func urlRedirectRule(target string) (gatewayv1.HTTPRouteRule, bool) {
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return gatewayv1.HTTPRouteRule{}, false
+	}
+	rule := hostRedirectRule(u.Hostname())
+	redirect := rule.Filters[0].RequestRedirect
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return gatewayv1.HTTPRouteRule{}, false
+		}
+		port := gatewayv1.PortNumber(n)
+		redirect.Port = &port
+	}
+	path := u.Path
+	if path == "" {
+		path = "/"
+	}
+	redirect.Path = &gatewayv1.HTTPPathModifier{Type: gatewayv1.FullPathHTTPPathModifier, ReplaceFullPath: &path}
+	return rule, true
 }
 
 // frontPageRedirectRule sends the bare domain's front page to a desktop: the
