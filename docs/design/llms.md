@@ -39,6 +39,12 @@ This document details the architecture for integrating Large Language Model (LLM
     console** (§5, "Changing the models"), or with `kubectl gentian models`.
     Both ask the director, which commits the claim. The console flags a
     provider's model whose token is missing.
+*   **Open WebUI comes with the models.** While `spec.llm.enabled` is true,
+    the director keeps `open-webui-ce` in every tenant's apps, for everyone,
+    and removes it when the cluster stops serving models
+    (`internal/director/api/platform_apps.go`). A cluster catalogue's index
+    marks such an entry `placedWith: llm`; the App Store does not offer it,
+    and an uninstall by hand is refused.
 *   **Built:** the vLLM instances. Each entry of `spec.llm.instances` is a
     model of the gateway and a `vllm-<name>-inference` Deployment, Service,
     PVC and NetworkPolicy in `system-llm`, from the same chart (§6).

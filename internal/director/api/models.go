@@ -61,6 +61,11 @@ func (s *Server) setClusterModels(w http.ResponseWriter, r *http.Request, c call
 	case errors.Is(err, gitops.ErrModelsFlowForm):
 		s.fail(w, r, http.StatusConflict, gitops.ErrModelsFlowForm.Error())
 	default:
+		if err == nil && res.Changed {
+			// Switching models on or off places or removes the apps that
+			// come with them.
+			s.placePlatformAppsNow()
+		}
 		s.written(w, r, res, err)
 	}
 }
