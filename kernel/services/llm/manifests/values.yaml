@@ -79,6 +79,10 @@ gateway:
 #   docker buildx imagetools inspect docker.io/vllm/vllm-openai:<tag>
 vllm:
   image: docker.io/vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+  # The memory an instance may use, unless its memoryLimit says otherwise.
+  # Qwen2.5-7B-Instruct peaked at 15.8GiB while loading and runs at about
+  # 5.5GiB; a larger model needs its own memoryLimit.
+  memoryLimit: 20Gi
 
 # The namespace LLM serving runs in.
 #

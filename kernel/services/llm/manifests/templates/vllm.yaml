@@ -129,6 +129,10 @@ spec:
         resources:
           limits:
             nvidia.com/gpu: "1"
+            # Loading the weights is the peak. Without a limit that peak
+            # comes out of the node's memory, and the kernel's OOM killer
+            # takes the pods that requested none, not this one.
+            memory: {{ $i.memoryLimit | default $.Values.vllm.memoryLimit }}
           requests:
             nvidia.com/gpu: "1"
             cpu: "2"

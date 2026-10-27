@@ -70,6 +70,7 @@ type ModelInstance struct {
 	GPUMemoryUtilization string `json:"gpuMemoryUtilization,omitempty"`
 	MaxModelLen          string `json:"maxModelLen,omitempty"`
 	ModelCacheSize       string `json:"modelCacheSize,omitempty"`
+	MemoryLimit          string `json:"memoryLimit,omitempty"`
 	ImageTag             string `json:"imageTag,omitempty"`
 	ToolCallParser       string `json:"toolCallParser,omitempty"`
 }
@@ -289,6 +290,7 @@ func ValidateModelSettings(m ModelSettings) error {
 		line(at+".gpuMemoryUtilization", in.GPUMemoryUtilization, false)
 		line(at+".maxModelLen", in.MaxModelLen, false)
 		line(at+".modelCacheSize", in.ModelCacheSize, false)
+		line(at+".memoryLimit", in.MemoryLimit, false)
 		line(at+".imageTag", in.ImageTag, false)
 		line(at+".toolCallParser", in.ToolCallParser, false)
 	}
@@ -451,6 +453,7 @@ func renderInstances(instances []ModelInstance) []string {
 			{"gpuMemoryUtilization", i.GPUMemoryUtilization},
 			{"maxModelLen", i.MaxModelLen},
 			{"modelCacheSize", i.ModelCacheSize},
+			{"memoryLimit", i.MemoryLimit},
 			{"imageTag", i.ImageTag},
 			{"toolCallParser", i.ToolCallParser},
 		} {
