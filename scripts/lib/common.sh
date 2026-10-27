@@ -1107,7 +1107,7 @@ load_deployments_cluster_settings() {
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES \
-             LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
+             LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
              LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
              MAIL_EGRESS_HOST; do
@@ -1161,13 +1161,10 @@ load_deployments_cluster_settings() {
         claim_setting EXTERNAL_SMTP_STARTTLS mail.starttls "${claim_file}"
         # LLM serving. Hardware-dependent, and the XRD has said so all along.
         #
-        # enabled and gpuAcceleration are the switches; without them the sizing
-        # fields below came from the claim while the decision to use them did
-        # not, so llm.enabled: true on the claim changed nothing and no step
-        # said why.
+        # enabled and gpuAcceleration are the switches, read from the claim so
+        # that llm.enabled: true there is what turns serving on.
         claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
         claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
-        claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
         # The model gateway's console, llm.<kernelDomain>. Off unless the
         # claim switches it on, and a claim written before the setting existed
         # does not state it: a cluster that had the console loses its route

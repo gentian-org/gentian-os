@@ -16,6 +16,7 @@
 #   llm_network_policies.py wiring    what the policies lean on
 #   llm_network_policies.py off       the switch, and the mock
 #   llm_network_policies.py console   the gateway's console, off unless asked for
+#   llm_network_policies.py vllm      a model served on the cluster's GPUs
 # =============================================================================
 import sys
 import tempfile
@@ -359,9 +360,37 @@ def check_console():
             raise Failure(f"{path} carries the console switch from the install run to the gateway's chart")
 
 
+def check_vllm():
+    """An instance the claim lists is a pod of this namespace, and the gateway
+    is the one client its policy admits: no tenant, no edge, no other pod."""
+    app = application()
+    docs = render(app, "--set", "spec.llm.gpuAcceleration=true",
+                  "--set", "spec.llm.instances[0].name=qwen",
+                  "--set", "spec.llm.instances[0].modelId=Qwen/Qwen2.5-7B-Instruct")
+    policy = by_name(docs).get("llm-vllm-ingress")
+    if policy is None:
+        raise Failure("an instance is rendered without the policy llm-vllm-ingress")
+    instance = pods(docs).get(("Deployment", "vllm-qwen-inference"))
+    if instance is None:
+        raise Failure("the instance's Deployment vllm-qwen-inference is not rendered")
+    if not matches(match_labels(policy["spec"]["podSelector"], "llm-vllm-ingress"), instance["labels"]):
+        raise Failure("llm-vllm-ingress does not select the instance's pods")
+    if set(instance["ports"].values()) != {8000}:
+        raise Failure(f"the instance declares the ports {instance['ports']}, the policy opens 8000")
+    gateway = pods(docs)[WORKLOAD["gateway"]]["labels"]
+    ns = app["namespace"]
+    own = {NAME_LABEL: ns}
+    if not admitted(policy, ns, own, gateway, 8000):
+        raise Failure("the gateway is not admitted to the instance")
+    if admitted(policy, ns, own, {"app": "redis-llm"}, 8000):
+        raise Failure("a pod of the namespace other than the gateway is admitted to the instance")
+    if admitted(policy, "tenant-acme", {NAME_LABEL: "tenant-acme", "gentianos.io/tier": "tenant"}, gateway, 8000):
+        raise Failure("a tenant's pod is admitted to the instance")
+
+
 def main():
     checks = {"shape": check_shape, "clients": check_clients, "wiring": check_wiring, "off": check_off,
-              "console": check_console}
+              "console": check_console, "vllm": check_vllm}
     args = sys.argv[1:]
     if len(args) != 1 or args[0] not in checks:
         print(f"usage: {sys.argv[0]} {'|'.join(checks)}", file=sys.stderr)

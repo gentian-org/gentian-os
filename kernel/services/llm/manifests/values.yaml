@@ -17,10 +17,10 @@ env: dev
 #   gpuAcceleration  false runs the mock model server, so that the gateway's
 #                    namespace has a model server at all on a cluster without
 #                    GPUs. The mock is not a model the gateway offers.
-#   instances        with gpuAcceleration true, one model of the gateway each,
-#                    addressed at the Service a vLLM instance of that name has
-#                    in this namespace (vllm-<name>-inference, port 8000).
-#                    This chart does not start that instance.
+#   instances        with gpuAcceleration true, one vLLM instance each
+#                    (templates/vllm.yaml) and one model of the gateway each,
+#                    addressed at that instance's Service in this namespace
+#                    (vllm-<name>-inference, port 8000).
 #   providers        one model of the gateway per entry of a provider's models,
 #                    named <provider>/<model name>, and the ExternalSecret for
 #                    the providers' tokens when the list is not empty.
@@ -65,6 +65,21 @@ spec:
 gateway:
   image: ghcr.io/berriai/litellm:v1.104.2@sha256:3d88bd757134a00e8c00237b85a021ab1f6d54abb9c1df750f411dbe7256a500
 
+# The model server of each instance (templates/vllm.yaml): vLLM, by release
+# tag and the digest of what that tag held, like the gateway above. An
+# instance's imageTag names another release of the same image instead.
+#
+# vLLM's default build is for CUDA 13, which needs an NVIDIA driver of the 580
+# series or later on the node. A node with an older driver takes the build for
+# CUDA 12.9 through imageTag (v0.32.0-cu129), not a different default here.
+#
+# To move it: pick a release from https://github.com/vllm-project/vllm/releases,
+# read its notes for changes to the `vllm serve` flags the template passes, and
+# take the digest the registry reports for the tag:
+#   docker buildx imagetools inspect docker.io/vllm/vllm-openai:<tag>
+vllm:
+  image: docker.io/vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+
 # The namespace LLM serving runs in.
 #
 # system-llm, which the Cluster claim composes when llm.enabled is true —
@@ -97,6 +112,8 @@ networkPolicy:
     redis: 6379
     # The mock model server.
     mock: 8000
+    # A vLLM instance (templates/vllm.yaml).
+    vllm: 8000
   namespaces:
     # The operator's.
     control: kernel-control

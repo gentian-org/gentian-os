@@ -244,6 +244,26 @@ func TestAComponentTileNeedsBothTheProfileAndTheRoute(t *testing.T) {
 	}
 }
 
+// A profile that asks the portal to open its app at desktop mount has that on
+// its tile; every other tile does not.
+func TestAProfileAsksForPreopenOnItsTile(t *testing.T) {
+	tile := &gentianov1alpha1.ExposureTile{DisplayName: "Notes", Logo: testTileLogo, Relation: "can_launch"}
+	tenant := tileFixtureTenant("demo")
+	comp := tileFixtureComponent("notes", "tenant-demo", "notes")
+	route := tileFixtureRoute("notes-web", "tenant-demo", "notes.demo.k.example")
+
+	for value, want := range map[string]bool{"true": true, "false": false, "": false} {
+		profile := tileFixtureProfile("notes", tile)
+		if value != "" {
+			profile.Annotations = map[string]string{portalPreopenAnnotation: value}
+		}
+		got := project(t, tenant, comp, profile, route)
+		if len(got) != 1 || got[0].Preopen != want {
+			t.Errorf("annotation %q: tiles %+v, want preopen %v", value, got, want)
+		}
+	}
+}
+
 // Rebuilding a catalogue that has not changed must not rewrite the ConfigMap:
 // everything mounting it is woken by a write, and a projection that churns on
 // its requeue floor would wake them every ten minutes for nothing.

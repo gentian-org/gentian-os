@@ -834,9 +834,9 @@ kubectl gentian models set -f models.json    # make the claim declare exactly th
 
 ```
 $ kubectl gentian models list
-MODEL                     FROM                 STATE       NOTE
-qwen-qwen2.5-7b-instruct  instance qwen        NOT SERVED  The platform does not start the vLLM instance behind this model. ...
-infomaniak/gemma-4-31b    provider infomaniak  declared    token: credential llm-provider-infomaniak, property infomaniak_api_key
+MODEL                     FROM                 STATE     NOTE
+qwen-qwen2.5-7b-instruct  instance qwen        declared  served by vllm-qwen-inference
+infomaniak/gemma-4-31b    provider infomaniak  declared  token: credential llm-provider-infomaniak, property infomaniak_api_key
 Model serving is on, GPU serving on.
 ```
 
@@ -852,8 +852,8 @@ A provider's token is never in the file; it is entered in the admin console
 under Credentials, as `llm-provider-<name>`, which the cluster declares for
 every provider on the claim once it has applied the commit.
 Whether it has been supplied is shown on the console's Models tab, not here.
-A model the cluster serves itself is always `NOT SERVED`: the platform starts
-no instance for it.
+A model the cluster serves itself names its instance; whether it has finished
+loading the model is not shown.
 
 ## 6c. Cluster settings
 

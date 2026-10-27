@@ -115,10 +115,10 @@ const (
 	// ModelNotOffered: the gateway does not list it -- the cluster serves no
 	// models, or it is an instance on a cluster that declares no GPU.
 	ModelNotOffered = "not-offered"
-	// ModelNotServed: the gateway lists it and nothing answers behind it.
-	ModelNotServed = "not-served"
-	// ModelDeclared: the gateway lists it and calls its provider; whether
-	// the provider's token is there is not something the claim says.
+	// ModelDeclared: the gateway lists it and calls its server -- the vLLM
+	// instance the platform runs for it, or its provider. Whether that
+	// answers (a model still downloading, a provider's token not yet
+	// supplied) is not something the claim says.
 	ModelDeclared = "declared"
 )
 
@@ -160,19 +160,13 @@ func instanceModelName(modelID string) string {
 // GatewayModels lists every model the settings declare, under the name the
 // gateway gives it, instances first, in the claim's order.
 //
-// The state is read off the claim and off one fact about the platform: it
-// starts no vLLM instance, so a model of spec.llm.instances has no server
-// behind it unless somebody ran one by hand, and is reported as not served.
-// Nothing here asks the gateway or the cluster.
+// The state is read off the claim alone. Nothing here asks the gateway or the
+// cluster.
 func (m ModelSettings) GatewayModels() []GatewayModel {
 	out := []GatewayModel{}
 	off := "This cluster serves no models: llm.enabled is false."
 	for _, i := range m.Instances {
-		g := GatewayModel{
-			Name: instanceModelName(i.ModelID), Kind: "instance", Source: i.Name, State: ModelNotServed,
-			Reason: "The platform does not start the vLLM instance behind this model. " +
-				"It is listed by the gateway and a call to it fails until somebody runs vllm-" + i.Name + "-inference in the gateway's namespace.",
-		}
+		g := GatewayModel{Name: instanceModelName(i.ModelID), Kind: "instance", Source: i.Name, State: ModelDeclared}
 		switch {
 		case !m.Enabled:
 			g.State, g.Reason = ModelNotOffered, off

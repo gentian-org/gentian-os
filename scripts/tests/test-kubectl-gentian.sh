@@ -952,11 +952,11 @@ echo ""
 echo "kubectl gentian models"
 echo ""
 
-MODELS='{"cluster":"c1","settings":{"enabled":true,"gpuAcceleration":true,"instances":[{"name":"qwen","modelId":"Qwen/Qwen2.5-7B-Instruct"}],"providers":[{"name":"acme","apiBase":"https://models.example/v1","apiKeyProperty":"acme_api_key","models":[{"name":"small","model":"acme/small"}]}]},"models":[{"name":"qwen-qwen2.5-7b-instruct","kind":"instance","source":"qwen","state":"not-served","reason":"The platform does not start the vLLM instance behind this model."},{"name":"acme/small","kind":"provider","source":"acme","credential":"llm-provider-acme","apiKeyProperty":"acme_api_key","state":"declared"}]}'
+MODELS='{"cluster":"c1","settings":{"enabled":true,"gpuAcceleration":true,"instances":[{"name":"qwen","modelId":"Qwen/Qwen2.5-7B-Instruct"}],"providers":[{"name":"acme","apiBase":"https://models.example/v1","apiKeyProperty":"acme_api_key","models":[{"name":"small","model":"acme/small"}]}]},"models":[{"name":"qwen-qwen2.5-7b-instruct","kind":"instance","source":"qwen","state":"declared"},{"name":"acme/small","kind":"provider","source":"acme","credential":"llm-provider-acme","apiKeyProperty":"acme_api_key","state":"declared"}]}'
 
 fresh; reply GET /v1/clusters/c1/models 200 "${MODELS}"
 gentian models list
-has "list flags a model the cluster serves itself as not served" "$(grep '^qwen' <<<"${OUT}" | tr -s ' ')" "qwen-qwen2.5-7b-instruct instance qwen NOT SERVED The platform does not start"
+has "list names the instance that serves a model of the cluster's own" "$(grep '^qwen' <<<"${OUT}" | tr -s ' ')" "qwen-qwen2.5-7b-instruct instance qwen declared served by vllm-qwen-inference"
 has "... and names where a provider's token belongs" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme/small provider acme declared token: credential llm-provider-acme, property acme_api_key"
 is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/models "
 

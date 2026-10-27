@@ -1438,10 +1438,9 @@ cmd_repositories() {
 #   kubectl gentian models show > models.json; $EDITOR models.json
 #   kubectl gentian models set -f models.json
 #
-# The state is what the claim alone says. A model the cluster serves itself is
-# NOT SERVED, because the platform starts no instance for it. Whether a
-# provider's token has been supplied is not known here; the admin console
-# shows it, under Models and under Credentials.
+# The state is what the claim alone says. Whether an instance has finished
+# loading its model, or a provider's token has been supplied, is not known
+# here; the admin console shows the token, under Models and under Credentials.
 cmd_models() {
     local sub="${1:-}" answer
     shift || true
@@ -1456,8 +1455,9 @@ cmd_models() {
                     (["MODEL","FROM","STATE","NOTE"] | @tsv),
                     (.models[] | [.name,
                         (if .kind == "instance" then "instance " + .source else "provider " + .source end),
-                        (if .state == "not-served" then "NOT SERVED" elif .state == "not-offered" then "not offered" else "declared" end),
-                        (.reason // ("token: credential " + .credential + ", property " + .apiKeyProperty))] | @tsv)' |
+                        (if .state == "not-offered" then "not offered" else "declared" end),
+                        (.reason // (if .kind == "instance" then "served by vllm-" + .source + "-inference"
+                            else "token: credential " + .credential + ", property " + .apiKeyProperty end))] | @tsv)' |
                     column -t -s $'\t'
             fi
             printf '%s' "${answer}" | jq -r '"Model serving is " + (if .settings.enabled then "on" else "off" end) +

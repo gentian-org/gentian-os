@@ -461,21 +461,16 @@ guide in
 server (`vllm-inference`, `kernel/services/llm/manifests/templates/vllm-mock.yaml`),
 both delivered by the `gentian-llm` ApplicationSet.
 
-Real vLLM is **not installed on the current namespace layout.** The Cluster
-claim accepts `spec.llm.instances` (name, `modelId`, `gpuMemoryUtilization`,
-`maxModelLen`, `modelCacheSize`, `imageTag`, `toolCallParser`) and
-`spec.llm.gpuTimeSliceReplicas`, and the chart that renders one
-`vllm-<name>-inference` Deployment, Service and PVC per instance exists
-(`kernel/services/llm/chart`), but that chart still names the former shared
-namespace and no installer step or Composition applies it. Nothing registers an
-instance as a model at the gateway either ([llms.md](llms.md), "What is
-built").
+With `gpuAcceleration` true, each entry of `spec.llm.instances` (name,
+`modelId`, `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`,
+`imageTag`, `toolCallParser`) is a `vllm-<name>-inference` Deployment, Service
+and PVC (`kernel/services/llm/manifests/templates/vllm.yaml`) and a model of
+the gateway, delivered by the same ApplicationSet ([llms.md](llms.md) §6).
 
-What the chart is written for, once it is applied:
+What an instance needs:
 
 - **One GPU per instance.** Each instance requests one `nvidia.com/gpu`, a
-  time-sliced share where `gpuTimeSliceReplicas` is above 1
-  (`templates/gpu-sharing.yaml`). `--gpu-memory-utilization` is a fraction of
+  time-sliced share where the node's GPU operator slices the card. `--gpu-memory-utilization` is a fraction of
   one physical card's memory, and instances sharing a card draw from the same
   pool, so their values must sum to comfortably under 1.0. A 24GB card fits
   one 7B-class model at `0.85`; a second needs both quantized.

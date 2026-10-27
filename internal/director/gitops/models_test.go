@@ -105,15 +105,15 @@ func TestTheFixtureClaimReadsAsTheGatewaysModels(t *testing.T) {
 	for _, m := range claim.Spec.LLM.GatewayModels() {
 		got = append(got, m.Name+" "+m.Kind+" "+m.State)
 	}
-	want := "qwen-qwen2.5-7b-instruct instance not-served, infomaniak/gemma-4-31b provider declared, infomaniak/bge-m3 provider declared"
+	want := "qwen-qwen2.5-7b-instruct instance declared, infomaniak/gemma-4-31b provider declared, infomaniak/bge-m3 provider declared"
 	if strings.Join(got, ", ") != want {
 		t.Fatalf("models = %v\nwant     %s", got, want)
 	}
 }
 
-// An instance's model is never reported as working: the platform starts no
-// instance. Without a GPU, or with model serving off, the gateway does not
-// list it at all, and with serving off it lists no provider's model either.
+// An instance's model is declared like a provider's: the platform runs the
+// instance for it. Without a GPU, or with model serving off, the gateway does
+// not list it at all, and with serving off it lists no provider's model either.
 func TestWhatTheClaimSaysAboutAModelsState(t *testing.T) {
 	m := someModels()
 	states := func(m gitops.ModelSettings) string {
@@ -123,7 +123,7 @@ func TestWhatTheClaimSaysAboutAModelsState(t *testing.T) {
 		}
 		return strings.Join(out, " ")
 	}
-	if got := states(m); got != "not-served declared declared" {
+	if got := states(m); got != "declared declared declared" {
 		t.Errorf("serving, with a GPU: %s", got)
 	}
 	m.GPUAcceleration = false

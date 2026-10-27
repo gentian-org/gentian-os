@@ -67,15 +67,14 @@ func TestTheClustersAdministratorSetsTheModels(t *testing.T) {
 	}
 
 	// Read back: the settings, and each model under the gateway's name with
-	// what the claim says of it. The instance's is flagged, for nothing
-	// starts an instance; the provider's names where its token belongs.
+	// what the claim says of it. The provider's names where its token belongs.
 	_, out = h.do(t, "GET", clusterModels, alice, "")
 	models := out["models"].([]any)
 	if len(models) != 2 {
 		t.Fatalf("models = %v", models)
 	}
 	instance, provider := models[0].(map[string]any), models[1].(map[string]any)
-	if instance["name"] != "qwen-qwen2.5-7b-instruct" || instance["state"] != "not-served" || instance["reason"] == nil {
+	if instance["name"] != "qwen-qwen2.5-7b-instruct" || instance["state"] != "declared" {
 		t.Errorf("the instance's model = %v", instance)
 	}
 	if provider["name"] != "infomaniak/gemma-4-31b" || provider["state"] != "declared" ||
@@ -133,9 +132,6 @@ func TestModelSettingsAreHeldToTheSchemaBeforeAnythingIsWritten(t *testing.T) {
 	code, out = h.do(t, "PUT", clusterModels, alice, strings.Replace(modelsBody, `"apiKeyProperty"`, `"apiKey": "sk-secret", "apiKeyProperty"`, 1))
 	if code != http.StatusBadRequest || strings.Contains(out["error"].(string), "sk-secret") {
 		t.Errorf("a token in the body: %d %v", code, out)
-	}
-	if code, _ := h.do(t, "PUT", clusterModels, alice, `{"enabled": true, "gpuTimeSliceReplicas": 4}`); code != http.StatusBadRequest {
-		t.Errorf("GPU time slicing set by this route: %d", code)
 	}
 	code, out = h.do(t, "PUT", clusterModels, alice, strings.Replace(modelsBody, `"infomaniak_api_key"`, `"other_api_key"`, 1))
 	if code != http.StatusUnprocessableEntity || !strings.Contains(out["error"].(string), "apiKeyProperty must be infomaniak_api_key") {

@@ -1783,21 +1783,15 @@ _claim_cluster_fields() {
             printf '    # console:\n'
             printf '    #   enabled: true\n'
         fi
-        if [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]]; then
-            printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
-        else
-            printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
-        fi
-        printf '    # The models this cluster serves on its own GPUs. The gateway offers\n'
-        printf '    # one model per entry; the platform does not start the vLLM instance\n'
-        printf '    # behind it yet, so run one before listing it here.\n'
+        printf '    # The models this cluster serves on its own GPUs: one vLLM instance\n'
+        printf '    # and one model of the gateway per entry.\n'
         printf '    instances: []\n'
         printf '    #  - name: qwen\n'
         printf '    #    modelId: Qwen/Qwen2.5-7B-Instruct\n'
         printf '    #    gpuMemoryUtilization: "0.85"   fraction of GPU memory\n'
         printf '    #    maxModelLen: "8192"            context window, tokens\n'
         printf '    #    modelCacheSize: 60Gi           PVC for the weights\n'
-        printf '    #    imageTag: latest               vLLM image tag\n'
+        printf '    #    imageTag: v0.32.0-cu129        another vLLM release than the pinned one\n'
         printf '    #    toolCallParser: hermes         empty disables tool calling\n'
         printf '    # External OpenAI-compatible providers, routed through the same\n'
         printf '    # gateway. Independent of gpuAcceleration -- a cluster with no GPU\n'
@@ -1823,7 +1817,6 @@ _claim_cluster_fields() {
         printf '  #   gpuAcceleration: false    set true when the cluster has GPUs\n'
         printf '  #   console:\n'
         printf '  #     enabled: false          set true to serve the console of the gateway at llm.<kernelDomain>\n'
-        printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         printf '  #   instances: []             the models to serve; see the XRD for fields\n'
     fi
 

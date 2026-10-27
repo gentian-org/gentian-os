@@ -777,28 +777,19 @@ spec:
                         what a CPU-only cluster wants; the sizing fields below
                         are read only when it is true.
                       default: false
-                    gpuTimeSliceReplicas:
-                      type: integer
-                      description: >
-                        How many workloads share one physical GPU. Time slicing,
-                        not partitioning — they contend for the whole device
-                        rather than getting a fraction of it.
-                      default: 1
                     instances:
                       type: array
                       description: >
                         The models this cluster serves on its own GPUs, one
-                        vLLM instance each. The model gateway offers a model
+                        vLLM instance each, which the platform runs in the
+                        gateway's namespace. The model gateway offers a model
                         per entry, named after modelId in lower case with "/"
                         as "-" (Qwen/Qwen2.5-7B-Instruct is
                         qwen-qwen2.5-7b-instruct), and calls it at the Service
                         vllm-<name>-inference, port 8000, in the gateway's
                         namespace. Removing an entry removes the model from
-                        the gateway.
-
-                        The platform does not start the instance itself: the
-                        vLLM workload behind that Service has to be running
-                        for the model to answer.
+                        the gateway and stops its instance; the instance's
+                        cached weights are kept.
 
                         Read only when gpuAcceleration is true. An empty list is
                         a CPU-only cluster, which is the default.
@@ -829,8 +820,11 @@ spec:
                             default: 60Gi
                           imageTag:
                             type: string
-                            description: vLLM image tag.
-                            default: latest
+                            description: >
+                              Another release of vLLM's image than the
+                              platform's, by tag (e.g. v0.32.0-cu129 for a
+                              node whose NVIDIA driver predates CUDA 13).
+                              Absent runs the release the platform pins.
                           toolCallParser:
                             type: string
                             description: >

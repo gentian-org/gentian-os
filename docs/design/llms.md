@@ -37,15 +37,12 @@ This document details the architecture for integrating Large Language Model (LLM
     from its database.
 *   **The cluster's administrator changes them in the administration
     console** (§5, "Changing the models"), or with `kubectl gentian models`.
-    Both ask the director, which commits the claim. The console flags a model
-    that cannot answer: one the cluster would serve itself, and a provider's
-    model whose token is missing.
-*   **Not built:** starting the vLLM instances themselves. The gateway offers a
-    model for each entry of `spec.llm.instances` and calls it at
-    `vllm-<name>-inference.system-llm`, port 8000; the chart that holds that
-    workload (`kernel/services/llm/chart`) is delivered by nothing, so such a
-    model is listed and does not answer until somebody runs the instance (§6).
-    LocalAI was never added.
+    Both ask the director, which commits the claim. The console flags a
+    provider's model whose token is missing.
+*   **Built:** the vLLM instances. Each entry of `spec.llm.instances` is a
+    model of the gateway and a `vllm-<name>-inference` Deployment, Service,
+    PVC and NetworkPolicy in `system-llm`, from the same chart (§6).
+*   **Not built:** LocalAI was never added.
 
 ---
 
@@ -252,11 +249,10 @@ gateway, whoever wrote it there. The director holds the body to the schema of
 `spec.llm` it was built with — names, `https` addresses, the modes — and also
 refuses an empty model id, text over more than one line, and two entries that
 would give the gateway one model name twice. A body with any other field is
-refused unread: GPU time slicing and a provider's token are not set here. The
+refused unread: a provider's token is not set here. The
 gateway's console switch (`console.enabled`, "Operator access" below) is part
 of the settings; a body that leaves it out leaves it as the claim has it.
-GPU time slicing (`gpuTimeSliceReplicas`) is not, because nothing reads it:
-the chart that would is delivered by nothing (§6). The rest of the claim, its
+The rest of the claim, its
 comments included, stays as it was; a comment written inside the list of
 instances or of providers is lost when that list changes.
 
@@ -306,7 +302,7 @@ The console shows it per model, and asks neither the gateway nor any pod of
 
 | Model | Shown as | Known from |
 |---|---|---|
-| An instance's, with `gpuAcceleration` true | **Not served** | The director, from one fact: the platform starts no vLLM instance (§6). Every such model is flagged, also one whose instance somebody runs by hand |
+| An instance's, with `gpuAcceleration` true | **Served** | The director, from the claim: the platform runs its instance (§6). Not "works": nothing asks whether the model has finished loading |
 | An instance's, with `gpuAcceleration` false; any model with `enabled` false | **Not offered** | The director, from the claim: the gateway does not list it |
 | A provider's, where the provider names a token property that is not its own | **Not offered** | The director, from the claim: the gateway's chart leaves such a provider out |
 | A provider's, with no credential `llm-provider-<name>` on the cluster yet, or one that lacks the provider's property | **No credential** / **Property missing** | The custodian's list of credentials, which the console reads already |
@@ -490,25 +486,14 @@ with `/` as `-` — `qwen-qwen2.5-7b-instruct` above — and calls it at
 `http://vllm-<name>-inference.system-llm.svc.cluster.local:8000/v1`. That is
 the same file and the same mechanism as for a provider's models (§5).
 
-**The instance itself is not started by the platform.** The chart with the
-Deployment, Service and volume of an instance is in the repository
-(`kernel/services/llm/chart`) and no Application delivers it, so on a cluster
-installed today the model above is listed and a call to it fails with a
-connection error. The administration console and `kubectl gentian models list`
-show every such model as not served (§5, "Whether a model works"). What is
-missing before the platform can start it:
-
-- an Application that delivers the chart with the claim's `instances` — and
-  with them `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`,
-  `imageTag` and `toolCallParser`, which only that chart reads;
-- a NetworkPolicy for the instance's pods, as every other server of
-  `system-llm` has (security.md §2.9);
-- the pod settings the kernel's admission baseline requires, which the chart's
-  Deployment does not carry;
-- a named release of the vLLM image: `imageTag` defaults to `latest`;
-- a decision on GPU time slicing (`gpuTimeSliceReplicas`), whose ConfigMap is
-  the GPU operator's and shared with every GPU workload of the node;
-- where the Hugging Face token for gated models comes from.
+**The instance is the gateway chart's** (`kernel/services/llm/manifests/templates/vllm.yaml`),
+read from the same claim: per entry a Deployment on a node with
+`nvidia.com/gpu.present`, one `nvidia.com/gpu`, its Service, and a PVC for the
+weights that is kept when the entry is removed. The pod runs as a user that is
+not root with the kernel's admission baseline, its caches under the PVC
+(`HOME`, `HF_HOME`), and the NetworkPolicy `llm-vllm-ingress` admits the
+gateway alone. Still open: where the Hugging Face token for gated models
+comes from; the optional Secret `vllm-hf-token` is created by hand.
 
 With `gpuAcceleration` true the mock model server is not started. With it
 false the mock runs, and the gateway does not offer it as a model: a cluster

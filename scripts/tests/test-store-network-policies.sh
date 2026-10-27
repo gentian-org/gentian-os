@@ -100,6 +100,7 @@ check_llm "every client of the table is admitted to the server it names, everyth
 check_llm "the namespace, the parameters, the gateway's port and the edge's label are what the policies assume" wiring
 check_llm "storeNetworkPolicies=false: no policy; with GPUs no mock and no policy for one; no models, no ApplicationSet" off
 check_llm "the gateway's console is off unless the claim switches it on: only then is the edge admitted to the gateway" console
+check_llm "a model served on the cluster's GPUs: its instance is admitted from the gateway alone" vllm
 
 echo ""
 if [[ "${fail}" -gt 0 ]]; then

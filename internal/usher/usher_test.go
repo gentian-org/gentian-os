@@ -61,7 +61,7 @@ func catalogueFile(t *testing.T) string {
 		{Name: "acme/admin-console/web", DisplayName: "Administration", URL: "https://admin.acme.k.example/", Icon: "data:x",
 			Object: "tenant:acme", AnyOf: []string{"can_administer"}},
 		{Name: "acme/notes/web", DisplayName: "Notes", DisplayNames: map[string]string{"de_DE": "Notizen"},
-			URL: "https://notes.acme.k.example/", Icon: "data:x",
+			URL: "https://notes.acme.k.example/", Icon: "data:x", Preopen: true,
 			Object: "app:acme/notes", AnyOf: []string{"can_launch"}},
 		{Name: "other/admin-console/web", DisplayName: "Administration", URL: "https://admin.other.k.example/", Icon: "data:x",
 			Object: "tenant:other", AnyOf: []string{"can_administer"}},
@@ -158,6 +158,24 @@ func TestATileCarriesItsTranslations(t *testing.T) {
 	tile := body["tiles"].([]any)[0].(map[string]any)
 	if tile["displayNames"].(map[string]any)["de_DE"] != "Notizen" {
 		t.Errorf("translations lost: %v", tile)
+	}
+}
+
+// A tile the profile asks to be opened at mount says so to the portal, which
+// knows nothing else about the app to decide it by.
+func TestATileCarriesItsPreopen(t *testing.T) {
+	store := &fakeStore{held: map[string]bool{
+		"user:ada can_enter tenant:acme": true, "user:ada can_administer tenant:acme": true,
+		"user:ada can_launch app:acme/notes": true,
+	}}
+	s := New(Config{Authn: fakeAuthn{"ada": "ada"}, Authz: store, TilesPath: catalogueFile(t)})
+	_, body := ask(t, s, "/v1/tenants/acme/tiles", "ada")
+	for _, raw := range body["tiles"].([]any) {
+		tile := raw.(map[string]any)
+		want := tile["name"] == "acme/notes/web"
+		if got, _ := tile["preopen"].(bool); got != want {
+			t.Errorf("%v: preopen %v, want %v", tile["name"], got, want)
+		}
 	}
 }
 
