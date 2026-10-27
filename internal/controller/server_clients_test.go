@@ -103,7 +103,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 	}
 	built := map[string]func(*testing.T) builtClient{
 		"kernel-realm-desktop-database": func(t *testing.T) builtClient {
-			np := buildComponentNetworkPolicy(desktop(platform), releaseName(desktop(platform)), r.componentEgressNamespaces(desktopProfile, platform), nil)
+			np := buildComponentNetworkPolicy(desktop(platform), releasePods(releaseName(desktop(platform))), r.componentEgressNamespaces(desktopProfile, platform), nil)
 			return egressClient(t, np, layout.Namespace(layout.Data), provisioner.PostgresPort)
 		},
 		// The units of a backup of the tenant that adopts the kernel realm,

@@ -1163,11 +1163,14 @@ spec:
             {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
             {{- $redirects  := list }}
             {{- range $uri := (default list $oidcCl.redirectUris) }}
-            {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain | replace "${KERNEL_DOMAIN}" $kernelDomain) }}
             {{- end }}
+            {{- /* ${KERNEL_DOMAIN} as well as the tenant's: a profile sends a
+                 person back to the portal after signing out, and Keycloak
+                 refused the whole client over the placeholder left in. */}}
             {{- $postLogout := list }}
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
-            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain | replace "${KERNEL_DOMAIN}" $kernelDomain) }}
             {{- end }}
             {{- /* ── Where the realm tells the app that a person signed out ───────
                  requires.services.identity.oidc.backchannelLogout: a path, and
@@ -1784,11 +1787,11 @@ spec:
             {{- end }}
             {{- $scRedirects := list }}
             {{- range $uri := $scDeclared }}
-            {{- $scRedirects = append $scRedirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- $scRedirects = append $scRedirects ($uri | replace "${TENANT_DOMAIN}" $domain | replace "${KERNEL_DOMAIN}" $kernelDomain) }}
             {{- end }}
             {{- $scPostLogout := list }}
             {{- range $uri := (default list $scOIDC.postLogoutRedirectUris) }}
-            {{- $scPostLogout = append $scPostLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- $scPostLogout = append $scPostLogout ($uri | replace "${TENANT_DOMAIN}" $domain | replace "${KERNEL_DOMAIN}" $kernelDomain) }}
             {{- end }}
             {{- $scAudiences := list }}
             {{- range $aud := (default list $scOIDC.audiences) }}

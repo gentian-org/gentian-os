@@ -62,8 +62,10 @@ func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: "component-shop", Namespace: "tenant-acme"}, np); err != nil {
 		t.Fatalf("no component policy for a composed app: %v", err)
 	}
-	if got := np.Spec.PodSelector.MatchLabels[componentInstanceLabel]; got != "shop-release" {
-		t.Fatalf("the policy selects %q, want the Composition's release", got)
+	// By the app label the Composition puts on every pod of the app: not
+	// every chart sets the release label, and Odoo's does not.
+	if got := np.Spec.PodSelector.MatchLabels; len(got) != 1 || got[appLabel] != "shop" {
+		t.Fatalf("the policy selects %v, want the app's pods by %s", got, appLabel)
 	}
 	var realm, granted bool
 	for _, rule := range np.Spec.Egress {

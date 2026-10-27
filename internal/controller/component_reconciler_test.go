@@ -13,9 +13,11 @@ package controller
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -513,5 +515,37 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 	addon.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
 	if composedDelivery(addon) {
 		t.Error("an addon was handed to the Composition")
+	}
+}
+
+// A release waiting for a secret External Secrets has not written yet says
+// that it clears by itself; one the tenant's quota refused warns what is
+// missing; any other failure is passed on as it is.
+func TestReleaseFailureSaysWhenItResolvesItself(t *testing.T) {
+	t.Parallel()
+	release := func(msg string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{"status": map[string]interface{}{
+			"conditions": []interface{}{map[string]interface{}{"type": "Synced", "status": "False", "message": msg}},
+		}}}
+	}
+	missing := `create failed: failed to install release: failed to compose values: failed to get value from source: ` +
+		`failed to get data from secret ref: failed to get secret from namespace "tenant-test": Secret "nextcloud-base-ce-sensitive-values" not found`
+	if got := releaseFailureOf(release(missing)); !strings.Contains(got, "resolves itself") || !strings.HasPrefix(got, "Synced: "+missing) {
+		t.Fatalf("got %q", got)
+	}
+	quota := `update failed: failed to upgrade release: failed to create resource: persistentvolumeclaims "paperless-ngx-ce-media" ` +
+		`is forbidden: exceeded quota: tenant-quota, requested: requests.storage=20Gi, used: requests.storage=37Gi, limited: requests.storage=50Gi`
+	got := releaseFailureOf(release(quota))
+	for _, want := range []string{"warning", "20Gi more storage", "37Gi of the plan's 50Gi", "larger plan"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the quota warning lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "resolves itself") {
+		t.Fatalf("a full quota does not resolve itself: %q", got)
+	}
+	other := "create failed: failed to install release: chart not found"
+	if got := releaseFailureOf(release(other)); got != "Synced: "+other {
+		t.Fatalf("got %q", got)
 	}
 }
