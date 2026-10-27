@@ -206,6 +206,7 @@ spec:
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
     - https://demo.demo.platform.example.test/
+    - https://portal.platform.example.test/
     validRedirectUris:
     - https://demo.demo.platform.example.test/oidc/callback
     webOrigins:

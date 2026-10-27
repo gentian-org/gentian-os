@@ -35,3 +35,4 @@ spec:
             - "https://demo.${TENANT_DOMAIN}/oidc/callback"
           postLogoutRedirectUris:
             - "https://demo.${TENANT_DOMAIN}/"
+            - "https://portal.${KERNEL_DOMAIN}/"
