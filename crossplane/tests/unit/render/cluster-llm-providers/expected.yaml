@@ -376,6 +376,7 @@ spec:
         mail.serviceMode: ""
         mail.smtpHost: ""
         mainAddress.tenant: ""
+        monitoring.enabled: "false"
         network.edgeNamespace: kernel-edge
         node.ip: ""
         openbao.authMount: kubernetes

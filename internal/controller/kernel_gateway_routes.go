@@ -40,6 +40,7 @@ const (
 	kernelRouteHTTPRedirect    = "kernel-http-redirect"
 	kernelRouteArgoCD          = "kernel-argocd"
 	kernelRouteHeadlamp        = "kernel-headlamp"
+	kernelRouteGrafana         = "kernel-grafana"
 	// The name people type: an alias of the bare domain, by redirect.
 	kernelRouteWWWRedirect = "kernel-www-redirect"
 	// desktop.<kernel> on a multi-tenancy cluster: nobody's desktop there,
@@ -64,6 +65,9 @@ const (
 
 	argocdServerServiceName = "argocd-server"
 	headlampServiceName     = "headlamp"
+	// The monitoring Application's Grafana: kube-prometheus-stack names it
+	// after the release (fullnameOverride monitoring) and serves it on 80.
+	grafanaServiceName      = "monitoring-grafana"
 	litellmProxyServiceName = modelgateway.ServiceName
 	litellmProxyPort        = modelgateway.Port
 )
@@ -128,7 +132,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMConsoleRouted(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
+		kernelConsolesRouted(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
 	// The identity provider's public route is held to a rate of sign-in
 	// posts per client address, and which address that is has to be asked of
@@ -352,7 +356,7 @@ func kernelHTTPRouteSpecs(
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
-	llmConsole bool,
+	consoles kernelConsoles,
 	cluster string,
 	kernelZoneReady bool,
 	desktop bool,
@@ -576,6 +580,25 @@ func kernelHTTPRouteSpecs(
 				authz: &routeAuthz{relation: "can_open_kernel_tools", object: clusterObject},
 			})
 		}
+		// The platform's metrics dashboards (Grafana) at monitoring.<kernel>,
+		// a name for the function rather than the product, so a tenant's own
+		// Grafana keeps its name. Where the claim switches monitoring on
+		// (monitoring.enabled; clusterMonitoringEnabled): for whoever may
+		// audit the cluster -- its administrators, its security officers and
+		// its auditors -- with Grafana's own kernel-realm sign-in as the
+		// second step, like the consoles above.
+		if consoles.grafana && observabilityNamespace != "" {
+			specs = append(specs, kernelHTTPRouteSpec{
+				name:        kernelRouteGrafana,
+				host:        fmt.Sprintf("monitoring.%s", kernelDomain),
+				sectionName: wildcardListenerName,
+				rules: []gatewayv1.HTTPRouteRule{
+					kernelBackendRuleCrossNamespace(grafanaServiceName, observabilityNamespace, 80,
+						kernelConsoleFrameFilters(kernelDomain)...),
+				},
+				authz: &routeAuthz{relation: "can_audit", object: clusterObject},
+			})
+		}
 	}
 	// The model gateway's console (LiteLLM's: models, keys, spend), for
 	// platform administrators and only where the claim switches it on
@@ -588,7 +611,7 @@ func kernelHTTPRouteSpecs(
 	// Only once the kernel zone exists, like the other consoles: before it
 	// there is no session to put the route behind, and a console that is not
 	// routed is the safe way to be early.
-	if llmConsole && kernelZoneReady {
+	if consoles.llm && kernelZoneReady {
 		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteLiteLLM,
 			host:        fmt.Sprintf("llm.%s", kernelDomain),

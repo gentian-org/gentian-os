@@ -355,7 +355,7 @@ func TestBuildTenantReferenceGrantObjects(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, kernelFrontDoor{})
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
 	// One route per kernel host, plus one per tenant apex sending the browser
 	// to that tenant's desktop. Asserted by name rather than by count, so
 	// adding a route does not fail a test that has nothing to do with it.
@@ -477,7 +477,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 func TestNoDesktopRedirectsWithoutADesktop(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false, kernelFrontDoor{})
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, kernelConsoles{}, "c1", true, false, kernelFrontDoor{})
 	for _, s := range specs {
 		switch s.name {
 		case "tenant-demo-apex":
@@ -485,7 +485,7 @@ func TestNoDesktopRedirectsWithoutADesktop(t *testing.T) {
 		}
 	}
 	specs = kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true, kernelFrontDoor{})
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, kernelConsoles{}, "c1", false, true, kernelFrontDoor{})
 	// The routes that do not depend on the desktop are still there.
 	var sawIDP bool
 	for _, s := range specs {
@@ -503,7 +503,7 @@ func TestNoDesktopRedirectsWithoutADesktop(t *testing.T) {
 // route, so no hostname for the tunnel or a DNS record to carry, and no line
 // in the bouncer's table.
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, kernelFrontDoor{})
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
 			t.Fatalf("kernel-llm route present with the console off")
@@ -527,7 +527,7 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 // header alone and hands LiteLLM no token of the platform's.
 func TestTheModelGatewayConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Parallel()
-	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, kernelFrontDoor{}) {
+	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{llm: true}, "c1", true, true, kernelFrontDoor{}) {
 		if s.name != kernelRouteLiteLLM {
 			continue
 		}
@@ -573,7 +573,7 @@ func TestTheModelGatewayConsoleKeepsItsOwnBearer(t *testing.T) {
 // to put it behind.
 func TestTheModelGatewayConsoleWaitsForTheKernelZone(t *testing.T) {
 	t.Parallel()
-	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", false, true, kernelFrontDoor{}) {
+	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{llm: true}, "c1", false, true, kernelFrontDoor{}) {
 		if s.name == kernelRouteLiteLLM {
 			t.Fatal("the console is routed before the kernel zone exists")
 		}
@@ -581,7 +581,7 @@ func TestTheModelGatewayConsoleWaitsForTheKernelZone(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, kernelFrontDoor{})
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{llm: true}, "c1", true, true, kernelFrontDoor{})
 	// By name, not by count: adding a kernel route should not fail a test
 	// about the LLM one. The LLM route is still appended last, which is what
 	// the specs[len-1] lookup below relies on.
@@ -672,7 +672,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 		[]string{"demo.platform.example.test"},
 		nil,
 		[]string{"demo"},
-		true,
+		kernelConsoles{llm: true},
 		"c1", true, true, kernelFrontDoor{})
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
@@ -689,7 +689,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{})
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {
@@ -745,7 +745,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{})
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
 	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
 		var spec *kernelHTTPRouteSpec
 		for i := range specs {
@@ -780,7 +780,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 // an application that is not the admin console".
 func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{})
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
 	for _, s := range specs {
 		if s.name != kernelRouteKeycloakAdmin {
 			continue
@@ -855,7 +855,7 @@ func TestTheUserTenantOfASingleTenancyClusterAddsNoListener(t *testing.T) {
 func TestTheBareDomainIsNotAKernelRoute(t *testing.T) {
 	t.Parallel()
 	var www string
-	for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{}) {
+	for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{}) {
 		if spec.host == "k.example" {
 			t.Fatalf("route %q serves the bare domain from the kernel", spec.name)
 		}
@@ -1022,7 +1022,7 @@ func TestEveryKernelRouteIsBehindAQuestionOrDeliberatelyPublic(t *testing.T) {
 	}
 	for _, zoneReady := range []bool{true, false} {
 		{
-			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true, kernelFrontDoor{})
+			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, kernelConsoles{llm: true}, "c1", zoneReady, true, kernelFrontDoor{})
 			for _, s := range specs {
 				backends, redirectOnly := 0, true
 				for _, rule := range s.rules {
@@ -1066,7 +1066,7 @@ func TestHeadlampIsRoutedForWhoRunsTheCluster(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	for _, spec := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, kernelFrontDoor{}) {
+	for _, spec := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{}) {
 		if spec.name != kernelRouteHeadlamp {
 			continue
 		}
@@ -1094,5 +1094,36 @@ func TestAuthenticatedGatewayOutlastsAPurge(t *testing.T) {
 	}
 	if d <= lifecycle.PurgeDeadline {
 		t.Fatalf("requestTimeout %s is not longer than the purge deadline %s", d, lifecycle.PurgeDeadline)
+	}
+}
+
+// Grafana answers at monitoring.<kernel>, not grafana.<kernel>, so a tenant's
+// own Grafana keeps its name; only where the claim switches monitoring on and
+// the kernel zone exists; and only for whoever may audit the cluster.
+func TestGrafanaIsRoutedAtMonitoringForAuditorsOnlyWhereSwitchedOn(t *testing.T) {
+	find := func(specs []kernelHTTPRouteSpec) *kernelHTTPRouteSpec {
+		for i := range specs {
+			if specs[i].name == kernelRouteGrafana {
+				return &specs[i]
+			}
+		}
+		return nil
+	}
+	on := kernelConsoles{grafana: true}
+	if find(kernelHTTPRouteSpecs("k.example", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})) != nil {
+		t.Error("routed with monitoring off")
+	}
+	if find(kernelHTTPRouteSpecs("k.example", nil, nil, nil, on, "c1", false, true, kernelFrontDoor{})) != nil {
+		t.Error("routed before the kernel zone exists")
+	}
+	g := find(kernelHTTPRouteSpecs("k.example", nil, nil, nil, on, "c1", true, true, kernelFrontDoor{}))
+	if g == nil {
+		t.Fatal("not routed with monitoring on")
+	}
+	if g.host != "monitoring.k.example" {
+		t.Errorf("host = %q", g.host)
+	}
+	if g.authz == nil || g.authz.relation != "can_audit" {
+		t.Errorf("authz = %+v, want can_audit on the cluster", g.authz)
 	}
 }

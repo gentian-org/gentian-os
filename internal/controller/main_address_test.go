@@ -258,7 +258,7 @@ func TestTheFrontDoorWithAWebsiteOnTheMainAddress(t *testing.T) {
 		domains, names := zonedTenantDomains(tenants, mainKD, mode)
 		door := kernelFrontDoorOf(tenants, mainKD, "kernel", mode)
 		door.website = website && door.userDesktop != ""
-		return kernelHTTPRouteSpecs(mainKD, domains, nil, names, false, "c1", true, true, door)
+		return kernelHTTPRouteSpecs(mainKD, domains, nil, names, kernelConsoles{}, "c1", true, true, door)
 	}
 	bareDomain := func(all []kernelHTTPRouteSpec) map[string]string {
 		out := map[string]string{}
@@ -450,7 +450,7 @@ func (m *mainAddressCluster) routes() []mainRoute {
 	}
 	domains, names := zonedTenantDomains(tenants.Items, mainKD, m.gw.TenancyMode)
 	var out []mainRoute
-	for _, s := range kernelHTTPRouteSpecs(mainKD, domains, nil, names, false, "c1", true, true, door) {
+	for _, s := range kernelHTTPRouteSpecs(mainKD, domains, nil, names, kernelConsoles{}, "c1", true, true, door) {
 		if s.host == mainKD && s.gateway == PerimeterGatewayName {
 			out = append(out, rulesOf("desktop", s.rules)...)
 		}

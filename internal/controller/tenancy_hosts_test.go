@@ -179,7 +179,7 @@ func TestTheFrontDoorPerTenancyMode(t *testing.T) {
 
 	specsFor := func(mode string, tenants ...gentianov1alpha1.Tenant) []kernelHTTPRouteSpec {
 		domains, names := zonedTenantDomains(tenants, kd, mode)
-		return kernelHTTPRouteSpecs(kd, domains, nil, names, false, "c1", true, true,
+		return kernelHTTPRouteSpecs(kd, domains, nil, names, kernelConsoles{}, "c1", true, true,
 			kernelFrontDoorOf(tenants, kd, "kernel", mode))
 	}
 

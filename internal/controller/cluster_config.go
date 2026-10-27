@@ -35,6 +35,7 @@ const (
 	clusterConfigName           = "gentian-cluster-config"
 	clusterConfigLLMKey         = "llm.enabled"
 	clusterConfigLLMConsoleKey  = "llm.console.enabled"
+	clusterConfigMonitoringKey  = "monitoring.enabled"
 	clusterConfigTenancyKey     = "tenancyMode"
 	clusterConfigMailModeKey    = "mail.serviceMode"
 	clusterConfigMailEgressKey  = "mail.egressHost"
@@ -148,6 +149,25 @@ func clusterLLMEnabled(ctx context.Context, c client.Reader) bool {
 // existed -- therefore means no route, never one.
 func clusterLLMConsoleRouted(ctx context.Context, c client.Reader) bool {
 	return clusterLLMEnabled(ctx, c) && clusterConfigValueOr(ctx, c, clusterConfigLLMConsoleKey, "") == "true"
+}
+
+// clusterMonitoringEnabled reports whether the claim switches the platform's
+// monitoring on (monitoring.enabled), which is what puts Grafana behind
+// monitoring.<kernel domain>. No environment fallback, for the reason the LLM
+// console has none: a ConfigMap that cannot answer means no route.
+func clusterMonitoringEnabled(ctx context.Context, c client.Reader) bool {
+	return clusterConfigValueOr(ctx, c, clusterConfigMonitoringKey, "") == "true"
+}
+
+// kernelConsoles are the kernel consoles a claim may switch on: each is
+// routed only where it says so.
+type kernelConsoles struct {
+	llm     bool
+	grafana bool
+}
+
+func kernelConsolesRouted(ctx context.Context, c client.Reader) kernelConsoles {
+	return kernelConsoles{llm: clusterLLMConsoleRouted(ctx, c), grafana: clusterMonitoringEnabled(ctx, c)}
 }
 
 // clusterMailEgressHost is the name that resolves to the address mail leaves

@@ -382,6 +382,7 @@ spec:
     - https://wiki.platform.platform.example.test/
     - https://argocd.platform.example.test/
     - https://headlamp.platform.example.test/
+    - https://monitoring.platform.example.test/
     - https://id.platform.example.test/
     validRedirectUris:
     - https://platform.platform.example.test/oauth2/callback
@@ -394,6 +395,8 @@ spec:
     - https://argocd.platform.example.test/
     - https://headlamp.platform.example.test/oauth2/callback
     - https://headlamp.platform.example.test/
+    - https://monitoring.platform.example.test/oauth2/callback
+    - https://monitoring.platform.example.test/
     - https://id.platform.example.test/oauth2/callback
     - https://id.platform.example.test/
     webOrigins: []
