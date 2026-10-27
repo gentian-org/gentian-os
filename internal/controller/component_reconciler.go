@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -1360,11 +1361,37 @@ func releaseFailureOf(obj *unstructured.Unstructured) string {
 // before they are there, and it tries again until they are. Said, because
 // the bare message reads like an install that has broken.
 func releaseFailureOutlook(msg string) string {
+	if m := exceededQuota.FindStringSubmatch(msg); m != nil {
+		return quotaWarning(m[1], m[2], m[3], m[4])
+	}
 	if strings.Contains(msg, "failed to get value from source") && strings.Contains(msg, "not found") {
 		return " (this usually resolves itself within a minute or two, once the app's secrets are written; " +
 			"it is retried on its own)"
 	}
 	return ""
+}
+
+// exceededQuota is Kubernetes refusing an object for the tenant's quota:
+// "exceeded quota: tenant-quota, requested: requests.storage=20Gi, used:
+// requests.storage=37Gi, limited: requests.storage=50Gi". The first resource
+// of each list is the one named.
+var exceededQuota = regexp.MustCompile(`exceeded quota: [^,]+, requested: ([a-z.]+)=([^,]+), used: [a-z.]+=([^,]+), limited: [a-z.]+=([^,\s"]+)`)
+
+// quotaWarning says, for a release the tenant's quota refused, what is
+// missing and what to do. It does not resolve itself: the provider retries
+// and keeps being refused until the tenant has room.
+func quotaWarning(resource, requested, used, limit string) string {
+	what := map[string]string{
+		"requests.storage": "storage",
+		"requests.cpu":     "CPU", "limits.cpu": "CPU",
+		"requests.memory": "memory", "limits.memory": "memory",
+	}[resource]
+	if what == "" {
+		what = resource
+	}
+	return fmt.Sprintf(" (warning: the tenant's plan has no room for this app: it asks for %s more %s, "+
+		"and %s of the plan's %s are in use. Move the tenant to a larger plan or remove an app; "+
+		"the install goes on by itself once there is room)", requested, what, used, limit)
 }
 
 func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
