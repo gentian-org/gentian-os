@@ -746,6 +746,7 @@ spec:
     adminEventsDetailsEnabled: false
     adminEventsEnabled: true
     eventsEnabled: true
+    eventsExpiration: 2592000
     eventsListeners:
     - jboss-logging
     - gentian-director
