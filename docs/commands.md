@@ -517,6 +517,13 @@ the cluster — what the app owns cannot be determined without it; installing
 the app again from a catalogue source puts the profile back — and when the
 vault, the identity provider or the database it will need does not answer.
 
+A release that is already out of the tenant and only waits for its provider
+to uninstall it -- a provider still waiting out an upgrade of a broken release
+gets there minutes later -- does not hold the purge back: the purge destroys
+the data, waits for the release to go, deletes the app's volume claims once
+more (a rollback or a kept claim puts one back), and answers only when nothing
+of the app is left.
+
 The purge itself is one request that is answered when it is over. If a step
 fails, the command ends with which step failed, what had already been
 destroyed and what was not attempted; nothing is rolled back, every step is

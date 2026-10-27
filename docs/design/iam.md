@@ -304,7 +304,7 @@ day-to-day app user:
 |---|---|---|
 | **Member** | `members`, optional `app:*` | User app tiles only |
 | **Tenant admin** | `admins` | Admin Console (Users, Groups, Notifications) — no app tiles |
-| **Perimeter approver** | `admins`, named on the Cluster claim (§1.1c) | Approves what the tenant publishes to the internet (`can_expose`) and its egress beyond the baseline (`can_approve_privilege`), and nothing else beyond the tenant admin's. A tenant administrator the cluster's administrator names `perimeterApprover`; a perimeter approver of the platform tenant approves for every tenant, and the platform admin too, in a tenant the cluster operates ([security.md §2.14](security.md)) |
+| **Perimeter approver** | `admins`, named on the Cluster claim (§1.1c) | Approves what the tenant publishes to the internet (`can_expose`) and its egress beyond the baseline (`can_approve_privilege`), and nothing else beyond the tenant admin's. A tenant administrator the cluster's administrator names `perimeterApprover`; a perimeter approver of the platform tenant approves for every tenant, and so does the platform admin, by default ([security.md §2.14](security.md)) |
 | **Platform admin** | `gentian:platform:admin` | Admin Console (cross-tenant during bootstrap) |
 
 Provisioning is via the [Gentian Admin Console](admin-console.md).

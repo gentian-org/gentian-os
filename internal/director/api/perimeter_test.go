@@ -20,7 +20,8 @@ import (
 //
 // The fixture's tenants are the two cases there are. demo is operated by its
 // cluster and tom, its administrator, is its perimeter approver; solo
-// administers itself and paul is its perimeter approver.
+// administers itself and paul is its perimeter approver. The cluster's
+// administrator approves in both: the perimeter is the cluster's.
 
 const soloShares = "/v1/tenants/solo/exposures/nextcloud/shares"
 
@@ -37,7 +38,7 @@ func TestAPublicAddressIsApprovedByWhoeverHoldsTheRelationAndNobodyElse(t *testi
 		{"a member of the tenant", "tenant-demo", "mia", sharesPath, http.StatusForbidden},
 		{"another tenant's administrator", "tenant-solo", "tina", sharesPath, http.StatusForbidden},
 		// solo: administers itself, paul its perimeter approver.
-		{"the cluster's administrator, in a tenant that withdrew the operator", "gentian", "alice", soloShares, http.StatusForbidden},
+		{"the cluster's administrator, in a tenant that withdrew the operator", "gentian", "alice", soloShares, http.StatusAccepted},
 		{"the tenant's administrator, not named", "tenant-solo", "tina", soloShares, http.StatusForbidden},
 		{"that tenant's perimeter approver", "tenant-solo", "paul", soloShares, http.StatusAccepted},
 		{"another tenant's approver", "tenant-demo", "tom", soloShares, http.StatusForbidden},

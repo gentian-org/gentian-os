@@ -723,22 +723,36 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Mail is optional: a cluster without the relay's credentials
+                   leaves them empty, and provider-helm refuses an empty --set
+                   value, which would keep the whole app from installing. So
+                   the SMTP values do not go through set. The ExternalSecret
+                   writes each one, when it is not empty, as a values document
+                   of its own (values-smtp-*), and the Release reads those as
+                   optional valuesFrom: an empty credential is simply not set,
+                   the app installs and sends no mail, and the value reaches
+                   it on the next sync once it exists. */}}
+            {{- $relValuesFrom := list }}
+            {{- $esTemplate := dict }}
             {{- if $vm.smtp }}
-            {{- if $vm.smtp.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.hostKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-host"))) }}
+            {{- $optional := list
+                (dict "path" $vm.smtp.hostKey "key" "smtp-host" "raw" false)
+                (dict "path" $vm.smtp.portKey "key" "smtp-port" "raw" true)
+                (dict "path" $vm.smtp.userKey "key" "smtp-user" "raw" false)
+                (dict "path" $vm.smtp.passwordKey "key" "smtp-password" "raw" false) }}
+            {{- range $o := $optional }}
+            {{- if $o.path }}
+            {{- $head := "" }}
+            {{- $tail := "" }}
+            {{- range $part := splitList "." $o.path }}
+            {{- $head = printf "%s{%s:" $head (toJson $part) }}
+            {{- $tail = printf "%s}" $tail }}
             {{- end }}
-            {{- if $vm.smtp.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.portKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-port"))) }}
+            {{- $value := ternary " . " " . | toJson " $o.raw }}
+            {{- $docKey := printf "values-%s" $o.key }}
+            {{- $esTemplate = set $esTemplate $docKey (printf "%s with index . %q %s%s%s%s%s%s%s end %s" "{{" $o.key "}}" $head "{{" $value "}}" $tail "{{" "}}") }}
+            {{- $relValuesFrom = append $relValuesFrom (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" $docKey "optional" true)) }}
             {{- end }}
-            {{- if $vm.smtp.userKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.userKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-user"))) }}
-            {{- end }}
-            {{- if $vm.smtp.passwordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.passwordKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-password"))) }}
             {{- end }}
             {{- end }}
 
@@ -1916,6 +1930,13 @@ spec:
                       name: {{ $secretName }}
                       creationPolicy: Owner
                       deletionPolicy: Retain
+                      {{- if gt (len $esTemplate) 0 }}
+                      template:
+                        engineVersion: v2
+                        mergePolicy: Merge
+                        data:
+                          {{ toYaml $esTemplate | nindent 26 }}
+                      {{- end }}
                     data:
                       {{ toYaml $esData | nindent 22 }}
               providerConfigRef:
@@ -2306,6 +2327,10 @@ spec:
                       namespace: {{ $ns }}
                       key: patch.yaml
                       optional: false
+                {{- if gt (len $relValuesFrom) 0 }}
+                valuesFrom:
+                  {{ toYaml $relValuesFrom | nindent 18 }}
+                {{- end }}
                 {{- if gt (len $extraVals) 0 }}
                 values:
                   {{ toYaml $extraVals | nindent 18 }}

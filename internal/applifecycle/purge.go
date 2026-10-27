@@ -70,6 +70,7 @@ const (
 	KindModelAccess   = string(backup.KindModelAccess)
 	KindSignInScope   = string(backup.KindSignInScope)
 	KindAuthorization = string(backup.KindAuthorization)
+	KindWorkloads     = string(backup.KindWorkloads)
 )
 
 // kindLabels are the kinds as a person reads them.
@@ -84,6 +85,7 @@ var kindLabels = map[string]string{
 	KindModelAccess:   "model key",
 	KindSignInScope:   "sign-in scope",
 	KindAuthorization: "authorization store",
+	KindWorkloads:     "workloads",
 }
 
 // The bounds of one purge.
@@ -990,6 +992,12 @@ func (s *Service) waitForPVCsGone(ctx context.Context, ns string, claims []strin
 			return fmt.Errorf(
 				"volume claims still present %s after they were deleted: %s — the next install of this app will not schedule until they are gone",
 				pvcDeletionTimeout, strings.Join(remaining, ", "))
+		}
+		// A workload still being uninstalled may have started a pod on a
+		// claim between the first release of its holders and the claim's
+		// deletion; such a pod holds it as surely as the first ones did.
+		if err := s.releasePVCHolders(ctx, ns, remaining); err != nil {
+			return err
 		}
 		if err := wait(ctx); err != nil {
 			return fmt.Errorf("waiting for volume claims %s to be gone: %w", strings.Join(remaining, ", "), err)

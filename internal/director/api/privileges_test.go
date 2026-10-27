@@ -63,6 +63,21 @@ func TestThePerimeterApproverApprovesEgress(t *testing.T) {
 	}
 }
 
+// The cluster's administrator approves egress in every tenant, the ones that
+// administer themselves too: the perimeter is the cluster's. tina, who
+// administers solo, does not.
+func TestTheClusterAdministratorApprovesEgressInEveryTenant(t *testing.T) {
+	h := start(t)
+	path := "/v1/tenants/solo/privileges/element/egress/smtp-relay"
+	if code, _ := h.do(t, "PUT", path, h.token(t, "tenant-solo", "tina"), reason("my own tenant, after all")); code != http.StatusForbidden {
+		t.Fatalf("a tenant administrator approved egress: %d", code)
+	}
+	code, body := h.do(t, "PUT", path, h.token(t, "gentian", "alice"), reason("the relay is the cluster's own"))
+	if code != http.StatusAccepted {
+		t.Fatalf("PUT by the cluster's administrator = %d %v", code, body)
+	}
+}
+
 // A pod-security waiver weakens what protects the node, and every tenant on
 // it. A tenant administrator's authority inside their own tenant is not that,
 // however complete it is there.
