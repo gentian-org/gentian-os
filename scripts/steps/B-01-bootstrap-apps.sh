@@ -2,7 +2,7 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace; the monitoring Application exactly where the claim's monitoring.enabled is true
 # mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signalling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp monitoring
 
@@ -79,6 +79,14 @@ _v5_apps_synced()  { echo "openbao openbao-transit"; }
 # was still standing.
 _v5_apps_deferred() { echo "kernel-postgres"; }
 _v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_deferred)"; }
+
+# _v5_monitoring_as_claimed <gitops-ns> — no monitoring Application where the
+# claim's monitoring.enabled is not true. Where it is, the drift test sees an
+# absent one.
+_v5_monitoring_as_claimed() {
+    [[ "${MONITORING_ENABLED:-false}" == "true" ]] && return 0
+    ! kubectl get application monitoring -n "$1" >/dev/null 2>&1
+}
 
 # _v5_keep_chart_version — do not downgrade a component chart this cluster has
 # already resolved.
@@ -315,6 +323,10 @@ check() {
     # reached a fresh install and never an already-bootstrapped one
     # (roadmap 2.21). A subset test, by scripts/lib/bootstrap-app-drift.py.
     _v5_bootstrap_apps_current || return 1
+    # The platform's monitoring where the claim switches it off: the render
+    # leaves it out, and a subset test cannot see what is there and should
+    # not be.
+    _v5_monitoring_as_claimed "${ns}" || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
@@ -333,6 +345,14 @@ apply() {
     _v5_render | kubectl apply -f -
     local ns app want
     ns="$(ns_kernel gitops)"
+    # Switched off on the claim: the Application goes, and its finalizer has
+    # Argo CD take what it installed with it. Its volume stays, as a deleted
+    # StatefulSet's claims do.
+    if [[ "${MONITORING_ENABLED:-false}" != "true" ]] \
+        && kubectl get application monitoring -n "${ns}" >/dev/null 2>&1; then
+        kubectl delete application monitoring -n "${ns}" --wait=false >/dev/null
+        info "monitoring switched off on the claim: its Application is removed"
+    fi
     for app in $(_v5_apps_healthy) $(_v5_apps_synced); do
         want=healthy
         case " $(_v5_apps_synced) " in *" ${app} "*) want=synced ;; esac

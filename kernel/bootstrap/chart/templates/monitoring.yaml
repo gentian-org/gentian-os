@@ -15,7 +15,12 @@ kind: Application
 metadata:
   name: monitoring
   namespace: {{ include "ns" (list . "gitops") }}
-  finalizers: []
+  # Unlike the other bootstrap Applications, which stay when the installer
+  # is done with them: monitoring can be switched off, and switched off it
+  # should leave nothing running. B-01 deletes the Application; this has
+  # Argo CD delete what it installed first.
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   project: gentian
   source:
