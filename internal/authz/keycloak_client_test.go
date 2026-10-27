@@ -244,7 +244,9 @@ func TestDeleteClientScope(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == base:
 			out := []map[string]any{}
 			for name := range scopes {
-				out = append(out, map[string]any{"id": "id-" + name, "name": name})
+				// As Keycloak answers: a scope's attributes are strings.
+				out = append(out, map[string]any{"id": "id-" + name, "name": name,
+					"attributes": map[string]string{"include.in.token.scope": "true"}})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, base+"/id-"):

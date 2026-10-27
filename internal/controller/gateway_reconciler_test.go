@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -24,6 +25,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -293,29 +295,6 @@ func TestIngressGatewayFrameAncestorsDeduplicatesOrigins(t *testing.T) {
 	}
 	if got := strings.Count(policy.Origins, "https://demo.platform.example.test"); got != 1 {
 		t.Fatalf("origins = %q, want demo apex once", policy.Origins)
-	}
-}
-
-func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
-	t.Parallel()
-	spec := backendTrafficPolicySpecFromIngressAnnotations(map[string]string{
-		gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "3600",
-		gentianov1alpha1.AnnotationIngressGatewayBufferLimit:    "128m",
-	})
-	if spec == nil {
-		t.Fatal("expected spec")
-	}
-	timeout, ok := spec["timeout"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("timeout = %T", spec["timeout"])
-	}
-	http, ok := timeout["http"].(map[string]interface{})
-	if !ok || http["requestTimeout"] != "3600s" {
-		t.Fatalf("requestTimeout = %v", http["requestTimeout"])
-	}
-	conn, ok := spec["connection"].(map[string]interface{})
-	if !ok || conn["bufferLimit"] != "128m" {
-		t.Fatalf("bufferLimit = %v", conn["bufferLimit"])
 	}
 }
 
@@ -1097,4 +1076,23 @@ func TestHeadlampIsRoutedForWhoRunsTheCluster(t *testing.T) {
 		return
 	}
 	t.Fatal("no headlamp route")
+}
+
+// The authenticated Gateway gives a request longer than the longest one a
+// person makes behind it: a purge, which the director waits PurgeDeadline for.
+func TestAuthenticatedGatewayOutlastsAPurge(t *testing.T) {
+	t.Parallel()
+	spec := authenticatedGatewayBackendTrafficPolicySpec()
+	ref := spec["targetRefs"].([]interface{})[0].(map[string]interface{})
+	if ref["kind"] != "Gateway" || ref["name"] != AuthenticatedGatewayName {
+		t.Fatalf("target = %v", ref)
+	}
+	raw := spec["timeout"].(map[string]interface{})["http"].(map[string]interface{})["requestTimeout"].(string)
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d <= lifecycle.PurgeDeadline {
+		t.Fatalf("requestTimeout %s is not longer than the purge deadline %s", d, lifecycle.PurgeDeadline)
+	}
 }
