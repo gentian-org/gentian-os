@@ -28,6 +28,16 @@ This document details the architecture for integrating Large Language Model (LLM
 *   **One LiteLLM team per tenant**, created by the tenant reconciler
     (`internal/controller/litellm_team.go`). The operator sets no budget and no
     rate limit on a team or a key.
+*   **A budget per person**, when the claim states one
+    (`spec.llm.personBudget`: spend per period, requests and tokens per
+    minute). The gateway holds every person it is told about to it: the
+    desktop's assistant sends the person's subject as the request's `user`,
+    and Open WebUI its own id of the person in `x-litellm-end-user-id`. A
+    request over it is refused with 429. The budget is the gateway's, under
+    the id `gentian-person`, written by a Job of the gateway's chart after
+    every sync (`kernel/services/llm/manifests/templates/person-budget.yaml`).
+    One budget for every person on the cluster; a person's own is not built.
+    An app that names no person is held to nothing per person.
 *   **The gateway's models are the Cluster claim's** (§5). The gateway's chart
     writes its configuration file from `spec.llm.instances` and
     `spec.llm.providers`, and the claim reaches the chart as a values file of

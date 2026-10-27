@@ -59,7 +59,12 @@ pods.
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- toYaml (dict "model_list" $models) -}}
+{{- $config := dict "model_list" $models -}}
+{{- /* What one person may spend, when the claim says (person-budget.yaml). */ -}}
+{{- if dig "personBudget" dict $llm -}}
+{{- $_ := set $config "litellm_settings" (dict "max_end_user_budget_id" "gentian-person") -}}
+{{- end -}}
+{{- toYaml $config -}}
 {{- end -}}
 apiVersion: v1
 kind: ConfigMap

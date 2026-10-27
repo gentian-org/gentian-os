@@ -381,6 +381,14 @@ clients:
       internal/modelgateway/modelgateway.go, internal/controller/model_access_reconciler.go, litellm_team.go,
       internal/applifecycle/purge.go (the lifecycle service runs in the operator, cmd/main.go);
       the labels are checked against the rendered operator chart
+  - store: llm
+    server: gateway
+    client: the Job that writes the claim's budget per person after a sync
+    namespace: system-llm
+    podLabels: {app: llm-person-budget}
+    port: 4000
+    built: none
+    proof: kernel/services/llm/manifests/templates/person-budget.yaml (rendered only when the claim states spec.llm.personBudget)
   # Only where the claim switches the gateway's console on
   # (spec.llm.console.enabled, off by default). `when: console` says so:
   # llm_network_policies.py admits this row on a cluster with the console on
