@@ -54,7 +54,7 @@ metrics-server:
 # which are copied into the repository: after changing the version, run
 # scripts/gen/gen-envoy-gateway-crds.py.
 envoy-gateway:
-  chart: "v1.9.2"
+  chart: "v1.9.3"
   repo: oci://docker.io/envoyproxy/gateway-helm
 
 argocd:
