@@ -2234,7 +2234,9 @@ spec:
 
                                   The operator provides:
                                     GENTIAN_APP_ADMINS_FILE  path to a JSON array of the privileged
-                                                             members, each {"id","username","email"}
+                                                             members, each {"id","username","email"};
+                                                             email is the address the app receives in
+                                                             the email claim
                                     GENTIAN_PRIVILEGED_ROLE  spec.provisioning.privilegedRole.name
                                     GENTIAN_TENANT           tenant name
                                     GENTIAN_APP              this profile's name

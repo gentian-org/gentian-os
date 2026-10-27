@@ -17,14 +17,16 @@ import (
 	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
-// MemberFingerprint returns a stable hash input for app-admins membership.
+// MemberFingerprint returns a stable hash input for app-admins membership. It
+// covers each member's username as well as their id: the username is the
+// address the sync script matches on, so a changed one must run the script again.
 func MemberFingerprint(members []authz.KeycloakUser) string {
-	ids := make([]string, 0, len(members))
+	entries := make([]string, 0, len(members))
 	for _, member := range members {
 		if member.ID != "" {
-			ids = append(ids, member.ID)
+			entries = append(entries, member.ID+":"+member.Username)
 		}
 	}
-	sort.Strings(ids)
-	return strings.Join(ids, ",")
+	sort.Strings(entries)
+	return strings.Join(entries, ",")
 }

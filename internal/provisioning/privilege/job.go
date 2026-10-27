@@ -37,6 +37,12 @@ const (
 // Member is the privileged-user record handed to an app's sync script. It is
 // deliberately the small intersection every app can act on: apps match users by
 // email or username, never by Keycloak's internal model.
+//
+// Email is the address the app receives in the email claim, which every realm
+// maps to the username (the workspace address). Keycloak's email field holds the
+// person's recovery address; handing that over made a script promote an account
+// nobody signs in as, while the account the person signed in with stayed
+// unprivileged.
 type Member struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
@@ -58,7 +64,7 @@ func MembersJSON(members []authz.KeycloakUser) ([]byte, error) {
 		if m.ID == "" {
 			continue
 		}
-		out = append(out, Member{ID: m.ID, Username: m.Username, Email: m.Email})
+		out = append(out, Member{ID: m.ID, Username: m.Username, Email: m.Username})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return json.Marshal(out)
