@@ -53,10 +53,13 @@ rules:
     resources: ["repositories"]
     verbs: ["get", "list", "watch"]
   # Whether each credential is satisfied, and the nudge that makes a stored
-  # one be read again at once rather than at the next refresh interval.
+  # one be read again at once rather than at the next refresh interval: a
+  # merge patch of the force-sync annotation on the ExternalSecrets that read
+  # the path just written. No watch (these reads are not cached), no update,
+  # no create or delete.
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
-    verbs: ["get", "list", "watch", "update"]
+    verbs: ["get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

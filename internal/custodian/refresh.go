@@ -17,6 +17,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // forceSyncAnnotation is what External Secrets watches to re-read a value ahead
@@ -45,6 +46,10 @@ const forceSyncAnnotation = "force-sync"
 // rather than immediately — which is exactly the old behaviour. Reporting the
 // write as failed because the nudge failed would turn a slow success into a
 // visible error and invite someone to store it twice.
+//
+// The probe ExternalSecret reads the same path, so it is nudged with the rest;
+// its force-sync stamp is also what lets the catalogue report the credential as
+// pending rather than missing until ESO has answered (see probeStatus).
 func (s *Server) refreshConsumers(ctx context.Context, vaultPath string) {
 	log := ctrl.Log.WithName("custodian")
 	if s.Client == nil || vaultPath == "" {
@@ -68,13 +73,17 @@ func (s *Server) refreshConsumers(ctx context.Context, vaultPath string) {
 		if !readsVaultPath(item, vaultPath) {
 			continue
 		}
+		// A merge patch of the one annotation, not an Update of the object:
+		// nothing else on it is this service's to write, and the role grants
+		// patch, not update.
+		before := item.DeepCopy()
 		annotations := item.GetAnnotations()
 		if annotations == nil {
 			annotations = map[string]string{}
 		}
 		annotations[forceSyncAnnotation] = stamp
 		item.SetAnnotations(annotations)
-		if err := s.Client.Update(ctx, item); err != nil {
+		if err := s.Client.Patch(ctx, item, client.MergeFrom(before)); err != nil {
 			log.Error(err, "cannot refresh an ExternalSecret after storing a credential",
 				"path", vaultPath, "externalSecret", item.GetName(),
 				"namespace", item.GetNamespace())
