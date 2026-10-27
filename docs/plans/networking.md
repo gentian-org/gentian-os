@@ -21,7 +21,7 @@ works.
 | §3 Route classes | Tenant app in a browser, tenant desktop, platform desktop, the user tenant of a single-tenancy cluster, the kernel's own tools, the identity provider, perimeter over HTTP, ACME | A tenant app's API with `bearer` or `jwt` verified at the edge (withdrawn from perimeter entries, AD-6). The director's own host. Perimeter over TCP and UDP through the Gateway. Limits per user name at the identity provider (Keycloak's own brute-force detection is on) |
 | §4 Sessions, caching, logout | One client and one session per tenant zone; the token forwarded only where the entry says `forwardToken`; the decision cache per person, session and route, evicted on OpenFGA's change log; refusal when OpenFGA cannot be reached | The paragraph on logout is withdrawn by AD-13: nothing records a revoked session, and a session ended at Keycloak ends at the edge when its access token runs out. Membership reaches OpenFGA through the operator, not the director. No code revokes a person's sessions when their groups change. No cap on a WebSocket's duration |
 | §5, §6 Stress test | The rows that rest on the above: sharing inside a tenant, public links and public paths through the proxy, sync clients and API callers with a credential the app issued (`authMode: app`, cookies excepted), the bare domain, the desktops, app to app and app to a store, a domain of a tenant's own, certificates | Credentials checked at the proxy (`basic`, `signature`): withdrawn from the schema until built. A client that needs the app's cookies on a public address. Bearer routes for automation and agents. TURN and conferencing media. Federation on a port of its own. Mail as these rows draw it: see the note below the table |
-| §7 What this changes in the tree | The two Gateways, certificates by DNS-01, DNS by external-dns, routes and policies from `expose[]`, the bouncer | A back-channel logout address per zone client (withdrawn with §4). The mail split as written (note there). `system-turn` |
+| §7 What this changes in the tree | The two Gateways, certificates by DNS-01, DNS by external-dns, routes and policies from `expose[]`, the bouncer | A back-channel logout address per zone client (withdrawn with §4). The mail split as written (note there). `system-turn-dmz` (§9) |
 | §8 Exposure management | The tenant's enablement, written through the director under `can_expose` with a review date and an optional expiry; an expired one is treated as absent. What a tenant's apps ask to publish as a read, approval that refuses an entry no installed app declares, withdrawal, on the command line and in the administration console. §8.7 | The cluster's ceiling (`Cluster.spec.exposure`). Structured proxy logs, the log views and their API. The drift job. The `exposure-policy` contract. Notices ahead of a review or an expiry |
 
 ## 1. One address, two edges
@@ -45,9 +45,10 @@ which gives the split its shape:
 
 - **Perimeter surfaces on their own hostname or port** — Matrix federation
   on `:8448`, a public website on the tenant's vanity apex, SMTP and IMAP
-  as `TCPRoute`s, TURN as a `UDPRoute` — are listeners on the `perimeter`
-  Gateway. Cleanly separate: their own policies, their own rate-limit
-  budgets, no session code in the path.
+  as `TCPRoute`s — are listeners on the `perimeter` Gateway. Cleanly
+  separate: their own policies, their own rate-limit budgets, no session
+  code in the path. TURN is not a listener of the Gateway's: it has a load
+  balancer of its own in `system-turn-dmz` (§9).
 - **Perimeter surfaces on the app's own hostname** — Nextcloud's `/s/*`
   share links, `/remote.php/dav/*`, `/.well-known/*` — cannot leave that
   hostname, because the app mints the URLs. A hostname is served by exactly
@@ -230,7 +231,8 @@ UDP — which a tunnel cannot publish, because it carries HTTP origins and the
 senders are external MTAs and WebRTC clients that will never run a tunnel
 client. Those surfaces need `networkMode: static-ip`, and the director
 refuses their enablement in tunnel mode rather than creating a listener
-nothing can reach. Vanity domains (custom `Tenant.spec.domain`) add
+nothing can reach; a component that declares TURN waits on a tunnel cluster
+and says why (§9.1). Vanity domains (custom `Tenant.spec.domain`) add
 listeners to the same Gateways with per-host certificates; see §6.
 
 ## 2. Layers
@@ -317,7 +319,7 @@ kernel namespace by its rules and on the way out by nothing.
 | Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/auth/admin/*` on `id.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`; `can_open_kernel_tools` (administrators and service administrators) for Headlamp | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
 | Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 **Except `/auth/admin/*`**, which is the same hostname behind the kernel-realm session and `can_configure` — see below. |
 | Perimeter, HTTP | app host (paths) or own host | per entry | — | — | proxy in `tenant-<t>-dmz` |
-| Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn` |
+| Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn-dmz` (§9) |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | `none` | — | — | cert-manager solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned perimeter surfaces |
 
 Nothing is routable without a class. A hostname with no `expose[]` entry
@@ -450,7 +452,7 @@ design cannot do for it.
 | **Password-protected share** | same path; the password prompt is the app's | the app | same |
 | **Public WebDAV of a share** | `/public.php/webdav` → DMZ (`none`) | the app | same |
 | **Desktop and mobile sync, calendars, contacts** | **Built**: `/remote.php/dav/*` → DMZ (`authMode: app`), the app password passed to the app, which checks it. **Design only**: an app password from a broker that the proxy validates before forwarding (`basic`, withdrawn until then) | built: the app issued the credential and checks it. Design: the broker issued it; the app scopes it | built: the platform does not know the caller, and a removed person's app password works until the app revokes it; a client that needs the app's cookies does not work. Design: expiry and revocation through the broker |
-| **Conference call, members only** (Talk, Element Call, Jitsi) | signalling: the app host over the authenticated edge, WebSocket upgrade under L1–L2. Media: WebRTC over UDP to TURN/SFU in `system-turn` — a DMZ-tier service with its own `UDPRoute`, TURN credentials minted per session with a short HMAC lifetime | L1–L2 for signalling; the app for who is in the room; TURN checks only the time-limited credential | media never passes the gateway; TURN is all edge and holds no data, so its only defence is the credential's lifetime and the app's room membership |
+| **Conference call, members only** (Talk, Element Call, Jitsi) | signalling: the app host over the authenticated edge, WebSocket upgrade under L1–L2. Media: WebRTC to the TURN edge in `system-turn-dmz`, on a load balancer of its own, and through it to the other participants or to the app's media server (§9); TURN credentials minted per session with a short HMAC lifetime | L1–L2 for signalling; the app for who is in the room; TURN checks only the time-limited credential | media never passes the gateway; TURN is all edge and holds no data, so its defences are the credential's lifetime, the app's room membership and the edge's short list of peers it relays to |
 | **Conference call with an external guest** | a guest link is a perimeter surface (`none`) for the app's guest signalling paths; the app issues a guest identity for that room; TURN as above | the app: room, guest name, host approval | the guest is unidentified to the platform by design; rate limits and the app's lobby are the controls |
 | **Matrix federation** | `matrix.<t>.<kernel>:8448` on the `perimeter` Gateway, `authMode: signature`; `/.well-known/matrix/*` on the app host as a DMZ path (`none`) | Synapse verifies the peer server's signature | federation is a trust decision inside the app; the edge only rate-limits |
 | **Inbound webhook** (payment provider, git host) | **Design only**: a perimeter path with `authMode: signature`; the proxy verifies the HMAC before the app sees the body (withdrawn from the schema until built). **Built**: a perimeter path with `authMode: none`, or `app` where the provider signs in the `Authorization` header; the app verifies | design: the proxy, then the app. Built: the app | replay protection is the app's unless the proxy keeps nonces |
@@ -496,11 +498,11 @@ service. [mail.md](../design/mail.md) describes what is built.
   plainly rather than drawing two boxes.
 - **Real-time media is outside the model.** WebRTC goes to TURN or an SFU
   over UDP; no gateway sees it. The controls are short-lived TURN
-  credentials and the app's room membership. `system-turn` (coturn, or
-  LiveKit for Element Call) is all edge: it holds no data, so it lives
-  entirely in the DMZ tier, the way the mail edge does in `system-mail-dmz`.
-  AD-9 has no exception list; a system service with an internet protocol has
-  a DMZ namespace instead.
+  credentials, the app's room membership and the peers the edge relays to.
+  The TURN edge is all edge: it holds no data, so it lives entirely in the
+  DMZ tier, in `system-turn-dmz`, the way the mail edge does in
+  `system-mail-dmz`. AD-9 has no exception list; a system service with an
+  internet protocol has a DMZ namespace instead. §9 is the design.
 - **Cross-tenant collaboration is federation or public links, never a
   shared session.** That is correct, and it means the catalogue should say
   which apps federate (Nextcloud, Matrix) and which only share by link.
@@ -585,8 +587,8 @@ service. [mail.md](../design/mail.md) describes what is built.
 - Mail splits into `system-mail` (Dovecot store, DKIM signer with the keys)
   and `system-mail-dmz` (the one Postfix, spam filter, and a Dovecot proxy
   only while IMAP exposure is enabled). Postfix stays a single instance;
-  DKIM moves from the MTA to a milter inside. `system-turn` is added when
-  the first conferencing profile declares it as a requirement.
+  DKIM moves from the MTA to a milter inside. `system-turn-dmz` is added
+  when the first conferencing profile declares it as a requirement (§9).
 
   **Note, 2026-10-09:** not built this way. Postfix and Dovecot stay in
   `system-mail`, and `system-mail-dmz` holds a TCP proxy that keeps nothing;
@@ -806,3 +808,92 @@ the cluster's domain (a domain of its own), or allow on the main address only
 a website whose scripts the organisation controls. A website can protect its
 visitors itself with a strict content security policy and no third-party
 scripts.
+
+## 9. Real-time media
+
+Decided 2026-10-27. A conference has two parts, and the platform treats them
+differently. Getting media through NAT is TURN's job, and every conferencing
+app needs the same thing from it, so it is one system service. Forwarding
+media between the participants of a call is a selective forwarding unit's
+(SFU), and every app brings its own: Nextcloud Talk speaks to Janus through
+its signalling server, Element Call to LiveKit, Jitsi to its own bridge. So
+the SFU belongs to the app.
+
+### 9.1 The TURN edge
+
+- **Where.** `system-turn-dmz`, tier `system-dmz`, with no inner part:
+  TURN holds no data, so the whole service is edge (AD-9). The namespace is
+  composed on demand. The first component that declares
+  `requires.services.turn` puts the engine `turn` into the operator's set,
+  and it stays until a person purges it ([app-authorization.md
+  §3](app-authorization.md)).
+- **What runs.** STUNner's daemon, `stunnerd`, standalone, from a
+  configuration the operator writes. There is no STUNner operator, no
+  resource definition of STUNner's and no permission outside the namespace.
+  At least two replicas, on different nodes where there are two.
+- **How it is reached.** A LoadBalancer Service of its own, not a listener
+  of the Gateway's, for the reason the mail edge has one (§5, note): UDP
+  3478, TCP 3478, and TURN over TLS on TCP 443 for networks that let nothing
+  else out. `externalTrafficPolicy: Local` keeps the client's address, which
+  STUN reports back to the client. One address and one name for the
+  cluster, `turn.<kernel domain>`. The operator publishes the name from the
+  Service's address as a DNSEndpoint, and the name's certificate is issued
+  by DNS-01 into the namespace. Apart from the shared secret, its key is the
+  only secret the namespace holds.
+- **Where it relays to.** The headless model. A relayed connection may
+  reach the edge's own pods, which is how two participants behind NAT reach
+  each other through one public port, and the media servers that components
+  declared (§9.3). Nothing else in the cluster can be reached, and two
+  things enforce that: the daemon's list of peers, and the namespace's
+  egress policy, which admits the edge's own pods, the declared media
+  servers and DNS.
+- **Credentials.** Time-limited TURN credentials (the TURN REST scheme): the
+  username is `<expiry>:<id>`, the password is the HMAC-SHA1 of the username
+  under a shared secret, and the app mints one per session. One secret for
+  the cluster, kept in the vault and delivered to the edge and to every
+  component that declares the requirement. An edge per tenant, with a
+  secret, peers and an address of its own, is roadmap 2.35.
+- **Tunnel mode.** A tunnel carries no UDP and no TURN. A component that
+  declares the requirement on a tunnel cluster is not installed. It waits
+  under `SystemEngineNotReady` with the reason named.
+
+### 9.2 The contract
+
+`requires.services.turn` names no implementation. A component that declares
+it receives the Secret `turn-credentials-<component>` in its namespace:
+
+| Key | Value |
+|---|---|
+| `TURN_SERVER` | `turn.<kernel domain>` |
+| `TURN_URIS` | `turn:…:3478?transport=udp`, `turn:…:3478?transport=tcp` and `turns:…:443?transport=tcp`, comma-separated |
+| `STUN_URI` | `stun:turn.<kernel domain>:3478` |
+| `TURN_SECRET` | the shared secret |
+
+`valueMapping.turn.secretNameKey` tells the chart the Secret's name, and the
+chart reads it by reference. The secret is never a release value. A
+requirement an addon declares is served to the component the addon activates
+into, because that is where the addon runs: the Secret is named after the
+base. A credential minted in the strict form above is accepted by STUNner,
+coturn and the other TURN servers that implement the scheme. Replacing
+STUNner therefore changes the operator's edge and nothing a profile says.
+What it does change is the network: a server that needs a range of relay
+ports (coturn) needs that range open on the load balancer, or host
+networking.
+
+### 9.3 The media server: one per tenant, in the app
+
+- **Talk's high-performance backend** (signalling server, Janus, and NATS
+  where there is more than one signalling server) is part of the tenant's
+  Nextcloud, `class: app`, in `tenant-<t>`. One backend for every tenant is
+  roadmap 2.36.
+- **Media** reaches Janus through the TURN edge alone. A profile lists the
+  Services the edge may relay to as `requires.services.turn.mediaBackends`.
+  The operator resolves them to their pods, adds them to the edge's peers,
+  and admits the edge on them in the tenant's policy. Janus has no port on
+  the internet, and its range of ICE ports stays inside the cluster.
+- **Signalling** is a WebSocket on the Nextcloud host. Members connect over
+  the authenticated edge. Guests and the mobile apps connect through a
+  perimeter entry with `authMode: app`, and the signalling server checks
+  each connection's ticket with Nextcloud.
+- **Order.** The TURN edge and the contract first. The media server builds
+  on them and adds `mediaBackends`.

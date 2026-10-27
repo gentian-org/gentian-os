@@ -1403,6 +1403,45 @@ mappers and flow, nor the broker client is made any more
     differs. Crossplane's composition revisions are the way to pin the
     older one.
 
+### 2.35 A TURN Edge per Tenant (**) — to evaluate
+* **Target Domain**: Networking & Conferencing
+* **Context**: The TURN edge in `system-turn-dmz` is one fleet behind one
+  load balancer with one shared secret ([networking.md §9](plans/networking.md)).
+  Every tenant's conferencing app holds that secret, so a tenant
+  administrator, or a compromised app, can mint credentials for the whole
+  cluster's relay. The relay can then be used without limit, because a quota
+  per credential is a paid feature of STUNner's. Every tenant's declared media
+  servers sit on the same list of peers. A secret cannot be revoked for one
+  tenant alone, and abuse cannot be traced to a tenant. Media stays end to
+  end encrypted, and the relay reaches nothing beyond its peers, so no data
+  is exposed.
+* **Proposed Solution**: To evaluate: one `stunnerd` per tenant in
+  `system-turn-dmz`, each with its own secret, its own peers (only that
+  tenant's media servers), its own load balancer address and
+  `turn.<tenant domain>`. A process holds one secret and UDP cannot be split
+  by name, which is why the address cannot be shared. The cost is a load
+  balancer and a public address for every tenant that uses conferencing.
+* **Backlog Items**:
+  - `[ ]` Weigh the cost of a load balancer per tenant on the target providers against the isolation it buys.
+  - `[ ]` Decide whether a quota per credential (coturn's `user-quota`, or a STUNner tier that has one) is needed on the shared edge meanwhile.
+  - `[ ]` If chosen: an edge per tenant that declares TURN, and the move of existing tenants off the shared secret.
+
+### 2.36 One Talk High-Performance Backend for Every Tenant (**) — to evaluate
+* **Target Domain**: App Catalogue & Conferencing
+* **Context**: Nextcloud Talk's high-performance backend (signalling server,
+  Janus, NATS) runs per tenant, inside the tenant's Nextcloud
+  ([networking.md §9.3](plans/networking.md)). The signalling server can serve
+  several Nextcloud instances, each with a secret of its own, so one backend
+  could serve every tenant of a cluster.
+* **Proposed Solution**: To evaluate: one backend as a `shared-app` instance
+  in `shared-<app>`, with a backend entry and a secret per tenant, and Janus
+  reached through the TURN edge as now. It would need `trustTier: platform`,
+  and a fault in it would reach every tenant's calls.
+* **Backlog Items**:
+  - `[ ]` Measure what a per-tenant backend costs at idle and under load, against one shared backend.
+  - `[ ]` Check, against the signalling server's own configuration, that its backends are kept apart: a ticket of one tenant's Nextcloud is refused for another's rooms.
+  - `[ ]` Decide; if shared, a profile of class `shared-app` and a contract that gives each tenant's Nextcloud its backend entry.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
