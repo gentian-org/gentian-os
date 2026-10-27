@@ -1129,6 +1129,8 @@ load_deployments_cluster_settings() {
         claim_setting SECRETS_AT_REST   controlPlane.secretsAtRest "${claim_file}"
         claim_setting MONITORING_ENABLED monitoring.enabled "${claim_file}"
         claim_setting MONITORING_ALERTS_WEBHOOK monitoring.alerts.webhook "${claim_file}"
+        claim_setting LOG_FORWARDING_ENDPOINT logForwarding.destination.endpoint "${claim_file}"
+        claim_list_setting LOG_FORWARDING_STREAMS logForwarding.destination.streams "${claim_file}"
         claim_setting SECRETS_AT_REST_EVIDENCE controlPlane.evidence "${claim_file}"
         # Two the shell read only from install.env while the Cluster Composition
         # read them from the claim — certManager.letsencryptEmail at

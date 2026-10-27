@@ -83,6 +83,13 @@ monitoring:
   chart: "92.3.0"
   repo: https://prometheus-community.github.io/helm-charts
 
+# Vector (MPL-2.0, chart Apache-2.0): the log forwarder, where the Cluster
+# claim names a logForwarding destination. Rendered by B-01 into the bootstrap
+# chart's log-forwarding Application.
+logForwarding:
+  chart: "0.59.0"
+  repo: https://helm.vector.dev
+
 # The OpenFGA CLI is NOT pinned here, though it is pinned. It lives in its only
 # caller, scripts/tools/verify-authz-model.sh.
 #

@@ -482,6 +482,35 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
+                logForwarding:
+                  type: object
+                  description: >
+                    Where the platform's logs go (docs/design/audit-events.md
+                    §4). Read by the installer (B-01), which renders a log
+                    forwarder in the observability namespace when a
+                    destination is named; no Composition consumes it.
+                  properties:
+                    destination:
+                      type: object
+                      properties:
+                        endpoint:
+                          type: string
+                          pattern: '^https://'
+                          description: >
+                            An HTTPS URL taking newline-delimited JSON over
+                            POST, gzip-compressed, with a bearer token from the
+                            log-destination credential. Each request carries
+                            X-Gentian-Stream: audit or operations. Empty: no
+                            forwarder.
+                        streams:
+                          type: array
+                          items:
+                            type: string
+                            enum: [audit, operations]
+                          description: >
+                            Which streams to send: audit, the platform's audit
+                            records (an envelope with audit true); operations,
+                            every other line. Both when absent.
                 monitoring:
                   type: object
                   description: >
