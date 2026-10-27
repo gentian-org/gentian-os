@@ -532,7 +532,13 @@ func (c *KeycloakAdminClient) findClientScopeID(ctx context.Context, realm, name
 	if err != nil {
 		return "", err
 	}
-	var scopes []keycloakGroupRecord
+	// Only the id and the name: a scope's attributes are single strings
+	// ("include.in.token.scope": "true"), not a group's lists, and decoding
+	// them as a group's failed on every realm.
+	var scopes []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
 	if err := c.getAdminJSON(ctx, token, fmt.Sprintf("/admin/realms/%s/client-scopes", url.PathEscape(realm)), &scopes); err != nil {
 		return "", fmt.Errorf("keycloak list client scopes: %w", err)
 	}

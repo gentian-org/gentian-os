@@ -1009,8 +1009,12 @@ func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicy(ctx context
 	}
 	policySpec := cloneMap(spec.policy)
 	attachBackendTrafficPolicyTarget(policySpec, spec.name)
+	return r.ensureKernelBackendTrafficPolicyNamed(ctx, fmt.Sprintf("btp-%s", spec.name), policySpec)
+}
 
-	name := fmt.Sprintf("btp-%s", spec.name)
+func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicyNamed(
+	ctx context.Context, name string, policySpec map[string]interface{},
+) error {
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(backendTrafficPolicyGVK)
 	desired.SetName(name)

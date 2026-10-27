@@ -222,16 +222,9 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 			zoneSecurityPolicySpec("k.example", zone, "files-web", authz, servicesNamespace, "gentian-os-bouncer"))
 	}
 
-	// What an app's exposure may ask of its route, and the one client policy.
-	app := backendTrafficPolicySpecFromIngressAnnotations(map[string]string{
-		gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
-		gentianov1alpha1.AnnotationIngressGatewayBufferLimit:    "64Mi",
-	})
-	if app == nil {
-		t.Fatal("the annotations made no policy")
-	}
-	attachBackendTrafficPolicyTarget(app, "files-web")
-	create("an app's backend policy", backendTrafficPolicyGVK, app)
+	// The authenticated Gateway's default, which every route on it inherits.
+	create("the authenticated Gateway's backend policy", backendTrafficPolicyGVK,
+		authenticatedGatewayBackendTrafficPolicySpec())
 	keycloak := keycloakProxyBackendTrafficPolicySpec()
 	attachBackendTrafficPolicyTarget(keycloak, kernelRouteKeycloakIDP)
 	create("Keycloak's backend policy", backendTrafficPolicyGVK, keycloak)

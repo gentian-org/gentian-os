@@ -96,6 +96,10 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "ensure edge Gateways")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
+	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, authenticatedGatewayBackendTrafficPolicySpec()); err != nil {
+		logger.Error(err, "ensure the authenticated Gateway's backend policy")
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+	}
 	if err := r.reconcileKernelHTTPRoutes(ctx); err != nil {
 		logger.Error(err, "reconcile kernel HTTPRoutes")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
@@ -541,6 +545,38 @@ const (
 // certificate and DNS already cover every name under it, so the tenant gets
 // none of its own -- a *.<kernel> tenant listener would be the more specific
 // match for kernel hosts too, and route them nowhere.
+// authenticatedGatewayRequestTimeout is how long a request behind sign-in may
+// take, answer included. Envoy's own default is fifteen seconds, and the
+// longest request a person makes is longer: purging an app's data is one
+// request answered when the purge is over, and the director waits
+// lifecycle.PurgeDeadline (five minutes) for it. Under the default the gateway
+// answered 504 while the purge went on behind it. This is longer than that
+// deadline, so the request that asked always gets the answer.
+//
+// The perimeter keeps the default: nobody there has signed in, and a long
+// budget is a long hold on the edge for anyone who asks.
+const authenticatedGatewayRequestTimeout = "360s"
+
+const authenticatedGatewayPolicyName = "btp-gateway-" + AuthenticatedGatewayName
+
+// authenticatedGatewayBackendTrafficPolicySpec is the policy every route on
+// the authenticated Gateway inherits. A route with a policy of its own (the
+// identity provider's, a sign-in sidecar's) takes that one instead.
+func authenticatedGatewayBackendTrafficPolicySpec() map[string]interface{} {
+	return map[string]interface{}{
+		"targetRefs": []interface{}{
+			map[string]interface{}{
+				"group": gatewayv1.GroupName,
+				"kind":  "Gateway",
+				"name":  AuthenticatedGatewayName,
+			},
+		},
+		"timeout": map[string]interface{}{
+			"http": map[string]interface{}{"requestTimeout": authenticatedGatewayRequestTimeout},
+		},
+	}
+}
+
 func servedByKernelEdge(effectiveDomain, kernelDomain string) bool {
 	return kernelDomain != "" && effectiveDomain == kernelDomain
 }
