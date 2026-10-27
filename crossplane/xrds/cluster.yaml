@@ -838,6 +838,37 @@ spec:
                               vLLM tool-call parser for this model, e.g. hermes.
                               Empty disables tool calling.
                       default: []
+                    personBudget:
+                      type: object
+                      description: >
+                        What one person may spend at the model gateway: the
+                        default for everybody who has no budget of their
+                        own. The desktop's assistant and Open WebUI tell the
+                        gateway whose request it is; a request over the
+                        budget is refused. Absent, nobody is held to a
+                        budget per person. Costs are the gateway's prices: a
+                        provider's model has one, a model this cluster serves
+                        itself costs nothing, and only the limits per minute
+                        hold for it.
+                      properties:
+                        maxBudget:
+                          type: number
+                          minimum: 0
+                          description: Spend per period, in US dollars.
+                        budgetDuration:
+                          type: string
+                          pattern: '^[0-9]+(s|m|h|d|w|mo)$'
+                          description: >
+                            The period after which spend starts again from
+                            nothing, e.g. 30d or 1mo. Absent, it never does.
+                        rpmLimit:
+                          type: integer
+                          minimum: 1
+                          description: Requests per minute.
+                        tpmLimit:
+                          type: integer
+                          minimum: 1
+                          description: Tokens per minute.
                     providers:
                       type: array
                       description: >

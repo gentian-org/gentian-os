@@ -41,9 +41,12 @@
                         the console off there is no rule for the edge at all,
                         and the gateway is reachable by its in-cluster
                         clients alone.
+    the budget Job      the one pod of this namespace that calls the gateway:
+                        it writes the claim's budget per person after a sync
+                        (person-budget.yaml), with the master key.
 
-  No pod of this namespace is a client of the gateway: its database, its
-  cache and the model server are called by it and call nothing.
+  No other pod of this namespace is a client of the gateway: its database,
+  its cache and the model server are called by it and call nothing.
 
   The gateway's PostgreSQL (llm-database-ingress), a CloudNativePG cluster:
   the data port from the gateway, and from the cluster's own pods (a replica
@@ -97,6 +100,10 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
+        # The Job that writes the claim's budget per person (person-budget.yaml).
+        - podSelector:
+            matchLabels:
+              app: llm-person-budget
         {{- if eq (toString (dig "console" "enabled" false (.Values.spec.llm | default dict))) "true" }}
         - namespaceSelector:
             matchLabels:
