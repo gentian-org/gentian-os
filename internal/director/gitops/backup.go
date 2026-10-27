@@ -176,6 +176,38 @@ func (g *GitOps) writeClaimsFile(ctx context.Context, name, body, message string
 	return g.landed(ctx, "updated")
 }
 
+// writeClaimsFileIfAbsent writes one only where the claims do not hold it yet,
+// against the remote's latest word, under the same lock as every other write.
+func (g *GitOps) writeClaimsFileIfAbsent(ctx context.Context, name, body, message string, meta Meta) (Result, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepo(ctx); err != nil {
+		return Result{}, err
+	}
+	path := filepath.Join(g.claimsDir(), name)
+	if _, err := os.Stat(path); err == nil {
+		return Result{Status: "unchanged"}, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Result{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return Result{}, err
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return Result{}, err
+	}
+	rel, err := filepath.Rel(g.path, path)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := g.commitPaths(ctx, []string{rel}, message, meta); err != nil {
+		// Not left behind for the next write to commit under its own name.
+		_ = os.Remove(path)
+		return Result{}, err
+	}
+	return g.landed(ctx, "updated")
+}
+
 // readClaimsFile parses one, reporting whether it was there at all. Absent is
 // not an error: a cluster that declares nothing is the ordinary starting
 // state and the screen renders it as such.

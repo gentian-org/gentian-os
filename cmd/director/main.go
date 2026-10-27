@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -141,6 +142,14 @@ func run(log *slog.Logger) error {
 	} else {
 		log.Warn("no signing key: commits are unsigned (AD-2)",
 			"setting", "DIRECTOR_SIGNING_KEY_FILE")
+	}
+
+	// The cluster's allowlist, started from the deployment's values when the
+	// claims hold none (gitops.SeedPlatformSecurity). In the background and
+	// asked again: the signing key may arrive after this pod, and without it
+	// nothing is committed.
+	if raw := os.Getenv("DIRECTOR_PLATFORM_SECURITY_SEED"); raw != "" {
+		go seedPlatformSecurity(repo, raw, log)
 	}
 
 	// No cluster-role or tenant projection here.
@@ -356,4 +365,43 @@ func run(log *slog.Logger) error {
 		log.Warn("the director stopped while a watcher was still writing to the repository")
 	}
 	return nil
+}
+
+// platformSecuritySeed is DIRECTOR_PLATFORM_SECURITY_SEED: the operator
+// chart's platformSecurityPolicy values, as JSON.
+type platformSecuritySeed struct {
+	AllowedMacWaivers   []gitops.MacWaiver            `json:"allowedMacWaivers"`
+	AllowedClusterRoles []gitops.ClusterRoleAllowance `json:"allowedClusterRoles"`
+}
+
+// seedPlatformSecurity writes the deployment's allowlist into the claims
+// once, retrying for a while: a missing signing key or a remote that is not
+// reachable yet is a reason to wait, not to give up on the first try.
+func seedPlatformSecurity(repo *gitops.GitOps, raw string, log *slog.Logger) {
+	var seed platformSecuritySeed
+	if err := json.Unmarshal([]byte(raw), &seed); err != nil {
+		log.Error("the deployment's platformSecurityPolicy values are not readable; the allowlist is not started from them",
+			"error", err.Error())
+		return
+	}
+	for attempt := 1; attempt <= 30; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		res, err := repo.SeedPlatformSecurity(ctx, seed.AllowedMacWaivers, seed.AllowedClusterRoles)
+		cancel()
+		if err == nil {
+			if res.Changed {
+				log.Info("the cluster's allowlist was started from the deployment's values",
+					"waivers", len(seed.AllowedMacWaivers), "clusterRoles", len(seed.AllowedClusterRoles))
+			}
+			return
+		}
+		if errors.Is(err, gitops.ErrInvalidName) {
+			log.Error("the deployment's platformSecurityPolicy values are refused; the allowlist is not started from them",
+				"error", err.Error())
+			return
+		}
+		log.Warn("the cluster's allowlist could not be started yet; asked again in a minute",
+			"attempt", attempt, "error", err.Error())
+		time.Sleep(time.Minute)
+	}
 }

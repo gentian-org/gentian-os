@@ -610,7 +610,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 		if !releaseReady {
-			releaseMessage = pull.withPullHint(releaseMessage, profile)
+			releaseMessage = r.withWaiverHint(ctx, comp, profile, pull.withPullHint(releaseMessage, profile))
 		}
 
 	case profile.Spec.Package.Chart != nil:
@@ -626,7 +626,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 		if !releaseReady {
-			releaseMessage = pull.withPullHint(releaseMessage, profile)
+			releaseMessage = r.withWaiverHint(ctx, comp, profile, pull.withPullHint(releaseMessage, profile))
 		}
 
 	case profile.Spec.Package.Addon != nil:
@@ -1369,6 +1369,38 @@ func releaseFailureOutlook(msg string) string {
 			"it is retried on its own)"
 	}
 	return ""
+}
+
+// withWaiverHint puts first, on a release that is not ready, the pod-security
+// waivers the profile asks for and the cluster's allowlist does not permit.
+// Kyverno refuses those pods, and what reached the component was only the
+// release timing out: "context deadline exceeded" after ten minutes, then a
+// rollback, round after round, with nothing naming the allowlist.
+func (r *ComponentReconciler) withWaiverHint(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, msg string) string {
+	asks := security.WaiverRequests(profile.Privileges())
+	if len(asks) == 0 {
+		return msg
+	}
+	allowed, err := security.LoadAllowedMacWaivers(ctx, r.Client)
+	if err != nil {
+		return msg
+	}
+	permitted := security.ApprovedMacWaivers(comp.Spec.ProfileRef.Name, asks, allowed)
+	var missing []string
+	for _, ask := range asks {
+		if !security.IsWaiverApproved(permitted, ask.Policy, ask.Scope) {
+			missing = append(missing, ask.Policy+" for "+ask.Scope)
+		}
+	}
+	if len(missing) == 0 {
+		return msg
+	}
+	hint := fmt.Sprintf("waiting for the cluster to allow %s (Platform security in the kernel Admin Console; "+
+		"changing it needs break-glass): its pods are refused until then", strings.Join(missing, ", "))
+	if msg == "" {
+		return hint
+	}
+	return hint + "; " + msg
 }
 
 // exceededQuota is Kubernetes refusing an object for the tenant's quota:
