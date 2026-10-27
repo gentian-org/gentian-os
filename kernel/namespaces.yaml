@@ -83,6 +83,13 @@ system:
     function: authorization
     when: requires.services.authorization
     holds: the app instance of OpenFGA, with the components' authorization stores, and the arbiter, the one way into it
+  # Composed once a component declares TURN, and kept until a person purges
+  # the engine. All edge: the relay holds no data, so there is no inner
+  # namespace beside it.
+  - name: system-turn-dmz
+    function: turn-dmz
+    when: requires.services.turn
+    holds: the TURN edge — STUNner's daemon, its load balancer, its certificate and the record of turn.<kernel domain>; it relays only to its own pods
   # `when` marks a namespace the claim decides. Without it a namespace is
   # unconditional. A cluster that relays mail through a provider has no
   # mailbox store and no MTA of its own, and composing empty namespaces for

@@ -1,0 +1,16 @@
+# Invalid Cluster claim — the TURN edge asked for regardless, behind a tunnel.
+#
+# A tunnel carries HTTP and HTTPS and nothing else. TURN needs UDP and ports
+# of its own, so the edge would be a load balancer nothing reaches, and every
+# client given its address would try it and fail.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-turn-tunnel
+  namespace: default
+spec:
+  kernelDomain: example.org
+  networkMode: tunnel
+  systemServices:
+    always:
+      - turn

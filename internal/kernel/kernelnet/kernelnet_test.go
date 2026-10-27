@@ -411,6 +411,8 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"cmd/arbiter/main.go": {},
 	// The operator's client of the arbiter's platform path: a system namespace.
 	"internal/arbiter/client.go": {},
+	// The TURN edge's list of peers, its own pods: a system DMZ.
+	"internal/controller/turn_edge.go": {},
 	// The sidecar reads the realm's SAML descriptor.
 	"internal/controller/signin_sidecar.go": {{"kernel-authentication", 8080}},
 	// The tenants' stores, in the system namespaces.

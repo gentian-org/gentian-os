@@ -1967,6 +1967,11 @@ spec:
                                       type: boolean
                                   type: object
                               type: object
+                            turn:
+                              description: |-
+                                TURN declares that the component's clients relay real-time media
+                                through the platform's TURN edge. See TURNRequirement.
+                              type: object
                             vouching:
                               description: |-
                                 Vouching declares that the component obtains tokens of a person who is
@@ -3950,6 +3955,11 @@ spec:
                                       bucket for each tenant. Defaults to true.
                                     type: boolean
                                 type: object
+                            type: object
+                          turn:
+                            description: |-
+                              TURN declares that the component's clients relay real-time media
+                              through the platform's TURN edge. See TURNRequirement.
                             type: object
                           vouching:
                             description: |-
