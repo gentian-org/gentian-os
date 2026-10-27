@@ -103,12 +103,30 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	return out
 }
 
-// buildComponentNetworkPolicy is the policy for one component: its pods, by
-// the release label the chart puts on them (helmReleaseOf, which differs by
-// who installs the chart), may leave for the namespaces given. Ports are the
-// peer namespace's business; what is granted is the function, as the
-// baseline grants the edge.
-func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, release string, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
+// releasePods selects the pods of one Helm release by the label a chart puts
+// on them.
+func releasePods(release string) map[string]string {
+	return map[string]string{componentInstanceLabel: release}
+}
+
+// componentPods selects a component's pods. A chart this reconciler installs
+// is selected by its release. One the app Composition delivers is selected by
+// the app label the Composition puts on every pod of the app, as its own
+// policies (kernel-access-<app>, app-internal-<app>) are: not every chart sets
+// the release label, and a policy selecting by it held the privileges granted
+// on such an app for no pod at all.
+func componentPods(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) map[string]string {
+	if composedDelivery(profile) {
+		return map[string]string{appLabel: comp.Name}
+	}
+	return releasePods(releaseName(comp))
+}
+
+// buildComponentNetworkPolicy is the policy for one component: its pods
+// (componentPods, which differs by who installs the chart) may leave for the
+// namespaces given. Ports are the peer namespace's business; what is granted
+// is the function, as the baseline grants the edge.
+func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, pods map[string]string, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
 	egress := make([]networkingv1.NetworkPolicyEgressRule, 0, len(egressNamespaces)+len(granted))
 	for _, ns := range egressNamespaces {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
@@ -132,7 +150,7 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, release strin
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{componentInstanceLabel: release},
+				MatchLabels: pods,
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress:      egress,
@@ -210,7 +228,7 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	} else if !errors.IsNotFound(err) {
 		return err
 	}
-	desired := buildComponentNetworkPolicy(comp, helmReleaseOf(comp, profile), r.componentEgressNamespaces(profile, tenant),
+	desired := buildComponentNetworkPolicy(comp, componentPods(comp, profile), r.componentEgressNamespaces(profile, tenant),
 		append(rules, own...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
