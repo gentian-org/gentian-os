@@ -83,8 +83,7 @@ whose hostname does not match the apex and which therefore holds no route for
 it — `404 route_not_found`, intermittently, depending on which connection
 happened to be open.
 
-The apex carries a redirect to the tenant's desktop (§5), or to the home a
-sign-up tenant names (`spec.signUp.home`, [iam.md §1.1b](iam.md)), and it is kept
+The apex carries a redirect to the tenant's desktop (§5), and it is kept
 reachable by keeping it out of the tenant certificate.
 
 Two tenants are not like the others.

@@ -1272,17 +1272,6 @@ spec:
                       customers with accounts -- and not for a workspace, whose people are
                       invited. Off by default; off, every account is made by an invitation.
                     type: boolean
-                  home:
-                    description: |-
-                      Home is where the people of such a tenant are sent instead of its
-                      desktop: the page of the app they made their account for, e.g. a
-                      website's account page. The tenant's bare domain redirects there, and
-                      a browser refused at the tenant's desktop -- a signed-up account has
-                      none -- is sent there rather than shown the refusal. Only with
-                      Enabled; unset, both lead to the desktop as for any tenant.
-                    maxLength: 2048
-                    pattern: ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^?#\s]*)?$
-                    type: string
                 type: object
               storeTerms:
                 description: |-

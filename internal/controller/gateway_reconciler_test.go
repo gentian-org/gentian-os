@@ -471,51 +471,6 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 }
 
-// A sign-up tenant with a home sends its apex there, path and all, and has
-// the bouncer send a refused browser there from its desktop. Without
-// sign-up, or with a home the CRD would not admit, the apex leads to the
-// desktop as before.
-func TestASignUpTenantsHomeTakesItsApexAndItsRefusedDesktop(t *testing.T) {
-	t.Parallel()
-	kd := "platform.example.test"
-	tenant := func(name string, signUp *gentianov1alpha1.TenantSignUp) gentianov1alpha1.Tenant {
-		return gentianov1alpha1.Tenant{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       gentianov1alpha1.TenantSpec{SignUp: signUp},
-		}
-	}
-	tenants := []gentianov1alpha1.Tenant{
-		tenant("demo", &gentianov1alpha1.TenantSignUp{Enabled: true, Home: "https://shop.example/en/account"}),
-		tenant("closed", &gentianov1alpha1.TenantSignUp{Home: "https://shop.example/"}),
-		tenant("odd", &gentianov1alpha1.TenantSignUp{Enabled: true, Home: "https://shop.example/?x=1"}),
-	}
-	homes := tenantHomes(tenants)
-	if len(homes) != 1 || homes["demo"] == "" {
-		t.Fatalf("homes = %v: neither a tenant without sign-up nor an odd address is one", homes)
-	}
-	domains, names := zonedTenantDomains(tenants, kd, "multi")
-	specs := kernelHTTPRouteSpecs(kd, domains, nil, names, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
-	withTenantHomes(specs, homes)
-	byName := map[string]kernelHTTPRouteSpec{}
-	for _, s := range specs {
-		byName[s.name] = s
-	}
-	redirect := buildKernelHTTPRoute(byName["tenant-demo-apex"]).Spec.Rules[0].Filters[0].RequestRedirect
-	if string(*redirect.Hostname) != "shop.example" || redirect.Path == nil || *redirect.Path.ReplaceFullPath != "/en/account" || *redirect.Port != 443 {
-		t.Fatalf("demo apex = %+v", redirect)
-	}
-	for _, name := range []string{"closed", "odd"} {
-		got := *buildKernelHTTPRoute(byName["tenant-"+name+"-apex"]).Spec.Rules[0].Filters[0].RequestRedirect.Hostname
-		if string(got) != "desktop."+name+"."+kd {
-			t.Fatalf("%s apex redirects to %q, want its desktop", name, got)
-		}
-	}
-	denied := deniedRedirects(tenants, homes, kd, "multi")
-	if len(denied) != 1 || denied["desktop.demo."+kd] != "https://shop.example/en/account" {
-		t.Fatalf("denied redirects = %v", denied)
-	}
-}
-
 // A redirect to a desktop that does not exist is a public dead end, so
 // without a desktop profile no name is sent to one -- and before the kernel
 // zone exists there is no platform desktop to send the kernel names to.

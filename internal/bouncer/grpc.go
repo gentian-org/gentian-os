@@ -95,8 +95,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 			Body:   http.StatusText(dec.Status),
 		}
 		// A redirect is answered here and the request never reaches a
-		// backend: the old sign-out path, sent on to the Gateway's own, and
-		// a refused browser sent to its tenant's home.
+		// backend: the old sign-out path, sent on to the Gateway's own.
 		if dec.Redirect != "" {
 			denied.Body = ""
 			denied.Headers = []*corev3.HeaderValueOption{{

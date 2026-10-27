@@ -47,16 +47,6 @@ type TenantSignUp struct {
 	// invited. Off by default; off, every account is made by an invitation.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
-	// Home is where the people of such a tenant are sent instead of its
-	// desktop: the page of the app they made their account for, e.g. a
-	// website's account page. The tenant's bare domain redirects there, and
-	// a browser refused at the tenant's desktop -- a signed-up account has
-	// none -- is sent there rather than shown the refusal. Only with
-	// Enabled; unset, both lead to the desktop as for any tenant.
-	// +optional
-	// +kubebuilder:validation:MaxLength=2048
-	// +kubebuilder:validation:Pattern=`^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^?#\s]*)?$`
-	Home string `json:"home,omitempty"`
 }
 
 // TenantPartner is another realm -- usually of another cluster -- this
@@ -211,15 +201,6 @@ type TenantSignInFrom struct {
 // tenant's realm (spec.signUp.enabled); off unless the tenant says so.
 func (t *Tenant) SignUpEnabled() bool {
 	return t.Spec.SignUp != nil && t.Spec.SignUp.Enabled
-}
-
-// SignUpHome is where this tenant's people are sent instead of its desktop
-// (spec.signUp.home); empty unless sign-up is enabled and a home is set.
-func (t *Tenant) SignUpHome() string {
-	if !t.SignUpEnabled() {
-		return ""
-	}
-	return t.Spec.SignUp.Home
 }
 
 // TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.
