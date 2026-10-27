@@ -108,21 +108,6 @@ spec:
                   - key: gentianos.io/tenant-namespace
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.tenantNamespace
-            # Optional portal-bridge SSO helper page shipped with the profile catalogue.
-            - kind: ConfigMap
-              into: portalBridgeSso
-              apiVersion: v1
-              type: Selector
-              selector:
-                maxMatch: 1
-                minMatch: 0
-                matchLabels:
-                  - key: gentianos.io/profile-name
-                    type: FromCompositeFieldPath
-                    valueFromFieldPath: spec.profileRef.name
-                  - key: gentianos.io/asset
-                    type: Value
-                    value: portal-bridge-sso
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -917,8 +902,8 @@ spec:
             {{- $parts := splitList "." $activation.valuesPath }}
             {{- /* Append to whatever the app already puts at this path rather than
                    replacing it. Many charts expose a single lifecycle hook, and the app
-                   is usually already using it — Nextcloud's before-starting installs the
-                   portal-bridge SSO handler and hides the in-app header when embedded.
+                   is usually already using it — Nextcloud's before-starting brings its
+                   credentials up to date and hides the in-app header when embedded.
                    mergeOverwrite replaces a string outright, so writing ours on top
                    silently deleted the app's own setup and broke SSO and theming while
                    the addon activation itself looked like it worked. */}}
@@ -1944,34 +1929,6 @@ spec:
                       {{ toYaml $esData | nindent 22 }}
               providerConfigRef:
                 name: kubernetes
-            {{- end }}
-
-            {{- /* Copy optional portal-bridge SSO helper into the tenant namespace. */}}
-            {{- $portalSsoRes := dig "portalBridgeSso" list $extraRes }}
-            {{- if gt (len $portalSsoRes) 0 }}
-            {{- $ssoCM := index $portalSsoRes 0 }}
-            {{- $ssoData := dig "data" dict $ssoCM }}
-            {{- if gt (len $ssoData) 0 }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-portal-bridge-sso-cm
-              name: {{ $xrName }}-portal-bridge-sso-cm
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
-                  metadata:
-                    name: {{ $app }}-portal-bridge-sso
-                    namespace: {{ $ns }}
-                  data:
-                    {{ toYaml $ssoData | nindent 20 }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
             {{- end }}
 
             {{- /* ── The sign-in sidecar's client (requires.services.identity.sidecar)
