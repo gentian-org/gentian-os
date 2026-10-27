@@ -20,6 +20,7 @@ package bouncer
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -116,6 +117,13 @@ type Route struct {
 	// bearer route: there is no session there.
 	SessionCookies        []string `json:"sessionCookies,omitempty"`
 	SessionCookiePrefixes []string `json:"sessionCookiePrefixes,omitempty"`
+	// DeniedRedirect is where a browser refused by the store on this route
+	// is sent instead of the refusal page: the home of a tenant whose
+	// signed-up people have no desktop, on that desktop's route. It grants
+	// nothing -- the request is answered here and reaches no backend -- and
+	// only a person with a valid session is refused that way; one without
+	// is answered as on any route.
+	DeniedRedirect string `json:"deniedRedirect,omitempty"`
 }
 
 // Denies reports whether a path is one the route refuses outright.
@@ -200,6 +208,14 @@ func ParseTable(b []byte) (*Table, error) {
 		for _, n := range append(append([]string{}, r.SessionCookies...), r.SessionCookiePrefixes...) {
 			if strings.TrimSpace(n) == "" {
 				return nil, fmt.Errorf("route table: entry %d (%q) names an empty session cookie", i, r.Host)
+			}
+		}
+		// A refusal sent elsewhere is a browser's, and only to an https
+		// address: never a path of this host, never a script.
+		if r.DeniedRedirect != "" {
+			u, err := url.Parse(r.DeniedRedirect)
+			if r.AuthMode != AuthModeOIDC || err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+				return nil, fmt.Errorf("route table: entry %d (%q) sends a refusal only from a session route to an https address", i, r.Host)
 			}
 		}
 	}

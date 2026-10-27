@@ -75,8 +75,9 @@ type Decision struct {
 	// whether the denial carries a page or the bare status.
 	Browser bool
 	// Redirect makes this decision a 302 to that location instead of a
-	// refusal with a body. Only the old sign-out path uses it: the request is
-	// answered here and never reaches a backend.
+	// refusal with a body: the old sign-out path, and a refusal on a route
+	// that sends refused browsers home (Route.DeniedRedirect). The request
+	// is answered here and never reaches a backend.
 	Redirect string
 
 	// What the audit record names, set where it is known: the verified
@@ -235,8 +236,10 @@ func reasonOf(dec Decision) string {
 	switch {
 	case dec.Allow:
 		return "allowed"
-	case dec.Redirect != "":
+	case dec.Redirect == LogoutPath:
 		return "sign-out"
+	case dec.Redirect != "":
+		return "refused"
 	case dec.Status == http.StatusUnauthorized:
 		return "unauthenticated"
 	case dec.Status == http.StatusServiceUnavailable:
@@ -299,7 +302,13 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 		return about(route, id.Subject, deny(http.StatusServiceUnavailable, "authorization store unreachable"))
 	}
 	if !ok {
-		return about(route, id.Subject, browserRefusal(route, deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object)))
+		reason := "not " + route.Relation + " on " + route.Object
+		// A tenant whose signed-up people have no desktop sends them home
+		// rather than showing them a refusal they can do nothing about.
+		if route.DeniedRedirect != "" && route.AuthMode == AuthModeOIDC {
+			return about(route, id.Subject, Decision{Status: http.StatusFound, Redirect: route.DeniedRedirect, Reason: reason})
+		}
+		return about(route, id.Subject, browserRefusal(route, deny(http.StatusForbidden, reason)))
 	}
 	d.cache.put(id.Subject, id.SessionID, route.Host, who)
 	return about(route, id.Subject, d.finish(ctx, route, req, who))

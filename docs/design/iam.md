@@ -133,6 +133,12 @@ What sign-up changes, and only in that tenant's realm:
   it. The usage statistics report counts the members of such a tenant, not its
   realm's accounts. Making such an account a member is an administrator
   putting it in a group, as for anybody.
+- **Its people can be sent home instead** (`spec.signUp.home`, an https
+  address such as a website's account page). The tenant's bare domain then
+  redirects there rather than to the desktop, and the bouncer answers a
+  browser the store refuses at the tenant's desktop with a redirect there
+  rather than the refusal page. It grants nothing: the request reaches no
+  backend, and members still reach the desktop.
 
 - **The administrator's account carries its login as its address,
   recorded as verified.** The realm refuses an account without an address,
