@@ -345,6 +345,9 @@ spec:
   ingress:
   - from:
     - podSelector: {}
+  - ports:
+    - port: 10250
+      protocol: TCP
   - from:
     - namespaceSelector:
         matchLabels:

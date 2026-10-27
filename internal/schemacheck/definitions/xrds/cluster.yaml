@@ -482,6 +482,32 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
+                monitoring:
+                  type: object
+                  description: >
+                    The platform's own metrics and alerts
+                    (docs/design/audit-events.md §5). Read by the installer
+                    (B-01), which renders kube-prometheus-stack into the
+                    observability namespace when enabled; no Composition
+                    consumes it.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: >
+                        true installs Prometheus, Alertmanager, node-exporter
+                        and kube-state-metrics with the platform's alert rules.
+                        Every ServiceMonitor and PrometheusRule in the cluster
+                        is picked up. About 0.4 CPU, 1.5 GiB and a 20 GiB volume.
+                    alerts:
+                      type: object
+                      properties:
+                        webhook:
+                          type: string
+                          description: >
+                            Where Alertmanager sends alerts, as an HTTPS URL
+                            taking Alertmanager's webhook body. Empty holds
+                            them in Alertmanager.
                 metricsServer:
                   type: object
                   description: >

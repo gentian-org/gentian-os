@@ -4,7 +4,7 @@
 # requires: A-06-argocd
 # provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
 # mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signalling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
-# pins: headlamp
+# pins: headlamp monitoring
 
 # The chart takes the namespace layout as a value and resolves every
 # destination from it; it refuses to render an Application whose function the
@@ -173,9 +173,16 @@ _v5_render() {
         done
     } > "${dns_zones_values}"
 
+    # Where Alertmanager sends alerts (the claim's monitoring.alerts.webhook).
+    # A values file for the same reason: a URL may carry a comma.
+    local monitoring_values="${tmp}/monitoring.yaml"
+    printf 'monitoring:\n  alerts:\n    webhook: %s\n' \
+        "$(jq -Rn --arg u "${MONITORING_ALERTS_WEBHOOK:-}" '$u')" > "${monitoring_values}"
+
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
         -f "${signing_values}" -f "${installer_values}" -f "${dns_zones_values}" \
+        -f "${monitoring_values}" \
         --set-string "dnsProvider=$(gentian_dns_provider)" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
@@ -210,7 +217,10 @@ _v5_render() {
         --set-string "usageStatistics.enabled=$(gentian_usage_statistics_enabled)" \
         --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
-        --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
+        --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)" \
+        --set-string "monitoring.enabled=${MONITORING_ENABLED:-false}" \
+        --set-string "versions.monitoring.chart=$(gentian_pin monitoring chart)" \
+        --set-string "versions.monitoring.repo=$(gentian_pin monitoring repo)"
     local rc=$?
     rm -rf "${tmp}"
     return ${rc}

@@ -1,0 +1,123 @@
+{{- /*
+The platform's own metrics and alerts (docs/design/audit-events.md §5):
+kube-prometheus-stack with Prometheus, Alertmanager, node-exporter and
+kube-state-metrics, in the observability namespace, when the Cluster claim's
+monitoring.enabled says so. Off by default: a cluster that does not ask for
+it carries none of it.
+
+Grafana is not on here. It comes with its own sign-in against the kernel
+realm, the way Argo CD and Headlamp do, and is switched on by that change.
+*/ -}}
+{{- if eq (toString .Values.monitoring.enabled) "true" }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.versions.monitoring.repo }}
+    chart: kube-prometheus-stack
+    targetRevision: {{ .Values.versions.monitoring.chart | quote }}
+    helm:
+      valuesObject:
+        # The release's name is the prefix of every object; a short one
+        # keeps the Services and the rules readable.
+        fullnameOverride: monitoring
+        grafana:
+          enabled: false
+        # Which control-plane parts can be scraped depends on who runs the
+        # control plane. On a managed one -- the target -- none of these is
+        # reachable, and their alerts would fire for ever about targets that
+        # are not missing but not ours.
+        kubeEtcd:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        defaultRules:
+          create: true
+          rules:
+            etcd: false
+            kubeControllerManager: false
+            kubeSchedulerAlerting: false
+            kubeSchedulerRecording: false
+            kubeProxy: false
+        prometheus:
+          prometheusSpec:
+            # Every ServiceMonitor, PodMonitor and rule in the cluster, not
+            # only this release's: the operator's chart, the vendored Redis
+            # and SeaweedFS charts and a destination's own rules each bring
+            # theirs.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            retention: {{ .Values.monitoring.retention | quote }}
+            retentionSize: {{ .Values.monitoring.retentionSize | quote }}
+            resources:
+              requests: { cpu: 200m, memory: 1Gi }
+              limits: { memory: 2Gi }
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: [ReadWriteOnce]
+                  resources:
+                    requests:
+                      storage: {{ .Values.monitoring.storage | quote }}
+        alertmanager:
+          alertmanagerSpec:
+            resources:
+              requests: { cpu: 20m, memory: 64Mi }
+              limits: { memory: 128Mi }
+          {{- with .Values.monitoring.alerts.webhook }}
+          # Where alerts go: one webhook the claim names. Without one,
+          # Alertmanager holds them, and its API and the console show them.
+          config:
+            route:
+              receiver: claim-webhook
+              group_by: [alertname, namespace]
+              routes:
+                # The chart's own always-firing heartbeat goes nowhere: a
+                # receiver paged by it every few minutes learns to ignore
+                # the receiver.
+                - receiver: "null"
+                  matchers: ['alertname = "Watchdog"']
+            receivers:
+              - name: "null"
+              - name: claim-webhook
+                webhook_configs:
+                  - url: {{ . | quote }}
+                    send_resolved: true
+          {{- end }}
+        prometheusOperator:
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "observability") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    # The operator's CRDs are larger than the annotation a client-side
+    # apply keeps.
+    - ServerSideApply=true
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/template/spec/hostUsers
+  - group: apps
+    kind: DaemonSet
+    jsonPointers:
+    - /spec/template/spec/hostUsers
+{{- end }}
