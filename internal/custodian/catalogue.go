@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -63,6 +65,11 @@ type Status struct {
 	// from asking OpenBao. Nothing here polls the secret store.
 	Satisfied bool   `json:"satisfied"`
 	Reason    string `json:"reason,omitempty"`
+	// Pending is a value stored moments ago that ESO has not confirmed yet:
+	// the probe was told to re-read it and has not answered. Never true
+	// together with Satisfied, and only for pendingWindow after the write --
+	// past that, ESO's own verdict stands, whatever it is.
+	Pending bool `json:"pending,omitempty"`
 
 	// Metadata, when the caller's token can read it. Never a value.
 	SetBy     string `json:"setBy,omitempty"`
@@ -74,14 +81,22 @@ type Status struct {
 // ExternalSecret would produce.
 //
 // +kubebuilder:rbac:groups=gentianos.io,resources=credentialrequirements,verbs=get;list;watch
-// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;patch
 
 // Catalogue reads CredentialRequirement objects and their ESO probes.
 type Catalogue struct {
 	Client client.Client
 	// ProbeNamespace holds the probe ExternalSecrets the generator emits.
 	ProbeNamespace string
+	// Now is the clock pending is measured against; nil is time.Now.
+	Now func() time.Time
 }
+
+// pendingWindow is how long after a write an unconfirmed probe reads as
+// pending rather than missing. ESO answers a force-sync in seconds; this is
+// room for a busy controller, short enough that a value ESO cannot read is
+// reported as such while the person who stored it is still looking.
+const pendingWindow = 2 * time.Minute
 
 // Viewer is what one verified caller may see and set.
 //
@@ -145,7 +160,7 @@ func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 			st.Validator = r.Spec.Validate.Type
 			st.ValidateHost = r.Spec.Validate.Host
 		}
-		st.Satisfied, st.Reason = c.probeStatus(ctx, r.Name)
+		st.Satisfied, st.Pending, st.Reason = c.probeStatus(ctx, r.Name)
 		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -181,37 +196,80 @@ func (c *Catalogue) Get(ctx context.Context, name string, v Viewer) (*Status, er
 	return nil, fmt.Errorf("no such requirement, or not visible at this scope: %s", name)
 }
 
-// probeStatus reads ESO's verdict from the probe ExternalSecret.
+// probeStatus reads ESO's verdict from the probe ExternalSecret: satisfied,
+// pending, and the reason when it is neither.
+//
+// Pending covers the seconds between a write and ESO's answer. The custodian
+// stamps the probe's force-sync annotation when it stores a value (see
+// refreshConsumers); until the Ready condition has moved since that stamp, the
+// condition on the object is ESO's opinion of the previous value, and reporting
+// it as "missing" told the person who had just supplied it that it was lost.
 //
 // Unstructured rather than a typed ESO client: adding external-secrets to
 // go.mod for one condition read would couple the operator's build to ESO's API
 // version, which has already moved once (v1beta1 stopped being served).
-func (c *Catalogue) probeStatus(ctx context.Context, name string) (bool, string) {
+func (c *Catalogue) probeStatus(ctx context.Context, name string) (satisfied, pending bool, reason string) {
 	var es unstructured.Unstructured
 	es.SetGroupVersionKind(externalSecretGVK)
 	key := client.ObjectKey{Namespace: c.ProbeNamespace, Name: "credreq-" + name}
 
 	if err := c.Client.Get(ctx, key, &es); err != nil {
-		return false, "no satisfaction probe found — is the credential catalogue applied?"
+		return false, false, "no satisfaction probe found — is the credential catalogue applied?"
 	}
+	satisfied, since, reason := readyCondition(&es)
+	if satisfied {
+		return true, false, ""
+	}
+	if c.awaitingProbe(&es, since) {
+		return false, true, "saved, being checked"
+	}
+	return false, false, reason
+}
+
+// readyCondition is ESO's Ready condition: whether it is True, when it last
+// changed (zero when unknown), and its message.
+func readyCondition(es *unstructured.Unstructured) (bool, time.Time, string) {
 	conds, found, err := unstructured.NestedSlice(es.Object, "status", "conditions")
 	if err != nil || !found {
-		return false, "probe has not reported yet"
+		return false, time.Time{}, "probe has not reported yet"
 	}
 	for _, raw := range conds {
 		cond, ok := raw.(map[string]any)
-		if !ok {
+		if !ok || cond["type"] != "Ready" {
 			continue
 		}
-		if cond["type"] == "Ready" {
-			if cond["status"] == "True" {
-				return true, ""
-			}
-			if msg, ok := cond["message"].(string); ok && msg != "" {
-				return false, msg
-			}
-			return false, "not ready"
+		var since time.Time
+		if at, ok := cond["lastTransitionTime"].(string); ok {
+			since, _ = time.Parse(time.RFC3339, at)
 		}
+		if cond["status"] == "True" {
+			return true, since, ""
+		}
+		if msg, ok := cond["message"].(string); ok && msg != "" {
+			return false, since, msg
+		}
+		return false, since, "not ready"
 	}
-	return false, "probe has not reported a Ready condition"
+	return false, time.Time{}, "probe has not reported a Ready condition"
+}
+
+// awaitingProbe reports whether the probe was nudged within pendingWindow and
+// its Ready condition has not changed since. A condition that turned False
+// after the nudge is ESO's answer about the new value, not a wait.
+func (c *Catalogue) awaitingProbe(es *unstructured.Unstructured, readySince time.Time) bool {
+	stamp, err := strconv.ParseInt(es.GetAnnotations()[forceSyncAnnotation], 10, 64)
+	if err != nil {
+		return false
+	}
+	nudged := time.Unix(stamp, 0)
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	if now().Sub(nudged) > pendingWindow {
+		return false
+	}
+	// Second resolution on both sides; a transition in the same second as the
+	// nudge is taken as the answer to it.
+	return readySince.IsZero() || readySince.Before(nudged)
 }
