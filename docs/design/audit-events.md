@@ -118,10 +118,17 @@ spec:
   logForwarding:
     destination:
       endpoint: https://evidence.example.org/ingest   # unset: no forwarder
-      format: ndjson            # ndjson over HTTPS, or otlp
-      credentialRef: log-destination   # OpenBao-held, like a backup destination
-      streams: [audit, operations]
+      streams: [audit, operations]                    # both when absent
 ```
+
+The destination takes newline-delimited JSON over HTTPS POST, gzip
+compressed, one request per batch, with `X-Gentian-Stream: audit` or
+`operations` and the `log-destination` credential as its bearer token. The
+audit stream buffers on the node's disk when the destination is away and
+stops reading rather than drop a record; the operations stream drops the
+newest lines instead. The forwarder also counts each audit record as
+`gentian_audit_records_total` by source, kind, outcome and tenant, which is
+what the rules in §5 read.
 
 Unset `destination` renders no DaemonSet. The credential is supplied once,
 the way a backup destination's is, and never sits in the claim. The
@@ -155,8 +162,8 @@ rules:
 
 | Alert | Condition |
 | --- | --- |
-| `AuditSourceSilent` | a source's audit lines stop for 30 minutes while its pod runs |
-| `LogForwardingFailing` | the forwarder's sink errors for 5 minutes |
+| `AuditSourceSilent` | a source that wrote audit records in the last day writes none for two hours |
+| `LogForwardingFailing` | the forwarder's sinks error for 10 minutes |
 | `BreakGlassUsed` | a `break-glass` record |
 | `RefusalsSpiking` | refusals per tenant above 10× the 7-day baseline |
 | availability | pod crash-looping, volume above 85 %, certificate within 14 days, node not ready |

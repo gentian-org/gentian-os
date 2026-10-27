@@ -1,0 +1,235 @@
+{{- /*
+The log forwarder (docs/design/audit-events.md §4): Vector as a DaemonSet in
+the observability namespace, reading every pod's output on its node and
+shipping it to the destination the Cluster claim names
+(logForwarding.destination). Without a destination nothing here renders.
+
+It does three things: parse each line (JSON kept as fields), redact what must
+not leave a node whatever its source promised, and ship the audit records and
+the rest as two streams. What to keep, for how long and in what form is the
+destination's.
+
+It runs in the kernel tier because it reads the nodes' log directory through
+a hostPath, which the Kyverno baseline permits there and nowhere else.
+*/ -}}
+{{- $lf := .Values.logForwarding | default dict }}
+{{- if $lf.endpoint }}
+{{- $streams := $lf.streams | default (list "audit" "operations") }}
+---
+# The destination's bearer token, from the credential the cluster supplies
+# once (credentials.yaml: log-destination). Optional: a destination that
+# takes no token gets an empty one.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: log-destination
+  namespace: {{ include "ns" (list . "observability") }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: log-destination
+    creationPolicy: Owner
+    deletionPolicy: Delete
+  dataFrom:
+  - extract:
+      key: gentian-os/kernel/observability/log-destination
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: log-forwarding
+  namespace: {{ include "ns" (list . "gitops") }}
+  # Switched off on the claim, B-01 deletes the Application and this has
+  # Argo CD remove the DaemonSet with it.
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.versions.logForwarding.repo }}
+    chart: vector
+    targetRevision: {{ .Values.versions.logForwarding.chart | quote }}
+    helm:
+      valuesObject:
+        role: Agent
+        fullnameOverride: log-forwarder
+        # The audit metrics below are what the platform's alert rules count;
+        # a PodMonitor only where Prometheus is there to read it.
+        podMonitor:
+          enabled: {{ eq (toString .Values.monitoring.enabled) "true" }}
+        containerPorts:
+        - name: prom-exporter
+          containerPort: 9598
+          protocol: TCP
+        service:
+          enabled: false
+        # The node's pod logs, read-only, and a directory for the read
+        # positions. Not the chart's default of all of /var/lib, /proc and
+        # /sys: nothing here reads host metrics.
+        defaultVolumes:
+        - name: var-log
+          hostPath:
+            path: /var/log/pods
+        - name: data
+          hostPath:
+            path: /var/lib/gentian-log-forwarder
+            type: DirectoryOrCreate
+        defaultVolumeMounts:
+        - name: var-log
+          mountPath: /var/log/pods
+          readOnly: true
+        - name: data
+          mountPath: /vector-data-dir
+        env:
+        - name: LOG_DESTINATION_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: log-destination
+              key: token
+              optional: true
+        resources:
+          requests: { cpu: 100m, memory: 128Mi }
+          limits: { memory: 256Mi }
+        # Every node, control-plane ones included where pods run there.
+        tolerations:
+        - operator: Exists
+        customConfig:
+          data_dir: /vector-data-dir
+          api:
+            enabled: false
+          sources:
+            # The forwarder's own output is not read: the chart labels its
+            # pods vector.dev/exclude, which this source honours. A sink error
+            # would otherwise be logged, forwarded, fail, and be logged again.
+            pods:
+              type: kubernetes_logs
+            self:
+              type: internal_metrics
+          transforms:
+            parsed:
+              type: remap
+              inputs: [pods]
+              source: |
+                # A JSON line keeps its fields; anything else stays a message.
+                parsed, err = parse_json(.message)
+                if err == null && is_object(parsed) {
+                  . = merge(., object!(parsed))
+                  del(.message)
+                }
+                .cluster_namespace = .kubernetes.pod_namespace
+                .cluster_pod = .kubernetes.pod_name
+                .cluster_container = .kubernetes.container_name
+                del(.kubernetes)
+                del(.file)
+                del(.source_type)
+                # Whatever a source promised: no credential leaves the node.
+                del(.authorization)
+                del(.Authorization)
+                del(.cookie)
+                del(.Cookie)
+                del(.password)
+                del(.token)
+                . = redact(., filters: [
+                  r'(?i)bearer\s+[A-Za-z0-9._~+/=-]+',
+                  r'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}',
+                  r'(?i)(password|passwd|pwd|token|secret|code|client_secret)=[^&\s"]+'
+                ])
+            streams:
+              type: route
+              inputs: [parsed]
+              route:
+                audit: '.audit == true'
+            # What the platform's alert rules count: one counter per audit
+            # record, by source, kind, outcome and tenant. No subject: a
+            # person is not a metric label.
+            # The counter's tags are templates, and a template over a field
+            # the record does not carry drops the event; an empty tag does not.
+            tagged:
+              type: remap
+              inputs: [streams.audit]
+              source: |
+                .source = to_string(.source) ?? ""
+                .kind = to_string(.kind) ?? ""
+                .outcome = to_string(.outcome) ?? ""
+                .tenant = to_string(.tenant) ?? ""
+            counted:
+              type: log_to_metric
+              inputs: [tagged]
+              metrics:
+              - type: counter
+                field: kind
+                name: audit_records_total
+                namespace: gentian
+                tags:
+                  source: '{{ "{{" }} source {{ "}}" }}'
+                  kind: '{{ "{{" }} kind {{ "}}" }}'
+                  outcome: '{{ "{{" }} outcome {{ "}}" }}'
+                  tenant: '{{ "{{" }} tenant {{ "}}" }}'
+          sinks:
+            {{- if has "audit" $streams }}
+            destination_audit:
+              type: http
+              inputs: [streams.audit]
+              uri: {{ $lf.endpoint | quote }}
+              method: post
+              compression: gzip
+              encoding:
+                codec: json
+              framing:
+                method: newline_delimited
+              request:
+                headers:
+                  X-Gentian-Stream: audit
+              auth:
+                strategy: bearer
+                token: "${LOG_DESTINATION_TOKEN}"
+              # The audit stream waits on disk rather than being dropped when
+              # the destination is away: a record lost here is the one an
+              # auditor asks for.
+              buffer:
+                type: disk
+                max_size: 1073741824
+                when_full: block
+            {{- end }}
+            {{- if has "operations" $streams }}
+            destination_operations:
+              type: http
+              inputs: [streams._unmatched]
+              uri: {{ $lf.endpoint | quote }}
+              method: post
+              compression: gzip
+              encoding:
+                codec: json
+              framing:
+                method: newline_delimited
+              request:
+                headers:
+                  X-Gentian-Stream: operations
+              auth:
+                strategy: bearer
+                token: "${LOG_DESTINATION_TOKEN}"
+              buffer:
+                type: memory
+                max_events: 10000
+                when_full: drop_newest
+            {{- end }}
+            metrics:
+              type: prometheus_exporter
+              inputs: [self, counted]
+              address: 0.0.0.0:9598
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "observability") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+  ignoreDifferences:
+  - group: apps
+    kind: DaemonSet
+    jsonPointers:
+    - /spec/template/spec/hostUsers
+{{- end }}

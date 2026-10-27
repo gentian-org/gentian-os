@@ -2,9 +2,9 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace; the monitoring Application exactly where the claim's monitoring.enabled is true
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace; the monitoring Application exactly where the claim's monitoring.enabled is true; the log-forwarding Application exactly where it names a logForwarding destination
 # mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signalling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
-# pins: headlamp monitoring
+# pins: headlamp monitoring logForwarding
 
 # The chart takes the namespace layout as a value and resolves every
 # destination from it; it refuses to render an Application whose function the
@@ -86,6 +86,13 @@ _v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_def
 _v5_monitoring_as_claimed() {
     [[ "${MONITORING_ENABLED:-false}" == "true" ]] && return 0
     ! kubectl get application monitoring -n "$1" >/dev/null 2>&1
+}
+
+# _v5_forwarding_as_claimed <gitops-ns> — no log-forwarding Application where
+# the claim names no destination.
+_v5_forwarding_as_claimed() {
+    [[ -n "${LOG_FORWARDING_ENDPOINT:-}" ]] && return 0
+    ! kubectl get application log-forwarding -n "$1" >/dev/null 2>&1
 }
 
 # _v5_keep_chart_version — do not downgrade a component chart this cluster has
@@ -186,6 +193,16 @@ _v5_render() {
     local monitoring_values="${tmp}/monitoring.yaml"
     printf 'monitoring:\n  alerts:\n    webhook: %s\n' \
         "$(jq -Rn --arg u "${MONITORING_ALERTS_WEBHOOK:-}" '$u')" > "${monitoring_values}"
+    # Where the log forwarder ships to (the claim's logForwarding.destination),
+    # and which streams. The same reason: a URL may carry a comma.
+    {
+        printf 'logForwarding:\n  endpoint: %s\n' \
+            "$(jq -Rn --arg u "${LOG_FORWARDING_ENDPOINT:-}" '$u')"
+        if [[ -n "${LOG_FORWARDING_STREAMS:-}" ]]; then
+            printf '  streams: %s\n' \
+                "$(jq -Rn --arg s "${LOG_FORWARDING_STREAMS}" '$s | split(",") | map(gsub(" "; "")) | map(select(length > 0))')"
+        fi
+    } >> "${monitoring_values}"
 
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
@@ -228,7 +245,9 @@ _v5_render() {
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)" \
         --set-string "monitoring.enabled=${MONITORING_ENABLED:-false}" \
         --set-string "versions.monitoring.chart=$(gentian_pin monitoring chart)" \
-        --set-string "versions.monitoring.repo=$(gentian_pin monitoring repo)"
+        --set-string "versions.monitoring.repo=$(gentian_pin monitoring repo)" \
+        --set-string "versions.logForwarding.chart=$(gentian_pin logForwarding chart)" \
+        --set-string "versions.logForwarding.repo=$(gentian_pin logForwarding repo)"
     local rc=$?
     rm -rf "${tmp}"
     return ${rc}
@@ -327,6 +346,7 @@ check() {
     # leaves it out, and a subset test cannot see what is there and should
     # not be.
     _v5_monitoring_as_claimed "${ns}" || return 1
+    _v5_forwarding_as_claimed "${ns}" || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
@@ -352,6 +372,11 @@ apply() {
         && kubectl get application monitoring -n "${ns}" >/dev/null 2>&1; then
         kubectl delete application monitoring -n "${ns}" --wait=false >/dev/null
         info "monitoring switched off on the claim: its Application is removed"
+    fi
+    if [[ -z "${LOG_FORWARDING_ENDPOINT:-}" ]] \
+        && kubectl get application log-forwarding -n "${ns}" >/dev/null 2>&1; then
+        kubectl delete application log-forwarding -n "${ns}" --wait=false >/dev/null
+        info "no log-forwarding destination on the claim: the forwarder is removed"
     fi
     for app in $(_v5_apps_healthy) $(_v5_apps_synced); do
         want=healthy

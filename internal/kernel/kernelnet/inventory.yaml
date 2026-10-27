@@ -883,6 +883,14 @@ namespaces:
           - port: 6060
             what: profiling
             closed: nothing reads it
+      - name: log-forwarder
+        installedBy: bootstrap-application:log-forwarding
+        readAt: vector chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: vector}
+        ports:
+          - port: 9598
+            what: its own and the audit records' metrics
+            closed: scraped from this namespace only
       - name: kube-state-metrics
         installedBy: bootstrap-application:monitoring
         readAt: kube-prometheus-stack chart, pinned in versions.yaml

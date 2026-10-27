@@ -150,6 +150,46 @@ spec:
                   - url: {{ . | quote }}
                     send_resolved: true
           {{- end }}
+        {{- if (.Values.logForwarding | default dict).endpoint }}
+        # The platform's rules on its own audit records, counted by the log
+        # forwarder (gentian_audit_records_total, by source, kind, outcome
+        # and tenant) and on the forwarder itself (docs/design/audit-events.md
+        # §5). Only where both run: without the forwarder there is nothing to
+        # count.
+        additionalPrometheusRulesMap:
+          gentian-audit:
+            groups:
+            - name: gentian-audit
+              rules:
+              - alert: LogForwardingFailing
+                expr: sum by (component_id) (rate(vector_component_errors_total{component_kind="sink"}[5m])) > 0
+                for: 10m
+                labels: { severity: critical }
+                annotations:
+                  summary: "The log forwarder cannot deliver to {{ "{{" }} $labels.component_id {{ "}}" }}."
+                  description: "Audit records are buffered on the nodes' disks until the destination takes them again; a full buffer stops the forwarder reading."
+              - alert: AuditSourceSilent
+                expr: (sum by (source) (increase(gentian_audit_records_total[1d])) > 0) unless (sum by (source) (increase(gentian_audit_records_total[2h])) > 0)
+                for: 15m
+                labels: { severity: warning }
+                annotations:
+                  summary: "No audit record from {{ "{{" }} $labels.source {{ "}}" }} for two hours."
+                  description: "It wrote records in the last day and none since. A source that went quiet is the first thing an auditor finds."
+              - alert: BreakGlassUsed
+                expr: sum(increase(gentian_audit_records_total{kind="break-glass"}[10m])) > 0
+                labels: { severity: critical }
+                annotations:
+                  summary: "Break-glass access was used."
+              - alert: RefusalsSpiking
+                expr: |
+                  sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[10m]))
+                    > 10 * sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[7d]))
+                  and sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[10m])) > 0.2
+                for: 10m
+                labels: { severity: warning }
+                annotations:
+                  summary: "Refusals in tenant {{ "{{" }} $labels.tenant {{ "}}" }} are ten times their weekly rate."
+        {{- end }}
         prometheusOperator:
           resources:
             requests: { cpu: 50m, memory: 128Mi }

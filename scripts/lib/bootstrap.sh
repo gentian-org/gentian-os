@@ -1642,6 +1642,20 @@ _claim_cluster_fields() {
     fi
 
     printf '\n'
+    printf '  # Where the platform'"'"'s logs go: an HTTPS endpoint taking NDJSON, with\n'
+    printf '  # the log-destination credential as its bearer. Unset: no forwarder.\n'
+    if [[ -n "${LOG_FORWARDING_ENDPOINT:-}" ]]; then
+        printf '  logForwarding:\n'
+        printf '    destination:\n'
+        printf '      endpoint: "%s"\n' "${LOG_FORWARDING_ENDPOINT}"
+    else
+        printf '  # logForwarding:\n'
+        printf '  #   destination:\n'
+        printf '  #     endpoint: https://evidence.example.org/ingest\n'
+        printf '  #     streams: [audit, operations]\n'
+    fi
+
+    printf '\n'
     printf '  # Who issues TLS certificates, and who hosts the zone. Two questions:\n'
     printf '  # how control is proved, and by whom.\n'
     printf '  #   acme-dns01   Lets Encrypt over DNS-01; the only path to a wildcard\n'

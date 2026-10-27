@@ -33,6 +33,9 @@ versions:
   monitoring:
     chart: ""
     repo: ""
+  logForwarding:
+    chart: ""
+    repo: ""
 
 # The platform's metrics and alerts (templates/monitoring.yaml), from the
 # Cluster claim's monitoring block (B-01). Off unless the claim says so.
@@ -43,6 +46,12 @@ monitoring:
   storage: 20Gi
   alerts:
     webhook: ""
+
+# The log forwarder (templates/log-forwarding.yaml), from the Cluster claim's
+# logForwarding.destination (B-01, as a values file). No endpoint, no forwarder.
+logForwarding:
+  endpoint: ""
+  streams: [audit, operations]
 
 # The realm the kernel signs people in against. Tenants have their own.
 kernelRealm: kernel

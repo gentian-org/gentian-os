@@ -23,6 +23,7 @@ spec:
   - https://kyverno.github.io/kyverno/
   - https://kubernetes-sigs.github.io/headlamp/
   - https://prometheus-community.github.io/helm-charts
+  - https://helm.vector.dev
   # Every kernel and system namespace, by the layout. Shared and tenant
   # namespaces get their own projects with their own ceilings.
   #
