@@ -1462,6 +1462,10 @@ spec:
                     # llm.<kernelDomain>. The operator reads it and nothing
                     # else answers for it there: absent means off.
                     llm.console.enabled: {{ default false (dig "llm" "console" "enabled" false $spec) | quote }}
+                    # Whether the platform's monitoring is installed, which is
+                    # what routes Grafana at monitoring.<kernelDomain>. The
+                    # operator reads it; absent means off.
+                    monitoring.enabled: {{ default false (dig "monitoring" "enabled" false $spec) | quote }}
                     # Where the edge runs, which is the one kernel namespace a
                     # Composition has to name. The Gateway, its SecurityPolicies
                     # and the zone client secrets they read all live there, and
