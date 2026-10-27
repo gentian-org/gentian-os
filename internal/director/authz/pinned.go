@@ -58,20 +58,25 @@ func Pinned(ctx context.Context, o Options) (storeID, modelID string, err error)
 	if err := json.Unmarshal(modelV1, &want); err != nil {
 		return "", "", fmt.Errorf("embedded model: %w", err)
 	}
-	logged := false
+	// reason is why Pinned is still waiting. A look the deadline cut off
+	// half-way says only that the deadline came, so it does not replace the
+	// reason an earlier look found.
+	var reason error
 	for {
 		modelID, err = c.pinnedOnce(ctx, o, want)
 		if err == nil {
 			return o.StoreID, modelID, nil
 		}
-		if !logged {
+		if reason == nil {
 			c.log.InfoContext(ctx, "waiting for the operator to write the authorization model this service was built with",
 				"store", o.StoreID, "reason", err.Error())
-			logged = true
+		}
+		if reason == nil || ctx.Err() == nil {
+			reason = err
 		}
 		select {
 		case <-ctx.Done():
-			return "", "", fmt.Errorf("%w (gave up waiting: %v)", err, ctx.Err())
+			return "", "", fmt.Errorf("%w (gave up waiting: %v)", reason, ctx.Err())
 		case <-time.After(pinRetry):
 		}
 	}
