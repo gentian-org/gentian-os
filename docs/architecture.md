@@ -563,7 +563,7 @@ is waiting.
 
 See [design/data-lifecycle.md](design/data-lifecycle.md),
 [design/operations.md](design/operations.md),
-[design/evidence-store.md](design/evidence-store.md),
+[design/audit-events.md](design/audit-events.md),
 [tenant-backup-guide.md](tenant-backup-guide.md) and
 [recovery-playbook.md](recovery-playbook.md).
 
