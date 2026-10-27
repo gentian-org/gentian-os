@@ -204,6 +204,14 @@ keycloakx:
           key: admin-password
     - name: KC_METRICS_ENABLED
       value: "false"
+    # Audit events (docs/design/audit-events.md §3.2): every line as JSON, so
+    # a forwarder keeps fields rather than text, and the jboss-logging event
+    # listener's success events at info, where they reach stdout at all. At
+    # the default (debug) only errors were ever written.
+    - name: KC_LOG_CONSOLE_OUTPUT
+      value: json
+    - name: KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL
+      value: info
     - name: KC_HOSTNAME
       value: "https://id.$(KERNEL_DOMAIN)/auth"
     # No KC_HOSTNAME_ADMIN. The administration console is served on the

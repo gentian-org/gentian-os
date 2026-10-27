@@ -1075,8 +1075,11 @@ spec:
               # carry the changes an administrator makes; the user events carry
               # the ones nobody makes by hand -- a default group, a federation
               # mapper -- which is why both are on.
+              # Kept thirty days in the database, as tenant realms are: the
+              # record is what the realm writes to stdout as it happens.
               REALM_EVENTS=\$(jq -n '{
                 eventsEnabled: true,
+                eventsExpiration: 2592000,
                 adminEventsEnabled: true,
                 adminEventsDetailsEnabled: false,
                 eventsListeners: ["jboss-logging", "gentian-director"]

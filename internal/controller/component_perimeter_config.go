@@ -331,7 +331,12 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 	b.WriteString("pid /tmp/nginx.pid;\n")
 	b.WriteString("events { worker_connections 1024; }\n")
 	b.WriteString("http {\n")
-	b.WriteString("  access_log /dev/stdout;\n")
+	// The access log as JSON with the edge's field names
+	// (docs/design/audit-events.md §3.2). No query string, no cookies, no
+	// Authorization header: the path is $uri, which nginx keeps without the
+	// query, and nothing else of the request is written.
+	b.WriteString("  log_format audit escape=json '{\"time\":\"$time_iso8601\",\"request_id\":\"$http_x_request_id\",' '\"method\":\"$request_method\",\"host\":\"$host\",\"path\":\"${uri}\",' '\"status\":\"$status\",\"duration_ms\":\"$request_time\",\"bytes_sent\":\"$bytes_sent\",' '\"client\":\"$remote_addr\",\"user_agent\":\"$http_user_agent\"}';\n")
+	b.WriteString("  access_log /dev/stdout audit;\n")
 	// Writable paths under /tmp: the pod runs read-only, and nginx wants
 	// somewhere for its temporary bodies whatever we think of that.
 	b.WriteString("  client_body_temp_path /tmp/client_body;\n")

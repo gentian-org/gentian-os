@@ -113,6 +113,9 @@ func run(log *slog.Logger) error {
 		Name:  envOr("DIRECTOR_COMMITTER_NAME", "gentian-director"),
 		Email: os.Getenv("DIRECTOR_COMMITTER_EMAIL"),
 	})
+	// One audit record per commit that reached the remote, on the same
+	// stdout as every other line this process writes.
+	repo.AuditTo(log)
 
 	// AD-2: what the director writes is signed, and Argo CD syncs the
 	// deployments repository only for commits carrying one of the keys the

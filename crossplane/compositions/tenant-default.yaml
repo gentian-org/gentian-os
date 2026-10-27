@@ -1862,6 +1862,11 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 eventsEnabled: true
+                # Thirty days in the realm's database: a buffer for the
+                # administration console, not the record. The record is what
+                # the realm writes to stdout as it happens, which a forwarder
+                # can keep for as long as its destination says.
+                eventsExpiration: 2592000
                 adminEventsEnabled: true
                 adminEventsDetailsEnabled: false
                 eventsListeners:

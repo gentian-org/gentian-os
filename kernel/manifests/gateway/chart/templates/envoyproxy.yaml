@@ -67,6 +67,35 @@ spec:
   filterOrder:
     - name: envoy.filters.http.oauth2
       before: envoy.filters.http.ext_authz
+  # The access log as JSON, one line per request on stdout, so a forwarder
+  # keeps fields rather than text (docs/design/audit-events.md §3.2). What is
+  # left out is left out on purpose: the query string, which carries sign-in
+  # codes; cookies and the Authorization header, which carry sessions. The
+  # person is the subject the bouncer set, an issuer UUID, and only on a
+  # request it allowed. A refusal is the bouncer's own audit record.
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: JSON
+            json:
+              time: "%START_TIME%"
+              request_id: "%REQ(X-REQUEST-ID)%"
+              method: "%REQ(:METHOD)%"
+              host: "%REQ(:AUTHORITY)%"
+              path: "%REQ_WITHOUT_QUERY(:PATH)%"
+              status: "%RESPONSE_CODE%"
+              flags: "%RESPONSE_FLAGS%"
+              duration_ms: "%DURATION%"
+              bytes_sent: "%BYTES_SENT%"
+              upstream: "%UPSTREAM_CLUSTER%"
+              client: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              subject: "%REQ(X-GENTIAN-SUBJECT)%"
+              user_agent: "%REQ(USER-AGENT)%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout
   provider:
     type: Kubernetes
     kubernetes:

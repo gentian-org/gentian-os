@@ -56,7 +56,9 @@ record and the issuer's events, as today.
 
 ```json
 {
-  "ts": "2026-10-27T09:14:03.118Z",
+  "time": "2026-10-27T09:14:03.118Z",
+  "level": "INFO",
+  "msg": "audit",
   "audit": true,
   "source": "bouncer",
   "kind": "decision",
@@ -71,7 +73,9 @@ record and the issuer's events, as today.
 ```
 
 `audit: true` is what tells an audit record from a service's ordinary log
-line; the forwarder routes on it. `kind` is one of `decision`, `change`,
+line; the forwarder routes on it. `time`, `level` and `msg` are the JSON
+handler's own; `internal/audit` adds the rest, and leaves out a field that
+is empty rather than writing it empty. `kind` is one of `decision`, `change`,
 `identity`, `session`, `access`, `backup`, `deletion`, `policy`,
 `break-glass`. `outcome` is `allowed`, `refused`, `ok` or `failed`.
 `detail` holds named fields only, never text copied from a request.

@@ -15,6 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/gentian-org/gentian-os/internal/audit"
 	"net/http"
 	"sort"
 	"strings"
@@ -76,6 +78,11 @@ type Decision struct {
 	// refusal with a body. Only the old sign-out path uses it: the request is
 	// answered here and never reaches a backend.
 	Redirect string
+
+	// What the audit record names, set where it is known: the verified
+	// subject, the store question, and whether a cached allow answered.
+	subject, relation, object string
+	cached                    bool
 }
 
 type identity struct {
@@ -203,6 +210,43 @@ func IdentityHeaders() []string {
 // everything else. Nothing not previously allowed gets through, and nothing
 // gets through without a token this service verified itself.
 func (d *Decider) Decide(ctx context.Context, req Request) Decision {
+	dec := d.decide(ctx, req)
+	d.record(ctx, req, dec)
+	return dec
+}
+
+// record writes the decision's audit line (docs/design/audit-events.md §3):
+// every allow and every refusal, the reason as a code and not as the text a
+// refusal carries, which can quote a verifier's error.
+func (d *Decider) record(ctx context.Context, req Request, dec Decision) {
+	outcome, reason := audit.Refused, reasonOf(dec)
+	if dec.Allow {
+		outcome = audit.Allowed
+	}
+	audit.Write(ctx, d.log, audit.Record{
+		Source: "bouncer", Kind: audit.KindDecision, RequestID: req.ID,
+		Subject: dec.subject, Object: dec.object, Action: dec.relation, Outcome: outcome,
+		Detail: map[string]any{"reason": reason, "status": dec.Status, "host": req.Host, "cached": dec.cached},
+	})
+}
+
+// reasonOf is a decision's reason as a code a reader can count.
+func reasonOf(dec Decision) string {
+	switch {
+	case dec.Allow:
+		return "allowed"
+	case dec.Redirect != "":
+		return "sign-out"
+	case dec.Status == http.StatusUnauthorized:
+		return "unauthenticated"
+	case dec.Status == http.StatusServiceUnavailable:
+		return "unavailable"
+	default:
+		return "refused"
+	}
+}
+
+func (d *Decider) decide(ctx context.Context, req Request) Decision {
 	route := d.Table().Match(req.Host)
 	if route == nil {
 		return deny(http.StatusForbidden, "no route class for host "+req.Host)
@@ -217,7 +261,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	// Deny wins, and it wins before identity is looked at: the profile said
 	// this path is not published, so who is asking does not enter into it.
 	if route.Denies(req.Path) {
-		return deny(http.StatusForbidden, "path is not published on "+req.Host)
+		return about(route, "", deny(http.StatusForbidden, "path is not published on "+req.Host))
 	}
 	id, err := d.session(ctx, route, req)
 	if err != nil {
@@ -225,18 +269,20 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 		// runs first and would have sent such a request to sign in; one that
 		// arrives here without a token it set is a request the filter did
 		// not vouch for, and the only safe answer is no.
-		return browserRefusal(route, deny(http.StatusUnauthorized, err.Error()))
+		return about(route, "", browserRefusal(route, deny(http.StatusUnauthorized, err.Error())))
 	}
 	if id.SessionID == "" {
-		return browserRefusal(route, deny(http.StatusUnauthorized, "token names no session"))
+		return about(route, id.Subject, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session")))
 	}
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
 	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
-		return d.finish(ctx, route, req, cached)
+		dec := about(route, id.Subject, d.finish(ctx, route, req, cached))
+		dec.cached = true
+		return dec
 	}
 	user, err := authz.User(id.Subject)
 	if err != nil {
-		return deny(http.StatusUnauthorized, err.Error())
+		return about(route, id.Subject, deny(http.StatusUnauthorized, err.Error()))
 	}
 	// No revocation question. Ending the session at the realm is what ends
 	// it: the edge holds a short-lived access token and refreshes it, and a
@@ -250,13 +296,20 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	ok, err := authz.CheckAs(ctx, d.store, req.ID, user, holder, route.Relation, route.Object)
 	if err != nil {
 		d.log.WarnContext(ctx, "store unreachable; failing closed", "host", req.Host, "error", err.Error())
-		return deny(http.StatusServiceUnavailable, "authorization store unreachable")
+		return about(route, id.Subject, deny(http.StatusServiceUnavailable, "authorization store unreachable"))
 	}
 	if !ok {
-		return browserRefusal(route, deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object))
+		return about(route, id.Subject, browserRefusal(route, deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object)))
 	}
 	d.cache.put(id.Subject, id.SessionID, route.Host, who)
-	return d.finish(ctx, route, req, who)
+	return about(route, id.Subject, d.finish(ctx, route, req, who))
+}
+
+// about names, on a decision, the store question its route asks and the
+// subject it was asked for, for the audit record.
+func about(route *Route, subject string, dec Decision) Decision {
+	dec.subject, dec.relation, dec.object = subject, route.Relation, route.Object
+	return dec
 }
 
 // finish lets an allowed request through, and on a route that asks for it

@@ -13,6 +13,7 @@ package controller
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -44,6 +45,8 @@ import (
 type perimeterRig struct {
 	t    *testing.T
 	addr string
+	// proxy is the proxy's container, for reading its log.
+	proxy string
 }
 
 // perimeterEcho is the application's stand-in: it answers every request with
@@ -134,7 +137,7 @@ func startPerimeterRig(t *testing.T, e *gentianov1alpha1.ExposureSpec, website b
 	run(echo, echoConf)
 	run(proxy, proxyConf, "-p", "127.0.0.1::8080")
 	port := docker("port", proxy, "8080/tcp")
-	rig := &perimeterRig{t: t, addr: strings.TrimSpace(strings.Split(port, "\n")[0])}
+	rig := &perimeterRig{t: t, addr: strings.TrimSpace(strings.Split(port, "\n")[0]), proxy: proxy}
 
 	deadline := time.Now().Add(20 * time.Second)
 	for {
@@ -611,5 +614,42 @@ func TestTheProxyItselfKeepsThePlatformsPathsOnTheMainAddress(t *testing.T) {
 	}
 	if status, _, body := rig.get("/.well-known/security.txt"); status != 200 || !reached(body) {
 		t.Errorf("the rest of /.well-known/ is the website's: %d", status)
+	}
+}
+
+// The proxy's access log is one JSON object per request, with the edge's
+// field names, and without what a log must not hold: the query string, which
+// carries sign-in codes and tokens, and the caller's credential.
+func TestTheProxyItselfLogsEachRequestAsJSONWithoutQueryOrCredential(t *testing.T) {
+	rig := startPerimeterRig(t, sharesEntry(), false, generousLimits())
+	status, _, _ := rig.get("/s/abc?token=sekrit-query", "Authorization: Bearer sekrit-bearer", "Cookie: s=sekrit-cookie", "X-Request-Id: req-audit-1")
+	if status != 200 {
+		t.Fatalf("status %d", status)
+	}
+	var line map[string]any
+	deadline := time.Now().Add(5 * time.Second)
+	for line == nil && time.Now().Before(deadline) {
+		out, _ := exec.Command("docker", "logs", rig.proxy).Output()
+		if strings.Contains(string(out), "sekrit") {
+			t.Fatalf("the access log holds the query or a credential:\n%s", out)
+		}
+		for _, l := range strings.Split(string(out), "\n") {
+			var m map[string]any
+			if json.Unmarshal([]byte(l), &m) == nil && m["request_id"] == "req-audit-1" {
+				line = m
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if line == nil {
+		t.Fatal("no JSON access-log line for the request")
+	}
+	if line["path"] != "/s/abc" || line["method"] != "GET" || line["status"] != "200" {
+		t.Errorf("line: %v", line)
+	}
+	for _, k := range []string{"time", "host", "duration_ms", "client"} {
+		if _, ok := line[k]; !ok {
+			t.Errorf("no %s in %v", k, line)
+		}
 	}
 }

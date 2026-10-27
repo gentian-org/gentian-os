@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -32,6 +33,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/audit"
 )
 
 // GitOps edits gentian-deployments tenant YAML and pushes commits.
@@ -64,6 +67,39 @@ type GitOps struct {
 	// afterPush is told of every commit that reached the remote, set by
 	// AfterPush. Nil tells nobody.
 	afterPush func(actor string)
+	// auditLog receives one audit record per commit that reached the
+	// remote, set by AuditTo. Nil writes none.
+	auditLog *slog.Logger
+}
+
+// AuditTo has every commit this helper pushes written as an audit record on
+// log (docs/design/audit-events.md §3): who, under which request and which
+// decision, which commit and which files.
+func (g *GitOps) AuditTo(log *slog.Logger) {
+	g.auditLog = log
+}
+
+// audit writes the record of a pushed commit. The commit's id is read back;
+// a record without it still says what was changed and by whom.
+func (g *GitOps) audit(ctx context.Context, rels []string, message string, meta Meta) {
+	if g.auditLog == nil {
+		return
+	}
+	detail := map[string]any{"files": rels, "summary": strings.SplitN(message, "\n", 2)[0]}
+	head, cancel := g.gitCmd(ctx, "-C", g.path, "rev-parse", "HEAD")
+	if out, err := head.Output(); err == nil {
+		detail["commit"] = strings.TrimSpace(string(out))
+	}
+	cancel()
+	if meta.Principal != "" {
+		detail["principal"] = meta.Principal
+	}
+	relation, object, _ := strings.Cut(meta.Decision, " ")
+	audit.Write(ctx, g.auditLog, audit.Record{
+		Source: "director", Kind: audit.KindChange, RequestID: meta.RequestID,
+		Subject: meta.Subject, Object: object, Action: relation, Outcome: audit.OK,
+		Detail: detail,
+	})
 }
 
 // AfterPush has fn called once for every commit this helper pushes, after the
@@ -830,6 +866,7 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 		}
 		return fmt.Errorf("git push: %w: %s", perr, out)
 	}
+	g.audit(ctx, rels, message, meta)
 	if g.afterPush != nil {
 		g.afterPush(meta.actor())
 	}
