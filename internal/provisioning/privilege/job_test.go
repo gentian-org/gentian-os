@@ -154,3 +154,23 @@ func TestMembersSecret_CarriesTheMemberList(t *testing.T) {
 	}
 	var _ metav1.Object = s
 }
+
+// Every realm maps the email claim to the username; Keycloak's email field holds
+// the recovery address. A script matching on email must get the claim's value,
+// or it promotes an account the person never signs in with.
+func TestMembersJSON_EmailIsTheUsername(t *testing.T) {
+	t.Parallel()
+	j, err := privilege.MembersJSON([]authz.KeycloakUser{
+		{ID: "1", Username: "alice@corp.example", Email: "alice@personal.example"},
+	})
+	if err != nil {
+		t.Fatalf("MembersJSON: %v", err)
+	}
+	var out []privilege.Member
+	if err := json.Unmarshal(j, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 || out[0].Email != "alice@corp.example" {
+		t.Fatalf("email not taken from the username: %+v", out)
+	}
+}

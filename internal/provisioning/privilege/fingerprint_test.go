@@ -24,3 +24,13 @@ func TestMemberFingerprint_StableOrdering(t *testing.T) {
 		t.Fatalf("fingerprints differ: %q vs %q", a, b)
 	}
 }
+
+// The script matches on the username, so a renamed member must run it again.
+func TestMemberFingerprint_ChangesWithUsername(t *testing.T) {
+	t.Parallel()
+	a := MemberFingerprint([]authz.KeycloakUser{{ID: "a", Username: "alice@corp.example"}})
+	b := MemberFingerprint([]authz.KeycloakUser{{ID: "a", Username: "alice@other.example"}})
+	if a == b {
+		t.Fatalf("fingerprint ignores the username: %q", a)
+	}
+}
