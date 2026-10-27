@@ -104,7 +104,7 @@ func Write(ctx context.Context, log *slog.Logger, r Record) {
 		}
 	}
 	if len(r.Detail) > 0 {
-		group := make([]any, 0, len(r.Detail)*2)
+		var group []any
 		for k, v := range r.Detail {
 			group = append(group, k, v)
 		}
