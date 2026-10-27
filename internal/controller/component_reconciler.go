@@ -1347,9 +1347,22 @@ func releaseFailureOf(obj *unstructured.Unstructured) string {
 		m, _ := c.(map[string]interface{})
 		if m["type"] == "Ready" || m["type"] == "Synced" {
 			if msg, _ := m["message"].(string); msg != "" && m["status"] != "True" {
-				return fmt.Sprintf("%s: %s", m["type"], msg)
+				return fmt.Sprintf("%s: %s", m["type"], msg) + releaseFailureOutlook(msg)
 			}
 		}
+	}
+	return ""
+}
+
+// releaseFailureOutlook says when a failure is one that usually ends by
+// itself. A release reads its secret values from Secrets that External
+// Secrets writes from the vault; on a first install the provider can try
+// before they are there, and it tries again until they are. Said, because
+// the bare message reads like an install that has broken.
+func releaseFailureOutlook(msg string) string {
+	if strings.Contains(msg, "failed to get value from source") && strings.Contains(msg, "not found") {
+		return " (this usually resolves itself within a minute or two, once the app's secrets are written; " +
+			"it is retried on its own)"
 	}
 	return ""
 }
