@@ -138,6 +138,14 @@ spec:
             {{- if $authzEngine }}
             {{- $systemFns = concat $systemFns (list "authorization") }}
             {{- end }}
+            {{- /* The TURN edge: all edge, so its whole namespace is a DMZ,
+                 and everything in it is the operator's (turn_edge.go). It
+                 comes and goes with the engine, latched as the engines are. */}}
+            {{- $turnMark   := dig "turn" "" $seData }}
+            {{- $turnEngine := or (has "turn" $alwaysFns) (eq $turnMark "wanted") (and (hasKey $obsEngines "namespace-system-turn-dmz") (ne $turnMark "purge")) }}
+            {{- if $turnEngine }}
+            {{- $systemFns = concat $systemFns (list "turn-dmz") }}
+            {{- end }}
             {{- range $fn := $systemFns }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2

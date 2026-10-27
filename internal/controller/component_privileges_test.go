@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -112,6 +113,9 @@ func TestAGrantedPrivilegeReachesTheNetworkPolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
+	// Secrets, as the operator's scheme has them: a component that runs no
+	// TURN is still asked whether a Secret of it is left to remove.
+	_ = corev1.AddToScheme(scheme)
 	tenant := acmeTenantFixture()
 	profile := profileRequestingEgress("nextcloud")
 	comp := &gentianov1alpha1.Component{

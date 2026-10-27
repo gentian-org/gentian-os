@@ -865,13 +865,14 @@ it receives the Secret `turn-credentials-<component>` in its namespace:
 | Key | Value |
 |---|---|
 | `TURN_SERVER` | `turn.<kernel domain>` |
+| `TURN_PORT`, `TURNS_PORT` | `3478`, and `443` for TURN over TLS |
 | `TURN_URIS` | `turn:…:3478?transport=udp`, `turn:…:3478?transport=tcp` and `turns:…:443?transport=tcp`, comma-separated |
 | `STUN_URI` | `stun:turn.<kernel domain>:3478` |
 | `TURN_SECRET` | the shared secret |
 
-`valueMapping.turn.secretNameKey` tells the chart the Secret's name, and the
-chart reads it by reference. The secret is never a release value. A
-requirement an addon declares is served to the component the addon activates
+A chart mounts the Secret by that name, so the secret is never a release
+value. The Secret is removed once nothing the component runs declares the
+requirement. A requirement an addon declares is served to the component the addon activates
 into, because that is where the addon runs: the Secret is named after the
 base. A credential minted in the strict form above is accepted by STUNner,
 coturn and the other TURN servers that implement the scheme. Replacing

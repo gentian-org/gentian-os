@@ -111,13 +111,13 @@ func TestTheEngineSetFollowsTheComponentsAndTheyWaitForTheEngine(t *testing.T) {
 		t.Fatalf("set = %v labels = %v", cm.Data, cm.Labels)
 	}
 
-	if engine, err := systemEngineWaiting(ctx, c, shop); err != nil || engine != EngineMariaDB {
+	if engine, _, err := systemEngineWaiting(ctx, c, shop); err != nil || engine != EngineMariaDB {
 		t.Fatalf("waiting = %q, %v; want mariadb", engine, err)
 	}
 	if err := c.Create(ctx, engineReleaseObject("dev-mariadb", "system-mariadb", true)); err != nil {
 		t.Fatal(err)
 	}
-	if engine, err := systemEngineWaiting(ctx, c, shop); err != nil || engine != "" {
+	if engine, _, err := systemEngineWaiting(ctx, c, shop); err != nil || engine != "" {
 		t.Fatalf("waiting = %q, %v; want none once the Release is Ready", engine, err)
 	}
 

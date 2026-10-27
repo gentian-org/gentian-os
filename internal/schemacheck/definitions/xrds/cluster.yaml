@@ -60,6 +60,19 @@ spec:
                     can neither receive mail on port 25 nor publish submission on
                     587. Use 'external' with an smtp-relay credential, or switch
                     to networkMode 'static-ip' with a reachable SMTP ingress.
+                # The same physics for TURN: a tunnel carries no UDP, so a TURN
+                # edge behind one is a load balancer nothing reaches. A
+                # component that declares TURN there waits and says why; this
+                # refuses only the claim that asks for the edge regardless.
+                - rule: >-
+                    !(has(self.systemServices) && has(self.systemServices.always) &&
+                    'turn' in self.systemServices.always &&
+                    has(self.networkMode) && self.networkMode == 'tunnel')
+                  message: >-
+                    systemServices.always cannot name 'turn' behind networkMode
+                    'tunnel': a tunnel carries HTTP and HTTPS only, and TURN
+                    needs UDP and ports of its own. Switch to networkMode
+                    'static-ip', or leave TURN out.
               properties:
                 identity:
                   type: object
@@ -736,7 +749,7 @@ spec:
                         here.
                       items:
                         type: string
-                        enum: ["mariadb", "cache", "authorization"]
+                        enum: ["mariadb", "cache", "authorization", "turn"]
                       x-kubernetes-list-type: set
                 llm:
                   type: object
