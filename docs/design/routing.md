@@ -262,6 +262,7 @@ platform's included:
 | `llm` | the model gateway |
 | `mail` | the cluster's mail host |
 | `mail-egress` | the address the cluster's mail leaves from |
+| `monitoring` | the platform's metrics dashboards, where monitoring is on |
 | `platform` | the platform administrator's desktop, and the platform tenant's zone below it |
 | `www` | an alias of the cluster's main address |
 <!-- reserved-names:kernel:end -->

@@ -38,7 +38,7 @@ const (
 //   - https://<host>/sso: app-default's sign-in sidecar client;
 //   - gentian-registrar-admin, gentian-director-admin (retired): the
 //     operator's administrative clients;
-//   - gentian-argocd, headlamp, gentian-cli, litellm-dashboard: the
+//   - gentian-argocd, headlamp, grafana, gentian-cli, litellm-dashboard: the
 //     installer's clients in the kernel realm.
 //
 // An app's own client is named by its profile (requires.services.identity.oidc
@@ -52,7 +52,7 @@ var PlatformClientPatterns = []string{
 	`^openbao$`,
 	`^https://[^/]+/sso$`,
 	`^gentian-(registrar|director)-admin$`,
-	`^(gentian-argocd|headlamp|gentian-cli|litellm-dashboard)$`,
+	`^(gentian-argocd|headlamp|grafana|gentian-cli|litellm-dashboard)$`,
 }
 
 // PlatformGroupPattern matches the names of the groups the platform makes,

@@ -180,3 +180,28 @@ func TestClusterSecretModeIsReadOncePerInterval(t *testing.T) {
 		t.Fatalf("within the interval: %q, %v; want the answer already held", got, err)
 	}
 }
+
+// Grafana is routed only where the claim switches monitoring on, and a
+// ConfigMap that cannot answer means no route: there is no environment to
+// fall back on.
+func TestGrafanaIsRoutedOnlyWhereTheClaimSwitchesMonitoringOn(t *testing.T) {
+	ctx := context.Background()
+	cases := map[string]struct {
+		data map[string]string
+		want bool
+	}{
+		"no ConfigMap":                       {nil, false},
+		"a ConfigMap written before the key": {map[string]string{clusterConfigLLMKey: "false"}, false},
+		"the claim says off":                 {map[string]string{clusterConfigMonitoringKey: "false"}, false},
+		"the claim says on":                  {map[string]string{clusterConfigMonitoringKey: "true"}, true},
+	}
+	for name, c := range cases {
+		var objs []client.Object
+		if c.data != nil {
+			objs = append(objs, clusterConfigWith(c.data))
+		}
+		if got := kernelConsolesRouted(ctx, fakeClusterConfigClient(t, objs...)).grafana; got != c.want {
+			t.Errorf("%s: grafana routed = %v, want %v", name, got, c.want)
+		}
+	}
+}

@@ -172,7 +172,7 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 	// The kernel's routes, in both tenancy modes, with everything switched on.
 	policies := 0
 	for _, door := range []kernelFrontDoor{{}, {single: true, userDesktop: "desktop.k.example"}} {
-		specs := kernelHTTPRouteSpecs("k.example", []string{"acme.example"}, nil, []string{"acme"}, true, "c1", true, true, door)
+		specs := kernelHTTPRouteSpecs("k.example", []string{"acme.example"}, nil, []string{"acme"}, kernelConsoles{llm: true}, "c1", true, true, door)
 		for _, s := range specs {
 			switch {
 			case s.authz != nil:

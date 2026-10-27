@@ -577,7 +577,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- if $adoptsKernelRealm }}
-            {{- range $h := (list "argocd" "headlamp" "id") }}
+            {{- range $h := (list "argocd" "headlamp" "monitoring" "id") }}
             {{- $zoneHostNames = append $zoneHostNames (printf "%s.%s" $h $kd) }}
             {{- end }}
             {{- end }}

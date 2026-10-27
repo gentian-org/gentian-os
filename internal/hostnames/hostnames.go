@@ -95,7 +95,7 @@ var platformLabels = []Reserved{
 // everywhere.
 //
 // The list is what writes a host under the cluster's domain:
-// kernel_gateway_routes.go (id, www, argocd, headlamp, llm),
+// kernel_gateway_routes.go (id, www, argocd, headlamp, monitoring, llm),
 // mail_dnsendpoint.go and the mail egress record (mail, imap, mail-egress),
 // gateway_tunnel_ingress.go (corp), and the platform tenant's zone
 // (platform, and admin.platform below it). The object store, the secret
@@ -109,6 +109,7 @@ var kernelLabels = []Reserved{
 	{Label: "llm", Why: "the model gateway"},
 	{Label: "mail", Why: "the cluster's mail host"},
 	{Label: "mail-egress", Why: "the address the cluster's mail leaves from"},
+	{Label: "monitoring", Why: "the platform's metrics dashboards, where monitoring is on"},
 	{Label: gentianov1alpha1.PlatformTenantName, Why: "the platform administrator's desktop, and the platform tenant's zone below it"},
 	{Label: "www", Why: "an alias of the cluster's main address"},
 }

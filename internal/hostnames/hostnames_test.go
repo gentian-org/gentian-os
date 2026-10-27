@@ -51,7 +51,7 @@ func TestTheReservedNamesAreTheseAndNoOthers(t *testing.T) {
 	if got, want := Names(PlatformLabels()), "desktop, admin, store, console, platform, id, auth, login, signin, sign-in, sso, account, accounts"; got != want {
 		t.Errorf("platform labels = %s\nwant            %s", got, want)
 	}
-	if got, want := Names(KernelLabels()), "argocd, corp, headlamp, id, imap, llm, mail, mail-egress, platform, www"; got != want {
+	if got, want := Names(KernelLabels()), "argocd, corp, headlamp, id, imap, llm, mail, mail-egress, monitoring, platform, www"; got != want {
 		t.Errorf("kernel labels = %s\nwant          %s", got, want)
 	}
 	owners := map[string]string{}

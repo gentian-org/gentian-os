@@ -5,9 +5,13 @@ kube-state-metrics, in the observability namespace, when the Cluster claim's
 monitoring.enabled says so. Off by default: a cluster that does not ask for
 it carries none of it.
 
-Grafana is not on here. It comes with its own sign-in against the kernel
-realm, the way Argo CD and Headlamp do, and is switched on by that change.
+Grafana serves the dashboards at monitoring.<kernel domain>, behind the
+edge's session and can_audit (kernel_gateway_routes.go), and asks for its own
+sign-in against the kernel realm as the second step, the way Argo CD and
+Headlamp do. Its client and the Secret it reads are the installer's (D-03,
+scripts/lib/portal-login-bootstrap.sh).
 */ -}}
+{{- $realm := printf "https://id.%s/auth/realms/%s/protocol/openid-connect" .Values.kernelDomain .Values.kernelRealm }}
 {{- if eq (toString .Values.monitoring.enabled) "true" }}
 ---
 apiVersion: argoproj.io/v1alpha1
@@ -33,7 +37,52 @@ spec:
         # keeps the Services and the rules readable.
         fullnameOverride: monitoring
         grafana:
-          enabled: false
+          enabled: true
+          # The admin password the chart generates is never used: the login
+          # form is off and every person signs in at the kernel realm.
+          envValueFrom:
+            GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+              secretKeyRef:
+                name: grafana-oidc
+                key: client_secret
+          grafana.ini:
+            server:
+              root_url: {{ printf "https://monitoring.%s" .Values.kernelDomain | quote }}
+            auth:
+              disable_login_form: true
+              # Signing out at Grafana ends the realm session too.
+              signout_redirect_url: {{ printf "%s/logout?client_id=grafana&post_logout_redirect_uri=https://monitoring.%s/" $realm .Values.kernelDomain | quote }}
+            auth.basic:
+              enabled: false
+            auth.anonymous:
+              enabled: false
+            auth.generic_oauth:
+              enabled: true
+              name: {{ .Values.kernelRealm | quote }}
+              client_id: grafana
+              scopes: openid profile email groups
+              auth_url: {{ printf "%s/auth" $realm | quote }}
+              token_url: {{ printf "%s/token" $realm | quote }}
+              api_url: {{ printf "%s/userinfo" $realm | quote }}
+              use_pkce: true
+              auto_login: true
+              allow_sign_up: true
+              login_attribute_path: preferred_username
+              # The platform administrator administers Grafana; everyone else
+              # the edge lets through (can_audit) reads. The groups claim
+              # carries full paths.
+              role_attribute_path: "contains(groups[*], '/gentian:platform:admin') && 'Admin' || 'Viewer'"
+              role_attribute_strict: false
+              allow_assign_grafana_admin: false
+            users:
+              allow_sign_up: false
+            analytics:
+              reporting_enabled: false
+              check_for_updates: false
+              check_for_plugin_updates: false
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
         # Which control-plane parts can be scraped depends on who runs the
         # control plane. On a managed one -- the target -- none of these is
         # reachable, and their alerts would fire for ever about targets that

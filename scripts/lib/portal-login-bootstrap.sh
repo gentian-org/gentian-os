@@ -108,6 +108,32 @@ _headlamp_derive_secret() {
     echo -n "portal-bootstrap:headlamp_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
 }
 
+_grafana_derive_secret() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        _portal_random_secret grafana_client_secret "$(_pl_observability_ns)" grafana-oidc client_secret
+        return 0
+    fi
+    echo -n "portal-bootstrap:grafana_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+}
+
+# The Secret the platform's Grafana signs in with (the monitoring
+# Application reads it by name), in the namespace Grafana runs in. Written
+# whatever the claim says about monitoring: it costs nothing, and a cluster
+# that switches monitoring on later finds it there. The realm's client is
+# made only where monitoring is on.
+ensure_grafana_oidc_secret() {
+    local ns secret
+    ns="$(_pl_observability_ns)"
+    secret="$(_grafana_derive_secret)"
+    # >&2: this function's stdout is its return value (see
+    # ensure_litellm_sso_secret for what kubectl's own line did to one).
+    kubectl create secret generic grafana-oidc -n "${ns}" \
+        --from-literal=client_id="grafana" \
+        --from-literal=client_secret="${secret}" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    echo "${secret}"
+}
+
 # The kernel zone's confidential client and its secret are no longer written
 # here. A zone is produced by the tenant that owns it: the platform tenant
 # adopts the kernel realm (AD-10), so the kernel zone's client, its redirect
@@ -887,9 +913,10 @@ run_keycloak_portal_bootstrap_job() {
 
     info "Bootstrapping the kernel realm, its clients and the administrator via in-cluster Job..."
 
-    local argocd_secret headlamp_secret
+    local argocd_secret headlamp_secret grafana_secret
     argocd_secret=$(ensure_argocd_oidc_secret)
     headlamp_secret=$(ensure_headlamp_oidc_secret)
+    grafana_secret=$(ensure_grafana_oidc_secret)
 
     local llm_support="${LLM_SUPPORT:-false}"
     local litellm_sso_secret=""
@@ -908,7 +935,7 @@ run_keycloak_portal_bootstrap_job() {
     # A derived secret is one whitespace-free token. Anything else is a bug in
     # the producer, not a credential.
     local _name _val
-    for _name in argocd_secret litellm_sso_secret; do
+    for _name in argocd_secret litellm_sso_secret grafana_secret; do
         _val="${!_name}"
         [[ -n "${_val}" ]] || continue
         if [[ "${_val}" != "${_val//[[:space:]]/}" ]]; then
@@ -930,6 +957,8 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=legacy_username="${legacy_username}"
         --from-literal=argocd_client_secret="${argocd_secret}"
         --from-literal=headlamp_client_secret="${headlamp_secret}"
+        --from-literal=monitoring_enabled="${MONITORING_ENABLED:-false}"
+        --from-literal=grafana_client_secret="${grafana_secret}"
         --from-literal=llm_support="${llm_support}"
         --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
@@ -1391,6 +1420,51 @@ spec:
                 echo "headlamp default scope: groups"
               fi
 
+              # Grafana, the platform's metrics dashboards, where the claim
+              # switches monitoring on. Confidential, like Headlamp; it reads a
+              # person's role from the groups claim (the platform administrator
+              # is Grafana's Admin, everyone else who reaches it a Viewer), so
+              # it gets the groups scope too. The edge already decided who may
+              # reach it at all: can_audit on the cluster.
+              if [ "\${MONITORING_ENABLED}" = "true" ]; then
+                GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
+                  | jq -r '.[0].id // empty')
+                GRAFANA_BODY=\$(jq -n --arg secret "\${GRAFANA_CLIENT_SECRET}" --arg base "https://monitoring.\${KERNEL_DOMAIN}" '{
+                  clientId: "grafana",
+                  name: "Grafana",
+                  enabled: true,
+                  publicClient: false,
+                  standardFlowEnabled: true,
+                  directAccessGrantsEnabled: false,
+                  serviceAccountsEnabled: false,
+                  protocol: "openid-connect",
+                  redirectUris: [(\$base + "/login/generic_oauth")],
+                  rootUrl: \$base,
+                  baseUrl: "/",
+                  webOrigins: [\$base],
+                  attributes: {"post.logout.redirect.uris": (\$base + "/*")},
+                  secret: \$secret
+                }')
+                if [ -n "\${GRAFANA_CLIENT_ID}" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}" -d "\${GRAFANA_BODY}"
+                  echo "Updated client grafana"
+                else
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${GRAFANA_BODY}"
+                  GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
+                    | jq -r '.[0].id')
+                  echo "Created client grafana"
+                fi
+                if [ -n "\${GRAFANA_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                  echo "grafana default scope: groups"
+                fi
+              fi
+
               # The CLI. kubectl gentian is a client of the director, as the
               # console is: a person signs in with the device flow (a code shown
               # in the terminal, confirmed in a browser) and every command
@@ -1656,6 +1730,16 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: headlamp_client_secret
+            - name: MONITORING_ENABLED
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: monitoring_enabled
+            - name: GRAFANA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: grafana_client_secret
             - name: ARGOCD_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

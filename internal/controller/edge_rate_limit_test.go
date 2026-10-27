@@ -119,7 +119,7 @@ func TestTheSignInLimitIsPerClientAddress(t *testing.T) {
 // every other kernel route carry none.
 func TestOnlyTheIdentityProvidersPublicRouteIsLimited(t *testing.T) {
 	clearEdgeLimitEnv(t)
-	for _, s := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, true, "c1", true, true, kernelFrontDoor{}) {
+	for _, s := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, kernelConsoles{llm: true}, "c1", true, true, kernelFrontDoor{}) {
 		if _, limited := s.policy["rateLimit"]; limited {
 			t.Errorf("%s is limited where the routes are listed; the limit is set by the reconciler, for the one route", s.name)
 		}
