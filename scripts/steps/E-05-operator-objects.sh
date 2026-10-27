@@ -48,12 +48,46 @@ _e05_tenant_of() {
     case "$1" in tenant-*) printf '%s' "${1#tenant-}" ;; esac
 }
 
+# _e05_leftovers <json> — what an Application reports as on the cluster and
+# no longer declared, one "<kind> <namespace>/<name>" a line.
+_e05_leftovers() {
+    jq -r '.status.resources[]? | select(.requiresPruning == true)
+        | "\(.kind) \(if .namespace then .namespace + "/" else "" end)\(.name)"' <<<"$1" 2>/dev/null || true
+}
+
 # _e05_done <ns> <app> — Synced, and for a tenant's Application, the Tenant there.
+#
+# Synced also when the last sync succeeded and all that still differs is what
+# Argo CD marks as requiring pruning: the catalogue never prunes, so an object
+# a profile stopped bringing stays, and the Application stays OutOfSync for as
+# long as it does. Waiting would not end that; apply names those objects.
 _e05_done() {
-    local tenant
-    [[ "$(kubectl get application "$2" -n "$1" -o jsonpath='{.status.sync.status}' 2>/dev/null)" == "Synced" ]] || return 1
+    local json tenant
+    json="$(kubectl get application "$2" -n "$1" -o json 2>/dev/null)" || return 1
+    jq -e '.status.sync.status == "Synced"
+        or (.status.sync.status == "OutOfSync" and .status.operationState.phase == "Succeeded"
+            and ([.status.resources[]? | select(.status != "Synced")] | length > 0
+                 and all(.requiresPruning == true)))' <<<"${json}" >/dev/null 2>&1 || return 1
     tenant="$(_e05_tenant_of "$2")"
     [[ -z "${tenant}" ]] || kubectl get tenants.gentianos.io "${tenant}" >/dev/null 2>&1
+}
+
+# _e05_report_leftovers <ns> — the objects the Applications no longer declare
+# and keep, said once, with where they are removed.
+_e05_report_leftovers() {
+    local app json left
+    for app in $(argo_operator_kind_apps "$1"); do
+        json="$(kubectl get application "${app}" -n "$1" -o json 2>/dev/null)" || continue
+        left="$(_e05_leftovers "${json}")"
+        [[ -n "${left}" ]] || continue
+        warn "${app}: no longer declared and still on the cluster (Argo CD does not prune them):"
+        while read -r line; do warn "  ${line}"; done <<<"${left}"
+        case "${app}" in
+            gentian-catalogue-*)
+                warn "  To review them, and remove one at a time:"
+                warn "    kubectl gentian catalogues residue" ;;
+        esac
+    done
 }
 
 # _e05_held <app> — a tenant the handover gate still holds back.
@@ -132,5 +166,6 @@ apply() {
         warn "    ./install.sh --only E-05"
         return 0
     fi
+    _e05_report_leftovers "${ns}"
     success "The catalogue and every declared tenant are synced."
 }

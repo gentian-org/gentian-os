@@ -19,7 +19,10 @@
 #     the tenant and Argo CD's message;
 #   - before it, a tenant other than the platform's is reported held back and
 #     not asked for, and the check stays not satisfied;
-#   - D-01 asks again for a failed catalogue once the operator is up.
+#   - D-01 asks again for a failed catalogue once the operator is up;
+#   - a catalogue whose only difference is an object it no longer declares --
+#     it never prunes -- is done, and the step names that object; one that
+#     differs in anything else as well is not.
 #
 # No cluster.
 # =============================================================================
@@ -185,6 +188,33 @@ expect "D-01's resync asks for the failed catalogue and leaves a synced tenant a
     'asked gentian-catalogue-dev && ! asked tenant-platform' "$(cat "${STATE}/calls.log")"
 expect "D-01 calls that resync once the operator is running" \
     'grep -q "^    resync_operator_kind_apps \"\${ns}\"" scripts/steps/D-01-operator.sh'
+
+# 9. Synced but for an object the catalogue no longer declares.
+leftover() {
+    jq --argjson other "$2" '.status.resources = [
+          {kind: "ComponentProfile", group: "gentianos.io", name: "nextcloud-base-ce", status: "Synced"},
+          {kind: "ConfigMap", name: "nextcloud-base-ce.portal-bridge-sso", namespace: "kernel-provisioning",
+           status: "OutOfSync", requiresPruning: true}]
+        + (if $other then [{kind: "ConfigMap", name: "nextcloud-base-ce.files", namespace: "kernel-provisioning",
+                            status: "OutOfSync"}] else [] end)' \
+        "${STATE}/apps/$1.json" > "${STATE}/apps/$1.json.new" && mv "${STATE}/apps/$1.json.new" "${STATE}/apps/$1.json"
+}
+fresh; touch "${STATE}/handover"
+app gentian-catalogue-dev gentian-catalogue OutOfSync Succeeded "successfully synced (all tasks run)"
+leftover gentian-catalogue-dev false
+out="$(run E-05-operator-objects 'check; echo "check=$?"; apply; echo "rc=$?"')"
+expect "a catalogue that differs only by an object it no longer declares: satisfied, and the step succeeds" \
+    '[[ "${out}" == *"check=0"* && "${out}" == *"rc=0"* ]]' "${out}"
+expect "  naming the object and where it is removed" \
+    '[[ "${out}" == *"ConfigMap kernel-provisioning/nextcloud-base-ce.portal-bridge-sso"* && "${out}" == *"kubectl gentian catalogues residue"* ]]' "${out}"
+expect "  without asking Argo CD for anything" '! grep -q "kubectl \(patch\|annotate\) application" "${STATE}/calls.log"' "$(cat "${STATE}/calls.log")"
+
+fresh; touch "${STATE}/handover"
+app gentian-catalogue-dev gentian-catalogue OutOfSync Succeeded "successfully synced (all tasks run)"
+leftover gentian-catalogue-dev true
+out="$(run E-05-operator-objects 'check; echo "check=$?"; apply; echo "rc=$?"')"
+expect "one that also differs in a declared object: not satisfied, and the step fails" \
+    '[[ "${out}" == *"check=1"* && "${out}" == *"rc=1"* ]]' "${out}"
 
 echo ""
 if [[ "${fail}" -gt 0 ]]; then
