@@ -76,6 +76,13 @@ headlamp:
   chart: "0.45.0"
   repo: https://kubernetes-sigs.github.io/headlamp/
 
+# kube-prometheus-stack (Apache-2.0): the platform's metrics and alerts when
+# the Cluster claim's monitoring.enabled is true. Rendered by B-01 into the
+# bootstrap chart's monitoring Application.
+monitoring:
+  chart: "92.3.0"
+  repo: https://prometheus-community.github.io/helm-charts
+
 # The OpenFGA CLI is NOT pinned here, though it is pinned. It lives in its only
 # caller, scripts/tools/verify-authz-model.sh.
 #

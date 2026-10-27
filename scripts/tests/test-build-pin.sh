@@ -52,6 +52,9 @@ case "${all}" in
             *"kernelNetworkPolicies"*) printf 'false' ;;
             *"sync.status"*)           printf 'Synced Healthy' ;;
         esac ;;
+    # The monitoring Application exists only where the claim switches it
+    # on, and this cluster's claim does not.
+    *"get application monitoring"*) exit 1 ;;
     *"get application"*)   [[ "${all}" == *"sync.status"* ]] && printf 'Synced Healthy' ;;
     *"get configmap gentian-kernel-services"*) printf 'false' ;;
     # The vault's TLS, settled: signed by its CA, which is handed out.

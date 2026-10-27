@@ -1625,6 +1625,23 @@ _claim_cluster_fields() {
     fi
 
     printf '\n'
+    printf '  # The platform'"'"'s own metrics and alerts: kube-prometheus-stack in the\n'
+    printf '  # observability namespace. Off unless true; webhook is where alerts go.\n'
+    if [[ "${MONITORING_ENABLED:-}" == "true" ]]; then
+        printf '  monitoring:\n'
+        printf '    enabled: true\n'
+        if [[ -n "${MONITORING_ALERTS_WEBHOOK:-}" ]]; then
+            printf '    alerts:\n'
+            printf '      webhook: "%s"\n' "${MONITORING_ALERTS_WEBHOOK}"
+        fi
+    else
+        printf '  # monitoring:\n'
+        printf '  #   enabled: false\n'
+        printf '  #   alerts:\n'
+        printf '  #     webhook: ""\n'
+    fi
+
+    printf '\n'
     printf '  # Who issues TLS certificates, and who hosts the zone. Two questions:\n'
     printf '  # how control is proved, and by whom.\n'
     printf '  #   acme-dns01   Lets Encrypt over DNS-01; the only path to a wildcard\n'

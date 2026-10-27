@@ -805,7 +805,7 @@ namespaces:
 
   - name: kernel-observability
     sameNamespace: true
-    sameNamespaceWhy: Headlamp reaches the API server through kube-oidc-proxy, beside it.
+    sameNamespaceWhy: Headlamp reaches the API server through kube-oidc-proxy, beside it; Prometheus scrapes and alerts beside it.
     egress: open
     egressWhy: kube-oidc-proxy calls the API server and the identity provider's public address.
     workloads:
@@ -829,3 +829,51 @@ namespaces:
             what: the API server, for a person signed in at the identity provider
             closed: Headlamp alone calls it, from this namespace
             evidence: [kernel/bootstrap/chart/templates/kube-oidc-proxy.yaml:219]
+      # The platform's monitoring, when the Cluster claim's monitoring.enabled
+      # installs it. Prometheus scrapes inside this namespace, which
+      # sameNamespace admits; what it scrapes elsewhere is admitted by the
+      # scraped side (the operator's metrics port admits any source).
+      - name: prometheus
+        installedBy: bootstrap-application:monitoring
+        readAt: kube-prometheus-stack chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: prometheus}
+        ports:
+          - port: 9090
+            what: the query API and its console
+            closed: nothing outside this namespace queries it
+          - port: 8080
+            what: the configuration reloader's metrics
+            closed: scraped from this namespace only
+      - name: alertmanager
+        installedBy: bootstrap-application:monitoring
+        readAt: kube-prometheus-stack chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: alertmanager}
+        ports:
+          - port: 9093
+            what: the alert API
+            closed: Prometheus posts alerts from this namespace
+          - port: 9094
+            what: cluster gossip between replicas
+            closed: one replica, nothing to gossip with
+          - port: 8080
+            what: the configuration reloader's metrics
+            closed: scraped from this namespace only
+      - name: prometheus-operator
+        installedBy: bootstrap-application:monitoring
+        readAt: kube-prometheus-stack chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator}
+        ports:
+          - port: 10250
+            what: the admission webhook for PrometheusRule objects
+            open: the API server calls webhooks, and no portable rule names the API server
+      - name: kube-state-metrics
+        installedBy: bootstrap-application:monitoring
+        readAt: kube-prometheus-stack chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: kube-state-metrics}
+        ports:
+          - port: 8080
+            what: the cluster's object state as metrics
+            closed: scraped from this namespace only
+          - port: 8081
+            what: its own metrics
+            closed: scraped from this namespace only
