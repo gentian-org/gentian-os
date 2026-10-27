@@ -289,6 +289,35 @@ func (g *GitOps) SetPlatformClusterRoles(ctx context.Context, roles []ClusterRol
 		"Set which cluster roles this cluster permits", meta)
 }
 
+// SeedPlatformSecurity starts the cluster's allowlist from the deployment's
+// values (the operator chart's platformSecurityPolicy), once: only while the
+// claims hold no allowlist at all, and never over one somebody wrote.
+//
+// The chart no longer creates the object on a cluster with a director, so the
+// waivers a deployment declared for its apps reached no cluster: a profile
+// asked, the install granted, and the pod was still refused, with nothing
+// saying the cluster had been left out. From here on the claims file is the
+// only allowlist, edited in the console; a list somebody emptied there stays
+// empty, because the file is there.
+func (g *GitOps) SeedPlatformSecurity(ctx context.Context, waivers []MacWaiver, roles []ClusterRoleAllowance) (Result, error) {
+	if len(waivers) == 0 && len(roles) == 0 {
+		return Result{Status: "unchanged"}, nil
+	}
+	for _, w := range waivers {
+		if strings.TrimSpace(w.Profile) == "" || strings.TrimSpace(w.Policy) == "" || strings.TrimSpace(w.Scope) == "" {
+			return Result{}, fmt.Errorf("%w: a waiver needs a profile, a policy and a scope", ErrInvalidName)
+		}
+	}
+	for _, r := range roles {
+		if !ValidName(r.Profile) || !ValidName(r.Role) {
+			return Result{}, fmt.Errorf("%w: a permitted cluster role needs a profile and a role, each a lower-case name", ErrInvalidName)
+		}
+	}
+	return g.writeClaimsFileIfAbsent(ctx, PlatformSecurityFile, renderPlatformSecurity(waivers, roles),
+		"Start this cluster's allowlist from the deployment's values",
+		Meta{Principal: "gentian-director", Decision: "platformSecurityPolicy of the deployment's values"})
+}
+
 // PlatformSecurity reads back what the cluster declares, so a screen shows
 // the list it is about to change rather than only the one in force.
 func (g *GitOps) PlatformSecurity(ctx context.Context) ([]MacWaiver, error) {

@@ -218,3 +218,48 @@ func TestPermittedClusterRolesAndWaiversDoNotOverwriteEachOther(t *testing.T) {
 		t.Fatal("a wildcard was taken as a role")
 	}
 }
+
+// The deployment's values start the allowlist once, while the claims hold
+// none; they never overwrite one somebody wrote, an emptied one included.
+func TestTheDeploymentsValuesStartTheAllowlistOnce(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	seed := []gitops.MacWaiver{{Profile: "nextcloud-base-ce", Policy: "gentian-require-seccomp", Scope: "collabora"}}
+
+	res, err := g.SeedPlatformSecurity(ctx, seed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Changed {
+		t.Fatalf("an absent allowlist was not started: %+v", res)
+	}
+	declared, err := g.PlatformSecurity(ctx)
+	if err != nil || len(declared) != 1 || declared[0].Scope != "collabora" {
+		t.Fatalf("read back = %+v (%v)", declared, err)
+	}
+
+	if _, err := g.SetPlatformSecurity(ctx, nil, gitops.Meta{Subject: "beth"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err = g.SeedPlatformSecurity(ctx, seed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Changed {
+		t.Fatalf("the values overwrote the allowlist somebody emptied: %+v", res)
+	}
+	if declared, _ := g.PlatformSecurity(ctx); len(declared) != 0 {
+		t.Fatalf("emptied allowlist now reads %+v", declared)
+	}
+
+	// Nothing declared is nothing to write, and a waiver without a scope is refused.
+	other := dt.Remote(t, "demo")
+	fresh := gitops.NewGitOps(dt.Clone(t, other), other, dt.Cluster, director)
+	if res, err := fresh.SeedPlatformSecurity(ctx, nil, nil); err != nil || res.Changed {
+		t.Fatalf("an empty seed wrote: %+v (%v)", res, err)
+	}
+	if _, err := fresh.SeedPlatformSecurity(ctx, []gitops.MacWaiver{{Profile: "a", Policy: "b"}}, nil); err == nil {
+		t.Fatal("a waiver without a scope was seeded")
+	}
+}

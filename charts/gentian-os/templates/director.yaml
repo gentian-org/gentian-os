@@ -311,6 +311,14 @@ spec:
                  in the components' Secrets and never here. */}}
             - name: DIRECTOR_COMMISSION_KEYS
               value: /etc/gentian/commission/keys.json
+            {{- /* The deployment's waiver allowlist, which the director writes
+                 into the claims once while they hold none: the chart does not
+                 create the object where the director writes it, and the
+                 values would otherwise reach no cluster. */}}
+            {{- if not .Values.platformSecurityPolicy.create }}
+            - name: DIRECTOR_PLATFORM_SECURITY_SEED
+              value: {{ dict "allowedMacWaivers" (.Values.platformSecurityPolicy.allowedMacWaivers | default list) "allowedClusterRoles" (.Values.platformSecurityPolicy.allowedClusterRoles | default list) | toJson | quote }}
+            {{- end }}
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL

@@ -3205,7 +3205,10 @@ _scaffold_stage_values() {
 # Empty is valid: the chart's defaults then apply. Put here what is the same
 # on every cluster this repository describes and belongs to this deployment
 # rather than to the chart -- for example the pod-security waivers the apps
-# its tenants install need:
+# its tenants install need. The director writes them into a cluster's claims
+# (platform-security-policy.yaml) once, while the claims hold no allowlist;
+# after that the claims file is the allowlist, edited under Platform security
+# in the kernel Admin Console:
 #
 # platformSecurityPolicy:
 #   allowedMacWaivers:

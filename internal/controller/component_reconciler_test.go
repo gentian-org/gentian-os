@@ -549,3 +549,48 @@ func TestReleaseFailureSaysWhenItResolvesItself(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// A release whose pods the cluster's allowlist refuses says which waiver the
+// cluster has to allow, ahead of what the provider said; one the allowlist
+// permits is passed on as it is.
+func TestAReleaseNamesTheWaiverTheClusterDoesNotAllow(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(s)
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
+		PodSecurity: []gentianov1alpha1.PodSecurityWaiver{
+			{Name: "seccomp", Policy: "gentian-require-seccomp", Scope: "collabora"},
+			{Name: "caps", Policy: "gentian-restrict-capabilities", Scope: "collabora"},
+		},
+	}}
+	comp := &gentianov1alpha1.Component{}
+	comp.Spec.ProfileRef.Name = "nextcloud-base-ce"
+	ctx := context.Background()
+
+	r := &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build()}
+	got := r.withWaiverHint(ctx, comp, profile, "Synced: context deadline exceeded")
+	for _, want := range []string{"gentian-require-seccomp for collabora", "gentian-restrict-capabilities for collabora",
+		"Platform security", "; Synced: context deadline exceeded"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("without an allowlist the hint lacks %q: %q", want, got)
+		}
+	}
+
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
+	psp.Name = gentianov1alpha1.PlatformSecurityPolicyName
+	psp.Spec.AllowedMacWaivers = []gentianov1alpha1.AllowedMacWaiver{
+		{Profile: "nextcloud-base-ce", Policy: "gentian-require-seccomp", Scope: "collabora"},
+	}
+	r = &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).WithObjects(psp).Build()}
+	got = r.withWaiverHint(ctx, comp, profile, "Synced: context deadline exceeded")
+	if strings.Contains(got, "gentian-require-seccomp") || !strings.Contains(got, "gentian-restrict-capabilities for collabora") {
+		t.Fatalf("the hint names what is allowed or misses what is not: %q", got)
+	}
+
+	psp.Spec.AllowedMacWaivers = append(psp.Spec.AllowedMacWaivers,
+		gentianov1alpha1.AllowedMacWaiver{Profile: "nextcloud-base-ce", Policy: "gentian-restrict-capabilities", Scope: "collabora"})
+	r = &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).WithObjects(psp).Build()}
+	if got := r.withWaiverHint(ctx, comp, profile, "Synced: x"); got != "Synced: x" {
+		t.Fatalf("everything allowed and still a hint: %q", got)
+	}
+}
