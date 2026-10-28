@@ -2058,7 +2058,8 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
 			builder.WithPredicates(mainAddressChanged())).
-		// A tenant's country, which a profile naming countryKey is told
+		// A tenant's country and organisation, which a profile naming countryKey,
+		// organizationKey or timeZoneKey is told
 		// (tenant_country.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
 			builder.WithPredicates(countryChanged())).

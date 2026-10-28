@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -23,11 +24,13 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// A tenant's country (spec.country) is one of the values of a component whose
-// profile names valueMapping.platform.countryKey. It is the Tenant's, not the
-// Component's, so a change to it is carried to the release from here.
+// A tenant's country (spec.country) and who it is (its display name,
+// languages and spec.organization) are values of a component whose profile
+// names valueMapping.platform.countryKey, organizationKey or timeZoneKey. They
+// are the Tenant's, not the Component's, so a change to them is carried to
+// the release from here.
 
-// countryChanged admits a Tenant update whose country differs.
+// countryChanged admits a Tenant update whose country or organisation differs.
 func countryChanged() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(event.CreateEvent) bool { return false },
@@ -36,13 +39,16 @@ func countryChanged() predicate.Predicate {
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			before, ok1 := e.ObjectOld.(*gentianov1alpha1.Tenant)
 			after, ok2 := e.ObjectNew.(*gentianov1alpha1.Tenant)
-			return ok1 && ok2 && before.Spec.Country != after.Spec.Country
+			return ok1 && ok2 && (before.Spec.Country != after.Spec.Country ||
+				before.Spec.DisplayName != after.Spec.DisplayName ||
+				!equality.Semantic.DeepEqual(before.Spec.Locales, after.Spec.Locales) ||
+				!equality.Semantic.DeepEqual(before.Spec.Organization, after.Spec.Organization))
 		},
 	}
 }
 
 // componentsToldTheCountry re-runs the components of the tenant whose
-// profile names countryKey.
+// profile names countryKey, organizationKey or timeZoneKey.
 func componentsToldTheCountry(c client.Reader) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		tenant, ok := obj.(*gentianov1alpha1.Tenant)
@@ -55,7 +61,7 @@ func componentsToldTheCountry(c client.Reader) handler.EventHandler {
 		}
 		asking := map[string]struct{}{}
 		for i := range profiles.Items {
-			if m := platformMapping(&profiles.Items[i]); m != nil && m.CountryKey != "" {
+			if m := platformMapping(&profiles.Items[i]); m != nil && (m.CountryKey != "" || m.OrganizationKey != "" || m.TimeZoneKey != "") {
 				asking[profiles.Items[i].Name] = struct{}{}
 			}
 		}

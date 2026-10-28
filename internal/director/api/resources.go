@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
@@ -338,6 +339,36 @@ func (s *Server) setTenantCountry(w http.ResponseWriter, r *http.Request, c call
 	}
 	res, err := s.cfg.Repo.SetTenantCountry(r.Context(), r.PathValue("t"), *body.Country, c.meta)
 	if errors.Is(err, gitops.ErrInvalidCountry) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// tenantOrganization answers who the tenant is, from git, and which of the
+// facts an app needs are still missing.
+func (s *Server) tenantOrganization(w http.ResponseWriter, r *http.Request, _ call) {
+	org, err := s.cfg.Repo.TenantOrganization(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, org)
+}
+
+// setTenantOrganization commits the display name and organisation. An empty
+// display name keeps the one there; a currency left empty is the country's.
+func (s *Server) setTenantOrganization(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		DisplayName  string                               `json:"displayName"`
+		Organization *gentianov1alpha1.TenantOrganization `json:"organization"`
+	}
+	if err := decode(r, &body); err != nil || body.Organization == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"displayName": "<name>", "organization": {"legalName": "...", ...}}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantOrganization(r.Context(), r.PathValue("t"), body.DisplayName, *body.Organization, c.meta)
+	if errors.Is(err, gitops.ErrInvalidOrganization) {
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}

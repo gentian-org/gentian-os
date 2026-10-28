@@ -594,3 +594,39 @@ func TestAReleaseNamesTheWaiverTheClusterDoesNotAllow(t *testing.T) {
 		t.Fatalf("everything allowed and still a hint: %q", got)
 	}
 }
+
+// A profile naming organizationKey is told who the tenant is as one object,
+// every field present and complete only once the required ones are given;
+// timeZoneKey is told the zone alone, and nothing while there is none.
+func TestTheTenantsOrganizationLandsWhereTheProfileSays(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{OrganizationKey: "tenantProfile", TimeZoneKey: "env.TZ"},
+	}
+	tenant := platformTenantFixture()
+	org := func() map[string]interface{} {
+		return r.platformValues(profile, tenant, r.zoneOf(tenant))["tenantProfile"].(map[string]interface{})
+	}
+	if _, set := r.platformValues(profile, tenant, r.zoneOf(tenant))["env"]; set {
+		t.Fatal("timeZoneKey was set for a tenant naming no zone")
+	}
+	if got := org(); got["complete"] != false || got["legalName"] != "" || got["fiscalYearStartMonth"] != int64(1) ||
+		got["address"].(map[string]interface{})["city"] != "" {
+		t.Fatalf("an empty organisation: %v", got)
+	}
+	tenant.Spec.Country = "CH"
+	tenant.Spec.Locales = []string{"de", "en"}
+	tenant.Spec.Organization = &gentianov1alpha1.TenantOrganization{
+		LegalName: "Acme AG", Currency: "CHF", TimeZone: "Europe/Zurich", FiscalYearStartMonth: 7,
+		Address: &gentianov1alpha1.TenantAddress{City: "Zürich"},
+	}
+	got := org()
+	if got["complete"] != true || got["currency"] != "CHF" || got["fiscalYearStartMonth"] != int64(7) ||
+		got["address"].(map[string]interface{})["city"] != "Zürich" || got["languages"].([]interface{})[0] != "de" {
+		t.Fatalf("a complete organisation: %v", got)
+	}
+	if tz := r.platformValues(profile, tenant, r.zoneOf(tenant))["env"].(map[string]interface{})["TZ"]; tz != "Europe/Zurich" {
+		t.Fatalf("TZ = %v", tz)
+	}
+}
