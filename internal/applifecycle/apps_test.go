@@ -13,6 +13,7 @@ package applifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -181,9 +182,10 @@ func TestAWorkloadThatCannotStartIsFailingNotInstalling(t *testing.T) {
 	}
 }
 
-// The platform's own components and add-ons are not apps a tenant
-// administrator installed, and the store offers nothing to do about them.
-func TestThePlatformsOwnComponentsAndAddonsAreNotListed(t *testing.T) {
+// Add-ons are not apps a tenant administrator installed, and are not listed
+// as apps. An app the platform places is listed as the platform's (origin
+// default): it runs, and a screen offers nothing to do about it.
+func TestAddonsAreNotListedAndPlatformAppsAreThePlatforms(t *testing.T) {
 	s := appsService(t, demoTenant(),
 		component("wiki", "Ready", "", true),
 		component("desktop", "Ready", "", true),
@@ -196,7 +198,11 @@ func TestThePlatformsOwnComponentsAndAddonsAreNotListed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(states) != 1 || states[0].Profile != "wiki" {
+	origins := map[string]string{}
+	for _, st := range states {
+		origins[st.Profile] = st.Origin
+	}
+	if fmt.Sprint(origins) != "map[desktop:default wiki:install]" {
 		t.Fatalf("states = %+v", states)
 	}
 }
