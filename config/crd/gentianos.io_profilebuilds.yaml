@@ -1965,6 +1965,16 @@ spec:
                                       description: BucketPerTenant creates a dedicated
                                         bucket for each tenant. Defaults to true.
                                       type: boolean
+                                    objectLock:
+                                      description: |-
+                                        ObjectLock makes the bucket with S3 Object Lock, which cannot be
+                                        switched off again, and lets the app read and set the bucket's default
+                                        retention (GetBucketObjectLockConfiguration,
+                                        PutBucketObjectLockConfiguration). Nobody but the store's own
+                                        administrator may bypass a lock; the app is never given that right. A
+                                        purge keeps a bucket that still holds locked objects, and removes the
+                                        app's identity to it.
+                                      type: boolean
                                   type: object
                               type: object
                             turn:
@@ -3972,6 +3982,16 @@ spec:
                                     default: true
                                     description: BucketPerTenant creates a dedicated
                                       bucket for each tenant. Defaults to true.
+                                    type: boolean
+                                  objectLock:
+                                    description: |-
+                                      ObjectLock makes the bucket with S3 Object Lock, which cannot be
+                                      switched off again, and lets the app read and set the bucket's default
+                                      retention (GetBucketObjectLockConfiguration,
+                                      PutBucketObjectLockConfiguration). Nobody but the store's own
+                                      administrator may bypass a lock; the app is never given that right. A
+                                      purge keeps a bucket that still holds locked objects, and removes the
+                                      app's identity to it.
                                     type: boolean
                                 type: object
                             type: object

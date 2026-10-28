@@ -32,4 +32,4 @@ echo "object storage: the Jobs against the server the platform deploys"
 echo ""
 docker build -q -t "${image}" kernel/images/storage-tools >/dev/null
 GENTIAN_LIVE_S3=1 STORAGE_TOOLS_IMAGE="${image}" \
-    go test ./internal/backup -run 'TestObjectStorageJobsAgainstAServer$' -count=1 -v
+    go test ./internal/backup -run 'TestObjectStorageJobsAgainstAServer$|TestALockedBucketAgainstAServer$' -count=1 -v

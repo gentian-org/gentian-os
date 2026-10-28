@@ -722,3 +722,88 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 		t.Errorf("the bucket Job succeeded against a store it cannot reach:\n%s", out)
 	}
 }
+
+// s3 signs one S3 request with a key pair (curl's SigV4) beside the server
+// and returns the status line's code and the body.
+func (l *liveStore) s3(accessKey, secretKey, method, path, body string) (string, string) {
+	l.t.Helper()
+	endpoint := l.secrets[StorageAdminSecret]["endpoint"]
+	script := fmt.Sprintf(`apk add -q --no-cache curl >/dev/null 2>&1
+printf '%%s' "$BODY" > /tmp/body
+curl -s -o /tmp/out -w '%%{http_code}' --aws-sigv4 "aws:amz:us-east-1:s3" --user "$AK:$SK" \
+  -X %s -H 'Content-MD5: '"$(openssl dgst -md5 -binary /tmp/body 2>/dev/null | base64 2>/dev/null)" \
+  --data-binary @/tmp/body %q
+echo
+cat /tmp/out`, method, endpoint+path)
+	out, _ := exec.Command("docker", "run", "--rm", "--network", l.net,
+		"-e", "AK="+accessKey, "-e", "SK="+secretKey, "-e", "BODY="+body,
+		"alpine:3.22", "sh", "-c", "apk add -q --no-cache openssl >/dev/null 2>&1; "+script).CombinedOutput()
+	code, rest, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	return strings.TrimSpace(code), rest
+}
+
+// A bucket a profile asks Object Lock for (requires.services.s3.objectLock):
+// made with the lock, the app may set its default retention and may not
+// delete a version that retention protects, and a purge keeps the bucket
+// while it holds one -- and removes the app's key to it.
+func TestALockedBucketAgainstAServer(t *testing.T) {
+	l := startLiveStore(t)
+	const (
+		bucket = "demo-evidence"
+		appKey = "demo-evidence-key"
+		appSec = "demo-evidence-secret-0123456789"
+	)
+	l.keySecret("s3-bucket-demo-evidence", appKey, appSec)
+	provision := ObjectStorageProvisionContainerWith("create-bucket", bucket, "s3-bucket-demo-evidence", ObjectStorageOptions{ObjectLock: true})
+	out, err := l.pod("s3-bucket-demo-evidence", provision)
+	if err != nil || !strings.Contains(out, "has Object Lock") {
+		t.Fatalf("the bucket Job failed or did not lock the bucket: %v\n%s", err, out)
+	}
+	if out, err := l.pod("s3-bucket-demo-evidence-again", provision); err != nil {
+		t.Fatalf("the bucket Job run a second time failed: %v\n%s", err, out)
+	}
+
+	// The app sets the bucket's default retention: compliance, one day.
+	config := `<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule><DefaultRetention><Mode>COMPLIANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>`
+	if code, body := l.s3(appKey, appSec, "PUT", "/"+bucket+"?object-lock", config); code != "200" {
+		t.Fatalf("the app could not set its bucket's default retention: %s\n%s", code, body)
+	}
+	if code, body := l.s3(appKey, appSec, "GET", "/"+bucket+"?object-lock", ""); code != "200" || !strings.Contains(body, "COMPLIANCE") {
+		t.Fatalf("the bucket's retention reads back as: %s\n%s", code, body)
+	}
+
+	// A record written under it cannot be deleted by the app.
+	if out, err := l.rclone(appKey, appSec, "kept\n", "rcat", "s:"+bucket+"/day/one.ndjson"); err != nil {
+		t.Fatalf("the app cannot write its locked bucket: %v\n%s", err, out)
+	}
+	_, versions := l.s3(appKey, appSec, "GET", "/"+bucket+"?versions", "")
+	m := regexp.MustCompile(`<VersionId>([^<]+)</VersionId>`).FindStringSubmatch(versions)
+	if m == nil {
+		t.Fatalf("no version listed for the record:\n%s", versions)
+	}
+	if code, body := l.s3(appKey, appSec, "DELETE", "/"+bucket+"/day/one.ndjson?versionId="+m[1], ""); code == "204" || code == "200" {
+		t.Fatalf("the app deleted a version under compliance retention: %s\n%s", code, body)
+	}
+	// Nor may it lift the protection: bypassing governance is not among its rights.
+	if code, _ := l.s3(appKey, appSec, "PUT", "/"+bucket+"?object-lock",
+		`<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`); code != "200" {
+		t.Logf("removing the default retention answered %s (the protected version keeps its own retention either way)", code)
+	}
+	if code, _ := l.s3(appKey, appSec, "DELETE", "/"+bucket+"/day/one.ndjson?versionId="+m[1], ""); code == "204" || code == "200" {
+		t.Fatalf("the version lost its protection with the bucket's default")
+	}
+
+	// The purge keeps the bucket while it holds a locked version, says so,
+	// and still removes the app's key.
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	out = l.mustRun(ObjectStorageDestroyJob(tenant, "evidence", DestroyInTheBackground))
+	if !strings.Contains(out, "bucket demo-evidence kept") {
+		t.Errorf("the purge did not say the locked bucket is kept:\n%s", out)
+	}
+	if out, err := l.rclone(l.secrets[StorageAdminSecret]["accessKey"], l.secrets[StorageAdminSecret]["secretKey"], "", "lsd", "s:"); err != nil || !strings.Contains(out, bucket) {
+		t.Errorf("the locked bucket is gone after the purge (%v):\n%s", err, out)
+	}
+	if out, err := l.rclone(appKey, appSec, "", "lsd", "s:"); err == nil {
+		t.Errorf("the app's key still works after the purge:\n%s", out)
+	}
+}

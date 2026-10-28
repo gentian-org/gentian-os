@@ -26,6 +26,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -113,7 +114,7 @@ const backupBucketUnit = "gentian-backup"
 // the exact key pair over in a Secret the Job owns (ensureProvisioningJobSecrets),
 // so tenant workloads never need OpenBao access to provision storage (SEC-1)
 // and the key is in no Job spec, no ConfigMap and no composed Object.
-func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bool) *batchv1.Job {
+func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bool, opts backup.ObjectStorageOptions) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	keySecret := ""
@@ -123,7 +124,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bo
 	// The container that makes a bucket and its identity is the
 	// inventory's: a restore runs the same one before it writes a bucket's
 	// objects back.
-	container := backup.ObjectStorageProvisionContainer("create-bucket", s3BucketName(tenant, appName), keySecret)
+	container := backup.ObjectStorageProvisionContainerWith("create-bucket", s3BucketName(tenant, appName), keySecret, opts)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketJobName(tenant.Name, appName),
@@ -208,11 +209,33 @@ func (r *TenantReconciler) objectStorageProvisioner(ctx context.Context, tenant 
 	if err != nil {
 		return corev1.Container{}, nil, err
 	}
-	if accessKey == "" || secretKey == "" {
-		return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), ""), nil, nil
+	opts, err := r.objectStorageOptions(ctx, appName)
+	if err != nil {
+		return corev1.Container{}, nil, err
 	}
-	return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), jobName),
+	if accessKey == "" || secretKey == "" {
+		return backup.ObjectStorageProvisionContainerWith(name, s3BucketName(tenant, appName), "", opts), nil, nil
+	}
+	return backup.ObjectStorageProvisionContainerWith(name, s3BucketName(tenant, appName), jobName, opts),
 		&objectStoreKey{accessKey: accessKey, secretKey: secretKey}, nil
+}
+
+// objectStorageOptions are what the app's profile asks of its bucket
+// (requires.services.s3). A profile that cannot be read asks for nothing
+// more than a bucket only where it is gone, which is a restore's or a
+// purge's case; an install reads it.
+func (r *TenantReconciler) objectStorageOptions(ctx context.Context, appName string) (backup.ObjectStorageOptions, error) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
+		if apierrors.IsNotFound(err) {
+			return backup.ObjectStorageOptions{}, nil
+		}
+		return backup.ObjectStorageOptions{}, fmt.Errorf("get ComponentProfile %s: %w", appName, err)
+	}
+	if !matchS3Profile(profile) {
+		return backup.ObjectStorageOptions{}, nil
+	}
+	return backup.ObjectStorageOptions{ObjectLock: profile.Services().Storage.S3.ObjectLock}, nil
 }
 
 // objectStoreKey is an app's key pair on its way to the Secret a Job that
