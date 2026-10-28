@@ -1967,6 +1967,11 @@ spec:
                                       type: boolean
                                   type: object
                               type: object
+                            turn:
+                              description: |-
+                                TURN declares that the component's clients relay real-time media
+                                through the platform's TURN edge. See TURNRequirement.
+                              type: object
                             vouching:
                               description: |-
                                 Vouching declares that the component obtains tokens of a person who is
@@ -2806,6 +2811,18 @@ spec:
                                 description: KernelDomainKey receives the cluster's
                                   kernel domain.
                                 type: string
+                              organizationKey:
+                                description: |-
+                                  OrganizationKey receives who the tenant is, as one object: displayName,
+                                  legalName, country, languages (the first is the tenant's own),
+                                  currency, timeZone, fiscalYearStartMonth (1 when unset), address
+                                  (street, postalCode, city, region), website, email, phone, taxId and
+                                  registrationNumber. A field the tenant has not filled in is the empty
+                                  string, and complete is false until legal name, country, currency, time
+                                  zone and languages are all given. An app sets itself up from it; a
+                                  later change re-renders the values but should not rewrite what the app
+                                  already holds.
+                                type: string
                               realmKey:
                                 description: RealmKey receives the name of the zone's
                                   realm.
@@ -2843,6 +2860,13 @@ spec:
                                   TenantUIDKey receives the tenant's unique id, its metadata.uid: the id
                                   the usage statistics report names it by, and the one the store keys
                                   its sign-in through the tenant's realm by. It never changes.
+                                type: string
+                              timeZoneKey:
+                                description: |-
+                                  TimeZoneKey receives the tenant's time zone (spec.organization.timeZone),
+                                  an IANA name, for a chart that takes only the zone, such as a TZ
+                                  variable. While the tenant names none the key is not set, so the
+                                  profile's own value there stands.
                                 type: string
                               usherUrlKey:
                                 description: |-
@@ -3950,6 +3974,11 @@ spec:
                                       bucket for each tenant. Defaults to true.
                                     type: boolean
                                 type: object
+                            type: object
+                          turn:
+                            description: |-
+                              TURN declares that the component's clients relay real-time media
+                              through the platform's TURN edge. See TURNRequirement.
                             type: object
                           vouching:
                             description: |-

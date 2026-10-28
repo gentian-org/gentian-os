@@ -73,7 +73,18 @@ const (
 	DefaultSeaweedFSImage = "docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
 	// StorageToolsRepository is where CI publishes that image.
 	StorageToolsRepository = "ghcr.io/gentian-org/storage-tools"
+	// DefaultTURNEdgeImage is the TURN edge's server: STUNner's daemon,
+	// run standalone from a configuration the operator writes
+	// (internal/controller/turn_edge.go). Named by tag and by the digest of
+	// the tag's index, so the build that was tested is the build that faces
+	// the internet.
+	DefaultTURNEdgeImage = "docker.io/l7mp/stunnerd:1.2.1@sha256:a9a06157564d0630a8a95b9eab1307340bc1e710c53c890daff5fd0dfee50617"
 )
+
+// TURNEdgeImage is the TURN edge's server.
+func TURNEdgeImage() string {
+	return envOrDefault("TURN_EDGE_IMAGE", DefaultTURNEdgeImage)
+}
 
 func PostgresProvisionerImage() string {
 	return envOrDefault("POSTGRES_PROVISIONER_IMAGE", DefaultPostgresProvisionerImage)

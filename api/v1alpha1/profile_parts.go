@@ -247,7 +247,34 @@ type ServiceRequirements struct {
 	// AuthorizationRequirement.
 	// +optional
 	Authorization *AuthorizationRequirement `json:"authorization,omitempty"`
+
+	// TURN declares that the component's clients relay real-time media
+	// through the platform's TURN edge. See TURNRequirement.
+	// +optional
+	TURN *TURNRequirement `json:"turn,omitempty"`
 }
+
+// TURNRequirement declares that the component's clients relay real-time
+// media (WebRTC) through the platform's TURN edge. Being present is the
+// declaration.
+//
+// The component receives the edge's address and the secret it mints
+// time-limited credentials with, in the Secret turn-credentials-<component>
+// of its namespace: TURN_SERVER, TURN_PORT, TURNS_PORT, TURN_URIS, STUN_URI
+// and TURN_SECRET. A credential is the TURN REST scheme's: the username is
+// "<expiry>:<id>", the password the base64 HMAC-SHA1 of the username under
+// the secret. A chart reads the Secret by its name. Nothing in it names the
+// server software, which is the platform's to choose.
+//
+// An addon that declares it is served in the component it activates into,
+// because that is where the addon runs: the Secret is named after that
+// component.
+//
+// The edge is composed the first time a component declares it, and the
+// component waits until it answers. A cluster whose edge is a tunnel carries
+// no UDP and cannot serve the requirement; the component then waits for
+// good, and says why.
+type TURNRequirement struct{}
 
 // AuthorizationRequirement declares an authorization store of the
 // component's own: one per tenant and component, with the component's own
@@ -1228,6 +1255,25 @@ type PlatformValueMapping struct {
 	// none.
 	// +optional
 	CountryKey string `json:"countryKey,omitempty"`
+
+	// OrganizationKey receives who the tenant is, as one object: displayName,
+	// legalName, country, languages (the first is the tenant's own),
+	// currency, timeZone, fiscalYearStartMonth (1 when unset), address
+	// (street, postalCode, city, region), website, email, phone, taxId and
+	// registrationNumber. A field the tenant has not filled in is the empty
+	// string, and complete is false until legal name, country, currency, time
+	// zone and languages are all given. An app sets itself up from it; a
+	// later change re-renders the values but should not rewrite what the app
+	// already holds.
+	// +optional
+	OrganizationKey string `json:"organizationKey,omitempty"`
+
+	// TimeZoneKey receives the tenant's time zone (spec.organization.timeZone),
+	// an IANA name, for a chart that takes only the zone, such as a TZ
+	// variable. While the tenant names none the key is not set, so the
+	// profile's own value there stands.
+	// +optional
+	TimeZoneKey string `json:"timeZoneKey,omitempty"`
 
 	// TenantUIDKey receives the tenant's unique id, its metadata.uid: the id
 	// the usage statistics report names it by, and the one the store keys

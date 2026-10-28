@@ -472,6 +472,43 @@ func TestARefusedBrowserIsToldHowToLeave(t *testing.T) {
 	}
 }
 
+// A desktop of a tenant whose signed-up people have none sends the one the
+// store refuses home, and nobody else: no session is still 401, a member
+// still gets in.
+func TestARefusedBrowserOnARouteWithAHomeIsSentThere(t *testing.T) {
+	t.Parallel()
+	const home = "https://shop.example/en/account"
+	tbl := table()
+	for i := range tbl.Routes {
+		if tbl.Routes[i].Host == "desktop.k.example" {
+			tbl.Routes[i].DeniedRedirect = home
+		}
+	}
+	d := decider(&fakeStore{allow: map[string]bool{"user:root|can_enter|tenant:platform": true}})
+	d.SetTable(tbl)
+	dec := d.Decide(context.Background(), Request{Host: "desktop.k.example", Path: "/", Authorization: "Bearer mia-token"})
+	if dec.Allow || dec.Status != http.StatusFound || dec.Redirect != home || reasonOf(dec) != "refused" {
+		t.Fatalf("mia: %+v", dec)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "desktop.k.example", Path: "/", Authorization: "Bearer forged"}); dec.Redirect != "" || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("no session: %+v", dec)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "desktop.k.example", Path: "/", Authorization: "Bearer root-token"}); !dec.Allow {
+		t.Fatalf("member: %+v", dec)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Path: "/", Authorization: "Bearer mia-token"}); dec.Redirect != "" || dec.Status != http.StatusForbidden {
+		t.Fatalf("another route: %+v", dec)
+	}
+	for _, bad := range []string{"http://shop.example/", "/elsewhere", "javascript:alert(1)", "https://u@shop.example/"} {
+		if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o, authMode: oidc, deniedRedirect: '" + bad + "'}\n")); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o, authMode: bearer, deniedRedirect: '" + home + "'}\n")); err == nil {
+		t.Fatal("a bearer route sends nobody anywhere")
+	}
+}
+
 // denyPaths is a control the CRD promised for a while and nothing applied: a
 // component author could list an administrative path and have it served
 // anyway. It is refused at L2, before identity is looked at, because the

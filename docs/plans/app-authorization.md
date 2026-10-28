@@ -212,6 +212,7 @@ engine for each entry of that set.
 | Redis | `system-cache` (always there) | a component declares a cache |
 | SeaweedFS | `system-s3` | always: every backup, bundle and export is written to it |
 | App authorization | `system-authorization` | a component declares `authorization` |
+| TURN | `system-turn-dmz` | a component declares `turn` ([networking.md §9](networking.md)) |
 | Mail, LLM | `system-mail`, `system-llm` | the claim says so, as now |
 
 The set is the ConfigMap `system-engines` in `kernel-control`, one key per

@@ -75,11 +75,22 @@ const (
 	EngineMariaDB       = "mariadb"
 	EngineCache         = "cache"
 	EngineAuthorization = "authorization"
+	EngineTURN          = "turn"
 )
+
+// engineNamespace is the namespace an engine runs in. It is named for the
+// engine's function, system-<name>, except for an engine that is all edge:
+// TURN faces the internet and holds nothing, so its whole namespace is a DMZ.
+func engineNamespace(engine string) string {
+	if engine == EngineTURN {
+		return turnEdgeNamespace
+	}
+	return layout.System(engine)
+}
 
 // systemEngines are the on-demand engines, by name, each with what decides
 // whether a profile declares it. The name is the system namespace's
-// function as well: system-<name>.
+// function as well (engineNamespace).
 var systemEngines = []struct {
 	name     string
 	declares func(*gentianov1alpha1.ComponentProfile) bool
@@ -91,6 +102,7 @@ var systemEngines = []struct {
 		return provisioner.CacheEngineOf(p) == gentianov1alpha1.CacheEngineRedis
 	}},
 	{EngineAuthorization, wantsAuthorization},
+	{EngineTURN, wantsTURN},
 }
 
 // declaredEngines are the on-demand engines a profile declares.
@@ -180,7 +192,7 @@ func (r *SystemEnginesReconciler) Reconcile(ctx context.Context, _ ctrl.Request)
 			pending = true
 			continue
 		}
-		if err := r.DeleteAllOf(ctx, &corev1.PersistentVolumeClaim{}, client.InNamespace(layout.System(engine))); err != nil && !errors.IsNotFound(err) {
+		if err := r.DeleteAllOf(ctx, &corev1.PersistentVolumeClaim{}, client.InNamespace(engineNamespace(engine))); err != nil && !errors.IsNotFound(err) {
 			return ctrl.Result{}, fmt.Errorf("remove the volumes of the purged %s engine: %w", engine, err)
 		}
 	}
@@ -323,7 +335,7 @@ func engineRelease(ctx context.Context, c client.Reader, engine string) (ready, 
 		}
 		return false, false, err
 	}
-	ns := layout.System(engine)
+	ns := engineNamespace(engine)
 	ready = true
 	for _, rel := range list.Items {
 		if target, _, _ := unstructured.NestedString(rel.Object, "spec", "forProvider", "namespace"); target != ns {
@@ -343,28 +355,58 @@ func engineRelease(ctx context.Context, c client.Reader, engine string) (ready, 
 	return ready && found, found, nil
 }
 
-// systemEngineWaiting is the first on-demand engine the profile declares
-// that is not ready yet, "" when there is none. A component that declares
-// an engine is installed once the engine answers, and waits with a condition
-// naming it until then: its first install is what asks for the engine.
-func systemEngineWaiting(ctx context.Context, c client.Reader, profile *gentianov1alpha1.ComponentProfile) (string, error) {
-	for _, engine := range declaredEngines(profile) {
-		ready, _, err := engineRelease(ctx, c, engine)
-		if err != nil {
-			return "", err
-		}
-		// The app authorization engine is the instance's Release and the
-		// arbiter beside it, which the operator deploys itself.
-		if ready && engine == EngineAuthorization {
-			if ready, err = arbiterReady(ctx, c); err != nil {
-				return "", err
+// systemEngineWaiting is the first on-demand engine the profiles declare
+// that is not ready yet, "" when there is none, with why it is not when that
+// is more than "not yet". A component that declares an engine is installed
+// once the engine answers, and waits with a condition naming it until then:
+// its first install is what asks for the engine.
+//
+// The profiles are the component's own and those of the addons it activates:
+// an addon runs inside its base, so what it needs, the base waits for.
+func systemEngineWaiting(ctx context.Context, c client.Reader, profiles ...*gentianov1alpha1.ComponentProfile) (string, string, error) {
+	seen := map[string]bool{}
+	for _, profile := range profiles {
+		for _, engine := range declaredEngines(profile) {
+			if seen[engine] {
+				continue
+			}
+			seen[engine] = true
+			ready, why, err := systemEngineReady(ctx, c, engine)
+			if err != nil {
+				return "", "", err
+			}
+			if !ready {
+				return engine, why, nil
 			}
 		}
-		if !ready {
-			return engine, nil
+	}
+	return "", "", nil
+}
+
+// systemEngineReady reports whether an engine answers, and why it cannot
+// when it never will on this cluster.
+func systemEngineReady(ctx context.Context, c client.Reader, engine string) (bool, string, error) {
+	// The TURN edge is no Release: the operator deploys it itself, and only
+	// where something can reach it.
+	if engine == EngineTURN {
+		if !turnReachable() {
+			return false, turnUnreachableReason, nil
+		}
+		ready, err := turnEdgeReady(ctx, c)
+		return ready, "", err
+	}
+	ready, _, err := engineRelease(ctx, c, engine)
+	if err != nil {
+		return false, "", err
+	}
+	// The app authorization engine is the instance's Release and the
+	// arbiter beside it, which the operator deploys itself.
+	if ready && engine == EngineAuthorization {
+		if ready, err = arbiterReady(ctx, c); err != nil {
+			return false, "", err
 		}
 	}
-	return "", nil
+	return ready, "", nil
 }
 
 func (r *SystemEnginesReconciler) SetupWithManager(mgr ctrl.Manager) error {

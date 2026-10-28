@@ -490,13 +490,20 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// component's first install is what asks for an engine that was not
 	// running, and until the engine answers the component waits under a
 	// condition that names it rather than failing on a store that is not
-	// there (system_engines.go).
-	if engine, err := systemEngineWaiting(ctx, r.Client, profile); err != nil {
+	// there (system_engines.go). What its addons declare counts as its own:
+	// they run inside this component's release.
+	addons, err := r.addonProfiles(ctx, comp)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if engine, why, err := systemEngineWaiting(ctx, r.Client, append([]*gentianov1alpha1.ComponentProfile{profile}, addons...)...); err != nil {
 		return ctrl.Result{}, err
 	} else if engine != "" {
-		return r.status(ctx, comp, metav1.ConditionFalse, reasonSystemEngineNotReady,
-			fmt.Sprintf("waiting for the system engine %s, which this component is the first to declare or which is not ready yet", engine),
-			componentRequeue)
+		message := fmt.Sprintf("waiting for the system engine %s, which this component is the first to declare or which is not ready yet", engine)
+		if why != "" {
+			message = fmt.Sprintf("the system engine %s cannot run on this cluster: %s", engine, why)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonSystemEngineNotReady, message, componentRequeue)
 	}
 
 	// Requirements first: a chart whose database does not exist yet is not
@@ -544,6 +551,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// one, for the same reason and in the same way.
 	if err := r.ensureAuthorization(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("authorization: %w", err)
+	}
+	// The TURN edge's address and secret, for a component that declares it
+	// or activates an addon that does, for the same reason and in the same
+	// way.
+	if err := r.ensureTURNCredentials(ctx, comp, profile, addons); err != nil {
+		return ctrl.Result{}, fmt.Errorf("turn credentials: %w", err)
 	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
@@ -909,6 +922,24 @@ func (r *ComponentReconciler) unusableProfile(
 		}
 	}
 	return nil, nil
+}
+
+// addonProfiles are the profiles of the addons this component activates, as
+// far as they are on the cluster: an addon without one is unusableProfile's
+// to refuse, before this is asked.
+func (r *ComponentReconciler) addonProfiles(ctx context.Context, comp *gentianov1alpha1.Component) ([]*gentianov1alpha1.ComponentProfile, error) {
+	var out []*gentianov1alpha1.ComponentProfile
+	for _, name := range comp.Spec.Addons {
+		addon := &gentianov1alpha1.ComponentProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name}, addon); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		out = append(out, addon)
+	}
+	return out, nil
 }
 
 // componentReports says whether the component's Ready condition already
@@ -2027,7 +2058,8 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
 			builder.WithPredicates(mainAddressChanged())).
-		// A tenant's country, which a profile naming countryKey is told
+		// A tenant's country and organisation, which a profile naming countryKey,
+		// organizationKey or timeZoneKey is told
 		// (tenant_country.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
 			builder.WithPredicates(countryChanged())).

@@ -823,6 +823,94 @@ spec:
                       The Secret must provide keys: host, port, username, password.
                     type: string
                 type: object
+              organization:
+                description: |-
+                  Organization is who the tenant is: the facts an app needs to set itself
+                  up for this organisation rather than a placeholder (its company, its
+                  currency, its clock). Its administrators fill it in under Tenant
+                  Settings; a component whose profile names
+                  valueMapping.platform.organizationKey is told it. An app reads it when
+                  it sets itself up, so a later change does not rewrite what the app
+                  already holds.
+                properties:
+                  address:
+                    description: Address is where the organisation is. Its country
+                      is spec.country.
+                    properties:
+                      city:
+                        description: City is the city or town.
+                        maxLength: 100
+                        type: string
+                      postalCode:
+                        description: PostalCode is the postal code.
+                        maxLength: 20
+                        type: string
+                      region:
+                        description: Region is the state, canton or province, where
+                          the address has one.
+                        maxLength: 100
+                        type: string
+                      street:
+                        description: Street is the street and number, a line per line
+                          of the address.
+                        maxLength: 200
+                        type: string
+                    type: object
+                  currency:
+                    description: Currency is the organisation's currency, ISO 4217
+                      (CHF, EUR).
+                    pattern: ^[A-Z]{3}$
+                    type: string
+                  email:
+                    description: Email is the organisation's contact address.
+                    maxLength: 200
+                    pattern: ^[^@\s]+@[^@\s]+$
+                    type: string
+                  fiscalYearStartMonth:
+                    description: |-
+                      FiscalYearStartMonth is the month the organisation's fiscal year begins
+                      in, 1 to 12. Unset: January.
+                    format: int32
+                    maximum: 12
+                    minimum: 1
+                    type: integer
+                  legalName:
+                    description: |-
+                      LegalName is the name the organisation is registered under (Example AG),
+                      beside the tenant's display name, which is what its people call it.
+                    maxLength: 200
+                    type: string
+                  phone:
+                    description: |-
+                      Phone is the organisation's phone number, preferably international
+                      (+41 44 123 45 67).
+                    maxLength: 40
+                    type: string
+                  registrationNumber:
+                    description: |-
+                      RegistrationNumber is its number in the commercial register
+                      (CHE-123.456.789, HRB 12345).
+                    maxLength: 40
+                    type: string
+                  taxId:
+                    description: |-
+                      TaxID is the organisation's VAT number (CHE-123.456.789 MWST,
+                      DE123456789).
+                    maxLength: 40
+                    type: string
+                  timeZone:
+                    description: TimeZone is the organisation's time zone, an IANA
+                      name (Europe/Zurich).
+                    maxLength: 64
+                    pattern: ^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$
+                    type: string
+                  website:
+                    description: Website is the organisation's public site, an http(s)
+                      address.
+                    maxLength: 200
+                    pattern: ^https?://[^\s]+$
+                    type: string
+                type: object
               partnerCommissioners:
                 description: |-
                   PartnerCommissioners are the components, of this tenant or another,
@@ -1272,6 +1360,17 @@ spec:
                       customers with accounts -- and not for a workspace, whose people are
                       invited. Off by default; off, every account is made by an invitation.
                     type: boolean
+                  home:
+                    description: |-
+                      Home is where the people of such a tenant are sent instead of its
+                      desktop: the page of the app they made their account for, e.g. a
+                      website's account page. The tenant's bare domain redirects there, and
+                      a browser refused at the tenant's desktop -- a signed-up account has
+                      none -- is sent there rather than shown the refusal. Only with
+                      Enabled; unset, both lead to the desktop as for any tenant.
+                    maxLength: 2048
+                    pattern: ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^?#\s]*)?$
+                    type: string
                 type: object
               storeTerms:
                 description: |-

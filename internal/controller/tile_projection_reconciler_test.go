@@ -245,7 +245,7 @@ func TestAComponentTileNeedsBothTheProfileAndTheRoute(t *testing.T) {
 }
 
 // A profile that asks the portal to open its app at desktop mount has that on
-// its tile; every other tile does not.
+// its primary tile; its other tiles, and every other profile's, do not.
 func TestAProfileAsksForPreopenOnItsTile(t *testing.T) {
 	tile := &gentianov1alpha1.ExposureTile{DisplayName: "Notes", Logo: testTileLogo, Relation: "can_launch"}
 	tenant := tileFixtureTenant("demo")
@@ -261,6 +261,25 @@ func TestAProfileAsksForPreopenOnItsTile(t *testing.T) {
 		if len(got) != 1 || got[0].Preopen != want {
 			t.Errorf("annotation %q: tiles %+v, want preopen %v", value, got, want)
 		}
+	}
+
+	// A second tile of the same app is an ordinary one.
+	profile := tileFixtureProfile("notes", tile)
+	profile.Annotations = map[string]string{portalPreopenAnnotation: "true"}
+	profile.Spec.Expose = append(profile.Spec.Expose, gentianov1alpha1.ExposureSpec{
+		Name:     "admin",
+		Surface:  gentianov1alpha1.SurfaceGateway,
+		AuthMode: gentianov1alpha1.AuthModeOIDC,
+		Backend:  gentianov1alpha1.BackendRef{Service: "notes", Port: 8080},
+		Tile:     &gentianov1alpha1.ExposureTile{DisplayName: "Notes settings", Logo: testTileLogo, Relation: "can_launch"},
+	})
+	got := project(t, tenant, comp, profile, route, tileFixtureRoute("notes-admin", "tenant-demo", "notes.demo.k.example"))
+	preopen := map[string]bool{}
+	for _, tl := range got {
+		preopen[tl.Name] = tl.Preopen
+	}
+	if fmt.Sprint(preopen) != "map[demo/notes/admin:false demo/notes/web:true]" {
+		t.Errorf("preopen per tile = %v", preopen)
 	}
 }
 

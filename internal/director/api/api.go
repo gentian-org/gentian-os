@@ -133,6 +133,8 @@ type Repository interface {
 	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
 	TenantCountry(ctx context.Context, tenant string) (string, error)
 	SetTenantCountry(ctx context.Context, tenant, country string, meta gitops.Meta) (gitops.Result, error)
+	TenantOrganization(ctx context.Context, tenant string) (gitops.Organization, error)
+	SetTenantOrganization(ctx context.Context, tenant, displayName string, org gentianov1alpha1.TenantOrganization, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
@@ -833,6 +835,11 @@ func (s *Server) routes() {
 		// profile names countryKey is told it.
 		s.guarded("GET /v1/tenants/{t}/country", "can_view", tenantObject, s.tenantCountry)
 		s.guarded("PUT /v1/tenants/{t}/country", "can_set_policy", tenantObject, s.setTenantCountry)
+		// Who the tenant is (Tenant Settings), beside its country and
+		// languages; a component whose profile names organizationKey is told
+		// it, and the App Store warns while a required fact is missing.
+		s.guarded("GET /v1/tenants/{t}/organization", "can_view", tenantObject, s.tenantOrganization)
+		s.guarded("PUT /v1/tenants/{t}/organization", "can_set_policy", tenantObject, s.setTenantOrganization)
 		// Whether the platform's administrators may sign in to the tenant
 		// (platform_access.go): the tenant's own switch, under
 		// can_administer -- it opens the tenant's realm to people outside

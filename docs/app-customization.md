@@ -411,7 +411,7 @@ the cluster's state: the tile catalogue the operator projects carries the profil
 The platform's glyphs are `internal/tiles/glyphs/*.svg`, rendered into
 `internal/tiles/catalogue.json` and the chart's own tiles by `scripts/tools/render-tiles.py`.
 
-A profile annotated `gentianos.io/portal-preopen: "true"` has its routed tiles marked `preopen`:
+A profile annotated `gentianos.io/portal-preopen: "true"` has its primary tile (exposure `web`) marked `preopen`:
 the desktop opens the app hidden at mount, keeps its window alive, and draws the assistant widget
 in its place. The desktop knows the app by this mark only, never by its name.
 

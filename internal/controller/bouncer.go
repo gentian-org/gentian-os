@@ -27,6 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // The kernel zone at the edge (networking.md §4): one confidential client,
@@ -363,6 +365,10 @@ type bouncerRoute struct {
 	// On every route with a session, and on no other.
 	SessionCookies        []string `json:"sessionCookies,omitempty"`
 	SessionCookiePrefixes []string `json:"sessionCookiePrefixes,omitempty"`
+	// DeniedRedirect is where a browser refused on this host is sent: the
+	// home of a tenant whose signed-up people have no desktop
+	// (spec.signUp.home), on that tenant's desktop host only.
+	DeniedRedirect string `json:"deniedRedirect,omitempty"`
 }
 
 // bouncerRouteTable renders the bouncer's table from the routes that carry an
@@ -411,10 +417,31 @@ func bouncerTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, checkers []
 	return string(b), nil
 }
 
-func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context, specs []kernelHTTPRouteSpec) error {
+// deniedRedirects are the desktop hosts of the tenants with a home, and that
+// home: a browser refused at such a desktop is sent there.
+func deniedRedirects(tenants []gentianov1alpha1.Tenant, homes map[string]string, kernelDomain, tenancyMode string) map[string]string {
+	out := map[string]string{}
+	for i := range tenants {
+		home, ok := homes[tenants[i].Name]
+		if !ok {
+			continue
+		}
+		if domain := tenants[i].EffectiveDomain(kernelDomain, tenancyMode); domain != "" {
+			out[desktopHost(domain)] = home
+		}
+	}
+	return out
+}
+
+func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context, specs []kernelHTTPRouteSpec, denied map[string]string) error {
 	extra, err := componentRouteTableEntries(ctx, r.Client)
 	if err != nil {
 		return err
+	}
+	for i := range extra {
+		if extra[i].AuthMode == "oidc" {
+			extra[i].DeniedRedirect = denied[extra[i].Host]
+		}
 	}
 	checkers, err := rightsCheckers(ctx, r.Client)
 	if err != nil {

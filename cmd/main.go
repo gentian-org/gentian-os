@@ -505,6 +505,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The TURN edge, while a component declares requires.services.turn.
+	if err := (&controller.TURNEdgeReconciler{
+		Client: mgr.GetClient(),
+		// The shared secret, in the vault the tenants' credentials are kept in.
+		Seeder:        tenantReconciler.Seeder,
+		Namespace:     envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
+		ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TURNEdge")
+		os.Exit(1)
+	}
+
 	// The arbiter's table: which component's key opens which authorization
 	// store, and the model each is decided against.
 	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {

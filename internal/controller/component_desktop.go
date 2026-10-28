@@ -114,7 +114,58 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 			setPath(out, key, value)
 		}
 	}
+	// Only a zone the tenant names: while it names none, the profile's own
+	// default at that key stands rather than an empty string over it.
+	if m.TimeZoneKey != "" && tenant.Spec.Organization != nil && tenant.Spec.Organization.TimeZone != "" {
+		setPath(out, m.TimeZoneKey, tenant.Spec.Organization.TimeZone)
+	}
+	if m.OrganizationKey != "" {
+		setPath(out, m.OrganizationKey, organizationValues(tenant))
+	}
 	return out
+}
+
+// organizationValues is who the tenant is, as organizationKey delivers it:
+// every field present, "" where the tenant has not filled it in, so a chart
+// tests a value rather than its presence.
+func organizationValues(tenant *gentianov1alpha1.Tenant) map[string]interface{} {
+	org := gentianov1alpha1.TenantOrganization{}
+	if tenant.Spec.Organization != nil {
+		org = *tenant.Spec.Organization
+	}
+	addr := gentianov1alpha1.TenantAddress{}
+	if org.Address != nil {
+		addr = *org.Address
+	}
+	month := org.FiscalYearStartMonth
+	if month == 0 {
+		month = 1
+	}
+	languages := []interface{}{}
+	for _, lang := range locales.Normalise(tenant.Spec.Locales) {
+		languages = append(languages, lang)
+	}
+	return map[string]interface{}{
+		"complete":             len(tenant.Spec.MissingOrganization()) == 0,
+		"displayName":          tenant.Spec.DisplayName,
+		"legalName":            org.LegalName,
+		"country":              tenant.Spec.Country,
+		"languages":            languages,
+		"currency":             org.Currency,
+		"timeZone":             org.TimeZone,
+		"fiscalYearStartMonth": int64(month),
+		"address": map[string]interface{}{
+			"street":     addr.Street,
+			"postalCode": addr.PostalCode,
+			"city":       addr.City,
+			"region":     addr.Region,
+		},
+		"website":            org.Website,
+		"email":              org.Email,
+		"phone":              org.Phone,
+		"taxId":              org.TaxID,
+		"registrationNumber": org.RegistrationNumber,
+	}
 }
 
 // wantsDirector reports whether a profile asked to be told where the director
