@@ -12,13 +12,13 @@ package gitops
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/mail"
 	"os"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	// The director's image has no zone database of its own.
@@ -240,11 +240,9 @@ func (g *GitOps) SetTenantOrganization(ctx context.Context, tenant, displayName 
 // setTenantOrganization writes spec.displayName and spec.organization into
 // a tenant manifest's text and checks that they read back as written.
 func setTenantOrganization(text, displayName string, org gentianov1alpha1.TenantOrganization) (string, error) {
-	quoted, err := json.Marshal(displayName)
-	if err != nil {
-		return "", err
-	}
-	out, err := setSpecBlock(text, []string{"displayName"}, []string{"  displayName: " + string(quoted)})
+	// A YAML double-quoted scalar takes Go's escapes; the read-back below
+	// checks it.
+	out, err := setSpecBlock(text, []string{"displayName"}, []string{"  displayName: " + strconv.Quote(displayName)})
 	if err != nil {
 		return "", err
 	}
