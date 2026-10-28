@@ -929,6 +929,16 @@ type S3Requirement struct {
 	// +optional
 	// +kubebuilder:default=true
 	BucketPerTenant bool `json:"bucketPerTenant"`
+
+	// ObjectLock makes the bucket with S3 Object Lock, which cannot be
+	// switched off again, and lets the app read and set the bucket's default
+	// retention (GetBucketObjectLockConfiguration,
+	// PutBucketObjectLockConfiguration). Nobody but the store's own
+	// administrator may bypass a lock; the app is never given that right. A
+	// purge keeps a bucket that still holds locked objects, and removes the
+	// app's identity to it.
+	// +optional
+	ObjectLock bool `json:"objectLock,omitempty"`
 }
 
 // FilesRequirement describes WebDAV filesystem access needs.

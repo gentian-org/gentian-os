@@ -116,7 +116,11 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 				backup.ObjectStorageKeySecretKey: []byte(secretKey),
 			}
 		}
-		jobs = append(jobs, *makeS3BucketJob(tenant, appName, withKey))
+		opts, optErr := r.objectStorageOptions(ctx, appName)
+		if optErr != nil {
+			return nil, nil, optErr
+		}
+		jobs = append(jobs, *makeS3BucketJob(tenant, appName, withKey, opts))
 	}
 
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)

@@ -91,6 +91,23 @@ mail", and the value arrives on the next sync once it exists.
 
 The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
 
+**A bucket nobody may rewrite is said separately too.** An app that keeps
+records which must not change -- an audit archive -- asks for Object Lock:
+
+```yaml
+spec:
+  requires:
+    services:
+      storage:
+        s3: {objectLock: true}
+```
+
+The platform makes the bucket with S3 Object Lock, which cannot be switched
+off again, and lets the app read and set the bucket's default retention
+(mode and period) through the S3 API. It never gets the right to bypass a
+retention. Uninstalling with purge removes the app's key and keeps the bucket
+for as long as it holds locked objects.
+
 **Opening mailboxes with the sign-in token is said separately.** `imap: {}`
 gives the app the mail server's address and nothing more. An app that signs
 people in to their mailboxes with their own token (XOAUTH2) declares it:

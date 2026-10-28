@@ -20,6 +20,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
+	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 func jobDigest(t *testing.T, job *batchv1.Job) string {
@@ -81,8 +83,8 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// [grpc.client] settings from WEED_GRPC_*, and the filer's signing
 		// key, which s3.configure needs a token of, is read from the
 		// store's signing Secret.
-		"bucket":         {makeS3BucketJob(tenant, "wiki", true), "b8b6bda18925bf9da9324ce60f1e574280306f454068d0a337d44573311c28b2"},
-		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false), "56ebf6847888baa1559a5429f977c4c1bb81c6fbd8267282480dcd42419cda2a"},
+		"bucket":         {makeS3BucketJob(tenant, "wiki", true, backup.ObjectStorageOptions{}), "b8b6bda18925bf9da9324ce60f1e574280306f454068d0a337d44573311c28b2"},
+		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false, backup.ObjectStorageOptions{}), "56ebf6847888baa1559a5429f977c4c1bb81c6fbd8267282480dcd42419cda2a"},
 		"cache user":     {makeRedisACLJob(tenant, "wiki", true), "e69e2958d1a57f59a3e92f20f07af87036ada08858c580d218ec13c358caabeb"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {

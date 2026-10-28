@@ -536,13 +536,28 @@ func DeclaresModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 // server admits by its ObjectStorageShellLabel. A pod running it must be
 // made with ObjectStoreShellPod.
 func ObjectStorageProvisionContainer(name, bucket, keySecret string) corev1.Container {
+	return ObjectStorageProvisionContainerWith(name, bucket, keySecret, ObjectStorageOptions{})
+}
+
+// ObjectStorageOptions are what a profile's requires.services.s3 asks of
+// its bucket beyond the bucket itself.
+type ObjectStorageOptions struct {
+	// ObjectLock makes the bucket with S3 Object Lock, or switches it on for
+	// a bucket made without it, and lets the app read and set the bucket's
+	// default retention. Never off again: Object Lock cannot be removed.
+	ObjectLock bool
+}
+
+// ObjectStorageProvisionContainerWith is ObjectStorageProvisionContainer
+// with the profile's options.
+func ObjectStorageProvisionContainerWith(name, bucket, keySecret string, opts ObjectStorageOptions) corev1.Container {
 	no := false
 	yes := true
 	user := objectStoreUser
 	c := corev1.Container{
 		Name:    name,
 		Image:   kernel.SeaweedFSImage(),
-		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket)},
+		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket, opts.ObjectLock)},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: &no,
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
@@ -692,25 +707,41 @@ shell_error() {
 // The identity is made again from nothing on every run: s3.configure adds a
 // key pair to an identity that has one, and a re-seeded key must replace the
 // old one, not join it.
-func objectStorageProvisionScript(bucket string) string {
+func objectStorageProvisionScript(bucket string, objectLock bool) string {
+	create, actions, lock := "", "Read,Write,List,Tagging", ""
+	if objectLock {
+		// Made with the lock, or given it if it was made without: a
+		// profile that starts asking for it gets it on its existing bucket.
+		// The two actions let the app read and set the bucket's default
+		// retention; BypassGovernanceRetention is never among them.
+		create = " -withLock"
+		actions += ",GetBucketObjectLockConfiguration,PutBucketObjectLockConfiguration"
+		// Idempotent: on a bucket that has the lock the store says so and
+		// changes nothing.
+		lock = fmt.Sprintf(`if ! shell "s3.bucket.lock -name %[1]s -enable"; then
+  echo "ERROR: Object Lock could not be switched on for bucket %[1]s:" >&2; shell_error; exit 1
+fi
+echo "bucket %[1]s has Object Lock"
+`, bucket)
+	}
 	return fmt.Sprintf(`set -eu
-%[2]sif shell "s3.bucket.create -name %[1]s"; then
+%[2]sif shell "s3.bucket.create -name %[1]s%[3]s"; then
   echo "bucket %[1]s made"
 elif grep -q 'already exists' /tmp/shell.out; then
   echo "bucket %[1]s is there"
 else
   echo "ERROR: bucket %[1]s could not be made:" >&2; shell_error; exit 1
 fi
-if [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
+%[5]sif [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
   if ! shell "s3.configure -user=%[1]s -delete -apply" && ! grep -q 'not found' /tmp/shell.out; then
     echo "ERROR: the identity %[1]s could not be replaced:" >&2; shell_error; exit 1
   fi
-  if ! shell "s3.configure -user=%[1]s -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=%[1]s -actions=Read,Write,List,Tagging -apply"; then
+  if ! shell "s3.configure -user=%[1]s -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=%[1]s -actions=%[4]s -apply"; then
     echo "ERROR: the identity %[1]s could not be made:" >&2; shell_error; exit 1
   fi
   echo "identity for bucket %[1]s ready"
 fi
-echo "bucket %[1]s ready"`, bucket, objectStoreShell)
+echo "bucket %[1]s ready"`, bucket, objectStoreShell, create, actions, lock)
 }
 
 // --- destroying a store -----------------------------------------------------
@@ -810,10 +841,16 @@ func objectStorageDestroyScript(bucket string) string {
   echo "ERROR: the store did not list its buckets:" >&2; shell_error; exit 1
 fi
 if awk '{print $1}' /tmp/shell.out | grep -qxF '%[1]s'; then
-  if ! shell "s3.bucket.delete -name %[1]s"; then
+  if shell "s3.bucket.delete -name %[1]s"; then
+    echo "bucket %[1]s removed"
+  elif grep -q 'active Object Lock retention or legal hold' /tmp/shell.out; then
+    # Locked objects are kept until their retention ends: that is what the
+    # lock is for, and the store refuses to delete them. The bucket stays;
+    # the app's identity to it goes below, so nothing writes to it again.
+    echo "bucket %[1]s kept: it holds objects under Object Lock until their retention ends"
+  else
     echo "ERROR: bucket %[1]s could not be removed:" >&2; shell_error; exit 1
   fi
-  echo "bucket %[1]s removed"
 else
   echo "bucket %[1]s is not there"
 fi
