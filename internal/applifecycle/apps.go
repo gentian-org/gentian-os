@@ -225,7 +225,8 @@ func componentOrigin(comp *gentianov1alpha1.Component) string {
 // The components the platform places itself -- the desktop, the consoles,
 // the App Store app -- are listed with origin "default", by the operator's
 // label on the component: a screen shows that they run and offers nothing to
-// do about them. A profile with the platform-app annotation is left out.
+// do about them. So is one whose profile has the platform-app annotation,
+// such as Open WebUI, which comes with the cluster's models.
 // Add-ons are left out as apps: an add-on is switched on inside its base, and
 // is listed under it, in the base's addons.
 func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState, error) {
@@ -250,9 +251,6 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		found := false
 		if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err == nil {
 			found = true
-			if cp.Annotations[platformAppAnnotation] == "true" {
-				continue
-			}
 			if cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
 				addons[comp.Name] = addonState(comp, cp)
 				continue
@@ -262,6 +260,9 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		}
 		state := componentState(comp)
 		state.Origin = componentOrigin(comp)
+		if found && cp.Annotations[platformAppAnnotation] == "true" {
+			state.Origin = componentOriginDefault
+		}
 		if found {
 			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, time.Now())
 		}
