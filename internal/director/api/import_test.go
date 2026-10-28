@@ -54,6 +54,8 @@ type importingOperator struct {
 	// domain and domainRefused are the tenant's custom domain as the
 	// operator has taken it, and why it did not.
 	domain, domainRefused string
+	// uploaded is how many bytes the last upload carried.
+	uploaded int64
 }
 
 const importedManifest = `{"schemaVersion":1,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd","apps":[{"profile":"element"}]},"apps":[]}`
@@ -68,7 +70,7 @@ func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (i
 		}
 		// A component the platform places itself is listed too, and is not
 		// what an import waits for: it was not in the bundle.
-		return http.StatusOK, []byte(`{"apps":[{"profile":"element","origin":"install","ready":true,"phase":"Ready"},`+
+		return http.StatusOK, []byte(`{"apps":[{"profile":"element","origin":"install","ready":true,"phase":"Ready"},` +
 			`{"profile":"desktop","origin":"default","ready":false,"phase":"Installing"}]}`), nil
 	case strings.Contains(path, "/restores/"):
 		name := path[strings.LastIndex(path, "/")+1:]
@@ -131,7 +133,8 @@ func (o *importingOperator) Upload(_ context.Context, _, _ string, body io.Reade
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.uploads++
-	_, _ = io.Copy(io.Discard, body)
+	n, _ := io.Copy(io.Discard, body)
+	o.uploaded = n
 	return http.StatusCreated, []byte(`{"bundle":{"bucket":"gentian-imports","prefix":"x"}}`), nil
 }
 
@@ -760,5 +763,25 @@ func TestAnImportWhoseCustomDomainCannotBeBoundHereIsRefused(t *testing.T) {
 	}
 	if h.tip(t) != before {
 		t.Fatal("a refused import moved the repository")
+	}
+}
+
+// A bundle is far larger than the JSON bodies every other route takes: an
+// upload reaches the operator whole, and another route still refuses a body
+// past a mebibyte.
+func TestABundleUploadIsNotCutAtTheJSONBodyLimit(t *testing.T) {
+	op := &importingOperator{}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+
+	bundle := strings.Repeat("x", 3<<20)
+	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/bundles", alice, bundle)
+	if code != http.StatusAccepted || op.uploaded != int64(len(bundle)) {
+		t.Fatalf("upload = %d %v, the operator got %d of %d bytes", code, body, op.uploaded, len(bundle))
+	}
+
+	large := `{"bundle":{"bucket":"gentian-imports","prefix":"x"},"pad":"` + strings.Repeat("x", 2<<20) + `"}`
+	if code, _ := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/import", alice, large); code/100 == 2 {
+		t.Fatalf("a 2 MiB import request = %d, want it refused", code)
 	}
 }
