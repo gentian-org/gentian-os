@@ -34,3 +34,18 @@ func TestMemberFingerprint_ChangesWithUsername(t *testing.T) {
 		t.Fatalf("fingerprint ignores the username: %q", a)
 	}
 }
+
+// A profile whose sync script changes has not had the change applied, so the
+// sync must run again although the members are the same.
+func TestDeclarationFingerprint_ChangesWithTheScript(t *testing.T) {
+	t.Parallel()
+	type job struct{ Script string }
+	a := DeclarationFingerprint(job{Script: "give System Manager"})
+	b := DeclarationFingerprint(job{Script: "give every role"})
+	if a == "" || a == b {
+		t.Fatalf("fingerprint ignores the script: %q vs %q", a, b)
+	}
+	if a != DeclarationFingerprint(job{Script: "give System Manager"}) {
+		t.Fatal("fingerprint is not stable")
+	}
+}

@@ -11,6 +11,9 @@ SPDX-License-Identifier: MPL-2.0
 package privilege
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -29,4 +32,17 @@ func MemberFingerprint(members []authz.KeycloakUser) string {
 	}
 	sort.Strings(entries)
 	return strings.Join(entries, ",")
+}
+
+// DeclarationFingerprint returns a short hash of what an app declares for its
+// privileged-role sync: the role and the Job. A profile that changes either
+// has not had the change applied, whatever the membership, so a completed sync
+// is recorded against it as well as against the members.
+func DeclarationFingerprint(provisioning any) string {
+	raw, err := json.Marshal(provisioning)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:8])
 }
