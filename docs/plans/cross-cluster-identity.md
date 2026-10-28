@@ -53,17 +53,28 @@ realm):
   flow only; consent required; `fullScopeAllowed` off; its one default scope
   is `partner-<name>`.
 - **The scope `partner-<name>`**: an audience mapper putting P's issuer — and
-  nothing else — in the access token's audience, and a pairwise `sub` mapper
+  nothing else — in the access token's audience, a pairwise `sub` mapper
   with the sector identifier `<P issuer>` and a salt the operator derives
-  once per tenant and partner. The same scope is the partner client's
-  default and an optional scope of every app client allowed to call P, so
-  the subject P stored at linking and the subject in every later assertion
-  are the same value.
+  once per tenant and partner, and a roles mapper putting the person's role
+  on the tenant in the access token as the multi-valued claim
+  `gentian_roles`: `tenant-admin` for a member of
+  `gentian:tenant:<t>:admins`, `cluster-admin` for a member of
+  `gentian:tenant:<t>:platform-admins`, both for a person in both, and no
+  claim for anybody else. It is Keycloak's user attribute mapper aggregating
+  the group attribute `gentianPartnerRole` over the person's groups, which
+  only those two groups carry, so the claim follows from group membership
+  and from nothing else (iam.md §1.2); in the access token only, never in an
+  ID token or at userinfo, and on this scope only, so no other client of the
+  realm sees it. The same scope is the partner client's default and an
+  optional scope of every app client allowed to call P, so the subject P
+  stored at linking and the subject in every later assertion are the same
+  value.
 - **Per app allowed to call P, the app's client `partner-<profile>`** (§5):
   confidential, standard token exchange on, every other flow off,
   authenticated by the app's Kubernetes service account token, default scope
   `basic` only, optional scope `partner-<name>`. An assertion therefore
-  carries the pairwise subject and nothing about the person.
+  carries the pairwise subject and the person's role on the tenant, and
+  nothing else about them.
 
 **Receiving side Y, per partner X:**
 
@@ -88,8 +99,10 @@ realm):
   confidential, JWT Authorization Grant on for every accepted partner's
   provider, authenticated by the app's Kubernetes service account token.
 
-The person's group memberships and roles never cross. What a linked person
-may do at Y is Y's own groups, as for any account of Y.
+The person's group memberships never cross, and of their roles only the one
+word `gentian_roles` carries: whether they administer the tenant, or the
+cluster. What a linked person may do at Y is Y's own groups, as for any
+account of Y; what Y makes of the role is Y's.
 
 **Service account trust.** Each realm with a partner app holds the identity
 provider `kubernetes` (Keycloak's Kubernetes provider) for the cluster's
@@ -265,9 +278,11 @@ works is the assertion's lifetime plus Y's token's.
 
 - **Y learns** a pairwise subject: random to Y, stable for that person and
   that partner, different for every partner, so two partners cannot join
-  their records by it. Y never sees X's user id, name, e-mail address,
-  groups or roles — not at linking, not in an assertion. There is no switch
-  to share more.
+  their records by it — and, in an assertion, the person's role on the
+  tenant (`gentian_roles`, §2): that they administer the tenant, or the
+  cluster, and nothing when they do neither. Y never sees X's user id, name,
+  e-mail address or groups — not at linking, not in an assertion. There is
+  no switch to share more.
 - **A partner that needs a contact** (billing) asks the person for it in its
   own pages, under its own privacy notice — for instance in its payment
   provider's checkout.

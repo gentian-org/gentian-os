@@ -74,6 +74,10 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 // A malformed value yields no names rather than an error: the groups themselves
 // are provisioned from the same JSON by the script, and failing the whole realm
 // job over a mapper would be a worse outcome than a missing claim.
+//
+// The partner role (keycloak.PartnerRoleAttribute) is left out: it reaches a
+// token through the mapper on the scope partner-<name> alone, and a mapper on
+// the groups scope would put it into every token of the realm.
 func groupAttributeNames(groupsJSON string) []string {
 	var groups []struct {
 		Attributes map[string]any `json:"attributes"`
@@ -87,7 +91,7 @@ func groupAttributeNames(groupsJSON string) []string {
 		for name := range g.Attributes {
 			// Keycloak config keys are interpolated into JSON below; refuse anything
 			// that is not a plain identifier rather than escaping it.
-			if !validAttrName(name) {
+			if !validAttrName(name) || name == keycloak.PartnerRoleAttribute {
 				continue
 			}
 			if _, dup := seen[name]; dup {

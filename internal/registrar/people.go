@@ -393,7 +393,7 @@ func tenantGroupPrefix(tenant string) string {
 var groupLabel = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
 
 // reservedGroupLabels are names the platform composes itself.
-var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true, "perimeter": true}
+var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true, "perimeter": true, "platform-admins": true}
 
 // updatePerson changes somebody's names, delivery address or whether they may
 // sign in.

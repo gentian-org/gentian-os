@@ -263,10 +263,14 @@ identity provider `kernel`, and the kernel realm the client `broker-to-<t>`
 it authenticates to, by the JWT the tenant's realm signs, checked against its
 published keys -- no secret crosses. The provider requires the `groups` claim to name
 `gentian:platform:admin` (no other kernel account gets an account in the
-tenant through it), and one mapper puts whoever arrives into
-`gentian:tenant:<t>:admins` from that claim, re-evaluated at every sign-in
-(sync mode force): a person who leaves the platform group is out of the
-tenant's admin group at their next sign-in through it. The person arrives as
+tenant through it), and two mappers of one kind put whoever arrives into
+`gentian:tenant:<t>:admins` and `gentian:tenant:<t>:platform-admins` from
+that claim, re-evaluated at every sign-in (sync mode force): a person who
+leaves the platform group is out of both at their next sign-in through it.
+The second group grants nothing in the tenant -- no role in the kernel
+store, nothing on the desktop or in an app; it exists so that an assertion
+towards a partner can say the person is a cluster administrator
+([cross-cluster-identity.md §2](../plans/cross-cluster-identity.md)). The person arrives as
 a new account of the tenant's realm, under Keycloak's own first-broker-login
 flow; an address the realm already has is linked only once its owner confirms
 it. The provider is hidden on the tenant's sign-in page: the way in is the
@@ -278,8 +282,9 @@ lets the cluster's administrators act on the tenant through the director,
 this one lets them sign in to it, and each is set and withdrawn on its own.
 
 What a platform administrator is told when they enter a tenant this way is
-what any tenant administrator sees; the account they get holds `admins` and
-nothing else, like every administrator's (§1.3).
+what any tenant administrator sees; the account they get holds `admins`,
+like every administrator's (§1.3), and `platform-admins`, which adds
+nothing to it.
 
 ### 1.2 Group taxonomy
 
@@ -291,7 +296,8 @@ membership, and access to each app:
 | `gentian:platform:admin` | The platform administrator. The Cluster claim names the group that holds each of the two group-held platform roles (`spec.platformRoles`); this is the default for `admin` |
 | the group the claim names for `breakGlass` | Break-glass; nobody holds it unless the claim names a group. Every other cluster role is held by name (§1.1c) |
 | `gentian:tenant:<t>:members` | All workspace members |
-| `gentian:tenant:<t>:admins` | Tenant IT admins |
+| `gentian:tenant:<t>:admins` | Tenant IT admins. Carries the group attribute `gentianPartnerRole: tenant-admin`, which an assertion towards a partner reads and nothing else does |
+| `gentian:tenant:<t>:platform-admins` | The platform's administrators while they are in the tenant through `kernel` (§1.1c), filled and emptied at every sign-in like `admins`. Grants nothing: no tuple in the kernel store, nothing on the desktop or in an app. Carries `gentianPartnerRole: cluster-admin`, for the partner assertion alone |
 | `gentian:tenant:<t>:app-admins` | The App Admin role: who administers the tenant's apps. One group for the whole tenant, not one per app (§1.11) |
 | `gentian:tenant:<t>:app:<profile>` | Access to one installed app (§1.6) |
 

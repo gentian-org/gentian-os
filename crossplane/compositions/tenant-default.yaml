@@ -2043,15 +2043,30 @@ spec:
                  takes an additionalProfiles argument for exactly that — so the Job
                  goes only once that gap is closed.
               */}}
-            {{- /* Only the three that belong to the tenant itself. The per-app
+            {{- /* Only the four that belong to the tenant itself. The per-app
                  group is app-default's, because its name follows the resolved
                  profile and its attributes come from that profile's
                  gentianos.io/keycloak-group-attributes annotation — nine of the
                  catalogue's profiles carry one, and the Odoo ones drive module
                  and role provisioning. This Composition cannot see a ComponentProfile;
-                 app-default already fetches it. */}}
-            {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) }}
-            {{- range $g := $groupNames }}
+                 app-default already fetches it.
+
+                 The two administrators' groups carry one attribute more, the
+                 role a partner assertion says for their members
+                 (gentianPartnerRole; internal/keycloak PartnerRoleAttribute):
+                 tenant-admin on admins, cluster-admin on platform-admins --
+                 the group the platform's administrators are in while they are
+                 here through the provider "kernel" (below), which grants
+                 nothing itself. The scope partner-<name> reads the attribute
+                 off the person's groups and nothing else does. The groups Job
+                 sets the same, so the two writers agree. */}}
+            {{- $groupNames := list
+                  (dict "name" (printf "gentian:tenant:%s:members" $tenant) "attributes" (dict))
+                  (dict "name" (printf "gentian:tenant:%s:admins" $tenant) "attributes" (dict "gentianPartnerRole" "tenant-admin"))
+                  (dict "name" (printf "gentian:tenant:%s:platform-admins" $tenant) "attributes" (dict "gentianPartnerRole" "cluster-admin"))
+                  (dict "name" (printf "gentian:tenant:%s:app-admins" $tenant) "attributes" (dict)) }}
+            {{- range $group := $groupNames }}
+            {{- $g := $group.name }}
             {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
             ---
             apiVersion: group.keycloak.crossplane.io/v1alpha1
@@ -2067,6 +2082,9 @@ spec:
                 name: {{ $g | quote }}
                 attributes:
                   gentianos.io/managed-by: platform
+                  {{- range $k, $v := $group.attributes }}
+                  {{ $k }}: {{ $v | quote }}
+                  {{- end }}
               providerConfigRef:
                 name: keycloak
             {{- end }}
@@ -2317,15 +2335,21 @@ spec:
 
                  issue -- this tenant's people towards the partner: the scope
                  partner-<name>, whose mappers give an access token the
-                 partner's issuer as its only audience and the person's
+                 partner's issuer as its only audience, the person's
                  pairwise subject (sector the partner's issuer, the salt the
-                 operator derives), and the partner client, client ID = the
+                 operator derives) and the person's role on this tenant
+                 (gentian_roles: tenant-admin, cluster-admin, read off the
+                 attribute gentianPartnerRole of the person's groups, which
+                 only the two administrators' groups carry -- access token
+                 only, so nothing but an assertion says it), and the partner
+                 client, client ID = the
                  partner's issuer, which the partner's realm signs in through
                  once per person to link the two accounts. It sends a person
                  back only to <issuer>/broker/partner-<as>/endpoint, checks
                  the partner realm's published keys (no secret), asks for
                  consent, gives no role, and its one default scope is
-                 partner-<name>: the subject is all it gives.
+                 partner-<name>: the subject and the person's role on this
+                 tenant are all it gives.
 
                  accept -- the partner's people here: the identity provider
                  partner-<name>, authenticating to the partner by a JWT this
@@ -2606,6 +2630,42 @@ spec:
                   pairwiseSubAlgorithmSalt: {{ $b.salt | quote }}
               providerConfigRef:
                 name: keycloak
+            {{- /* The person's role on this tenant: Keycloak's user attribute
+                 mapper, aggregating over the person's groups, so the claim
+                 is the attribute of the groups the person is in and nothing
+                 else -- the realm's user profile declares no such attribute,
+                 and Keycloak admits none it does not declare on an account.
+                 Multivalued: a platform administrator in both groups is
+                 both. Nobody else has the claim at all. Access token and
+                 introspection only, like the audience: no ID token, no
+                 userinfo. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-partner-{{ $b.name }}-roles
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-roles
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: gentian-roles
+                protocol: openid-connect
+                protocolMapper: oidc-usermodel-attribute-mapper
+                config:
+                  user.attribute: gentianPartnerRole
+                  claim.name: gentian_roles
+                  jsonType.label: String
+                  multivalued: "true"
+                  aggregate.attrs: "true"
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
             {{- end }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
@@ -2792,7 +2852,8 @@ spec:
                  partner-<name> of the partners it names (and that this
                  tenant issues towards) as its optional scopes, basic as its
                  only default -- an assertion carries the pairwise subject
-                 and nothing about the person. Accepting: the JWT
+                 and the person's role on this tenant, and nothing else
+                 about them. Accepting: the JWT
                  authorization grant on, for every partner this tenant
                  accepts. Every other flow off; no role (fullScopeAllowed
                  off).
@@ -3603,11 +3664,14 @@ spec:
 
                  For the platform's administrators only. The provider requires
                  the token's groups claim to name gentian:platform:admin, so no
-                 other kernel account gets an account here through it, and the
-                 one mapper puts whoever arrives into this tenant's admins
-                 group from that claim at every sign-in (FORCE): a person who
-                 left the platform group is out of the admins group at their
-                 next sign-in through it. Keycloak's own first-broker-login
+                 other kernel account gets an account here through it, and two
+                 mappers of one kind put whoever arrives into this tenant's
+                 admins group and its platform-admins group from that claim at
+                 every sign-in (FORCE): a person who left the platform group
+                 is out of both at their next sign-in through it. The second
+                 group grants nothing here; it is what lets a partner
+                 assertion say cluster-admin (the partner scopes above).
+                 Keycloak's own first-broker-login
                  flow, with no profile page: an address this realm already has
                  is linked once its owner confirms it.
 
@@ -3708,6 +3772,28 @@ spec:
                   claims: '[{"key":"groups","value":"gentian:platform:admin"}]'
                   are.claim.values.regex: "false"
                   group: {{ printf "/gentian:tenant:%s:admins" $tenant | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-platform-admins-mapper
+              name: {{ $tenant }}-kernel-idp-platform-admins-mapper
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                identityProviderAlias: kernel
+                name: platform administrators are this tenant's platform administrators
+                identityProviderMapper: oidc-advanced-group-idp-mapper
+                extraConfig:
+                  syncMode: FORCE
+                  claims: '[{"key":"groups","value":"gentian:platform:admin"}]'
+                  are.claim.values.regex: "false"
+                  group: {{ printf "/gentian:tenant:%s:platform-admins" $tenant | quote }}
               providerConfigRef:
                 name: keycloak
             {{- end }}{{- /* $kernelBroker */}}

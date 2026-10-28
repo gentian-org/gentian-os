@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
-      and 39 more'
+      and 40 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -933,6 +933,7 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     attributes:
+      gentianPartnerRole: tenant-admin
       gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:admins
     realmId: render-fixture
@@ -985,6 +986,32 @@ spec:
     attributes:
       gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:members
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-platform-admins
+  labels:
+    crossplane.io/composite: render-fixture
+  name: gentian-tenant-render-fixture-platform-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianPartnerRole: cluster-admin
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:render-fixture:platform-admins
     realmId: render-fixture
   providerConfigRef:
     name: keycloak

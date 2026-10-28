@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
-      and 39 more'
+      and 41 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -964,6 +964,7 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     attributes:
+      gentianPartnerRole: tenant-admin
       gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:admins
     realmId: render-fixture
@@ -1016,6 +1017,32 @@ spec:
     attributes:
       gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:members
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-platform-admins
+  labels:
+    crossplane.io/composite: render-fixture
+  name: gentian-tenant-render-fixture-platform-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianPartnerRole: cluster-admin
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:render-fixture:platform-admins
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -1135,6 +1162,41 @@ spec:
     identityProviderAlias: kernel
     identityProviderMapper: oidc-advanced-group-idp-mapper
     name: platform administrators are this tenant's administrators
+    realm: render-fixture
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+kind: IdentityProviderMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kernel-idp-platform-admins-mapper
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-kernel-idp-platform-admins-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    extraConfig:
+      are.claim.values.regex: "false"
+      claims: '[{"key":"groups","value":"gentian:platform:admin"}]'
+      group: /gentian:tenant:render-fixture:platform-admins
+      syncMode: FORCE
+    identityProviderAlias: kernel
+    identityProviderMapper: oidc-advanced-group-idp-mapper
+    name: platform administrators are this tenant's platform administrators
     realm: render-fixture
   managementPolicies:
   - Observe

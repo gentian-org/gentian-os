@@ -541,7 +541,7 @@ func TestCustomGroupsLiveInTheTenantsSubtree(t *testing.T) {
 	if got != "gentian:tenant:demo:sales" {
 		t.Fatalf("created %q", got)
 	}
-	for _, bad := range []string{`{"name":"admin"}`, `{"name":"app:x"}`, `{"name":""}`} {
+	for _, bad := range []string{`{"name":"admin"}`, `{"name":"platform-admins"}`, `{"name":"app:x"}`, `{"name":""}`} {
 		if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/create-group", tok, bad); status != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", bad, status)
 		}
