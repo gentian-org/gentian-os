@@ -105,6 +105,9 @@ func TestSyncJob_TakesEverythingAppSpecificFromTheProfile(t *testing.T) {
 	if env["GENTIAN_APP_ADMINS_FILE"] == "" {
 		t.Errorf("member list path not provided")
 	}
+	if env["GENTIAN_APP_USERS_FILE"] == "" {
+		t.Errorf("user list path not provided")
+	}
 
 	if got := job.Annotations[privilege.FingerprintAnnotation]; got != "fp1" {
 		t.Errorf("fingerprint not recorded: %q", got)
@@ -143,14 +146,16 @@ func TestStateOf(t *testing.T) {
 	}
 }
 
-func TestMembersSecret_CarriesTheMemberList(t *testing.T) {
+func TestMembersSecret_CarriesTheMemberLists(t *testing.T) {
 	t.Parallel()
-	s := privilege.MembersSecret("demo", "someapp-ce", "tenant-demo", []byte(`[]`))
+	s := privilege.MembersSecret("demo", "someapp-ce", "tenant-demo", []byte(`[]`), []byte(`[]`))
 	if s.Name != privilege.SecretName("someapp-ce") || s.Namespace != "tenant-demo" {
 		t.Fatalf("unexpected secret identity: %s/%s", s.Namespace, s.Name)
 	}
-	if _, ok := s.Data["members.json"]; !ok {
-		t.Fatalf("member list missing: %+v", s.Data)
+	for _, key := range []string{"members.json", "users.json"} {
+		if _, ok := s.Data[key]; !ok {
+			t.Fatalf("%s missing: %+v", key, s.Data)
+		}
 	}
 	var _ metav1.Object = s
 }
