@@ -331,3 +331,89 @@ func TestThePlatformMovesOneTenantFirstAndStopsOnARollback(t *testing.T) {
 		t.Fatalf("after the canary came up: moved %d, solo at %s", moved, pinned("solo"))
 	}
 }
+
+// A pinned add-on is reported beside its app and moves under its app's mode:
+// the platform moves it in latest mode and not in manual, and move-outdated
+// moves it in any, each moving that add-on's pin and leaving the app and its
+// other add-ons where they are.
+func TestAPinnedAddonIsReportedAndMovedUnderItsAppsMode(t *testing.T) {
+	notes := profileNamed("notes", "one")
+	addon := func(name, version string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(addonProfile(name), "of: element", "of: notes"),
+			`version: "1.0.0"`, `version: "`+version+`"`)
+	}
+	talk, deck := addon("notes-talk", "1.0.0"), addon("notes-deck", "1.0.0")
+	content := served{"gentian": {"notes": notes, "notes-talk": talk, "notes-deck": deck}}
+	src := catalogues(t, content)
+	op := &rolloutsOperator{}
+	h := startCatalogues(t, src, withOperator(op))
+	alice := h.token(t, "gentian", "alice")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/notes", alice,
+		fmt.Sprintf(`{"coordinate":"gentian/notes","digest":%q}`, sha(notes))); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if code, out := h.do(t, "PUT", "/v1/tenants/demo/apps/notes/addons", alice,
+		`{"addons":[`+pinnedAddon("gentian/notes-talk", sha(talk))+`,`+pinnedAddon("gentian/notes-deck", sha(deck))+`]}`); code != http.StatusAccepted {
+		t.Fatalf("set addons = %d %v", code, out)
+	}
+	op.set([]map[string]any{{"tenant": "demo", "profile": "notes", "pinned": sha(notes), "running": sha(notes), "phase": "Done", "ready": true}})
+	// Nothing reads the index until the catalogue has moved on: it is
+	// cached once read.
+	talk2, deck2 := addon("notes-talk", "2.0.0"), addon("notes-deck", "2.0.0")
+	content["gentian"]["notes-talk"], content["gentian"]["notes-deck"] = talk2, deck2
+	if code, out := h.do(t, "PUT", clusterTenant("demo", "/apps/notes/update-mode"), alice, `{"mode":"manual"}`); code >= 300 {
+		t.Fatalf("set mode = %d %v", code, out)
+	}
+
+	_, out := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/updates", alice, "")
+	if e := updateEntryOf(t, out, "demo", "notes-talk"); e["addonOf"] != "notes" || e["outdated"] != true ||
+		e["pinned"] != sha(talk) || e["newest"] != sha(talk2) || e["mode"] != "manual" || e["modeFrom"] != "tenant" {
+		t.Fatalf("add-on entry = %v", e)
+	}
+	if e := updateEntryOf(t, out, "demo", "notes"); e["outdated"] != false || e["addonOf"] != nil {
+		t.Fatalf("app entry = %v", e)
+	}
+	order := []string{}
+	for _, raw := range out["entries"].([]any) {
+		order = append(order, raw.(map[string]any)["profile"].(string))
+	}
+	if got := strings.Join(order, " "); got != "notes notes-deck notes-talk" {
+		t.Fatalf("entries in order %q, want each app's add-ons after it", got)
+	}
+
+	pins := func() map[string]string {
+		out := map[string]string{}
+		for _, p := range appNamed(t, gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{}), "demo", "notes").AddonPins {
+			out[p.Name] = p.Digest
+		}
+		return out
+	}
+	// In manual mode the platform leaves them; the administrator moves one.
+	if moved := h.server().RunLatestMoves(context.Background()); moved != 0 {
+		t.Fatalf("an add-on of a manual-mode app was moved by the platform: %d", moved)
+	}
+	code, out := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/actions/move-outdated", alice, `{"apps":["notes-deck"]}`)
+	if code != http.StatusAccepted || len(out["moved"].([]any)) != 1 || len(out["skipped"].([]any)) != 0 {
+		t.Fatalf("move-outdated = %d %v", code, out)
+	}
+	if p := pins(); p["notes-talk"] != sha(talk) || p["notes-deck"] != sha(deck2) {
+		t.Fatalf("after move-outdated: %v", p)
+	}
+
+	// Back in latest mode the platform moves the other, and only it.
+	if code, out := h.do(t, "PUT", clusterTenant("demo", "/apps/notes/update-mode"), alice, `{"mode":""}`); code >= 300 {
+		t.Fatalf("clear mode = %d %v", code, out)
+	}
+	if moved := h.server().RunLatestMoves(context.Background()); moved != 1 {
+		t.Fatalf("the mover moved %d, want the one add-on", moved)
+	}
+	if p := pins(); p["notes-talk"] != sha(talk2) || p["notes-deck"] != sha(deck2) {
+		t.Fatalf("after the platform's move: %v", p)
+	}
+	if moved := h.server().RunLatestMoves(context.Background()); moved != 0 {
+		t.Fatalf("a current add-on was moved again: %d", moved)
+	}
+	if a := appNamed(t, gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{}), "demo", "notes"); a.Digest != sha(notes) || len(a.Addons) != 2 {
+		t.Fatalf("the app itself changed: %+v", a)
+	}
+}

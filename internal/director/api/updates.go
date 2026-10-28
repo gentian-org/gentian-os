@@ -52,6 +52,10 @@ const (
 type updateEntry struct {
 	Tenant  string `json:"tenant"`
 	Profile string `json:"profile"`
+	// AddonOf names the app an add-on's pin sits in: the entry is that
+	// add-on, and it moves under its app's mode. The cluster runs an add-on
+	// inside its app's release, so it has no build or rollout of its own.
+	AddonOf string `json:"addonOf,omitempty"`
 	// Pinned is the build git names; Running the build the cluster runs.
 	Pinned  string `json:"pinned,omitempty"`
 	Running string `json:"running,omitempty"`
@@ -167,19 +171,57 @@ func (s *Server) updateReport(ctx context.Context, tenant string) (*updateReport
 			}
 			e.Held = heldReasons(e, holds[app.Profile], t)
 			report.Entries = append(report.Entries, e)
+			for _, pin := range app.AddonPins {
+				report.Entries = append(report.Entries, s.addonEntry(ctx, sources, e, pin, holds[app.Profile], unread))
+			}
 		}
 	}
 	for name := range unread {
 		report.Unread = append(report.Unread, name)
 	}
 	sort.Strings(report.Unread)
-	sort.Slice(report.Entries, func(i, j int) bool {
-		if report.Entries[i].Tenant != report.Entries[j].Tenant {
-			return report.Entries[i].Tenant < report.Entries[j].Tenant
+	// By tenant and app, each app's add-ons right after it.
+	app := func(e updateEntry) string {
+		if e.AddonOf != "" {
+			return e.AddonOf
 		}
-		return report.Entries[i].Profile < report.Entries[j].Profile
+		return e.Profile
+	}
+	sort.SliceStable(report.Entries, func(i, j int) bool {
+		a, b := report.Entries[i], report.Entries[j]
+		if a.Tenant != b.Tenant {
+			return a.Tenant < b.Tenant
+		}
+		if app(a) != app(b) {
+			return app(a) < app(b)
+		}
+		if (a.AddonOf == "") != (b.AddonOf == "") {
+			return a.AddonOf == ""
+		}
+		return a.Profile < b.Profile
 	})
 	return report, nil
+}
+
+// addonEntry is one pinned add-on of an app in the report: compared with the
+// catalogue its build came from, under its app's mode, and held by what
+// holds its app -- and while its app's own move is under way.
+func (s *Server) addonEntry(ctx context.Context, sources []visibleSource, base updateEntry, pin gitops.AddonPin, holds []customizationHold, unread map[string]bool) updateEntry {
+	e := updateEntry{
+		Tenant: base.Tenant, Profile: pin.Name, AddonOf: base.Profile, Pinned: pin.Digest,
+		Mode: base.Mode, ModeFrom: base.ModeFrom, Ready: base.Ready,
+	}
+	src, entry, ok := s.newestFor(ctx, sources, gitops.App{Profile: pin.Name, Catalogue: pin.Catalogue}, unread)
+	if ok {
+		e.Catalogue, e.Newest, e.NewestVersion = src.Name, entry.Digest, entry.Version
+		e.Unmet = platformversion.Unmet(entry.Platform)
+		e.Outdated = entry.Digest != "" && entry.Digest != pin.Digest && e.Unmet == ""
+	}
+	e.Held = heldReasons(e, holds, base.Tenant)
+	if e.Outdated && base.Rollout != nil && (base.Rollout.Phase == "Exporting" || base.Rollout.Phase == "Rolling") {
+		e.Held = append(e.Held, "the move of "+base.Profile+" is under way")
+	}
+	return e
 }
 
 // operatorRollout is one entry of the operator's rollouts.
@@ -472,7 +514,7 @@ func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 			skipped = append(skipped, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Newest, Status: "under_way"})
 			continue
 		}
-		res, detail, err := s.moveTo(r.Context(), c, e.Tenant, e.Profile, e.Catalogue, e.Newest, nil)
+		res, detail, err := s.moveEntry(r.Context(), c, e)
 		switch {
 		case err != nil:
 			skipped = append(skipped, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Newest, Status: "refused", Detail: detail})
@@ -483,43 +525,90 @@ func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 	s.json(w, http.StatusAccepted, map[string]any{"moved": moved, "skipped": skipped})
 }
 
+// moveEntry moves what one entry of the report names to its newest build:
+// an app's own pin, or an add-on's pin in its app.
+func (s *Server) moveEntry(ctx context.Context, c call, e updateEntry) (gitops.Result, string, error) {
+	if e.AddonOf != "" {
+		return s.moveAddonTo(ctx, c, e.Tenant, e.AddonOf, e.Profile, e.Catalogue, e.Newest)
+	}
+	return s.moveTo(ctx, c, e.Tenant, e.Profile, e.Catalogue, e.Newest, nil)
+}
+
 // moveTo moves one tenant's app to a build of a catalogue: fetched or read
 // from the cluster's store, held to the floor, committed with its profile,
 // and the pin moved. The same path an install takes, without a response
 // writer: what would have been the refusal comes back as detail.
 // defaultGrant is the install's, as InstallFrom takes it: nil for a move.
 func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueName, digest string, defaultGrant *bool) (gitops.Result, string, error) {
-	rec := &recorder{}
-	req := (&http.Request{}).WithContext(ctx)
-	source, known, err := s.resolveSource(ctx, tenant, catalogueName)
+	source, detail, err := s.materialise(ctx, c, "app", tenant, profile, catalogueName, digest)
 	if err != nil {
-		return gitops.Result{}, err.Error(), err
-	}
-	if !known {
-		return gitops.Result{}, "the tenant no longer sees catalogue " + catalogueName, fmt.Errorf("unknown catalogue")
-	}
-	fetched, ok := s.fetchOrStored(rec, req, source, tenant, profile, digest)
-	if !ok {
-		return gitops.Result{}, rec.detail(), fmt.Errorf("fetch refused")
-	}
-	if s.refusedByFloor(rec, req, fetched, "app "+catalogueName+"/"+profile) {
-		return gitops.Result{}, rec.detail(), fmt.Errorf("floor")
-	}
-	zone, err := s.reservedAddressZone(ctx)
-	if err != nil {
-		return gitops.Result{}, err.Error(), err
-	}
-	if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
-		return gitops.Result{}, why, fmt.Errorf("reserved address")
-	}
-	if _, ok := s.commitEntry(rec, req, c, tenant, source, fetched); !ok {
-		return gitops.Result{}, rec.detail(), fmt.Errorf("commit refused")
+		return gitops.Result{}, detail, err
 	}
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, digest, source.Name, defaultGrant, c.meta)
 	if err != nil {
 		return gitops.Result{}, err.Error(), err
 	}
 	return res, "", nil
+}
+
+// moveAddonTo moves one add-on's pin in a tenant's app to a build of a
+// catalogue, by the steps moveTo takes; the app's other add-ons, and who
+// has each, stay as they are.
+func (s *Server) moveAddonTo(ctx context.Context, c call, tenant, base, addon, catalogueName, digest string) (gitops.Result, string, error) {
+	source, detail, err := s.materialise(ctx, c, "add-on", tenant, addon, catalogueName, digest)
+	if err != nil {
+		return gitops.Result{}, detail, err
+	}
+	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	if err != nil {
+		return gitops.Result{}, err.Error(), err
+	}
+	for _, a := range apps {
+		if a.Profile != base {
+			continue
+		}
+		pin := []gitops.AddonPin{{Name: addon, Digest: digest, Catalogue: source.Name}}
+		res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, base, a.Addons, pin, nil, c.meta)
+		if err != nil {
+			return gitops.Result{}, err.Error(), err
+		}
+		return res, "", nil
+	}
+	return gitops.Result{}, "the tenant no longer has " + base + " installed", gitops.ErrNotInstalled
+}
+
+// materialise is what a move commits before the pin: the build fetched or
+// read from the cluster's store, held to the floor and to the reserved
+// addresses, and committed with its profile. what says which it is, "app"
+// or "add-on", for a refusal.
+func (s *Server) materialise(ctx context.Context, c call, what, tenant, profile, catalogueName, digest string) (visibleSource, string, error) {
+	rec := &recorder{}
+	req := (&http.Request{}).WithContext(ctx)
+	source, known, err := s.resolveSource(ctx, tenant, catalogueName)
+	if err != nil {
+		return visibleSource{}, err.Error(), err
+	}
+	if !known {
+		return visibleSource{}, "the tenant no longer sees catalogue " + catalogueName, fmt.Errorf("unknown catalogue")
+	}
+	fetched, ok := s.fetchOrStored(rec, req, source, tenant, profile, digest)
+	if !ok {
+		return visibleSource{}, rec.detail(), fmt.Errorf("fetch refused")
+	}
+	if s.refusedByFloor(rec, req, fetched, what+" "+catalogueName+"/"+profile) {
+		return visibleSource{}, rec.detail(), fmt.Errorf("floor")
+	}
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		return visibleSource{}, err.Error(), err
+	}
+	if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
+		return visibleSource{}, why, fmt.Errorf("reserved address")
+	}
+	if _, ok := s.commitEntry(rec, req, c, tenant, source, fetched); !ok {
+		return visibleSource{}, rec.detail(), fmt.Errorf("commit refused")
+	}
+	return source, "", nil
 }
 
 // recorder captures what a handler would have answered, for a caller that

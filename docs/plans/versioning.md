@@ -131,7 +131,8 @@ a security fix may be applied outside the window.
 There is no floor in `tenant` mode: a tenant may stay where it is. Instead
 the operator computes, for every `Component` on the cluster, whether a newer
 build the platform admits exists on its track, and what keeps it where it is:
-its mode, a `Customization` with `upgradeRisk`, a failed move. The usher
+its mode, a `Customization` with `upgradeRisk`, a failed move. A pinned
+add-on is listed under its app, at its own build. The usher
 serves the report for the cluster and per tenant. The administration console
 shows it under the cluster's apps with one action, "move to the newest build",
 for all listed or for a selection, whoever introduced the lag.
