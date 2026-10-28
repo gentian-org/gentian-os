@@ -125,7 +125,8 @@ Settings in the admin console (`GET`/`PUT /v1/tenants/<t>/organization`,
 names what is still `missing` of legal name, country, currency, time zone and
 languages; the App Store warns until nothing is. A component whose profile
 names `valueMapping.platform.organizationKey` is told all of it as one object,
-`timeZoneKey` the zone alone; an app sets itself up from them.
+`timeZoneKey` the zone alone (unset while there is none); an app sets
+itself up from them.
 
 A tenant's partners — realms of other clusters its realm links its people's
 accounts with (`spec.partners`, AD-17, [identity-brokering.md](identity-brokering.md)).

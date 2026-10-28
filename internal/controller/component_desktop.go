@@ -114,12 +114,10 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 			setPath(out, key, value)
 		}
 	}
-	if m.TimeZoneKey != "" {
-		zone := ""
-		if tenant.Spec.Organization != nil {
-			zone = tenant.Spec.Organization.TimeZone
-		}
-		setPath(out, m.TimeZoneKey, zone)
+	// Only a zone the tenant names: while it names none, the profile's own
+	// default at that key stands rather than an empty string over it.
+	if m.TimeZoneKey != "" && tenant.Spec.Organization != nil && tenant.Spec.Organization.TimeZone != "" {
+		setPath(out, m.TimeZoneKey, tenant.Spec.Organization.TimeZone)
 	}
 	if m.OrganizationKey != "" {
 		setPath(out, m.OrganizationKey, organizationValues(tenant))

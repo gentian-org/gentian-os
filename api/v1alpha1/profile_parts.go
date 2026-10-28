@@ -1269,8 +1269,9 @@ type PlatformValueMapping struct {
 	OrganizationKey string `json:"organizationKey,omitempty"`
 
 	// TimeZoneKey receives the tenant's time zone (spec.organization.timeZone),
-	// an IANA name, and the empty string while the tenant names none: for a
-	// chart that takes only the zone, such as a TZ variable.
+	// an IANA name, for a chart that takes only the zone, such as a TZ
+	// variable. While the tenant names none the key is not set, so the
+	// profile's own value there stands.
 	// +optional
 	TimeZoneKey string `json:"timeZoneKey,omitempty"`
 

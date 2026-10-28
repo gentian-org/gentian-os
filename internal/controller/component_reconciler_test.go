@@ -597,7 +597,7 @@ func TestAReleaseNamesTheWaiverTheClusterDoesNotAllow(t *testing.T) {
 
 // A profile naming organizationKey is told who the tenant is as one object,
 // every field present and complete only once the required ones are given;
-// timeZoneKey is told the zone alone.
+// timeZoneKey is told the zone alone, and nothing while there is none.
 func TestTheTenantsOrganizationLandsWhereTheProfileSays(t *testing.T) {
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
 	profile := &gentianov1alpha1.ComponentProfile{}
@@ -607,6 +607,9 @@ func TestTheTenantsOrganizationLandsWhereTheProfileSays(t *testing.T) {
 	tenant := platformTenantFixture()
 	org := func() map[string]interface{} {
 		return r.platformValues(profile, tenant, r.zoneOf(tenant))["tenantProfile"].(map[string]interface{})
+	}
+	if _, set := r.platformValues(profile, tenant, r.zoneOf(tenant))["env"]; set {
+		t.Fatal("timeZoneKey was set for a tenant naming no zone")
 	}
 	if got := org(); got["complete"] != false || got["legalName"] != "" || got["fiscalYearStartMonth"] != int64(1) ||
 		got["address"].(map[string]interface{})["city"] != "" {
