@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-create-account-create,
-      keycloak-create-account-exec-auth-otp-form, and 75 more'
+      keycloak-create-account-exec-auth-otp-form, and 78 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -1184,6 +1184,7 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     attributes:
+      gentianPartnerRole: tenant-admin
       gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:admins
     realmId: render-fixture
@@ -1236,6 +1237,32 @@ spec:
     attributes:
       gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:members
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-platform-admins
+  labels:
+    crossplane.io/composite: render-fixture
+  name: gentian-tenant-render-fixture-platform-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianPartnerRole: cluster-admin
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:render-fixture:platform-admins
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -1847,6 +1874,42 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-roles
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0002
+    config:
+      access.token.claim: "true"
+      aggregate.attrs: "true"
+      claim.name: gentian_roles
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      jsonType.label: String
+      multivalued: "true"
+      user.attribute: gentianPartnerRole
+      userinfo.token.claim: "false"
+    name: gentian-roles
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: ClientScope
 metadata:
@@ -2005,6 +2068,42 @@ spec:
     name: pairwise-subject
     protocol: openid-connect
     protocolMapper: oidc-sha256-pairwise-sub-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-roles
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0001
+    config:
+      access.token.claim: "true"
+      aggregate.attrs: "true"
+      claim.name: gentian_roles
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      jsonType.label: String
+      multivalued: "true"
+      user.attribute: gentianPartnerRole
+      userinfo.token.claim: "false"
+    name: gentian-roles
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
     realmId: render-fixture
   providerConfigRef:
     name: keycloak

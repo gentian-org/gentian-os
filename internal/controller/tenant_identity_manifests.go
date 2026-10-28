@@ -401,8 +401,19 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 
 	// 1. Add tenant default groups. App admins comes last, after the app loop
 	// below, because what it grants is collected from the installed profiles.
+	//
+	// The two administrators' groups carry the role a partner assertion
+	// says for their members (keycloak.PartnerRoleAttribute): the scope
+	// partner-<name> the Composition makes reads it off the person's
+	// groups, and nothing else does. The Composition declares the same
+	// attribute on the same groups, so the two writers agree.
 	addGroup(keycloak.TenantMembersGroup(tenant.Name), nil)
-	addGroup(keycloak.TenantAdminsGroup(tenant.Name), nil)
+	addGroup(keycloak.TenantAdminsGroup(tenant.Name), map[string][]string{
+		keycloak.PartnerRoleAttribute: {keycloak.PartnerRoleTenantAdmin},
+	})
+	addGroup(keycloak.TenantPlatformAdminsGroup(tenant.Name), map[string][]string{
+		keycloak.PartnerRoleAttribute: {keycloak.PartnerRoleClusterAdmin},
+	})
 
 	// The Odoo roles an app admin gets, unioned across everything installed.
 	//

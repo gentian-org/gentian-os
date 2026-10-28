@@ -31,6 +31,35 @@ func TenantAdminsGroup(tenant string) string {
 	return tenantPrefix(tenant) + "admins"
 }
 
+// TenantPlatformAdminsGroup is the Keycloak group the platform's
+// administrators are in while they are in a tenant's realm through the
+// identity provider "kernel" (Tenant spec.platformAccess.adminsEnter), put
+// there and taken out again at every sign-in like the admins group. It
+// grants nothing: no role in the kernel store, nothing on the desktop or in
+// an app. It exists so that a partner assertion can say that the person is
+// a cluster administrator (PartnerRoleClusterAdmin), and for nothing else.
+func TenantPlatformAdminsGroup(tenant string) string {
+	return tenantPrefix(tenant) + "platform-admins"
+}
+
+// PartnerRoleAttribute is the group attribute that names the role a partner
+// assertion carries for the group's members, under the claim
+// PartnerRolesClaim of the scope partner-<name> and nowhere else: the
+// mapper on that scope aggregates it over the person's groups, and no other
+// mapper reads it (groupAttributeNames in the operator leaves it out). The
+// admins group carries PartnerRoleTenantAdmin, the platform-admins group
+// PartnerRoleClusterAdmin; a person in neither has no claim.
+//
+// The attribute is the groups' alone: the realm's user profile declares no
+// such attribute, and Keycloak admits no unmanaged attribute on an account,
+// so the claim can only ever follow from group membership.
+const (
+	PartnerRoleAttribute    = "gentianPartnerRole"
+	PartnerRolesClaim       = "gentian_roles"
+	PartnerRoleTenantAdmin  = "tenant-admin"
+	PartnerRoleClusterAdmin = "cluster-admin"
+)
+
 // TenantAppGroup is the Keycloak group for users entitled to an app profile.
 func TenantAppGroup(tenant, profile string) string {
 	return tenantPrefix(tenant) + "app:" + profile
@@ -52,13 +81,15 @@ func TenantAppAdminsGroup(tenant string) string {
 // additionalProfiles covers OIDC pack profiles not yet listed on tenant.Spec.Apps.
 func CollectTenantGroupNames(tenant *gentianov1alpha1.Tenant, additionalProfiles []string) []string {
 	seen := map[string]struct{}{
-		TenantMembersGroup(tenant.Name):   {},
-		TenantAdminsGroup(tenant.Name):    {},
-		TenantAppAdminsGroup(tenant.Name): {},
+		TenantMembersGroup(tenant.Name):        {},
+		TenantAdminsGroup(tenant.Name):         {},
+		TenantPlatformAdminsGroup(tenant.Name): {},
+		TenantAppAdminsGroup(tenant.Name):      {},
 	}
 	names := []string{
 		TenantMembersGroup(tenant.Name),
 		TenantAdminsGroup(tenant.Name),
+		TenantPlatformAdminsGroup(tenant.Name),
 		TenantAppAdminsGroup(tenant.Name),
 	}
 	add := func(group string) {

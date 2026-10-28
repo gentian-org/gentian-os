@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 func TestGroupAttributeNamesDerivesOdooMapper(t *testing.T) {
@@ -224,5 +225,63 @@ func TestCollectGentianGroupsJSONLeavesAppAdminsBareWithoutDeclarations(t *testi
 	}
 	if names := groupAttributeNames(raw); len(names) != 0 {
 		t.Fatalf("got mapper names %v, want none", names)
+	}
+}
+
+// The two administrators' groups carry the role a partner assertion says for
+// their members, and the members group carries none: the claim
+// gentian_roles follows from group membership and from nothing else.
+func TestCollectGentianGroupsJSONPutsThePartnerRoleOnTheAdministratorsGroups(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "corp"},
+		Spec:       gentianov1alpha1.TenantSpec{DisplayName: "Test Tenant"},
+	}
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	r := &TenantReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+
+	raw, err := r.collectGentianGroupsJSON(context.Background(), tenant, nil)
+	if err != nil {
+		t.Fatalf("collectGentianGroupsJSON: %v", err)
+	}
+	var groups []struct {
+		Name       string              `json:"name"`
+		Attributes map[string][]string `json:"attributes"`
+	}
+	if err := json.Unmarshal([]byte(raw), &groups); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	byName := map[string][]string{}
+	for _, g := range groups {
+		byName[g.Name] = g.Attributes[keycloak.PartnerRoleAttribute]
+	}
+	if _, ok := byName["gentian:tenant:corp:platform-admins"]; !ok {
+		t.Fatalf("the platform-admins group is not made: %s", raw)
+	}
+	for group, want := range map[string]string{
+		"gentian:tenant:corp:admins":          "tenant-admin",
+		"gentian:tenant:corp:platform-admins": "cluster-admin",
+		"gentian:tenant:corp:members":         "",
+		"gentian:tenant:corp:app-admins":      "",
+	} {
+		if got := strings.Join(byName[group], ","); got != want {
+			t.Errorf("%s: partner role %q, want %q", group, got, want)
+		}
+	}
+}
+
+// The partner role reaches a token through the scope partner-<name> alone.
+// A mapper for it on the groups scope, which every client of the realm has
+// by default, would put the role into every token.
+func TestGroupAttributeNamesLeavesThePartnerRoleOut(t *testing.T) {
+	t.Parallel()
+	groups := `[
+		{"name":"gentian:tenant:corp:admins","attributes":{"gentianPartnerRole":["tenant-admin"]}},
+		{"name":"gentian:tenant:corp:platform-admins","attributes":{"gentianPartnerRole":["cluster-admin"]}},
+		{"name":"gentian:tenant:corp:app:odoo","attributes":{"gentianOdooGroupRoles":["base.group_user"]}}
+	]`
+	if got := strings.Join(groupAttributeNames(groups), ","); got != "gentianOdooGroupRoles" {
+		t.Fatalf("mapper names = %q, want gentianOdooGroupRoles alone", got)
 	}
 }

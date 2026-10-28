@@ -32,6 +32,7 @@ func TestCollectTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 	want := []string{
 		"gentian:tenant:demo:members",
 		"gentian:tenant:demo:admins",
+		"gentian:tenant:demo:platform-admins",
 		"gentian:tenant:demo:app-admins",
 		"gentian:tenant:demo:app:demo-app",
 	}
@@ -49,5 +50,17 @@ func TestTenantAppAdminsGroup(t *testing.T) {
 	t.Parallel()
 	if got := TenantAppAdminsGroup("demo"); got != "gentian:tenant:demo:app-admins" {
 		t.Fatalf("TenantAppAdminsGroup() = %q", got)
+	}
+}
+
+// The platform's administrators are in it while they are in the tenant
+// through the kernel provider; a partner assertion reads cluster-admin off
+// it. It is the tenant's, under the tenant's prefix like the admins group,
+// so the tenant's realm may speak for it and nothing confuses it with the
+// kernel realm's gentian:platform:admin.
+func TestTenantPlatformAdminsGroup(t *testing.T) {
+	t.Parallel()
+	if got := TenantPlatformAdminsGroup("demo"); got != "gentian:tenant:demo:platform-admins" {
+		t.Fatalf("TenantPlatformAdminsGroup() = %q", got)
 	}
 }
