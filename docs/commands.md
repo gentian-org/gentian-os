@@ -117,6 +117,16 @@ kubectl gentian tenants set acme --country DE
 kubectl gentian tenants set acme --country ""
 ```
 
+Who the tenant is — legal name, currency, time zone, fiscal year start,
+address, website, email, phone, VAT and register numbers (`spec.organization`)
+and its display name — is filled in by its administrators under Tenant
+Settings in the admin console (`GET`/`PUT /v1/tenants/<t>/organization`,
+`can_set_policy` to write). A currency left empty is the country's. The answer
+names what is still `missing` of legal name, country, currency, time zone and
+languages; the App Store warns until nothing is. A component whose profile
+names `valueMapping.platform.organizationKey` is told all of it as one object,
+`timeZoneKey` the zone alone; an app sets itself up from them.
+
 A tenant's partners — realms of other clusters its realm links its people's
 accounts with (`spec.partners`, AD-17, [identity-brokering.md](identity-brokering.md)).
 `--issue`: our people sign in there and our apps call it for them; `--accept`:

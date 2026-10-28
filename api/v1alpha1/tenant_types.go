@@ -399,6 +399,16 @@ type TenantSpec struct {
 	// +kubebuilder:validation:Pattern=`^[A-Z]{2}$`
 	Country string `json:"country,omitempty"`
 
+	// Organization is who the tenant is: the facts an app needs to set itself
+	// up for this organisation rather than a placeholder (its company, its
+	// currency, its clock). Its administrators fill it in under Tenant
+	// Settings; a component whose profile names
+	// valueMapping.platform.organizationKey is told it. An app reads it when
+	// it sets itself up, so a later change does not rewrite what the app
+	// already holds.
+	// +optional
+	Organization *TenantOrganization `json:"organization,omitempty"`
+
 	// Privileges are the privilege requests a person granted for this
 	// tenant's components (AD-5). They live here because a grant has to
 	// survive the thing it applies to: a Component is rebuilt from its
@@ -758,6 +768,88 @@ type TenantQuotas struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxPods int32 `json:"maxPods,omitempty"`
+}
+
+// TenantOrganization is who a tenant is, as its apps are told it. Its
+// country and languages are the Tenant's own spec.country and spec.locales.
+type TenantOrganization struct {
+	// LegalName is the name the organisation is registered under (Example AG),
+	// beside the tenant's display name, which is what its people call it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	LegalName string `json:"legalName,omitempty"`
+
+	// Currency is the organisation's currency, ISO 4217 (CHF, EUR).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z]{3}$`
+	Currency string `json:"currency,omitempty"`
+
+	// TimeZone is the organisation's time zone, an IANA name (Europe/Zurich).
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`
+	TimeZone string `json:"timeZone,omitempty"`
+
+	// FiscalYearStartMonth is the month the organisation's fiscal year begins
+	// in, 1 to 12. Unset: January.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=12
+	FiscalYearStartMonth int32 `json:"fiscalYearStartMonth,omitempty"`
+
+	// Address is where the organisation is. Its country is spec.country.
+	// +optional
+	Address *TenantAddress `json:"address,omitempty"`
+
+	// Website is the organisation's public site, an http(s) address.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
+	Website string `json:"website,omitempty"`
+
+	// Email is the organisation's contact address.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^[^@\s]+@[^@\s]+$`
+	Email string `json:"email,omitempty"`
+
+	// Phone is the organisation's phone number, preferably international
+	// (+41 44 123 45 67).
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	Phone string `json:"phone,omitempty"`
+
+	// TaxID is the organisation's VAT number (CHE-123.456.789 MWST,
+	// DE123456789).
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	TaxID string `json:"taxId,omitempty"`
+
+	// RegistrationNumber is its number in the commercial register
+	// (CHE-123.456.789, HRB 12345).
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	RegistrationNumber string `json:"registrationNumber,omitempty"`
+}
+
+// TenantAddress is a postal address without its country.
+type TenantAddress struct {
+	// Street is the street and number, a line per line of the address.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	Street string `json:"street,omitempty"`
+	// PostalCode is the postal code.
+	// +optional
+	// +kubebuilder:validation:MaxLength=20
+	PostalCode string `json:"postalCode,omitempty"`
+	// City is the city or town.
+	// +optional
+	// +kubebuilder:validation:MaxLength=100
+	City string `json:"city,omitempty"`
+	// Region is the state, canton or province, where the address has one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=100
+	Region string `json:"region,omitempty"`
 }
 
 // TenantPlatformAccess is what a tenant opens to the platform's own people.
