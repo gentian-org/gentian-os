@@ -49,7 +49,7 @@
 #                                                             to the tenant as its administrators (the tenant's switch)
 #
 #   kubectl gentian platform-roles holders                     who holds which cluster role by name, as the claim declares
-#   kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>]
+#   kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>]
 #                                                             a person of the platform tenant, or an administrator
 #                                                             of another, holds it: one commit
 #   kubectl gentian platform-roles holders remove <role> <tenant> <login>   no longer
@@ -1640,7 +1640,7 @@ cmd_tenants_platform_access() {
 #
 #   platform-roles candidates                     who could hold one, from the registrar
 #   platform-roles holders                        who holds which, as the claim declares
-#   platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>]
+#   platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>]
 #   platform-roles holders remove <role> <tenant> <login>
 #   platform-roles members                        who holds admin and breakGlass through their group
 #
@@ -1700,7 +1700,7 @@ cmd_platform_roles_members() {
 
 cmd_platform_roles_holders() {
     local action="${1:-list}" answer
-    local usage="usage: kubectl gentian platform-roles holders [list | add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] | remove <role> <tenant> <login>]"
+    local usage="usage: kubectl gentian platform-roles holders [list | add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>] | remove <role> <tenant> <login>]"
     need jq
     shift || true
     case "${action}" in
@@ -1719,10 +1719,11 @@ cmd_platform_roles_holders() {
                 column -t -s $'\t'
             ;;
         add)
-            local role="" tenant="" login="" reason="" expires=""
+            local role="" tenant="" login="" reason="" expires="" scope=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --reason) [[ $# -ge 2 ]] || die "${usage}"; reason="$2"; shift 2 ;;
+                    --scope) [[ $# -ge 2 ]] || die "${usage}"; scope="$2"; shift 2 ;;
                     --expires) [[ $# -ge 2 ]] || die "${usage}"; expires="$2"; shift 2 ;;
                     -*) die "unknown option $1" ;;
                     *)
@@ -1734,6 +1735,9 @@ cmd_platform_roles_holders() {
                 esac
             done
             [[ -n "${role}" && -n "${tenant}" && -n "${login}" && -n "${reason}" ]] || die "${usage}"
+            # A tenant's auditor is a person of the platform tenant; the one
+            # tenant whose evidence they read is theirs to name.
+            [[ "${role}" != "tenantAuditor" || -n "${scope}" ]] || die "tenantAuditor reads one tenant's evidence: name it with --scope tenant:<t>"
             _label "The tenant" "${tenant}"
             _discover
             local people person
@@ -1753,13 +1757,14 @@ cmd_platform_roles_holders() {
             username="$(jq -r '.username' <<<"${person}")"
             email="$(jq -r '.email // ""' <<<"${person}")"
             answer="$(_call PUT "/v1/clusters/${_CLUSTER}/platform-roles/holders/${role}/${tenant}/${subject}" \
-                "$(jq -n --arg u "${username}" --arg e "${email}" --arg r "${reason}" --arg x "${expires}" \
-                    '{username: $u, email: $e, reason: $r} + (if $x != "" then {expiresAt: $x} else {} end)')")" || exit 1
+                "$(jq -n --arg u "${username}" --arg e "${email}" --arg r "${reason}" --arg x "${expires}" --arg s "${scope}" \
+                    '{username: $u, email: $e, reason: $r} + (if $x != "" then {expiresAt: $x} else {} end)
+                        + (if $s != "" then {scope: $s} else {} end)')")" || exit 1
             if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
                 echo "${username} of ${tenant} holds ${role} already, as stated; nothing was committed."
                 return 0
             fi
-            echo "${username} of ${tenant} holds ${role}${expires:+ until ${expires}}: committed ($(_committed "${answer}"))."
+            echo "${username} of ${tenant} holds ${role}${scope:+ over ${scope}}${expires:+ until ${expires}}: committed ($(_committed "${answer}"))."
             echo "Once Argo CD has synced, the operator writes the role for their ${tenant} account; they use it"
             echo "signed in to ${tenant}, from its admin console."
             ;;

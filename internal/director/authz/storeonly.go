@@ -132,12 +132,12 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 		return out, fmt.Errorf("%w: %s", ErrNotProjected, tenant)
 	}
 	for _, t := range onTenant {
-		// Who approves the tenant's perimeter is the Cluster claim's to say,
-		// and the projection removes every entry it does not name. Present or
-		// not, it is not a right only the store knows, and it does not travel
-		// in a bundle: on the cluster a tenant is imported to, that is its
-		// administrator's decision.
-		if t.Relation == "perimeter_approver" {
+		// Who approves the tenant's perimeter and who reads its evidence are
+		// the Cluster claim's to say, and the projection removes every entry
+		// it does not name. Present or not, it is not a right only the store
+		// knows, and it does not travel in a bundle: on the cluster a tenant
+		// is imported to, that is its administrator's decision.
+		if claimTenantRelation(t.Relation) {
 			continue
 		}
 		if p := plain(t); !derived[key(p)] {

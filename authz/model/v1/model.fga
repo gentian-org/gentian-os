@@ -16,7 +16,8 @@ model
 #                   group per role. The exception is a role the Cluster claim
 #                   gives a person by name (spec.platformAccess.roleHolders):
 #                   security_officer, auditor, service_admin,
-#                   shared_apps_admin and perimeter_approver take
+#                   shared_apps_admin, perimeter_approver and a
+#                   tenant's auditor take
 #                   user:<realm>/<sub>, the account qualified by the realm
 #                   that holds it, which a token from any other realm can
 #                   never name
@@ -95,6 +96,11 @@ type tenant
     # A role holder of scope tenant:<t> (an administrator of this tenant), or
     # the cluster's perimeter approver.
     define perimeter_approver: [user] or perimeter_approver from cluster
+    # A person of the platform tenant the cluster's administrator named to
+    # read this tenant's evidence and nothing else's: commonly the tenant's
+    # own administrator, given an account of the platform's realm for it. It
+    # grants no entry to the tenant (can_enter).
+    define auditor: [user]
     define member: [group#member]              # gentian:tenant:<t>:members
 
     # reach — the desktop host at L2. An admin account must get in to
@@ -122,6 +128,10 @@ type tenant
     define can_expose: perimeter_approver or admin from cluster
     define can_approve_privilege: can_expose
     define can_view: member or admin or perimeter_approver or can_audit from cluster
+    # The tenant's audit records in the evidence store, read from the platform
+    # tenant's console: the tenant's auditor, and the cluster's, whose
+    # can_audit reads every tenant's.
+    define can_read_evidence: auditor or can_audit from cluster
 
     # Admin tiles on the desktop. Not an app permission: app#can_use excludes
     # admin accounts by design, so an admin account can reach no app object —

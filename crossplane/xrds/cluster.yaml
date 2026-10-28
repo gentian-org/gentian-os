@@ -394,15 +394,19 @@ spec:
                         cluster and by people of the platform tenant only;
                         perimeterApprover over the cluster by a person of the
                         platform tenant, and over their own tenant
-                        (tenant:<t>) by a tenant's administrator. An entry
-                        whose expiresAt has passed grants nothing.
+                        (tenant:<t>) by a tenant's administrator;
+                        tenantAuditor, reading one tenant's evidence, by a
+                        person of the platform tenant over the tenant the
+                        entry names (tenant:<t>, never platform), so one
+                        account audits one tenant. An entry whose expiresAt
+                        has passed grants nothing.
                       items:
                         type: object
                         required: [role, tenant, subject, username]
                         properties:
                           role:
                             type: string
-                            enum: [securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover]
+                            enum: [securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover, tenantAuditor]
                           scope:
                             type: string
                             pattern: '^(cluster|tenant:[a-z0-9]([-a-z0-9]*[a-z0-9])?)$'

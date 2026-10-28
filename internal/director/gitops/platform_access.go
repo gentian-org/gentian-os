@@ -44,7 +44,7 @@ type RoleHolder struct {
 	// Role is the claim's name for the role: one of authz.HolderRoles.
 	Role string `json:"role"`
 	// Scope is how far it reaches: "cluster", or "tenant:<t>" for the
-	// perimeter approver of one tenant (authz.HolderScope).
+	// perimeter approver or auditor of one tenant (authz.EntryScope).
 	Scope string `json:"scope,omitempty"`
 	// Tenant is the tenant whose realm holds the account.
 	Tenant string `json:"tenant"`
@@ -160,12 +160,16 @@ func validHolder(h RoleHolder, now time.Time) error {
 	if h.Reason == "" {
 		return fmt.Errorf("%w: the reason is missing", ErrInvalidRoleHolder)
 	}
-	scope, ok := authz.HolderScope(h.Role, h.Tenant)
-	if !ok {
-		return fmt.Errorf("%w: %s is held by people of the platform tenant only", ErrInvalidRoleHolder, h.Role)
-	}
-	if h.Scope != scope {
-		return fmt.Errorf("%w: %s held by a person of tenant %s has scope %s, not %q", ErrInvalidRoleHolder, h.Role, h.Tenant, scope, h.Scope)
+	if scope, ok := authz.EntryScope(h.Role, h.Tenant, h.Scope); !ok || h.Scope != scope {
+		if h.Role == "tenantAuditor" {
+			return fmt.Errorf("%w: tenantAuditor is held by a person of the platform tenant over one other tenant, "+
+				"scope tenant:<t>, not %q by a person of %s", ErrInvalidRoleHolder, h.Scope, h.Tenant)
+		}
+		derived, held := authz.HolderScope(h.Role, h.Tenant)
+		if !held {
+			return fmt.Errorf("%w: %s is held by people of the platform tenant only", ErrInvalidRoleHolder, h.Role)
+		}
+		return fmt.Errorf("%w: %s held by a person of tenant %s has scope %s, not %q", ErrInvalidRoleHolder, h.Role, h.Tenant, derived, h.Scope)
 	}
 	if h.ExpiresAt != "" {
 		at, err := time.Parse(time.RFC3339, h.ExpiresAt)
@@ -182,9 +186,10 @@ func validHolder(h RoleHolder, now time.Time) error {
 // SetRoleHolder gives a person a role, or restates it: one commit to the
 // claim. The tenant has to be one git declares, and either the platform
 // tenant, whose people are the kernel realm's, or one with a realm of its
-// own. That the person is an administrator of that tenant, where the role
-// asks for one, is the caller's to have checked. An empty scope is filled in
-// with the one the role has for the tenant's people.
+// own, and so does the tenant a scope tenant:<t> names. That the person is
+// an administrator of that tenant, where the role asks for one, is the
+// caller's to have checked. An empty scope is filled in with the one the role
+// has for the tenant's people; a tenantAuditor's has to be stated.
 func (g *GitOps) SetRoleHolder(ctx context.Context, h RoleHolder, meta Meta) (Result, error) {
 	if h.Scope == "" {
 		h.Scope, _ = authz.HolderScope(h.Role, h.Tenant)
@@ -198,6 +203,9 @@ func (g *GitOps) SetRoleHolder(ctx context.Context, h RoleHolder, meta Meta) (Re
 	}
 	if !slices.Contains(names, h.Tenant) {
 		return Result{}, fmt.Errorf("%w: this cluster has no tenant %q", ErrInvalidRoleHolder, h.Tenant)
+	}
+	if audited, ok := strings.CutPrefix(h.Scope, "tenant:"); ok && !slices.Contains(names, audited) {
+		return Result{}, fmt.Errorf("%w: this cluster has no tenant %q", ErrInvalidRoleHolder, audited)
 	}
 	adopts, err := g.IsPlatformTenant(ctx, h.Tenant)
 	if err != nil {

@@ -98,7 +98,9 @@ func TestAMisspeltPlatformRoleIsSkippedAndTheRestProjected(t *testing.T) {
 // have or that has no realm of its own, a subject that is no account id and
 // an entry that has expired grant nothing, and nor does one whose person of
 // a tenant is no longer its administrator. A perimeter approver of a tenant
-// is held on that tenant; one of the platform tenant on the cluster.
+// is held on that tenant; one of the platform tenant on the cluster. A
+// tenant's auditor is a person of the platform tenant, held on the tenant its
+// entry names.
 func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 	claim := clusterClaim("")
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -124,6 +126,10 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 		holder("auditor", "gone", "b2"),
 		holder("auditor", "test", "not a subject"),
 		holder("auditor", "test", "n1"), // no longer an administrator of test
+		holder("tenantAuditor", "platform", "k3", "scope", "tenant:test"),
+		holder("tenantAuditor", "platform", "k4"),                       // names no tenant
+		holder("tenantAuditor", "platform", "k5", "scope", "cluster"),   // reads every tenant: that is auditor
+		holder("tenantAuditor", "test", "6f1c", "scope", "tenant:test"), // a person of the tenant itself
 	}, "spec", "platformAccess", "roleHolders")
 	test := &gentianov1alpha1.Tenant{}
 	test.Name = "test"
@@ -154,6 +160,7 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 		{Relation: "perimeter_approver", Realm: "kernel", Subject: "k2"},
 		{Relation: "perimeter_approver", Realm: "test", Subject: "6f1c", Tenant: "test"},
 		{Relation: "auditor", Realm: "test", Subject: "e2"},
+		{Relation: "auditor", Realm: "kernel", Subject: "k3", Tenant: "test"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("roleHolders() = %v, want %v", got, want)
@@ -174,6 +181,12 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 		}
 		if tr.Name != "test" && len(tr.PerimeterApprovers) != 0 {
 			t.Errorf("%s's perimeter approvers: %v", tr.Name, tr.PerimeterApprovers)
+		}
+		if tr.Name == "test" && !reflect.DeepEqual(tr.Auditors, []string{"user:kernel/k3"}) {
+			t.Errorf("test's auditors: %v", tr.Auditors)
+		}
+		if tr.Name != "test" && len(tr.Auditors) != 0 {
+			t.Errorf("%s's auditors: %v", tr.Name, tr.Auditors)
 		}
 	}
 }

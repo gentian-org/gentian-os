@@ -933,6 +933,7 @@ token of that person's realm, and used from their tenant's console.
 | `serviceAdmin` -- the claim's system section (`can_operate_system`) | a person of the platform tenant | `cluster` |
 | `sharedAppsAdmin` -- shared apps (`can_install_shared`, `can_grant_shared`) | a person of the platform tenant | `cluster` |
 | `perimeterApprover` -- public addresses and egress beyond the baseline (`can_expose`, `can_approve_privilege`) | a person of the platform tenant, for every tenant; an administrator of a tenant, for that tenant | `cluster`; `tenant:<t>` |
+| `tenantAuditor` -- reading one tenant's audit evidence from the platform console (`tenant#can_read_evidence`) | a person of the platform tenant, for the one tenant `--scope` names | `tenant:<t>` |
 
 ```bash
 kubectl gentian platform-roles candidates                               # who could hold one: the platform tenant's people, every other tenant's administrators
@@ -940,6 +941,7 @@ kubectl gentian platform-roles holders                                  # ROLE S
 kubectl gentian platform-roles members                                  # who holds admin and breakGlass through their kernel Keycloak group
 kubectl gentian platform-roles holders add securityOfficer acme it@acme.example --reason "acme's CISO approves waivers"   # one commit
 kubectl gentian platform-roles holders add perimeterApprover acme it@acme.example --reason "acme publishes its shop" --expires 2027-06-30T00:00:00Z
+kubectl gentian platform-roles holders add tenantAuditor platform acme-audit@<kernel-domain> --reason "acme reads its own records" --scope tenant:acme
 kubectl gentian platform-roles holders remove securityOfficer acme it@acme.example
 ```
 
@@ -955,8 +957,8 @@ The director's routes, all on the Cluster claim:
 
 | Route | Relation | Body | Answer |
 |---|---|---|---|
-| `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin"], "roleHolders": [{"role","scope","tenant","subject","username","email","reason","expiresAt"}]}` |
-| `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email", "reason", "expiresAt"?}` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `400` without a reason, `422` for a role, tenant or subject that cannot hold one -- a person of another tenant who is not its administrator, or an entry already expired |
+| `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin","tenantAuditor"], "roleHolders": [{"role","scope","tenant","subject","username","email","reason","expiresAt"}]}` |
+| `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email", "reason", "expiresAt"?, "scope"?}` -- `scope` `tenant:<t>` required for `tenantAuditor` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `400` without a reason, `422` for a role, tenant or subject that cannot hold one -- a person of another tenant who is not its administrator, or an entry already expired |
 | `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
 
 The candidates are the registrar's: `GET /v1/clusters/{c}/role-candidates`,
