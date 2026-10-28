@@ -67,8 +67,8 @@ type ProvisioningJobSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 
-	// Script executed with /bin/sh. It is re-run whenever membership changes,
-	// and whenever the profile changes the role or this Job, so it must be
+	// Script executed with /bin/sh. It is re-run whenever either membership
+	// changes, and whenever the profile changes the role or this Job, so it must be
 	// idempotent: converge the app to exactly the membership it is given
 	// rather than applying a delta.
 	//
@@ -77,6 +77,8 @@ type ProvisioningJobSpec struct {
 	//                            members, each {"id","username","email"};
 	//                            email is the address the app receives in
 	//                            the email claim
+	//   GENTIAN_APP_USERS_FILE   path to a JSON array, of the same shape, of
+	//                            everyone the tenant entitled to the app
 	//   GENTIAN_PRIVILEGED_ROLE  spec.provisioning.privilegedRole.name
 	//   GENTIAN_TENANT           tenant name
 	//   GENTIAN_APP              this profile's name

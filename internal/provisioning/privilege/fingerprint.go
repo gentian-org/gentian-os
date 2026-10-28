@@ -34,6 +34,14 @@ func MemberFingerprint(members []authz.KeycloakUser) string {
 	return strings.Join(entries, ",")
 }
 
+// UsersFingerprint returns a short hash of the people entitled to an app. The
+// list can run to thousands, so it is recorded as a hash rather than spelled
+// out as the administrators are.
+func UsersFingerprint(members []authz.KeycloakUser) string {
+	sum := sha256.Sum256([]byte(MemberFingerprint(members)))
+	return hex.EncodeToString(sum[:8])
+}
+
 // DeclarationFingerprint returns a short hash of what an app declares for its
 // privileged-role sync: the role and the Job. A profile that changes either
 // has not had the change applied, whatever the membership, so a completed sync

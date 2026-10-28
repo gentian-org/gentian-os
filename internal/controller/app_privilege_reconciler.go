@@ -108,12 +108,19 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
 		}
 
-		appFingerprint := fingerprint + "@" + privilege.DeclarationFingerprint(profile.Provisioning())
+		// Everyone the tenant entitled to the app, beside its administrators:
+		// the script may give them the app's ordinary roles.
+		users, err := kc.ListGroupMembers(ctx, tenant.Name, gentianTenantAppGroup(tenant.Name, profileName))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("list %s users: %w", profileName, err)
+		}
+		appFingerprint := fingerprint + "@" + privilege.UsersFingerprint(users) +
+			"@" + privilege.DeclarationFingerprint(profile.Provisioning())
 		if r.appPrivilegeSynced(tenant, profileName, appFingerprint) {
 			continue
 		}
 
-		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, appFingerprint)
+		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, users, appFingerprint)
 		if err != nil {
 			syncFailed = true
 			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
@@ -232,7 +239,7 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	profileName string,
 	profile *gentianov1alpha1.ComponentProfile,
 	role *gentianov1alpha1.PrivilegedRoleSpec,
-	members []authz.KeycloakUser,
+	members, users []authz.KeycloakUser,
 	fingerprint string,
 ) (done bool, err error) {
 	switch role.Kind {
@@ -252,11 +259,15 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	if err != nil {
 		return false, fmt.Errorf("encode app-admins members: %w", err)
 	}
+	usersJSON, err := privilege.MembersJSON(users)
+	if err != nil {
+		return false, fmt.Errorf("encode app users: %w", err)
+	}
 
 	// Script and member list travel in one Secret so they are always mounted as
 	// a matched pair; a Job cannot end up running last reconcile's script
 	// against this reconcile's membership.
-	secret := privilege.MembersSecret(tenant.Name, profileName, ns, membersJSON)
+	secret := privilege.MembersSecret(tenant.Name, profileName, ns, membersJSON, usersJSON)
 	secret.StringData = map[string]string{"run.sh": jobSpec.Script}
 	if err := r.applySecret(ctx, secret); err != nil {
 		return false, fmt.Errorf("publish app-admins members: %w", err)

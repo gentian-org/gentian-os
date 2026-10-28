@@ -49,3 +49,14 @@ func TestDeclarationFingerprint_ChangesWithTheScript(t *testing.T) {
 		t.Fatal("fingerprint is not stable")
 	}
 }
+
+// The entitled users are recorded as a hash, so the record stays small however
+// many there are, and still changes when one joins.
+func TestUsersFingerprint_ChangesWithTheUsers(t *testing.T) {
+	t.Parallel()
+	a := UsersFingerprint([]authz.KeycloakUser{{ID: "a", Username: "alice@corp.example"}})
+	b := UsersFingerprint([]authz.KeycloakUser{{ID: "a", Username: "alice@corp.example"}, {ID: "b", Username: "bob@corp.example"}})
+	if a == b || len(a) != 16 {
+		t.Fatalf("users fingerprint: %q vs %q", a, b)
+	}
+}

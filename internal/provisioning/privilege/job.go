@@ -30,6 +30,7 @@ const (
 	FingerprintAnnotation = "gentianos.io/app-privilege-fingerprint"
 
 	membersKey       = "members.json"
+	usersKey         = "users.json"
 	membersMountPath = "/etc/gentian/app-admins"
 	scriptMountPath  = "/scripts"
 )
@@ -70,11 +71,12 @@ func MembersJSON(members []authz.KeycloakUser) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// MembersSecret publishes the member list into the tenant namespace for the
-// sync Job to read. A Secret rather than a ConfigMap: it carries the email
-// addresses of named people, which is not something to leave in a more
-// casually-readable object.
-func MembersSecret(tenant, app, namespace string, membersJSON []byte) *corev1.Secret {
+// MembersSecret publishes the member lists into the tenant namespace for the
+// sync Job to read: the app administrators, and everyone the tenant entitled
+// to the app. A Secret rather than a ConfigMap: it carries the email addresses
+// of named people, which is not something to leave in a more casually-readable
+// object.
+func MembersSecret(tenant, app, namespace string, membersJSON, usersJSON []byte) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      SecretName(app),
@@ -82,7 +84,7 @@ func MembersSecret(tenant, app, namespace string, membersJSON []byte) *corev1.Se
 			Labels:    labels(tenant, app),
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{membersKey: membersJSON},
+		Data: map[string][]byte{membersKey: membersJSON, usersKey: usersJSON},
 	}
 }
 
@@ -103,6 +105,7 @@ func SyncJob(
 
 	env := []corev1.EnvVar{
 		{Name: "GENTIAN_APP_ADMINS_FILE", Value: membersMountPath + "/" + membersKey},
+		{Name: "GENTIAN_APP_USERS_FILE", Value: membersMountPath + "/" + usersKey},
 		{Name: "GENTIAN_PRIVILEGED_ROLE", Value: roleName},
 		{Name: "GENTIAN_TENANT", Value: tenant},
 		{Name: "GENTIAN_APP", Value: app},
@@ -195,7 +198,10 @@ func SyncJob(
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
 									SecretName: SecretName(app),
-									Items:      []corev1.KeyToPath{{Key: membersKey, Path: membersKey}},
+									Items: []corev1.KeyToPath{
+										{Key: membersKey, Path: membersKey},
+										{Key: usersKey, Path: usersKey},
+									},
 								},
 							},
 						},
