@@ -18,9 +18,9 @@ import (
 )
 
 // The platform's own mover: what "latest" means (docs/plans/versioning.md
-// §4.1). Inside the cluster's window it moves apps in latest mode to the
-// newest build their catalogue offers, one tenant first, the rest once that
-// one's move has ended well. A move that is rolled back or fails holds every
+// §4.1). Inside the cluster's window it moves apps in latest mode, and their
+// pinned add-ons, to the newest build their catalogue offers, one tenant
+// first, the rest once that one's move has ended well. A move that is rolled back or fails holds every
 // other tenant's move to that build: the report says so, and a person
 // decides. Nothing is stored between runs; each run reads the report again,
 // which is also what a person reads, so the two never disagree.
@@ -100,7 +100,9 @@ func (s *Server) runLatestMoves(ctx context.Context) (moved int) {
 			keys = append(keys, key)
 		}
 		switch {
-		case e.Pinned == e.Newest && e.Running == e.Newest:
+		case e.Pinned == e.Newest && (e.Running == e.Newest || e.AddonOf != ""):
+			// An add-on runs inside its app's release: pinned is as far as
+			// the report can follow it.
 			tg.done++
 		case e.Pinned == e.Newest:
 			// Asked already and not there yet: a move under way, or one
@@ -135,14 +137,15 @@ func (s *Server) runLatestMoves(ctx context.Context) (moved int) {
 		}
 		for i := 0; i < batch && i < len(tg.behind); i++ {
 			e := tg.behind[i]
-			res, detail, err := s.moveTo(ctx, c, e.Tenant, e.Profile, tg.catalogue, e.Newest, nil)
+			e.Catalogue = tg.catalogue
+			res, detail, err := s.moveEntry(ctx, c, e)
 			if err != nil {
 				log.WarnContext(ctx, "the platform could not move an app", "tenant", e.Tenant, "app", e.Profile, "to", e.Newest, "detail", detail)
 				continue
 			}
 			moved++
 			log.InfoContext(ctx, "the platform moved an app to the newest build", "tenant", e.Tenant, "app", e.Profile,
-				"to", e.Newest, "status", res.Status, "commit", res.Commit, "canary", tg.done == 0)
+				"addonOf", e.AddonOf, "to", e.Newest, "status", res.Status, "commit", res.Commit, "canary", tg.done == 0)
 		}
 	}
 	return moved
