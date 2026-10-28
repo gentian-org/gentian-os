@@ -68,8 +68,9 @@ type ProvisioningJobSpec struct {
 	Image string `json:"image"`
 
 	// Script executed with /bin/sh. It is re-run whenever membership changes,
-	// so it must be idempotent: converge the app to exactly the membership it
-	// is given rather than applying a delta.
+	// and whenever the profile changes the role or this Job, so it must be
+	// idempotent: converge the app to exactly the membership it is given
+	// rather than applying a delta.
 	//
 	// The operator provides:
 	//   GENTIAN_APP_ADMINS_FILE  path to a JSON array of the privileged

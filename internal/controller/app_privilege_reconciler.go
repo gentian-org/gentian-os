@@ -108,11 +108,12 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
 		}
 
-		if r.appPrivilegeSynced(tenant, profileName, fingerprint) {
+		appFingerprint := fingerprint + "@" + privilege.DeclarationFingerprint(profile.Provisioning())
+		if r.appPrivilegeSynced(tenant, profileName, appFingerprint) {
 			continue
 		}
 
-		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, fingerprint)
+		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, appFingerprint)
 		if err != nil {
 			syncFailed = true
 			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
@@ -127,7 +128,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 				"Syncing", fmt.Sprintf("Applying app administrators to %s", profileName))
 			continue
 		}
-		if err := r.persistAppPrivilegeFingerprint(ctx, tenant, profileName, fingerprint); err != nil {
+		if err := r.persistAppPrivilegeFingerprint(ctx, tenant, profileName, appFingerprint); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
