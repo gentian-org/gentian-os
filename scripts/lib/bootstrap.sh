@@ -3137,8 +3137,9 @@ EOF
 # happen is enough, and it is what nobody was told.
 # _claims_this_checkout_cannot_apply <kernel-dir> — stale claims, named.
 #
-# A claim names a kind, and a kind exists here only if crossplane/xrds/ defines
-# it. One that names anything else is a file Argo CD will sync and the API
+# A claim names a kind, and a kind exists here only if crossplane/xrds/ or the
+# operator chart's CRDs (charts/gentian-os/crds/) define it -- the director
+# seeds the cluster's PlatformSecurityPolicy there. One that names anything else is a file Argo CD will sync and the API
 # server will refuse -- and because the refusal happens three layers away, on
 # a resource nothing else mentions, it reads as an unrelated Argo error days
 # later.
@@ -3157,7 +3158,8 @@ _claims_this_checkout_cannot_apply() {
     local -a known=()
     while IFS= read -r kind; do
         [[ -n "${kind}" ]] && known+=("${kind}")
-    done < <(grep -h '^    kind:' "${SCRIPT_DIR}"/crossplane/xrds/*.yaml 2>/dev/null |
+    done < <(grep -h '^    kind:' "${SCRIPT_DIR}"/crossplane/xrds/*.yaml \
+            "${SCRIPT_DIR}"/charts/gentian-os/crds/*.yaml 2>/dev/null |
         awk '{print $2}' | sort -u)
     (( ${#known[@]} > 0 )) || return 0   # no XRDs to compare against: say nothing
 
@@ -3567,7 +3569,7 @@ gentian_commit_cluster_deployment() {
     if [[ -n "${stale}" ]]; then
         error "clusters/${cluster}/kernel has claims this checkout cannot apply:"
         while IFS=$'\t' read -r f k; do
-            [[ -n "${f}" ]] && error "    ${f} declares kind ${k}, which no XRD in crossplane/xrds/ defines"
+            [[ -n "${f}" ]] && error "    ${f} declares kind ${k}, which neither crossplane/xrds/ nor charts/gentian-os/crds/ defines"
         done <<< "${stale}"
         error ""
         error "  Argo CD would sync them and the API server would refuse them, days"
