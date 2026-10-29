@@ -813,6 +813,33 @@ func TestARealmImportKeepsTheIdsOfTheGroupsThatAreHere(t *testing.T) {
 	}
 }
 
+// The platform's group of an app the tenant does not have is not here when
+// a restore leaves the app out, or a bundle of another tenant brings people
+// who had it: the membership is said and left out, and the import succeeds.
+func TestARealmImportLeavesOutTheGroupOfAnAppThatIsNotHere(t *testing.T) {
+	w := newRealmWorld(t)
+	w.archive(bundleRealm, bundleUsers, `{"userId":"u1","groups":[{"path":"/gentian:tenant:acme:members"},{"path":"/gentian:tenant:acme:app:open-webui"}]}
+{"userId":"u3","groups":[{"path":"/gentian:tenant:acme:members"}]}
+`)
+	w.answer("POST", "acme/partialImport", 200, `{}`)
+	w.clientsHere(`[{"id":"k1","clientId":"acme-wiki"}]`)
+	w.groupsHere()
+	w.answer("GET", "acme", 200, `{"realm":"acme","defaultRole":{"name":"default-roles-acme"}}`)
+	w.answer("GET", "acme/users?exact=true&username=ada", 200, `[{"id":"n1"}]`)
+	w.answer("GET", "acme/users?exact=true&username=bob", 200, `[{"id":"n3"}]`)
+	w.answer("GET", "acme/group-by-path/gentian%3Atenant%3Aacme%3Amembers", 200, `{"id":"g-members"}`)
+	w.answer("PUT", "acme/users/n1/groups/g-members", 204, ``)
+	w.answer("PUT", "acme/users/n3/groups/g-members", 204, ``)
+
+	out, err := w.run(importScript("acme", RealmSource{}))
+	if err != nil {
+		t.Fatalf("the import failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "ada was a member of /gentian:tenant:acme:app:open-webui, the group of an app that is not here") {
+		t.Errorf("the membership left out is not said:\n%s", out)
+	}
+}
+
 // What the import used to pass over in silence now fails it, with the name:
 // a person the provider refuses, a group that is not there, a membership
 // that is refused -- and it still goes to the end, so the output names all.

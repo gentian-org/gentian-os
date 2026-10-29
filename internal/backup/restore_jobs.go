@@ -202,9 +202,45 @@ echo "ownership normalised to ${ROLE}"
 # app. Restoring without it left every table owned by the postgres superuser,
 # and the app's first query after the restore was "permission denied for
 # table oc_appconfig" — data perfectly restored, unreadable by its owner.
-pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl --single-transaction \
-  --dbname="${DB}" %[3]s/dump.pgc
-echo "restored %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, database)},
+#
+# The app's tables are in a schema of the database's name, the one its role's
+# search_path reads first (provisioning makes it). A dump taken of another
+# tenant's database -- a bundle brought to another tenant -- names that schema
+# after the database it was taken of. Loaded as it is, its tables went in
+# beside the tenant's own, under the old name, and the app went on reading its
+# own: the restore said restored and nothing had changed. And a view in a
+# dependency loop, which the clean step replaces with a placeholder before
+# dropping it, failed the load outright: its schema is not in this database.
+# So where the dump's one schema has another name than this database, the
+# tenant's schema goes, the dump's is made for the clean step to find, the
+# dump is loaded, and its schema takes the database's name -- all in one
+# transaction, so a failure still leaves the database as it was. A dump of
+# several schemas, or of this database's own, is loaded as it is.
+schemas="$(pg_restore -l %[3]s/dump.pgc | awk '$4 == "SCHEMA" && $5 == "-" && $6 != "public" {print $6}' | sort -u)"
+src=""
+if [ "$(printf '%%s\n' "${schemas}" | grep -c .)" = "1" ] && [ "${schemas}" != "${DB}" ]; then
+  src="${schemas}"
+fi
+if [ -z "${src}" ]; then
+  pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl --single-transaction \
+    --dbname="${DB}" %[3]s/dump.pgc
+  echo "restored %[4]s"
+  exit 0
+fi
+pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl -f %[3]s/restore.sql %[3]s/dump.pgc
+cat > %[3]s/before.sql <<'PSQL'
+DROP SCHEMA IF EXISTS :"db" CASCADE;
+CREATE SCHEMA IF NOT EXISTS :"src" AUTHORIZATION :"app_role";
+PSQL
+cat > %[3]s/after.sql <<'PSQL'
+RESET ROLE;
+ALTER SCHEMA :"src" RENAME TO :"db";
+ALTER SCHEMA :"db" OWNER TO :"app_role";
+PSQL
+psql -v ON_ERROR_STOP=1 -v db="${DB}" -v src="${src}" -v app_role="${ROLE}" --single-transaction -q \
+  -d "${DB}" -f %[3]s/before.sql -f %[3]s/restore.sql -f %[3]s/after.sql >/dev/null
+rm -f %[3]s/restore.sql
+echo "restored %[4]s; the dump's schema ${src} is its schema %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, database)},
 		Env:          PostgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
@@ -1068,8 +1104,20 @@ while IFS= read -r line; do
   while IFS= read -r path; do
     [ -n "${path}" ] || continue
     segments=$(printf '%%s' "${path}" | jq -sRr 'ltrimstr("/") | split("/") | map(@uri) | join("/")')
-    if ! kc GET "${API}/group-by-path/${segments}" > %[2]s/group.json; then
-      echo "ERROR: ${username} was a member of ${path}, which is not in the realm" >&2; failed=$((failed + 1)); continue
+    rc=0; found "${API}/group-by-path/${segments}" > %[2]s/group.json || rc=$?
+    if [ "${rc}" -eq 2 ]; then failed=$((failed + 1)); continue; fi
+    if [ "${rc}" -eq 1 ]; then
+      # The platform's group of an app this tenant does not have -- one a
+      # restore of some of its apps, or a bundle brought from another
+      # tenant, leaves out -- is said, as the group itself is above. Any
+      # other group not here is a failure: the tenant's own were made above,
+      # and the platform makes its others with the tenant.
+      if printf '%%s' "${path}" | grep -Eq '^/gentian:tenant:[^:/]+:app:[^/]+$'; then
+        echo "NOTE: ${username} was a member of ${path}, the group of an app that is not here; the membership is left out"
+      else
+        echo "ERROR: ${username} was a member of ${path}, which is not in the realm" >&2; failed=$((failed + 1))
+      fi
+      continue
     fi
     gid=$(jq -r '.id // empty' %[2]s/group.json)
     if [ -z "${gid}" ] || ! kc PUT "${API}/users/${uid}/groups/${gid}" >/dev/null; then
