@@ -40,6 +40,7 @@ func checkFixture(t *testing.T) (*fakeStore, http.Handler) {
 		// group, as the account itself), audrey audits it and dana reads
 		// acme's evidence (by name, as the account of the kernel realm).
 		"user:root|can_audit|cluster:main":                 true,
+		"user:root|can_configure|cluster:main":             true,
 		"user:kernel/audrey|can_audit|cluster:main":        true,
 		"user:kernel/audrey|can_read_evidence|tenant:acme": true,
 		"user:kernel/dana|can_read_evidence|tenant:acme":   true,
@@ -141,6 +142,9 @@ func TestAnAuditKeyAsksWhoMayAuditAndReadEvidence(t *testing.T) {
 		`{"person":"dana","relation":"can_read_evidence","tenant":"acme"}`:   true,
 		`{"person":"dana","relation":"can_read_evidence","tenant":"globex"}`: false,
 		`{"person":"anna","relation":"can_read_evidence","tenant":"acme"}`:   false,
+		// Configuring is the administrator's, never the auditor's.
+		`{"person":"root","relation":"can_configure"}`:   true,
+		`{"person":"audrey","relation":"can_configure"}`: false,
 	} {
 		rec := ask(h, "platform-key", body)
 		if rec.Code != 200 || strings.Contains(rec.Body.String(), `"allowed":true`) != want {
@@ -153,7 +157,8 @@ func TestAnAuditKeyAsksNothingElse(t *testing.T) {
 	store, h := checkFixture(t)
 	for _, body := range []string{
 		`{"person":"dana","relation":"can_administer","tenant":"acme"}`,
-		`{"person":"dana","relation":"can_configure"}`,
+		`{"person":"dana","relation":"can_operate_system"}`,
+		`{"person":"dana","relation":"can_configure","tenant":"acme"}`,
 		`{"person":"dana","relation":"can_audit","tenant":"acme"}`,
 		`{"person":"dana","relation":"can_read_evidence"}`,
 		`{"person":"dana","relation":"can_read_evidence","tenant":"acme/x"}`,

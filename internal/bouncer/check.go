@@ -59,9 +59,13 @@ type CheckerAudit struct {
 }
 
 // The audit questions a key with Audit may ask, beside the app question.
+// can_configure is among them so that a store of evidence can keep its own
+// settings -- what is kept and for how long -- to who configures the cluster,
+// and its auditors to reading.
 const (
 	relationCanAudit        = "can_audit"
 	relationCanReadEvidence = "can_read_evidence"
+	relationCanConfigure    = "can_configure"
 )
 
 var keyHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -120,7 +124,8 @@ type checkRequest struct {
 	// person use it.
 	App string `json:"app,omitempty"`
 	// Relation, instead of App, asks an audit question of a key that may:
-	// can_audit, of the cluster, or can_read_evidence, of Tenant.
+	// can_audit or can_configure, of the cluster, or can_read_evidence, of
+	// Tenant.
 	Relation string `json:"relation,omitempty"`
 	Tenant   string `json:"tenant,omitempty"`
 }
@@ -175,9 +180,9 @@ func questionOf(checker *Checker, req checkRequest) (question, int, string) {
 	}
 	q := question{user: user, holder: holder, relation: req.Relation}
 	switch req.Relation {
-	case relationCanAudit:
+	case relationCanAudit, relationCanConfigure:
 		if req.Tenant != "" {
-			return question{}, http.StatusBadRequest, "can_audit is asked of the cluster, with no tenant"
+			return question{}, http.StatusBadRequest, req.Relation + " is asked of the cluster, with no tenant"
 		}
 		q.object = authz.Cluster(checker.Audit.Cluster)
 	case relationCanReadEvidence:
@@ -186,7 +191,7 @@ func questionOf(checker *Checker, req checkRequest) (question, int, string) {
 		}
 		q.object, q.tenant = authz.Tenant(req.Tenant), req.Tenant
 	default:
-		return question{}, http.StatusBadRequest, "relation must be can_audit or can_read_evidence"
+		return question{}, http.StatusBadRequest, "relation must be can_audit, can_configure or can_read_evidence"
 	}
 	return q, 0, ""
 }

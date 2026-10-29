@@ -446,11 +446,12 @@ credential of the authorization store. The answer says who in the tenant may use
 declaration needs `trustTier: platform`.
 
 A component of the platform tenant that keeps or shows audit evidence declares
-`spec.requires.services.rights: {audit: true}`, and its key asks two questions more about a person
+`spec.requires.services.rights: {audit: true}`, and its key asks three questions more about a person
 of the platform tenant: `{"person": "<subject>", "relation": "can_audit"}`, may they audit the
-cluster, and `{"person": "<subject>", "relation": "can_read_evidence", "tenant": "<t>"}`, may they
-read that tenant's evidence -- which the cluster's auditors hold for every tenant and a `tenantAuditor`
-([commands.md](commands.md)) for one. In any other tenant `audit` is ignored, and a key without it is
+cluster; `{"person": "<subject>", "relation": "can_configure"}`, may they configure it, which keeps
+the evidence's own settings away from its readers; and `{"person": "<subject>", "relation":
+"can_read_evidence", "tenant": "<t>"}`, may they read that tenant's evidence -- which the cluster's
+auditors hold for every tenant and a `tenantAuditor` ([commands.md](commands.md)) for one. In any other tenant `audit` is ignored, and a key without it is
 refused (`403`) when it names a relation.
 
 **A component that obtains a person's token while the person is away** declares vouching
