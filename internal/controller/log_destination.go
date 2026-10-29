@@ -326,9 +326,25 @@ func (r *ComponentReconciler) copyLogDestinationSecret(ctx context.Context, comp
 // cluster's certificate where it is this component's, and the copy and the
 // network rule in its namespace.
 func (r *ComponentReconciler) deleteLogDestination(ctx context.Context, comp *gentianov1alpha1.Component) error {
+	if err := r.deleteLogDestinationCertificate(ctx, comp); err != nil {
+		return err
+	}
+	return r.deleteLogDestinationOwn(ctx, comp)
+}
+
+// deleteLogDestinationCertificate removes the cluster's certificate and its
+// Secret where they are this component's: what no owner reference of the
+// component reaches, and all a removed component leaves to be taken away.
+//
+// A cluster without cert-manager's types has no certificate to take away,
+// and that must not keep any component from being reconciled or removed.
+func (r *ComponentReconciler) deleteLogDestinationCertificate(ctx context.Context, comp *gentianov1alpha1.Component) error {
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certManagerCertGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: logDestinationCertificate, Namespace: layout.Kernel(layout.Observability)}, cert)
+	if apimeta.IsNoMatchError(err) {
+		return nil
+	}
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
@@ -342,7 +358,7 @@ func (r *ComponentReconciler) deleteLogDestination(ctx context.Context, comp *ge
 			return err
 		}
 	}
-	return r.deleteLogDestinationOwn(ctx, comp)
+	return nil
 }
 
 // deleteLogDestinationOwn removes the copy and the network rule in the

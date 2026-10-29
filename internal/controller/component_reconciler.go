@@ -201,7 +201,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 			// The log destination's certificate lives in the observability
 			// namespace, where no owner reference of this component reaches.
-			if err := r.deleteLogDestination(ctx, comp); err != nil {
+			if err := r.deleteLogDestinationCertificate(ctx, comp); err != nil {
 				return ctrl.Result{}, err
 			}
 			controllerutil.RemoveFinalizer(comp, componentFinalizer)
