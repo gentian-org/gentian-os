@@ -577,7 +577,15 @@ spec:
             {{- end }}
             {{- end }}
             {{- if $adoptsKernelRealm }}
-            {{- range $h := (list "argocd" "headlamp" "monitoring" "id") }}
+            {{- $kernelConsoles := list "argocd" "headlamp" "monitoring" "id" }}
+            {{- /* The model gateway's console signs in here too, and exists
+                 only where the claim switches it on: the operator routes
+                 llm.<kernel> from the same setting, and a host it does not
+                 route has no callback to admit. */}}
+            {{- if eq (dig "llm.console.enabled" "" $ccData) "true" }}
+            {{- $kernelConsoles = append $kernelConsoles "llm" }}
+            {{- end }}
+            {{- range $h := $kernelConsoles }}
             {{- $zoneHostNames = append $zoneHostNames (printf "%s.%s" $h $kd) }}
             {{- end }}
             {{- end }}

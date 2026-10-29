@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-platform-provisioning-jobs
+  namespace: kernel-provisioning
+  labels:
+    gentianos.io/config-type: tenant-provisioning-jobs
+    gentianos.io/tenant: platform
+data:
+  jobs.json: |
+    [
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "keycloak-gentian-groups-platform",
+          "namespace": "kernel-authentication",
+          "labels": {
+            "gentianos.io/tenant": "platform"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  objects.json: "[]"
