@@ -338,7 +338,6 @@ for the person (§6.1).
 | `GET /v1/apps/{catalogue}/{app}/reports` | open | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask one of an app's support offers for support, with an optional message; the store answers that it received it, and what follows is the store's |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant the assertion's issuer is; if not, the reason; notices to show (§6.2); and the account's role for the tenant |
-| `GET /v1/tenant/access`, `POST …/{subject}/approve` and `…/decline` | signed in | Who manages the tenant; the account that holds it lets another manage it, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired |
 | `POST /v1/acquisitions` | signed in, managing the tenant | Acquire an app. `201` with a confirmation; or `202` while it waits for a checkout at the store, for an approval, or for the store's own confirmation; or `200` with the acquisition the tenant already has. With the feature `tenant-organization` (1.14) the request may say who the tenant is, from its Tenant Settings, for a store that makes the person's organization from it |
 | `POST /v1/acquisitions/free` | assertion, no account (1.13) | Acquire an app whose price model is `free` without registering (§6.1, *Free apps*). Answers as `POST /v1/acquisitions` |
@@ -356,8 +355,9 @@ which tenant; what that account may do for the tenant is the store's to
 decide. Every account signed in for a tenant may read its standing, its
 acquisitions, and one acquisition with its confirmation, without any
 repository credential. Only an account that **manages** the tenant — the
-first that signed in for it, which holds it, or one the holder or the
-store's operator approved — changes what the tenant has, acquiring or
+first that signed in for it, or one an owner or administrator of the
+organization the tenant belongs to, or the store's operator, approved —
+changes what the tenant has, acquiring or
 replacing a credential, and is answered a repository credential: no answer
 carries one to any other account. Another account asks to manage the tenant
 by acquiring for it, and its acquisition waits for that approval.
@@ -495,7 +495,7 @@ accounts are linked, and the store's account is made. The page shows the
 store's terms and privacy notice and asks the company's name, size,
 country, address and industry, each optional. A store that needs a billing
 contact asks for it there or in its checkout. The first account that
-registers for a tenant holds it.
+registers for a tenant manages it.
 
 **The store's terms.** Using the App Store means accepting the store's
 terms. The app asks once per tenant and per version (`termsVersion` in
@@ -521,25 +521,27 @@ claim another's realm and a request cannot claim another tenant. The
 acceptance is the report's, or the request's where the report has not
 caught up, and the store records which. The acquisition is recorded
 against the tenant uid and the pairwise subject; no name or address is
-sent, and nobody holds the tenant. Every other price model — `freemium`
-among them — and every other call need registration: a free acquisition
+sent, and no account is associated with the tenant. Every other price
+model — `freemium` among them — and every other call need registration: a free acquisition
 is answered `403 registration-required` with the registration page for an
 app that is not free. This is the one call on which the store takes an
 assertion without a link (AD-17).
 
 **Who acts for a tenant at the store.** A tenant is an organization in the
 store's records, and an account is a person; the two are separate things.
-The first account that registers for a tenant holds it and manages it. A
-store with the feature `tenant-access` serves any other account linked for
-the tenant, which reads its standing and acquisitions and asks to manage
-the tenant by acquiring for it; its acquisition waits until the holder, or
-the store's operator, approves. A store without it lets exactly the one
-account act for the tenant and refuses the others with the reason
+The first account that registers for a tenant manages it. A store may
+serve any other account linked for the tenant, which reads its standing
+and acquisitions and asks to manage the tenant by acquiring for it; its
+acquisition waits for `approval` until an owner or administrator of the
+organization the tenant belongs to, or the store's operator, approves or
+declines it, outside the store API. A store that does not lets exactly the
+one account act for the tenant and refuses the others with the reason
 `tenant-not-claimed` (§6.2); they learn nothing of what the tenant has
 acquired.
 
 **A repository credential is released only to an account that manages the
-tenant** — the one that holds it, or one the holder or the store's operator
+tenant** — the first that registered for it, or one an owner or
+administrator of the tenant's organization, or the store's operator,
 approved. Any other account is answered a confirmation without its
 credential, and the listing of acquisitions never carries one. Pulls use
 the tenant's registry credential, which the confirmation carries (§6.4) and
@@ -1256,5 +1258,5 @@ the *repository*, for pulls, with the credential the tenant holds.
 * **How a store first associates the administrator's account with a
   tenant**, what it asks of an account before it confirms an app, and how
   it prices, are the store's own. That a tenant is an organization, that
-  the first account to register holds it, and that only an account that
+  the first account to register manages it, and that only an account that
   manages it acquires for it, is in the contract (§6.1).
