@@ -118,10 +118,8 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
 	}
-	// A route lives beside the Gateway; the Services it points at live where
-	// their own function does, so each of those namespaces grants the
-	// reference. Duplicates in the v4 layout, where they are one namespace.
-	for _, ns := range dedupe(argocdNamespace, identityNamespace, servicesNamespace, observabilityNamespace) {
+	consoles := kernelConsolesRouted(ctx, r.Client)
+	for _, ns := range kernelRouteGrantNamespaces(consoles) {
 		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
 			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
 		}
@@ -134,7 +132,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		kernelConsolesRouted(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
+		consoles, r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
 	homes := tenantHomes(tenantList.Items)
 	withTenantHomes(specs, homes)
@@ -748,6 +746,22 @@ func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32, 
 // shape that goes wrong quietly: a change to the grant made in one and not the
 // other leaves half the kernel's routes unable to resolve their backend, and the
 // symptom is a 500 from the gateway rather than anything naming a ReferenceGrant.
+// kernelRouteGrantNamespaces are the namespaces that grant the kernel routes
+// their backends. A route lives beside the Gateway; the Services it points at
+// live where their own function does, so each of those namespaces grants the
+// reference. Duplicates in the v4 layout, where they are one namespace.
+//
+// The model gateway's namespace only while its console is routed: it exists
+// only on a cluster that serves models, and without the grant Envoy Gateway
+// refuses the route's backend and answers every request with a 500.
+func kernelRouteGrantNamespaces(consoles kernelConsoles) []string {
+	namespaces := []string{argocdNamespace, identityNamespace, servicesNamespace, observabilityNamespace}
+	if consoles.llm {
+		namespaces = append(namespaces, llmNamespace)
+	}
+	return dedupe(namespaces...)
+}
+
 func (r *GatewayPlatformReconciler) ensureRouteReferenceGrant(ctx context.Context, ns string) error {
 	spec := map[string]interface{}{
 		"from": []interface{}{
