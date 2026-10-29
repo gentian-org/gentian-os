@@ -278,8 +278,26 @@ func (s *Server) Close() {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	w.Header().Set("X-Request-Id", id)
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	// Every body is a small JSON document but a bundle upload's, which is
+	// streamed to the operator as it arrives: the operator bounds what a
+	// tenant's administrator puts into the import storage
+	// (bundlestore.MaxTenantUpload, MaxTenantImports), and a cluster's
+	// administrator's is the storage's to bound.
+	if !bundleUpload(r) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	}
 	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID{}, id)))
+}
+
+// bundleUpload says whether r is one of the two upload routes,
+// POST /v1/clusters/{c}/bundles and POST /v1/tenants/{t}/bundles.
+func bundleUpload(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "v1" && (parts[1] == "clusters" || parts[1] == "tenants") &&
+		parts[2] != "" && parts[3] == "bundles"
 }
 
 type ctxRequestID struct{}
