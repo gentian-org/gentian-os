@@ -503,16 +503,16 @@ spec:
                   type: object
                   description: >
                     Where the platform's logs go (docs/design/audit-events.md
-                    §4). Read by the installer (B-01), which renders a log
-                    forwarder in the observability namespace when a
-                    destination is named; no Composition consumes it.
+                    §4). The Composition renders a log forwarder in the
+                    observability namespace while a destination is named, and
+                    removes it when none is; the director may set both fields.
                   properties:
                     destination:
                       type: object
                       properties:
                         endpoint:
                           type: string
-                          pattern: '^https://'
+                          pattern: '^(https://\S+)?$'
                           description: >
                             An HTTPS URL taking newline-delimited JSON over
                             POST, gzip-compressed, with a bearer token from the
@@ -527,7 +527,7 @@ spec:
                           description: >
                             Which streams to send: audit, the platform's audit
                             records (an envelope with audit true); operations,
-                            every other line. Both when absent.
+                            every other line. Both when absent or empty.
                 monitoring:
                   type: object
                   description: >

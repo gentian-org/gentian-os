@@ -884,7 +884,7 @@ namespaces:
             what: profiling
             closed: nothing reads it
       - name: log-forwarder
-        installedBy: bootstrap-application:log-forwarding
+        installedBy: composition:cluster-default
         readAt: vector chart, pinned in versions.yaml
         podLabels: {app.kubernetes.io/name: vector}
         ports:
