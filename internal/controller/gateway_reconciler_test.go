@@ -625,6 +625,20 @@ func TestTheModelGatewayConsoleWaitsForTheKernelZone(t *testing.T) {
 	}
 }
 
+// The console's route points across namespaces at the model gateway's
+// Service, and Envoy Gateway refuses that reference unless the gateway's
+// namespace grants it: the route was accepted, its backend was not, and every
+// request got a 500. Off, the namespace may not exist and is not granted.
+func TestTheModelGatewayConsoleIsGrantedItsBackend(t *testing.T) {
+	t.Parallel()
+	if !slices.Contains(kernelRouteGrantNamespaces(kernelConsoles{llm: true}), llmNamespace) {
+		t.Errorf("console routed, and %s grants the route nothing", llmNamespace)
+	}
+	if slices.Contains(kernelRouteGrantNamespaces(kernelConsoles{}), llmNamespace) {
+		t.Errorf("console off, and %s is still asked for a grant", llmNamespace)
+	}
+}
+
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{llm: true}, "c1", true, true, kernelFrontDoor{})
 	// By name, not by count: adding a kernel route should not fail a test
