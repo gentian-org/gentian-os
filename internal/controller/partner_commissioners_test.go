@@ -93,7 +93,7 @@ func TestDirectorListHoldsAComponentOnlyForTheTenantsThatNameIt(t *testing.T) {
 		t.Fatal("a component that commissions nothing is told where the director is")
 	}
 	// Commissioning is no rights check: the bouncer hears only of plain.
-	if checkers, err := rightsCheckers(ctx, c); err != nil || len(checkers) != 1 || checkers[0].Component != "plain" {
+	if checkers, err := rightsCheckers(ctx, c, bouncerCheckerAudit{}); err != nil || len(checkers) != 1 || checkers[0].Component != "plain" {
 		t.Fatalf("the bouncer's checkers: %+v, %v", checkers, err)
 	}
 

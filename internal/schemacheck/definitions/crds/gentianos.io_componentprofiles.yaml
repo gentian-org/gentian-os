@@ -1845,6 +1845,17 @@ spec:
                             may use an app of its tenant, for a person who is not at a browser.
                             Only a component that declares it is given a key for that question and
                             a network path to where it is answered.
+                          properties:
+                            audit:
+                              description: |-
+                                Audit lets the same key ask two more questions, for a person of the
+                                platform tenant: may they audit the cluster (cluster#can_audit), and
+                                may they read one tenant's evidence (tenant#can_read_evidence, which
+                                the cluster's auditors and that tenant's auditor hold). It is for the
+                                service that keeps the evidence and the console that shows it, and is
+                                honoured for a component of the platform tenant only: anywhere else
+                                the key asks the app question alone.
+                              type: boolean
                           type: object
                         storage:
                           description: Storage specifies object storage (S3) and/or
@@ -3855,6 +3866,17 @@ spec:
                           may use an app of its tenant, for a person who is not at a browser.
                           Only a component that declares it is given a key for that question and
                           a network path to where it is answered.
+                        properties:
+                          audit:
+                            description: |-
+                              Audit lets the same key ask two more questions, for a person of the
+                              platform tenant: may they audit the cluster (cluster#can_audit), and
+                              may they read one tenant's evidence (tenant#can_read_evidence, which
+                              the cluster's auditors and that tenant's auditor hold). It is for the
+                              service that keeps the evidence and the console that shows it, and is
+                              honoured for a component of the platform tenant only: anywhere else
+                              the key asks the app question alone.
+                            type: boolean
                         type: object
                       storage:
                         description: Storage specifies object storage (S3) and/or

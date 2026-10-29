@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 )
 
@@ -160,21 +161,56 @@ func rightsCheckEgress() networkingv1.NetworkPolicyEgressRule {
 
 // bouncerChecker is one checker of the bouncer's table (internal/bouncer).
 type bouncerChecker struct {
-	Tenant    string `json:"tenant"`
-	Component string `json:"component"`
-	KeyHash   string `json:"keyHash"`
+	Tenant    string               `json:"tenant"`
+	Component string               `json:"component"`
+	KeyHash   string               `json:"keyHash"`
+	Audit     *bouncerCheckerAudit `json:"audit,omitempty"`
+}
+
+// bouncerCheckerAudit is what an audit key's questions are asked against:
+// the cluster, and the realm of the platform tenant's people.
+type bouncerCheckerAudit struct {
+	Cluster string `json:"cluster"`
+	Realm   string `json:"realm"`
+}
+
+// wantsAuditCheck reports whether a profile asks the audit questions with its
+// key (requires.services.rights.audit). The schema holds the rights check to
+// platform trust; rightsCheckers holds the audit questions to the platform
+// tenant.
+func wantsAuditCheck(profile *gentianov1alpha1.ComponentProfile) bool {
+	services := profile.Services()
+	return services != nil && services.Rights != nil && services.Rights.Audit &&
+		profile.Spec.TrustTier == gentianov1alpha1.TrustTierPlatform
 }
 
 // rightsCheckers are the checkers the bouncer's table must hold: one per
-// component that declares the requirement and holds its key.
-func rightsCheckers(ctx context.Context, c client.Reader) ([]bouncerChecker, error) {
+// component that declares the requirement and holds its key. A component of
+// the platform tenant whose profile asks the audit questions has them, asked
+// against audit; one of any other tenant asks the app question alone,
+// whatever its profile says.
+func rightsCheckers(ctx context.Context, c client.Reader, audit bouncerCheckerAudit) ([]bouncerChecker, error) {
 	keys, err := componentKeys(ctx, c, wantsRightsCheck)
 	if err != nil {
 		return nil, err
 	}
+	auditing, err := componentKeys(ctx, c, wantsAuditCheck)
+	if err != nil {
+		return nil, err
+	}
+	audits := map[string]bool{}
+	for _, k := range auditing {
+		if k.Tenant == authz.PlatformTenant {
+			audits[k.KeyHash] = true
+		}
+	}
 	var out []bouncerChecker
 	for _, k := range keys {
-		out = append(out, bouncerChecker{Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash})
+		checker := bouncerChecker{Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash}
+		if audits[k.KeyHash] {
+			checker.Audit = &audit
+		}
+		out = append(out, checker)
 	}
 	return out, nil
 }

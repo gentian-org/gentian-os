@@ -43,6 +43,12 @@ func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
 			t.Errorf("%s is held by a group and by name", field)
 		}
 	}
+	// auditor and tenantAuditor are one relation, on the cluster and on a
+	// tenant: one way, held by name.
+	byName := map[string]bool{}
+	for _, r := range HolderRoles {
+		byName[r] = true
+	}
 	for _, rel := range ClusterRoles {
 		found := 0
 		for _, r := range ClaimRoles {
@@ -50,10 +56,8 @@ func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
 				found++
 			}
 		}
-		for _, r := range HolderRoles {
-			if r == rel {
-				found++
-			}
+		if byName[rel] {
+			found++
 		}
 		if found != 1 {
 			t.Errorf("relation %q is held %d ways", rel, found)
@@ -116,6 +120,35 @@ func TestARoleHoldersScopeFollowsTheRoleAndTheTenant(t *testing.T) {
 		scope, ok := HolderScope(c.role, c.tenant)
 		if ok != c.ok || (ok && scope != c.scope) {
 			t.Errorf("HolderScope(%s, %s) = %q, %v; want %q, %v", c.role, c.tenant, scope, ok, c.scope, c.ok)
+		}
+	}
+}
+
+// A tenant's auditor is a person of the platform tenant, and the one tenant
+// they read is the entry's to name; every other role takes its scope from
+// HolderScope and may leave it out.
+func TestAnEntrysScope(t *testing.T) {
+	for _, c := range []struct {
+		role, tenant, stated, scope string
+		ok                          bool
+	}{
+		{"tenantAuditor", PlatformTenant, "tenant:acme", "tenant:acme", true},
+		{"tenantAuditor", PlatformTenant, "", "", false},
+		{"tenantAuditor", PlatformTenant, "cluster", "", false},
+		{"tenantAuditor", PlatformTenant, "tenant:platform", "", false},
+		{"tenantAuditor", PlatformTenant, "tenant:Acme", "", false},
+		{"tenantAuditor", PlatformTenant, "tenant:a/b", "", false},
+		{"tenantAuditor", "acme", "tenant:acme", "", false},
+		{"perimeterApprover", "acme", "", "tenant:acme", true},
+		{"perimeterApprover", "acme", "tenant:acme", "tenant:acme", true},
+		{"perimeterApprover", "acme", "tenant:globex", "", false},
+		{"auditor", PlatformTenant, "", "cluster", true},
+		{"auditor", PlatformTenant, "tenant:acme", "", false},
+		{"serviceAdmin", "acme", "cluster", "", false},
+	} {
+		scope, ok := EntryScope(c.role, c.tenant, c.stated)
+		if ok != c.ok || scope != c.scope {
+			t.Errorf("EntryScope(%s, %s, %q) = %q, %v; want %q, %v", c.role, c.tenant, c.stated, scope, ok, c.scope, c.ok)
 		}
 	}
 }

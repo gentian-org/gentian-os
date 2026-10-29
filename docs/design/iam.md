@@ -195,10 +195,15 @@ spec:
 | `sharedAppsAdmin` | `shared_apps_admin` (`can_install_shared`, `can_grant_shared`) | a person of the platform tenant | `cluster` |
 | `perimeterApprover` | `perimeter_approver` (`can_expose`, `can_approve_privilege`) | a person of the platform tenant: every tenant | `cluster` |
 | | | an administrator of tenant `t`: that tenant | `tenant:<t>` |
+| `tenantAuditor` | `auditor` on the tenant (`can_read_evidence`) | a person of the platform tenant: the one tenant the entry names, never the platform | `tenant:<t>` |
 
 The scope follows from role and tenant (`authz.HolderScope`); the claim states
 it so a reader sees how far the role reaches, and an entry stating another is
-refused. A person of a tenant other than the platform's must be one of its
+refused. A `tenantAuditor` is the exception (`authz.EntryScope`): it reads one
+tenant's audit evidence from the platform tenant's console, so it is held by
+an account of the platform's realm -- commonly given to that tenant's
+administrator for the purpose -- and the entry names the tenant, which has to
+be stated. Keyed like every entry, one account audits one tenant. A person of a tenant other than the platform's must be one of its
 administrators: a tenant's administrators can take over any account of their
 realm, so a role held there is in their hands too, and only approving and
 reading are acceptable for that. `admin` and `breakGlass` are never held by
@@ -215,7 +220,7 @@ on). The director's list says of each entry that is not in effect why
 
 The cluster's administrator writes an entry through the director
 (`can_configure`), from the command line
-(`kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>]`)
+(`kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>]`)
 or from the platform console, whose picker lists the candidates -- every
 person of the platform tenant and the members of each other tenant's `admins`
 group, read by the registrar across the realms it holds a credential for,
@@ -227,8 +232,8 @@ not in its `admins` group as the store holds it.
 **The tuple names the realm.** The operator writes each entry into the graph
 directly, with the cluster's other role tuples and declaratively like them:
 `user:<realm>/<subject> <relation> cluster:<c>` for scope `cluster`, and
-`user:<realm>/<subject> perimeter_approver tenant:<t>` for scope
-`tenant:<t>`, where `<realm>` is the tenant's realm. Removing the entry
+`user:<realm>/<subject> perimeter_approver tenant:<t>` (or `auditor`) for
+scope `tenant:<t>`, where `<realm>` is the holder's tenant's realm. Removing the entry
 removes the tuple. Nothing is made in Keycloak, in either realm.
 
 **Only that realm's token matches it.** Every enforcement point -- the

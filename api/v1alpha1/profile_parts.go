@@ -464,7 +464,17 @@ type VouchingKeys struct {
 //
 // The answer says who in the tenant may use what, so the requirement is for
 // a profile of platform trust.
-type RightsRequirement struct{}
+type RightsRequirement struct {
+	// Audit lets the same key ask two more questions, for a person of the
+	// platform tenant: may they audit the cluster (cluster#can_audit), and
+	// may they read one tenant's evidence (tenant#can_read_evidence, which
+	// the cluster's auditors and that tenant's auditor hold). It is for the
+	// service that keeps the evidence and the console that shows it, and is
+	// honoured for a component of the platform tenant only: anywhere else
+	// the key asks the app question alone.
+	// +optional
+	Audit bool `json:"audit,omitempty"`
+}
 
 // LLMRequirement declares that a component uses the platform's model gateway.
 // Being present is the declaration.

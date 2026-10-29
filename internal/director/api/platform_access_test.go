@@ -37,7 +37,7 @@ func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T)
 	if list, _ := body["roleHolders"].([]any); len(list) != 0 {
 		t.Fatalf("holders before anybody was named: %v", list)
 	}
-	if roles, _ := body["roles"].([]any); fmt.Sprint(roles) != "[auditor perimeterApprover securityOfficer serviceAdmin sharedAppsAdmin]" {
+	if roles, _ := body["roles"].([]any); fmt.Sprint(roles) != "[auditor perimeterApprover securityOfficer serviceAdmin sharedAppsAdmin tenantAuditor]" {
 		t.Fatalf("the roles a holder may hold: %v", body["roles"])
 	}
 
@@ -52,8 +52,9 @@ func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T)
 	}
 	for _, path := range []string{
 		"/securityOfficer/nowhere/7d0f3c2e", "/securityOfficer/demo/not%20a%20subject", "/admin/demo/7d0f3c2e", "/breakGlass/demo/7d0f3c2e",
-		"/serviceAdmin/demo/7d0f3c2e", // the platform tenant's people's alone
-		"/securityOfficer/demo/u-mia", // not one of demo's administrators
+		"/serviceAdmin/demo/7d0f3c2e",  // the platform tenant's people's alone
+		"/tenantAuditor/demo/7d0f3c2e", // so is reading one tenant's evidence
+		"/securityOfficer/demo/u-mia",  // not one of demo's administrators
 	} {
 		if code, body := h.do(t, "PUT", base+path, alice, `{"username":"x@demo.example","reason":"r"}`); code != http.StatusUnprocessableEntity || h.tip(t) != before {
 			t.Fatalf("%s: %d %v", path, code, body)

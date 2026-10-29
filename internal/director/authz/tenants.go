@@ -31,11 +31,30 @@ var tenantRoleGroups = []struct{ relation, suffix string }{
 }
 
 // TenantRights is one tenant as the projection is given it: its name, and
-// who the Cluster claim names its perimeter approvers (role holders of scope
-// tenant:<t>), each as HolderUser.
+// who the Cluster claim names its perimeter approvers and its auditors (role
+// holders of scope tenant:<t>), each as HolderUser.
 type TenantRights struct {
 	Name               string
 	PerimeterApprovers []string
+	Auditors           []string
+}
+
+// claimTenantRelations are the relations on type tenant the Cluster claim's
+// role holders hold, and nobody else.
+var claimTenantRelations = []string{"perimeter_approver", "auditor"}
+
+// heldBy is who holds each of claimTenantRelations, in that order.
+func (r TenantRights) heldBy() [][]string {
+	return [][]string{r.PerimeterApprovers, r.Auditors}
+}
+
+func claimTenantRelation(rel string) bool {
+	for _, r := range claimTenantRelations {
+		if r == rel {
+			return true
+		}
+	}
+	return false
 }
 
 // TenantsNamed is tenants nobody is named perimeter approver of.
@@ -60,11 +79,12 @@ func TenantsNamed(names ...string) []TenantRights {
 // and always for the platform tenant; a tenant that later withdraws it is not
 // second-guessed here, because the missing tuple is then the tenant's answer.
 //
-// perimeter_approver on a tenant is the claim's alone: the role holders of
-// scope tenant:<t> hold it, and every other entry under it is removed, so an
-// entry somebody wrote into the store by hand does not outlive the next
-// projection, and a backup does not carry it (StoreOnlyOf). The cluster's
-// perimeter approver holds it through the cluster and is not written here.
+// perimeter_approver and auditor on a tenant are the claim's alone: the role
+// holders of scope tenant:<t> hold them, and every other entry under them is
+// removed, so an entry somebody wrote into the store by hand does not outlive
+// the next projection, and a backup does not carry it (StoreOnlyOf). The
+// cluster's perimeter approver and auditor hold theirs through the cluster
+// and are not written here.
 //
 // Membership is not touched: it is a projection of Keycloak.
 func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants []TenantRights) error {
@@ -104,23 +124,26 @@ func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants 
 				writes = append(writes, t)
 			}
 		}
-		approvers := map[string]bool{}
-		for _, user := range rights.PerimeterApprovers {
-			approvers[user] = true
-		}
-		have, err := c.Read(ctx, Tuple{Relation: "perimeter_approver", Object: obj})
-		if err != nil {
-			return fmt.Errorf("read perimeter_approver on %s: %w", obj, err)
-		}
-		for _, t := range have {
-			if approvers[t.User] {
-				delete(approvers, t.User)
-				continue
+		for i, users := range rights.heldBy() {
+			rel := claimTenantRelations[i]
+			named := map[string]bool{}
+			for _, user := range users {
+				named[user] = true
 			}
-			deletes = append(deletes, plain(t))
-		}
-		for user := range approvers {
-			writes = append(writes, Tuple{User: user, Relation: "perimeter_approver", Object: obj})
+			have, err := c.Read(ctx, Tuple{Relation: rel, Object: obj})
+			if err != nil {
+				return fmt.Errorf("read %s on %s: %w", rel, obj, err)
+			}
+			for _, t := range have {
+				if named[t.User] {
+					delete(named, t.User)
+					continue
+				}
+				deletes = append(deletes, plain(t))
+			}
+			for user := range named {
+				writes = append(writes, Tuple{User: user, Relation: rel, Object: obj})
+			}
 		}
 	}
 	if len(writes) == 0 && len(deletes) == 0 {

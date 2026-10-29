@@ -82,18 +82,24 @@ func RolesFromClaim(claim map[string]string) (roles map[string]string, unknown [
 // HolderRoles are the roles the Cluster claim gives a person by name
 // (spec.platformAccess.roleHolders), keyed by the claim's spelling, each with
 // the relation it grants. Never admin or break_glass: those stay with the
-// kernel realm's groups.
+// kernel realm's groups. auditor and tenantAuditor grant the relation of one
+// name on the cluster and on one tenant.
 var HolderRoles = map[string]string{
 	"securityOfficer":   "security_officer",
 	"auditor":           "auditor",
 	"serviceAdmin":      "service_admin",
 	"sharedAppsAdmin":   "shared_apps_admin",
 	"perimeterApprover": "perimeter_approver",
+	"tenantAuditor":     "auditor",
 }
 
 // ScopeCluster is a role holder's scope when the role is held over the
-// cluster; a perimeter approver of one tenant has "tenant:<t>" instead.
+// cluster; a perimeter approver or auditor of one tenant has "tenant:<t>"
+// instead.
 const ScopeCluster = "cluster"
+
+// tenantName is a tenant's name as a scope may name it: a DNS label.
+var tenantName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
 // HolderScope is the scope a role holds for a person of tenant, or ok false
 // when that tenant's people may not hold the role:
@@ -102,6 +108,7 @@ const ScopeCluster = "cluster"
 //	serviceAdmin, sharedAppsAdmin      cluster, for a person of the platform tenant only
 //	perimeterApprover                  cluster for a person of the platform tenant,
 //	                                   tenant:<t> for an administrator of tenant t
+//	tenantAuditor                      none: its scope is the entry's (EntryScope)
 //
 // The scope follows from the role and the tenant and is never chosen: the
 // claim states it so that a person reading it sees how far the role
@@ -122,9 +129,35 @@ func HolderScope(role, tenant string) (scope string, ok bool) {
 	return "", false
 }
 
+// EntryScope is the scope an entry of the claim holds its role over, given
+// the scope it states, or ok false when it holds nothing.
+//
+// For every role but one that is HolderScope's, and an entry may leave it
+// out. A tenantAuditor is the exception: a person of the platform tenant
+// who reads one other tenant's evidence -- commonly that tenant's
+// administrator, given an account of the platform's realm for it -- so the
+// tenant is the entry's to name, as tenant:<t>, and there is no default. It
+// is never the platform tenant, whose records the cluster's auditor reads.
+// The entry is keyed by role, tenant and subject, so one account audits one
+// tenant.
+func EntryScope(role, tenant, stated string) (scope string, ok bool) {
+	if role == "tenantAuditor" {
+		t, named := strings.CutPrefix(stated, "tenant:")
+		if tenant != PlatformTenant || !named || !tenantName.MatchString(t) || t == PlatformTenant {
+			return "", false
+		}
+		return stated, true
+	}
+	scope, ok = HolderScope(role, tenant)
+	if !ok || (stated != "" && stated != scope) {
+		return "", false
+	}
+	return scope, true
+}
+
 // RoleHolder is one account of a realm holding a relation: on the cluster,
-// or, with Tenant set, on that tenant (a perimeter approver of scope
-// tenant:<t>).
+// or, with Tenant set, on that tenant (a perimeter approver or auditor of
+// scope tenant:<t>).
 type RoleHolder struct {
 	Relation, Realm, Subject string
 	Tenant                   string

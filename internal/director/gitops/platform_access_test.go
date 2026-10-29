@@ -97,6 +97,7 @@ func TestARoleHolderIsHeldToItsShape(t *testing.T) {
 		"a perimeter approver of their own tenant": {Role: "perimeterApprover", Scope: "tenant:acme", Tenant: "acme", Subject: "1", Username: "x", Reason: "r"},
 		"a perimeter approver of the platform":     {Role: "perimeterApprover", Scope: "cluster", Tenant: "platform", Subject: "1", Username: "x", Reason: "r"},
 		"a service administrator of the platform":  {Role: "serviceAdmin", Scope: "cluster", Tenant: "platform", Subject: "1", Username: "x", Reason: "r"},
+		"an auditor of one tenant":                 {Role: "tenantAuditor", Scope: "tenant:acme", Tenant: "platform", Subject: "1", Username: "x", Reason: "r"},
 	} {
 		if err := validHolder(ok, now); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -119,6 +120,9 @@ func TestARoleHolderIsHeldToItsShape(t *testing.T) {
 		"shared apps admin of a tenant": reason(RoleHolder{Role: "sharedAppsAdmin", Tenant: "acme", Subject: "1", Username: "x"}),
 		"a tenant's approver for all":   reason(RoleHolder{Role: "perimeterApprover", Tenant: "acme", Subject: "1", Username: "x"}),
 		"another tenant's approver":     reason(RoleHolder{Role: "perimeterApprover", Scope: "tenant:globex", Tenant: "acme", Subject: "1", Username: "x"}),
+		"a tenant auditor of no tenant": reason(RoleHolder{Role: "tenantAuditor", Tenant: "platform", Subject: "1", Username: "x"}),
+		"a tenant auditor of platform":  reason(RoleHolder{Role: "tenantAuditor", Scope: "tenant:platform", Tenant: "platform", Subject: "1", Username: "x"}),
+		"a tenant auditor of a tenant":  reason(RoleHolder{Role: "tenantAuditor", Scope: "tenant:acme", Tenant: "acme", Subject: "1", Username: "x"}),
 		"a reason over lines":           reason(RoleHolder{Role: "auditor", Tenant: "acme", Subject: "1", Username: "x", Reason: "a\nb"}),
 		"admin is no holder's":          reason(RoleHolder{Role: "admin", Tenant: "acme", Subject: "1", Username: "x"}),
 		"break glass neither":           reason(RoleHolder{Role: "breakGlass", Tenant: "acme", Subject: "1", Username: "x"}),
