@@ -785,3 +785,54 @@ func TestABundleUploadIsNotCutAtTheJSONBodyLimit(t *testing.T) {
 		t.Fatalf("a 2 MiB import request = %d, want it refused", code)
 	}
 }
+
+// trickle hands out its bytes a chunk at a time, pausing between chunks: a
+// bundle on a slow link.
+type trickle struct {
+	left  int
+	pause time.Duration
+}
+
+func (t *trickle) Read(p []byte) (int, error) {
+	if t.left == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(t.pause)
+	n := min(len(p), t.left, 64<<10)
+	t.left -= n
+	return n, nil
+}
+
+// An upload takes as long as the bundle is big. The director's read and
+// write deadlines are for requests that fit in memory; under them, an upload
+// slower than the read deadline was cut, and one slower than the write
+// deadline was stored and its answer lost.
+func TestABundleUploadOutlastsTheDirectorsDeadlines(t *testing.T) {
+	op := &importingOperator{}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	slow := httptest.NewUnstartedServer(h.server())
+	slow.Config.ReadTimeout, slow.Config.WriteTimeout = 200*time.Millisecond, 200*time.Millisecond
+	slow.Start()
+	t.Cleanup(slow.Close)
+
+	size := 1 << 20
+	req, err := http.NewRequest("POST", slow.URL+"/v1/clusters/"+dt.Cluster+"/bundles", &trickle{left: size, pause: 40 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+alice)
+	req.Header.Set("Content-Type", "application/x-tar")
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("after %s: %v", time.Since(start).Round(time.Millisecond), err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("the answer was lost: %v", err)
+	}
+	if resp.StatusCode != http.StatusAccepted || op.uploaded != int64(size) {
+		t.Fatalf("upload = %d, the operator got %d of %d bytes in %s", resp.StatusCode, op.uploaded, size, time.Since(start).Round(time.Millisecond))
+	}
+}

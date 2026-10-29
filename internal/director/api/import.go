@@ -144,9 +144,16 @@ func (req importRequest) inspection() (map[string]any, string) {
 }
 
 // uploadBundle streams the request body to the operator, which lays it out
-// in the cluster's storage and answers with where.
+// in the cluster's storage and answers with where. Both of the director's
+// deadlines are lifted for it, once the caller is authorized: the transfer
+// takes as long as the bundle is big, hours for a large one, and the answer
+// is written only at its end -- under the write deadline set when the request
+// arrived, an upload past six minutes was stored and its answer then lost.
+// The request's context ends it if the sender goes.
 func (s *Server) uploadBundle(w http.ResponseWriter, r *http.Request, _ call) {
-	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
 	path := "/v1/bundles"
 	if t := r.PathValue("t"); t != "" && r.PathValue("c") == "" {
 		// A tenant's administrator's: recorded as the tenant's, and bounded
