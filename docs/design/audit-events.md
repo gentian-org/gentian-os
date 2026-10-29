@@ -117,8 +117,8 @@ It does three things and no more:
 spec:
   logForwarding:
     destination:
-      endpoint: https://evidence.example.org/ingest   # unset: no forwarder
-      streams: [audit, operations]                    # both when absent
+      endpoint: https://evidence.example.org/ingest   # unset or empty: no forwarder
+      streams: [audit, operations]                    # both when absent or empty
 ```
 
 The destination takes newline-delimited JSON over HTTPS POST, gzip
@@ -131,8 +131,15 @@ newest lines instead. The forwarder also counts each audit record as
 `gentian_audit_records_total` by source, kind, outcome and tenant, which is
 what the rules in §5 read.
 
-Unset `destination` renders no DaemonSet. The credential is supplied once,
-the way a backup destination's is, and never sits in the claim. The
+The Cluster Composition composes the forwarder's Application and its
+credential's ExternalSecret while `destination.endpoint` is set, and
+removes both when it is empty or unset, so a change takes effect once
+Crossplane has seen the claim, with no installer step. Both fields are
+cluster settings the director writes (`kubectl gentian settings set
+logForwarding.destination.endpoint=…`), which is how a console switches
+forwarding on. The credential is supplied once at the custodian, the way a
+backup destination's is, and never sits in the claim; Reloader restarts the
+DaemonSet when it changes, because Vector reads it only at start. The
 inventory in `internal/kernel/kernelnet/inventory.yaml` names its egress.
 
 Minimisation beyond redaction — pseudonymising addresses, truncating client

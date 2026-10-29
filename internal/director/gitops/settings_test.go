@@ -251,6 +251,59 @@ func TestAListSettingChecksEveryItem(t *testing.T) {
 	}
 }
 
+// The log destination is the operator's to follow, not the installer's: an
+// HTTPS URL or nothing, and streams of the two the forwarder has. Written
+// into a claim that carries no logForwarding block, it makes one.
+func TestTheLogDestinationIsASettingTheClusterFollows(t *testing.T) {
+	t.Parallel()
+	endpoint, ok := settingByPath("logForwarding.destination.endpoint")
+	if !ok || endpoint.InstallStep != "" {
+		t.Fatalf("the endpoint should be a setting no installer step has to apply: %+v", endpoint)
+	}
+	for _, good := range []string{"https://evidence.example.org/ingest", "https://e.example.org/i?a=1,2", ""} {
+		if err := validateSetting(endpoint, good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"http://e.example.org/i", "e.example.org", "https://a b"} {
+		if err := validateSetting(endpoint, bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	streams, ok := settingByPath("logForwarding.destination.streams")
+	if !ok || !streams.List || streams.InstallStep != "" {
+		t.Fatalf("streams should be a list no installer step has to apply: %+v", streams)
+	}
+	for _, good := range []string{"audit", "audit,operations", ""} {
+		if err := validateSetting(streams, good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+	if err := validateSetting(streams, "audit,metrics"); err == nil {
+		t.Error("a stream the forwarder does not have was accepted")
+	}
+
+	out, changed, err := setClaimValue(claimFixture, "logForwarding.destination.endpoint", "https://evidence.example.org/ingest")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	out, _, err = setClaimList(out, "logForwarding.destination.streams", []string{"audit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claim map[string]any
+	if err := yaml.Unmarshal([]byte(out), &claim); err != nil {
+		t.Fatalf("not YAML: %v\n%s", err, out)
+	}
+	spec, _ := claim["spec"].(map[string]any)
+	if got, _ := lookupPath(spec, []string{"logForwarding", "destination", "endpoint"}); got != "https://evidence.example.org/ingest" {
+		t.Fatalf("endpoint reads back as %q:\n%s", got, out)
+	}
+	if got, _ := lookupPath(spec, []string{"logForwarding", "destination", "streams"}); got != "audit" {
+		t.Fatalf("streams read back as %q:\n%s", got, out)
+	}
+}
+
 // Values that YAML would read as something other than a string are quoted,
 // and ordinary ones are left as a person would write them.
 func TestScalarsAreQuotedOnlyWhenTheyMustBe(t *testing.T) {

@@ -1648,6 +1648,11 @@ _claim_cluster_fields() {
         printf '  logForwarding:\n'
         printf '    destination:\n'
         printf '      endpoint: "%s"\n' "${LOG_FORWARDING_ENDPOINT}"
+        # The streams, where the claim names some: the director may have set
+        # them, and a claim written again must not lose them.
+        if [[ -n "${LOG_FORWARDING_STREAMS:-}" ]]; then
+            printf '      streams: [%s]\n' "${LOG_FORWARDING_STREAMS//,/, }"
+        fi
     else
         printf '  # logForwarding:\n'
         printf '  #   destination:\n'

@@ -263,8 +263,9 @@ def census():
 
     # Every installedBy names something this looked at, or says in words what
     # creates the pods (cert-manager's solver). application: is an Application
-    # of an ApplicationSet under kernel/appsets.
-    known = ("bootstrap-application:", "bootstrap-chart:", "step:", "application:")
+    # of an ApplicationSet under kernel/appsets; composition: one a Composition
+    # composes from the claim.
+    known = ("bootstrap-application:", "bootstrap-chart:", "step:", "application:", "composition:")
     for installer in installed:
         if installer.startswith(known):
             continue
