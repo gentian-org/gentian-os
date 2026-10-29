@@ -411,7 +411,7 @@ func tenantFromNamespace(ns string) string {
 // run; a run happens once, at a moment somebody chose, and writing one into
 // git would leave an object there that has already finished and that somebody
 // then has to prune. So taking one and removing one are actions: the director
-// authorises the caller and asks for them by name, and the answer says what
+// authorizes the caller and asks for them by name, and the answer says what
 // was started rather than what was committed.
 
 // StartBackupRequest is one export, as the caller asks for it.

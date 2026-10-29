@@ -443,7 +443,7 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 			extra[i].DeniedRedirect = denied[extra[i].Host]
 		}
 	}
-	checkers, err := rightsCheckers(ctx, r.Client)
+	checkers, err := rightsCheckers(ctx, r.Client, bouncerCheckerAudit{Cluster: r.Cluster, Realm: r.kernelRealm()})
 	if err != nil {
 		return err
 	}

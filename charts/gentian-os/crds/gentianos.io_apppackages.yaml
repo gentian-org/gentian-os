@@ -75,7 +75,7 @@ spec:
                 x-kubernetes-list-type: set
               author:
                 description: |-
-                  Author is who supplies this preset — a company, an organisation, or an
+                  Author is who supplies this preset — a company, an organization, or an
                   individual.
                 maxLength: 128
                 type: string
@@ -101,7 +101,7 @@ spec:
                 description: Tile is the App Store icon for the preset.
                 properties:
                   icon:
-                    description: Icon selects a pre-made tile from the Gentian catalogue
+                    description: Icon selects a pre-made tile from the Gentian catalog
                       (path 2).
                     pattern: ^[a-z][a-z0-9-]*$
                     type: string

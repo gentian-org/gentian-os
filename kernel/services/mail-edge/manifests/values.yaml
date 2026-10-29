@@ -116,7 +116,7 @@ loadBalancer:
   # from the addresses in `from`, and takes none from anywhere else.
   # `from` empty means every connection must carry one -- correct only where
   # nothing reaches the proxy except through the load balancer, which on most
-  # clusters is not true of a pod dialling the public name.
+  # clusters is not true of a pod dialing the public name.
   #
   # The load balancer has to be switched to match, by its own annotation:
   #   loadbalancer.openstack.org/proxy-protocol: "true"        (Octavia)

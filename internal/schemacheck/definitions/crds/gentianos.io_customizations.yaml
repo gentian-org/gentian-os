@@ -138,7 +138,7 @@ spec:
                     description: Contact is the maintainer contact for the customization.
                     type: string
                   organisation:
-                    description: Organisation names the authoring organisation, when
+                    description: Organisation names the authoring organization, when
                       not Gentian.
                     type: string
                   repo:
@@ -390,7 +390,7 @@ spec:
                 format: int64
                 type: integer
               phase:
-                description: Phase summarises record health.
+                description: Phase summarizes record health.
                 enum:
                 - Active
                 - NeedsReview

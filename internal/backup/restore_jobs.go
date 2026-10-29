@@ -59,7 +59,7 @@ func (d Decryption) Validate() error {
 	return nil
 }
 
-// fetchAndDecrypt produces the init container that pulls one artefact from the
+// fetchAndDecrypt produces the init container that pulls one artifact from the
 // bundle, checks it against the checksum recorded beside it, and decrypts it.
 //
 // Verification happens before decryption and the Job fails on a mismatch. A

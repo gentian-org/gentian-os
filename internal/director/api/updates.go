@@ -31,8 +31,8 @@ import (
 //
 // Three things are read together and nothing is stored: what git says each
 // tenant has installed and at which build; what the cluster runs and how
-// the last move went (the operator's rollouts); and what the catalogue each
-// install came from offers now. An app is outdated when the catalogue's
+// the last move went (the operator's rollouts); and what the catalog each
+// install came from offers now. An app is outdated when the catalog's
 // newest build its floor admits is not the one pinned. What keeps it there is
 // said beside it -- its mode, a customization that carries upgrade risk, a
 // move that was rolled back -- so the person reading the report knows what
@@ -66,7 +66,7 @@ type updateEntry struct {
 	NewestVersion string `json:"newestVersion,omitempty"`
 	// Outdated: Newest is known and is not Pinned.
 	Outdated bool `json:"outdated"`
-	// Unmet is why the catalogue's newest build cannot be installed here.
+	// Unmet is why the catalog's newest build cannot be installed here.
 	Unmet string `json:"unmet,omitempty"`
 	// Mode is how this app moves for this tenant, and ModeFrom where that
 	// answer came from: tenant, app, customization or cluster.
@@ -97,7 +97,7 @@ type updateReport struct {
 	// WindowOpen is whether the platform would move latest-mode apps now.
 	WindowOpen bool          `json:"windowOpen"`
 	Entries    []updateEntry `json:"entries"`
-	// Unread names catalogues whose index could not be read; entries from
+	// Unread names catalogs whose index could not be read; entries from
 	// them say nothing about a newer build.
 	Unread []string `json:"unread,omitempty"`
 	// Partial says the cluster's side could not be read, and why.
@@ -251,12 +251,12 @@ func (h customizationHold) applies(tenant string) bool {
 
 // clusterSide reads the rollouts and the customizations from the operator.
 // Either not being readable leaves the report partial rather than empty:
-// what git and the catalogue say still stands.
+// what git and the catalog say still stands.
 func (s *Server) clusterSide(ctx context.Context) (map[string]operatorRollout, map[string][]customizationHold, string) {
 	rollouts := map[string]operatorRollout{}
 	holds := map[string][]customizationHold{}
 	if s.cfg.Lifecycle == nil {
-		// A director with no operator to ask: git and the catalogue are
+		// A director with no operator to ask: git and the catalog are
 		// still read, and the report says the cluster's side is missing.
 		return rollouts, holds, "this director has no operator to ask for the cluster's rollouts and customizations"
 	}
@@ -363,7 +363,7 @@ func heldReasons(e updateEntry, holds []customizationHold, tenant string) []stri
 	return out
 }
 
-// newestFor is the catalogue entry an install is compared with: from the
+// newestFor is the catalog entry an install is compared with: from the
 // catalogue it was installed from where the tenant still sees it, otherwise
 // from the first catalogue the tenant sees that serves the name.
 //
@@ -441,7 +441,7 @@ func (s *Server) retryMove(w http.ResponseWriter, r *http.Request, c call, tenan
 }
 
 // retryable is an entry whose last move, to the build it is pinned to, was
-// rolled back or did not start: current by the catalogue, and not running
+// rolled back or did not start: current by the catalog, and not running
 // what it is pinned to.
 func retryable(e updateEntry) bool {
 	return !e.Outdated && e.Pinned != "" && e.Rollout != nil && e.Rollout.Target == e.Pinned &&
@@ -449,7 +449,7 @@ func retryable(e updateEntry) bool {
 }
 
 // moveOutdated moves every outdated app the body names -- all of them when
-// it names none -- to the newest build its catalogue offers, by the one
+// it names none -- to the newest build its catalog offers, by the one
 // operation an install is (install), under the cluster administrator's
 // right. Apps held by their mode are moved too: this is the administrator
 // acting, which every mode allows. An app whose newest build this platform
@@ -589,7 +589,7 @@ func (s *Server) materialise(ctx context.Context, c call, what, tenant, profile,
 		return visibleSource{}, err.Error(), err
 	}
 	if !known {
-		return visibleSource{}, "the tenant no longer sees catalogue " + catalogueName, fmt.Errorf("unknown catalogue")
+		return visibleSource{}, "the tenant no longer sees catalog " + catalogueName, fmt.Errorf("unknown catalog")
 	}
 	fetched, ok := s.fetchOrStored(rec, req, source, tenant, profile, digest)
 	if !ok {

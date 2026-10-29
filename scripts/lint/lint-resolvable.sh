@@ -38,7 +38,7 @@ source scripts/lib/portal-login-bootstrap.sh >/dev/null 2>&1 || true
 trap - ERR
 set +e
 
-# Set after load.sh, which defines its own colour vars for `echo -e` and would
+# Set after load.sh, which defines its own color vars for `echo -e` and would
 # otherwise overwrite these with strings printf renders literally.
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; NC=$'\033[0m'
 

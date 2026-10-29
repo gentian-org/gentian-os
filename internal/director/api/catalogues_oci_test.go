@@ -27,8 +27,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// Catalogues kept as OCI artifacts, read with the credential of a
-// repository the catalogue's owner declared. One registry plays every
+// Catalogs kept as OCI artifacts, read with the credential of a
+// repository the catalog's owner declared. One registry plays every
 // registry host (directortest.Registry); the vault is a map, and records
 // every path it is asked for.
 //
@@ -92,8 +92,8 @@ func startOCI(t *testing.T, reg *dt.Registry, vault *fakeVault) *harness {
 }
 
 // Who may add an artifact is who may add an address; with which repository
-// it is read is where it is added. A tenant's catalogue is read with a
-// repository of that tenant's, and a catalogue of the cluster with one of
+// it is read is where it is added. A tenant's catalog is read with a
+// repository of that tenant's, and a catalog of the cluster with one of
 // the cluster's, whoever adds it -- every other name is a repository that is
 // not declared, in the words one nobody declared is refused in.
 func TestAnArtifactIsAddedWithItsOwnersRepositoryOnly(t *testing.T) {
@@ -142,7 +142,7 @@ func TestAnArtifactIsAddedWithItsOwnersRepositoryOnly(t *testing.T) {
 			t.Errorf("%s: %d %v, want %d saying %q", c.what, code, out, c.want, c.says)
 		}
 	}
-	// The credential is not asked for when a catalogue is added.
+	// The credential is not asked for when a catalog is added.
 	if asked := vault.paths(); len(asked) != 0 {
 		t.Fatalf("the vault was asked for %v", asked)
 	}
@@ -175,7 +175,7 @@ func TestAnArtifactIsAddedWithItsOwnersRepositoryOnly(t *testing.T) {
 }
 
 // What an artifact holds is listed and installed from as what an address
-// serves: pinned to the digest, recorded as the tenant's own catalogue, read
+// serves: pinned to the digest, recorded as the tenant's own catalog, read
 // with the tenant's credential and nobody else's.
 func TestATenantInstallsFromItsOwnArtifact(t *testing.T) {
 	app := profileNamed("demo-notes", "acme")
@@ -225,9 +225,9 @@ func TestATenantInstallsFromItsOwnArtifact(t *testing.T) {
 	}
 }
 
-// A catalogue added when the repository was declared is not read with
+// A catalog added when the repository was declared is not read with
 // another once the declaration changes owner: the repository is asked for on
-// every pull, of the owner the catalogue is declared for.
+// every pull, of the owner the catalog is declared for.
 func TestAnArtifactIsReadWithItsRepositoryOnEveryPull(t *testing.T) {
 	reg := dt.NewRegistry(t)
 	reg.Login = [2]string{"u", "p"}
@@ -250,7 +250,7 @@ func TestAnArtifactIsReadWithItsRepositoryOnEveryPull(t *testing.T) {
 }
 
 // An import obtains the builds its bundle records from the cluster's
-// catalogues of every kind: from one kept as an artifact as from one at an
+// catalogs of every kind: from one kept as an artifact as from one at an
 // address, with the same fetcher, read with the cluster's repository and no
 // other.
 func TestAnImportMaterialisesAProfileFromAnArtifactOfTheCluster(t *testing.T) {

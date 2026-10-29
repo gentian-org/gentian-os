@@ -151,7 +151,7 @@ spec:
 		}
 	}
 	// The cluster's own, in a file with a second object: refused, not
-	// rewritten around its neighbour.
+	// rewritten around its neighbor.
 	d := gitops.RepositoryDeclaration{Role: "apps", Type: "oci", URL: "oci://registry.example.com/charts"}
 	if _, err := g.DeclareRepository(ctx, "", "charts", d, repoMeta()); !errors.Is(err, gitops.ErrRepositoryNotRewritable) {
 		t.Errorf("a repository sharing its file: %v", err)

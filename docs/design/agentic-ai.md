@@ -82,7 +82,7 @@ profile, and no `mcpcapabilities` resource. The design is that, when an app is
 installed, the platform:
 
 1. Registers the app's MCP endpoint with the **MCP registry**
-   (a kernel service exposing the catalogue of all live MCP
+   (a kernel service exposing the catalog of all live MCP
    endpoints in the cluster, scoped per tenant).
 2. Leaves who is calling to the caller's side of the call. How a call
    through MCP reaches an app as one particular person is not settled here:
@@ -381,7 +381,7 @@ capability.
   is the substrate, not the orchestrator.
 - Not magic: apps that don't expose MCP or `automationHooks` remain
   opaque to agents and workflow engines. The value scales with
-  catalogue adoption.
+  catalog adoption.
 
 ## 10. LLM Serving: Admin Console & vLLM Operations
 

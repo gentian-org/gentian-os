@@ -38,7 +38,7 @@ const ManifestSchemaVersion = bundle.SchemaVersion
 // It runs last. A bundle without a manifest is one a restore will refuse, so
 // its presence is what marks the bundle complete — there is no separate flag to
 // disagree with.
-// The manifest is encrypted like every other artefact — it carries the tenant's
+// The manifest is encrypted like every other artifact — it carries the tenant's
 // spec and its app inventory, which is not something to leave readable next to
 // an encrypted bundle. info is written in the clear beside it, and says only
 // what the bundle is and how to open it.

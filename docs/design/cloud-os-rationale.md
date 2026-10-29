@@ -9,7 +9,7 @@
 Open-source business software is excellent — Nextcloud, OpenProject,
 Element/Matrix, OX App Suite, XWiki, Jitsi each rival or surpass their
 proprietary competitors in their own domain. But assembling them into a
-**coherent workplace** that an organisation can actually adopt is, today,
+**coherent workplace** that an organization can actually adopt is, today,
 a project measured in person-months:
 
 - Each app brings its own identity model, its own database, its own
@@ -103,7 +103,7 @@ To be precise about what Gentian OS is *not*:
   Nextcloud (and others) be installed cleanly.
 - **Not a Kubernetes distribution.** It runs on any conformant K8s.
 - **Not a SaaS product.** It is the platform someone could build a
-  SaaS on top of, or run for their own organisation.
+  SaaS on top of, or run for their own organization.
 - **Not a fork of any upstream app.** Profiles wrap upstream Helm
   charts as published; if patches are required, the goal is upstream
   contribution.

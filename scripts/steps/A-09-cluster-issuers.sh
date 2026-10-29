@@ -167,7 +167,7 @@ apply() {
                 info "  No DNS provider: this cluster issues per-host certificates, not wildcards."
             else
                 success "ClusterIssuers $(_v5_http01_issuer_name) and $(gentian_dns01_cluster_issuer_name) applied."
-                info "  The DNS-01 issuer stays NotReady until C-03 materialises its credential."
+                info "  The DNS-01 issuer stays NotReady until C-03 materializes its credential."
             fi
             ;;
         self-signed)
@@ -212,7 +212,7 @@ EOF
 }
 
 destroy() {
-    # Only the issuers this installer labelled, the internal CA's
+    # Only the issuers this installer labeled, the internal CA's
     # ServiceAccount and token Role, and a root CA Certificate left from
     # before the vault signed. A ClusterIssuer somebody else put on this
     # cluster is not ours to remove -- v4's step ended with a `delete

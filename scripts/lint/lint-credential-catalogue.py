@@ -3,7 +3,7 @@
 # scripts/lint/lint-credential-catalogue.py — a generated requirement must be
 # reachable from the installer
 # =============================================================================
-# The catalogue has two readers. scripts/gen/gen-credential-requirements.py
+# The catalog has two readers. scripts/gen/gen-credential-requirements.py
 # renders every provider table into the on-cluster CredentialRequirement set;
 # scripts/lib/credentials.sh walks the same tables to decide what to prompt
 # for. Each was internally correct and they disagreed about what exists:
@@ -14,7 +14,7 @@
 # did not happen.
 #
 # This compares the two lists. It is the check neither side can do alone, and
-# the only kind that catches a requirement nobody asks for: every artefact is
+# the only kind that catches a requirement nobody asks for: every artifact is
 # individually valid, and the defect lives in the gap between them.
 #
 # Usage: scripts/lint/lint-credential-catalogue.py

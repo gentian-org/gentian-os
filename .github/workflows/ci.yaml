@@ -20,7 +20,7 @@ on:
 
 # A newer commit on a branch replaces the run of the older one: only the tip
 # is what anybody waits for. main, develop and release tags
-# are never cancelled — each of their commits publishes an image something may
+# are never canceled — each of their commits publishes an image something may
 # pin, and what such a run started it finishes.
 concurrency:
   group: ci-${{ github.ref }}
@@ -89,7 +89,7 @@ jobs:
       - name: go build
         run: go build ./... ./api/...
 
-      # Every bundle the published catalogues serve, held to this build's
+      # Every bundle the published catalogs serve, held to this build's
       # install and rollout checks: a platform change that breaks a published
       # profile fails here, not at a tenant's install (docs/plans/versioning.md).
       - name: Published catalogues conform to this platform
@@ -248,7 +248,7 @@ jobs:
       # they prove the text came out as expected and can say nothing about what
       # it grants. A path glob with a typo — gentian-os/kernel* for
       # gentian-os/kernel/* — renders correctly, matches its golden, and opens a
-      # neighbouring path. The only way to catch that is to load the policy into
+      # neighboring path. The only way to catch that is to load the policy into
       # a real OpenBao and try the access.
       #
       # The sharp rule is cluster-admin being DENIED a tenant's data. That is

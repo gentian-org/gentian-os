@@ -9,14 +9,14 @@
 
 Gentian OS is a **cloud-native operating system** for open-source
 business applications. It runs on Kubernetes and exposes the same
-"install / uninstall / use" experience to organisations that a desktop
+"install / uninstall / use" experience to organizations that a desktop
 OS exposes to a single user — except the "user" is a tenant
-(organisation) and the "apps" are full multi-user products like
+(organization) and the "apps" are full multi-user products like
 Nextcloud, OpenProject, Element, or XWiki.
 
-The design optimises for two things:
+The design optimizes for two things:
 
-1. **Onboarding a new application** is one catalogue entry: a
+1. **Onboarding a new application** is one catalog entry: a
    `ComponentProfile` and the few objects that travel with it.
 2. **Onboarding a new tenant** is a single declarative resource
    (`Tenant`) that triggers the entire provisioning pipeline.
@@ -80,7 +80,7 @@ graph TD
 
 | Part | Role | Boundary |
 |---|---|---|
-| **Argo CD** (`kernel-gitops`) | Pulls git and applies it: the kernel's charts from `gentian-os`, and from the deployments repository the cluster's claims, its materialised catalogue and its tenants. Syncs only commits signed by the director or the break-glass key. | Provisions nothing itself. |
+| **Argo CD** (`kernel-gitops`) | Pulls git and applies it: the kernel's charts from `gentian-os`, and from the deployments repository the cluster's claims, its materialized catalog and its tenants. Syncs only commits signed by the director or the break-glass key. | Provisions nothing itself. |
 | **Director** (`kernel-control`) | The API people's requests go to. It verifies the caller's token, asks OpenFGA whether that person may make the change, and commits it to the deployments repository as that person. | Holds the git push credential and no cluster credential. |
 | **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite and each app's claim, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
 | **Crossplane** (`kernel-provisioning`) | Composes `XCluster`, `XTenant` and per-app `App` claims into managed resources: namespaces, vault policies, Jobs, `ExternalSecret`s, Helm `Release`s. | Owns what can be written down before it happens (below). |
@@ -108,8 +108,8 @@ flowchart TD
 
 | Owner | Does | Does *not* do |
 |---|---|---|
-| **Director** | Decide whether the caller may; commit the tenant's manifest, an app's entry in it, a materialised profile | Touch the cluster |
-| **Argo CD** | Apply the kernel's charts, the claims, the catalogue directory and each tenant's directory | Run provisioning logic; create a Helm release per tenant app |
+| **Director** | Decide whether the caller may; commit the tenant's manifest, an app's entry in it, a materialized profile | Touch the cluster |
+| **Argo CD** | Apply the kernel's charts, the claims, the catalog directory and each tenant's directory | Run provisioning logic; create a Helm release per tenant app |
 | **Operator** | Seed secrets; write `XTenant`; create a `Component` per installed app; write each Component's Helm release or `App` claim; routes, network policies, status | Create what a Composition creates |
 | **Crossplane** | Reconcile `XTenant` and `App` claims into managed resources (Jobs, Objects, ESO, `provider-helm` Releases) | Sync git |
 
@@ -207,13 +207,13 @@ There is no Argo CD Application per tenant app.
 
 **App install flow.** A person asks the director (`kubectl gentian apps
 install`, the App Store app). The director fetches the profile's bundle from a
-catalogue — an https address serving an index and one bundle per app — checks
+catalog — an https address serving an index and one bundle per app — checks
 it against the digest the install names, and commits two things: the bundle
 under `clusters/<cluster>/catalogue/` and the app's entry in the tenant's
 `spec.apps`. Argo CD applies both; the operator creates the `Component`; the
 Component either writes the Helm release itself or writes the `App` claim that
 the `app-default` Composition answers with an `ExternalSecret` and a
-`provider-helm` `Release`. Nothing copies a catalogue into a cluster ahead of
+`provider-helm` `Release`. Nothing copies a catalog into a cluster ahead of
 an install. See [custom-catalogues.md](custom-catalogues.md) and
 [design/store-contract.md](design/store-contract.md).
 
@@ -260,7 +260,7 @@ Two consequences worth knowing:
 
 Four kinds carry the model. The rest are listed at the end of the section.
 
-### 4.1 `ComponentProfile` (cluster-scoped) — the catalogue entry
+### 4.1 `ComponentProfile` (cluster-scoped) — the catalog entry
 
 Declares **what a component is**: whether it is an app, a shared app or a
 service (`classes`), how a person opens it (`launch`), its trust tier, how it
@@ -279,7 +279,7 @@ it (§3.1). The types are `api/v1alpha1/componentprofile_types.go` and
 ### 4.2 `Tenant` (cluster-scoped) — the customer
 
 Declares **who** uses the platform: isolation, quotas, mail mode, deletion
-policy, the catalogues only this tenant sees, and **`spec.apps`** — the
+policy, the catalogs only this tenant sees, and **`spec.apps`** — the
 profiles installed for it, each optionally pinned to a digest, with its
 addons. It also records what was approved for the tenant: public addresses
 (`spec.exposures`) and privileges (`spec.privileges`). The manifest lives in
@@ -310,7 +310,7 @@ are recorded and not enforced by the platform, and the provider is not told
 which app is calling ([app-customization.md §2.3](app-customization.md)).
 
 **Other kinds.** `Cluster` (the Crossplane claim that says what a cluster is:
-domain, tenancy mode, mail, models, catalogues), `Customization`
+domain, tenancy mode, mail, models, catalogs), `Customization`
 ([app-customization.md §5](app-customization.md)), `AppPackage`, `AppGrant`,
 `Branding`, `ResourcePlan`, `TenantDomain`, `BackupPolicy`, `TenantExport`,
 `TenantExportSchedule`, `TenantRestore`, `MailboxRemoval`,
@@ -357,8 +357,8 @@ namespaces by the operator like any other component. The platform is itself
 a tenant: its desktop answers at `platform.<kernel domain>` and shows platform
 administrators the kernel's consoles.
 
-**Catalogue apps** (Nextcloud, Element, …) are installed per tenant from a
-catalogue (§3.1). See [design/kernel.md](design/kernel.md) for the kernel
+**Catalog apps** (Nextcloud, Element, …) are installed per tenant from a
+catalog (§3.1). See [design/kernel.md](design/kernel.md) for the kernel
 functions and the kernel-versus-catalogue split.
 
 ---
@@ -469,8 +469,8 @@ the custodian, which can write a secret and cannot read one.
 
 ### 7.2 OpenBao Bootstrap
 
-OpenBao must be initialised before ESO or Crossplane can authenticate to
-it. The installer does this once, in its `B` phase: it initialises the
+OpenBao must be initialized before ESO or Crossplane can authenticate to
+it. The installer does this once, in its `B` phase: it initializes the
 transit seal and the vault (`B-02`, `B-03`), creates the KV mount and
 Crossplane's policy and token (`B-04`), and seeds the kernel's paths
 (`B-07`, `B-08`). Everything after that — Kubernetes auth, roles, the
@@ -536,9 +536,9 @@ Configuration, isolation and DNS records are in
 
 ---
 
-## 9b. Collabora (catalogue app)
+## 9b. Collabora (catalog app)
 
-Collaborative document editing is a **catalogue app**, not a kernel service:
+Collaborative document editing is a **catalog app**, not a kernel service:
 it is installed with the file store that uses it, as part of that app's
 profile or as an addon of it. See
 [design/app-catalogue.md](design/app-catalogue.md).
@@ -646,7 +646,7 @@ platform's kinds to do their work.
 
 | Role | Scope | Does it through | Cannot do |
 |---|---|---|---|
-| **Platform administrator** | The cluster and the platform tenant | `kubectl gentian`, the platform desktop's consoles; creates tenants, declares catalogues, sets plans | Open a tenant's apps |
+| **Platform administrator** | The cluster and the platform tenant | `kubectl gentian`, the platform desktop's consoles; creates tenants, declares catalogs, sets plans | Open a tenant's apps |
 | **Tenant administrator** | One tenant | The administration console and the App Store app: people, groups, installs, grants | Use the tenant's apps as a member; touch another tenant or the kernel |
 | **Perimeter approver** | One tenant | Approves what the tenant publishes without sign-in | Anything else |
 | **Member** | One tenant | The desktop: the apps they were given | Install, administer |
@@ -659,7 +659,7 @@ the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
 
 ## 14. Why This Architecture Scales
 
-- **Adding an app to a catalogue = one profile bundle.** No code and no
+- **Adding an app to a catalog = one profile bundle.** No code and no
   Composition change for a typical app; `app-default` reads the profile.
 - **Installing an app for a tenant = one request to the director**, which
   becomes one entry in `Tenant.spec.apps`. Tenant administrators do this
@@ -686,7 +686,7 @@ the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
 | Routing, the edge, sign-in sessions, embedding | [design/routing.md](design/routing.md) |
 | One brand on every page: tokens, identity, publishing | [design/branding.md](design/branding.md) |
 | Profile schema, IntegrationBindings, contracts, tiers | [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md) |
-| Publishing your own catalogue | [custom-catalogues.md](custom-catalogues.md) |
+| Publishing your own catalog | [custom-catalogues.md](custom-catalogues.md) |
 | Customizing an installed app | [app-customization.md](app-customization.md) |
 | What the cluster accepts from an App Store | [design/store-contract.md](design/store-contract.md) |
 | The security rules | [security-principles.md](security-principles.md) |

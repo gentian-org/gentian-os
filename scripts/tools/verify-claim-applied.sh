@@ -47,7 +47,7 @@ echo ""
 
 pass=0; fail=0
 
-# The composite, not the claim: the API server materialises the XRD's defaults
+# The composite, not the claim: the API server materializes the XRD's defaults
 # onto it, so a setting the author left out still has the value everything
 # downstream will see. Comparing against the claim alone would call a defaulted
 # setting missing.

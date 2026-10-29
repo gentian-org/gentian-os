@@ -309,7 +309,7 @@ def validate(catalogue):
         # Scope is a class; tenant is an identity. A tenant-scoped requirement
         # with no tenant is visible to every tenant admin, which for a
         # tenant-proprietary repository credential is a disclosure. The CRD's CEL
-        # rule rejects this at admission; catching it here names the catalogue
+        # rule rejects this at admission; catching it here names the catalog
         # entry instead of the generated object.
         tenant = req.get("tenant", "")
         if req.get("scope") == "tenant" and not tenant:

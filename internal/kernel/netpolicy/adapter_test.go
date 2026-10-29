@@ -109,7 +109,7 @@ func TestAdapterIsReachedOnlyByTheComponentThatSpeaksAsAPerson(t *testing.T) {
 		t.Fatal("the adapter has no policy of its own")
 	}
 	if floor.Labels[meta.NetPolicyTypeLabel] != meta.NetPolicyAdapter {
-		t.Fatalf("labelled %q", floor.Labels[meta.NetPolicyTypeLabel])
+		t.Fatalf("labeled %q", floor.Labels[meta.NetPolicyTypeLabel])
 	}
 	if floor.Spec.PodSelector.MatchLabels[instanceLabel] != "tenant-demo-openproject-adapter" {
 		t.Fatalf("selects %+v", floor.Spec.PodSelector)

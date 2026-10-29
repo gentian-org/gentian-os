@@ -20,7 +20,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// indexedSource serves profiles and an index.yaml, which is what a catalogue
+// indexedSource serves profiles and an index.yaml, which is what a catalog
 // source publishes for a cluster to browse it.
 func indexedSource(t *testing.T, index string) *httptest.Server {
 	t.Helper()
@@ -65,7 +65,7 @@ func sampleIndex(digest string) string {
 `, digest, digest, digest, digest, digest)
 }
 
-// A cluster lists its own catalogues' community, maintained and internal
+// A cluster lists its own catalogs' community, maintained and internal
 // entries, and nothing else: a proprietary entry is the App Store's to
 // describe and the cluster only says how many there are (AD-14).
 func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
@@ -141,7 +141,7 @@ func TestAnEntryIsInstallableWhenItStatesItsDigest(t *testing.T) {
 	}
 }
 
-// The list of catalogues is the other half: which they are. Every tenant is
+// The list of catalogs is the other half: which they are. Every tenant is
 // told the same, because a source the claim names is offered to all of them.
 func TestListingCataloguesNamesEverySourceToEveryTenant(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
@@ -153,18 +153,18 @@ func TestListingCataloguesNamesEverySourceToEveryTenant(t *testing.T) {
 	for tenant, person := range map[string]string{"demo": "tom", "solo": "tina"} {
 		code, out := h.do(t, "GET", "/v1/tenants/"+tenant+"/catalogues", h.token(t, "tenant-"+tenant, person), "")
 		if code != http.StatusOK {
-			t.Fatalf("catalogues for %s = %d %v", tenant, code, out)
+			t.Fatalf("catalogs for %s = %d %v", tenant, code, out)
 		}
 		var names []string
 		for _, raw := range out["catalogues"].([]any) {
 			c := raw.(map[string]any)
 			if _, ok := c["open"]; ok {
-				t.Fatalf("a catalogue still says whether it is open: %v", c)
+				t.Fatalf("a catalog still says whether it is open: %v", c)
 			}
 			names = append(names, c["name"].(string))
 		}
 		if strings.Join(names, ",") != "main,in-house" {
-			t.Fatalf("catalogues for %s = %v", tenant, names)
+			t.Fatalf("catalogs for %s = %v", tenant, names)
 		}
 	}
 }
@@ -184,7 +184,7 @@ func TestASourceWithNoIndexListsNothing(t *testing.T) {
 	}
 }
 
-// A catalogue this cluster does not name is not browsable, whatever the
+// A catalog this cluster does not name is not browsable, whatever the
 // caller asks for.
 func TestAnUndeclaredCatalogueIsNotFound(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
@@ -192,6 +192,6 @@ func TestAnUndeclaredCatalogueIsNotFound(t *testing.T) {
 	code, _ := h.do(t, "GET", "/v1/tenants/demo/catalogues/elsewhere/entries",
 		h.token(t, "tenant-demo", "tom"), "")
 	if code != http.StatusNotFound {
-		t.Fatalf("an undeclared catalogue answered %d", code)
+		t.Fatalf("an undeclared catalog answered %d", code)
 	}
 }

@@ -43,7 +43,7 @@ const (
 //
 // An app's own client is named by its profile (requires.services.identity.oidc
 // .clientId, or .saml.entityId), which no pattern can know: the restore is
-// given those names from the catalogue (backup.RealmSource.PlatformClients).
+// given those names from the catalog (backup.RealmSource.PlatformClients).
 var PlatformClientPatterns = []string{
 	`^gentian-edge-`,
 	`^vouch-`,

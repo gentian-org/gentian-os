@@ -26,7 +26,8 @@ import (
 )
 
 // Checker is one component the operator lets ask a single question of the
-// store: may this person use that app of the component's own tenant.
+// store: may this person use that app of the component's own tenant -- and,
+// for a key with Audit, the two audit questions.
 //
 // It is for a component that acts for a person who is not at a browser, and
 // so has no session this service could verify at the edge. Such a component
@@ -42,7 +43,26 @@ type Checker struct {
 	// KeyHash is the SHA-256 of the key the component was given, in hex. The
 	// key itself is in the component's Secret and nowhere else.
 	KeyHash string `json:"keyHash"`
+	// Audit, when set, lets the key ask two questions more about a person of
+	// the platform tenant: may they audit the cluster, and may they read one
+	// tenant's evidence. Nil for every key but the evidence service's and its
+	// console's.
+	Audit *CheckerAudit `json:"audit,omitempty"`
 }
+
+// CheckerAudit is what the audit questions are asked against: the cluster,
+// and the realm whose accounts the people asked about are, the platform
+// tenant's.
+type CheckerAudit struct {
+	Cluster string `json:"cluster"`
+	Realm   string `json:"realm"`
+}
+
+// The audit questions a key with Audit may ask, beside the app question.
+const (
+	relationCanAudit        = "can_audit"
+	relationCanReadEvidence = "can_read_evidence"
+)
 
 var keyHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -59,6 +79,12 @@ func validateCheckers(checkers []Checker) error {
 		}
 		if !keyHashPattern.MatchString(c.KeyHash) {
 			return fmt.Errorf("route table: checker %d (%s/%s) needs keyHash as 64 hex digits", i, c.Tenant, c.Component)
+		}
+		if c.Audit != nil {
+			if _, err := authz.HolderUser(c.Audit.Realm, "x"); err != nil || strings.TrimSpace(c.Audit.Cluster) == "" ||
+				strings.ContainsAny(c.Audit.Cluster, ":#/ ") {
+				return fmt.Errorf("route table: checker %d (%s/%s) asks the audit questions and needs a cluster and a realm", i, c.Tenant, c.Component)
+			}
 		}
 		if seen[c.KeyHash] {
 			return fmt.Errorf("route table: checker %d (%s/%s) shares its key with another", i, c.Tenant, c.Component)
@@ -90,8 +116,13 @@ type checkRequest struct {
 	// Person is the subject of the person asked about, as their tokens name
 	// them.
 	Person string `json:"person"`
-	// App is the profile name of an app of the checker's tenant.
-	App string `json:"app"`
+	// App is the profile name of an app of the checker's tenant: may the
+	// person use it.
+	App string `json:"app,omitempty"`
+	// Relation, instead of App, asks an audit question of a key that may:
+	// can_audit, of the cluster, or can_read_evidence, of Tenant.
+	Relation string `json:"relation,omitempty"`
+	Tenant   string `json:"tenant,omitempty"`
 }
 
 type checkResponse struct {
@@ -107,6 +138,59 @@ func (d *Decider) CheckHandler() http.Handler {
 	return mux
 }
 
+// question is what a checker asked, as the store is asked it.
+type question struct {
+	// holder is the role holder's account the person is asked as when
+	// refused as themselves (authz.CheckAs); empty for the app question.
+	user, holder     string
+	relation, object string
+	// tenant is the tenant the answer is about, for the record.
+	tenant string
+}
+
+// questionOf reads the request as one question the checker may ask, or says
+// why it is not, with the status to answer.
+func questionOf(checker *Checker, req checkRequest) (question, int, string) {
+	user, err := authz.User(req.Person)
+	if err != nil {
+		return question{}, http.StatusBadRequest, "person must be a subject"
+	}
+	if req.Relation == "" {
+		if !appNamePattern.MatchString(req.App) || req.Tenant != "" {
+			return question{}, http.StatusBadRequest, "app must be the name of an app of this tenant"
+		}
+		return question{user: user, relation: "can_use", object: authz.App(checker.Tenant, req.App), tenant: checker.Tenant}, 0, ""
+	}
+	if checker.Audit == nil {
+		return question{}, http.StatusForbidden, "this key asks about the apps of its tenant only"
+	}
+	if req.App != "" {
+		return question{}, http.StatusBadRequest, "ask about an app or a relation, not both"
+	}
+	// The audit questions are about people of the platform tenant, whose
+	// cluster and tenant roles are held by name, as the account of its realm.
+	holder, err := authz.HolderUser(checker.Audit.Realm, req.Person)
+	if err != nil {
+		return question{}, http.StatusBadRequest, "person must be a subject"
+	}
+	q := question{user: user, holder: holder, relation: req.Relation}
+	switch req.Relation {
+	case relationCanAudit:
+		if req.Tenant != "" {
+			return question{}, http.StatusBadRequest, "can_audit is asked of the cluster, with no tenant"
+		}
+		q.object = authz.Cluster(checker.Audit.Cluster)
+	case relationCanReadEvidence:
+		if !appNamePattern.MatchString(req.Tenant) {
+			return question{}, http.StatusBadRequest, "can_read_evidence needs the tenant's name"
+		}
+		q.object, q.tenant = authz.Tenant(req.Tenant), req.Tenant
+	default:
+		return question{}, http.StatusBadRequest, "relation must be can_audit or can_read_evidence"
+	}
+	return q, 0, ""
+}
+
 func (d *Decider) check(w http.ResponseWriter, r *http.Request) {
 	checker := d.Table().checker(bearer(r.Header.Get("Authorization")))
 	if checker == nil {
@@ -115,20 +199,15 @@ func (d *Decider) check(w http.ResponseWriter, r *http.Request) {
 	}
 	var req checkRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
-		http.Error(w, "the body must be JSON with person and app", http.StatusBadRequest)
+		http.Error(w, "the body must be JSON with person, and app or relation", http.StatusBadRequest)
 		return
 	}
-	if !appNamePattern.MatchString(req.App) {
-		http.Error(w, "app must be the name of an app of this tenant", http.StatusBadRequest)
+	q, status, refusal := questionOf(checker, req)
+	if status != 0 {
+		http.Error(w, refusal, status)
 		return
 	}
-	user, err := authz.User(req.Person)
-	if err != nil {
-		http.Error(w, "person must be a subject", http.StatusBadRequest)
-		return
-	}
-	object := authz.App(checker.Tenant, req.App)
-	ok, err := d.store.Check(r.Context(), r.Header.Get("x-request-id"), user, "can_use", object)
+	ok, err := authz.CheckAs(r.Context(), d.store, r.Header.Get("x-request-id"), q.user, q.holder, q.relation, q.object)
 	if err != nil {
 		d.log.WarnContext(r.Context(), "store unreachable; failing closed", "checker", checker.Component, "tenant", checker.Tenant, "error", err.Error())
 		http.Error(w, "authorization store unreachable", http.StatusServiceUnavailable)
@@ -139,10 +218,11 @@ func (d *Decider) check(w http.ResponseWriter, r *http.Request) {
 		outcome = audit.Allowed
 	}
 	// The person asked about is the subject: a component asked whether they
-	// may use the app, and the answer is a decision about them.
+	// may use the app, audit, or read the evidence, and the answer is a
+	// decision about them.
 	audit.Write(r.Context(), d.log, audit.Record{
 		Source: "bouncer", Kind: audit.KindDecision, RequestID: r.Header.Get("x-request-id"),
-		Tenant: checker.Tenant, Subject: req.Person, Object: object, Action: "can_use", Outcome: outcome,
+		Tenant: q.tenant, Subject: req.Person, Object: q.object, Action: q.relation, Outcome: outcome,
 		Detail: map[string]any{"reason": "rights-check", "checker": checker.Component},
 	})
 	w.Header().Set("Content-Type", "application/json")

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/lib/catalogue.sh — App catalogue sync, operator Helm bootstrap, and orchestrator handoff.
+# scripts/lib/catalogue.sh — App catalog sync, operator Helm bootstrap, and orchestrator handoff.
 # =============================================================================
 # Sourced by scripts/lib/load.sh. Do not execute directly.
 # =============================================================================
@@ -68,16 +68,16 @@ _gentian_os_services_namespace() {
 # =============================================================================
 # The installer's default profiles (AD-14).
 #
-# A profile reaches a cluster through the director, fetched from a catalogue
+# A profile reaches a cluster through the director, fetched from a catalog
 # and held to a digest. One arrives earlier than any director: the Operations
 # Console, which step 0 places in clusters/<cluster>/catalogue/ so that the
 # cluster comes up with it. This is that path, and it is held to the same
 # rule: the bytes are refused unless they hash to a digest somebody stated --
-# the catalogue's own index, or the person installing, who may pin one -- and
+# the catalog's own index, or the person installing, who may pin one -- and
 # what is written is what the director writes for an install of the same
 # bundle, byte for byte (internal/director/gitops/catalogue.go,
 # MaterialiseProfile): the bundle as served, the patch that puts those bytes
-# and the catalogue's origin on the profile, and both in the kustomization.
+# and the catalog's origin on the profile, and both in the kustomization.
 # A test holds the two to each other (installer_profiles_test.go).
 # =============================================================================
 
@@ -85,7 +85,7 @@ _gentian_os_services_namespace() {
 # (internal/profilebundle, MaxBytes).
 _PROFILE_BUNDLE_MAX_BYTES=184320
 
-# The profiles the platform's own chart ships. A catalogue entry of one of
+# The profiles the platform's own chart ships. A catalog entry of one of
 # these names is refused by the director (gitops.PlatformProfile), and here.
 _PLATFORM_PROFILE_NAMES="admin-console concierge desktop"
 
@@ -105,7 +105,7 @@ _yaml_docs_json() {
 # _catalogue_fetch <https address> <file> -- one GET, into the file.
 #
 #   0  served (200)
-#   2  the catalogue cannot be reached: no answer, or a 5xx
+#   2  the catalog cannot be reached: no answer, or a 5xx
 #   3  it answers and does not serve this (the status is in
 #      _CATALOGUE_FETCH_CODE)
 #
@@ -138,7 +138,7 @@ _catalogue_index_digest() {
 # _profile_bundle_refusal <bundle file> <name> -- why this file is not a
 # bundle the installer places, or nothing when it is.
 #
-# What the director asks of a bundle from a catalogue of the whole cluster
+# What the director asks of a bundle from a catalog of the whole cluster
 # (internal/profilebundle, Check), as far as a shell can ask it: one
 # ComponentProfile of this name, first, stating nothing only the platform
 # records and nothing addressed to Argo CD; after it only the four kinds a
@@ -255,7 +255,7 @@ _kustomization_list() {
 
 # gentian_materialise_profile <catalogue dir> <name> <bundle file> <origin>
 #
-# Writes one verified bundle into the cluster's catalogue directory as the
+# Writes one verified bundle into the cluster's catalog directory as the
 # director's MaterialiseProfile does: <name>.yaml, the bytes unchanged;
 # <name>.bundle.yaml, the patch that carries them and the origin on the
 # profile; builds/<name>-<12 hex of the digest>.yaml, the ProfileBuild that
@@ -325,9 +325,9 @@ gentian_materialise_profile() {
 # _default_profile_origin <catalogue address> <cluster> -- the origin recorded
 # for a profile fetched from this address: "cluster/<source>".
 #
-# The name of the catalogue the Cluster claim declares at that address, when
+# The name of the catalog the Cluster claim declares at that address, when
 # it declares one -- then the record is the one an install through the
-# director from that catalogue leaves. Otherwise a name made of the address
+# director from that catalog leaves. Otherwise a name made of the address
 # itself, so that the record still says where the bytes came from.
 _default_profile_origin() {
     local base="${1%/}" cluster="$2" claim name=""
@@ -344,29 +344,29 @@ _default_profile_origin() {
 }
 
 # _address_origin_name <catalogue address> -- the source name made of the
-# address itself, for a catalogue the Cluster claim does not name.
+# address itself, for a catalog the Cluster claim does not name.
 _address_origin_name() {
     printf '%s' "${1#https://}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//'
 }
 
 # The store's extra services: the profiles an installation places from the
-# store's catalogue unless --no-extra-services says otherwise. Where each runs
+# store's catalog unless --no-extra-services says otherwise. Where each runs
 # is the profile's own to say: the Operations Console in the platform tenant
 # (defaultForPlatform), the App Store app and the Aluvian Center in every
 # other tenant while the cluster offers a store (defaultWhereStoreOffered),
 # tenants made later included.
 _EXTRA_SERVICE_PROFILES="operations-console-ee app-store-pe aluvian-center-pe"
 
-# Names the extra services were placed under before the catalogue renamed
+# Names the extra services were placed under before the catalog renamed
 # them. A profile an earlier run placed under one of them from the store's
-# catalogue leaves the cluster's catalogue on the next run, as the extra
-# services do with --no-extra-services: the catalogue no longer lists it, so
+# catalog leaves the cluster's catalog on the next run, as the extra
+# services do with --no-extra-services: the catalog no longer lists it, so
 # it would otherwise stay at its last build for good, and the Components the
 # operator placed of it with it. One placed from anywhere else stays.
 _RETIRED_EXTRA_SERVICE_PROFILES="operations-console app-store subscription-center"
 
 # _default_profiles_configured [cluster] -- the list, as GENTIAN_DEFAULT_PROFILES
-# gives it or, unset, the extra services at the store's catalogue. Without the
+# gives it or, unset, the extra services at the store's catalog. Without the
 # extra services (gentian_extra_services_enabled) none of the three is in it,
 # whichever way the list was given.
 _default_profiles_configured() {
@@ -407,7 +407,7 @@ _default_profile_is_extra_service() {
     return 1
 }
 
-# _store_catalogue_base -- the store's catalogue, without a trailing slash.
+# _store_catalogue_base -- the store's catalog, without a trailing slash.
 _store_catalogue_base() {
     printf '%s' "${GENTIAN_STORE_CATALOGUE_URL:-https://catalogue.aluvian.io}" | sed 's:/*$::'
 }
@@ -424,8 +424,8 @@ _is_store_catalogue_origin() {
 
 # _retired_extra_services_remove <cluster> <catalogue dir> -- the profiles
 # placed under a name the extra services no longer have
-# (_RETIRED_EXTRA_SERVICE_PROFILES) leave the cluster's catalogue, when their
-# recorded origin is the store's catalogue.
+# (_RETIRED_EXTRA_SERVICE_PROFILES) leave the cluster's catalog, when their
+# recorded origin is the store's catalog.
 _retired_extra_services_remove() {
     local cluster="$1" dir="$2" name recorded names=""
     for name in ${_RETIRED_EXTRA_SERVICE_PROFILES}; do
@@ -484,9 +484,9 @@ _default_extra_services_remove() {
 # _default_profile_parse <entry> -- reads one entry of the list into
 # _DP_URL, _DP_BASE, _DP_NAME and _DP_PIN, or says why it is not one.
 #
-# An entry is the https address of a profile in a catalogue,
+# An entry is the https address of a profile in a catalog,
 # <catalogue>/profiles/<name>.yaml, optionally followed by @sha256:<digest>.
-# A local file was accepted once and is not any more: it has no catalogue to
+# A local file was accepted once and is not any more: it has no catalog to
 # record as its origin and no index to state its digest, and a file on the
 # install host is exactly the unverified copy this path no longer writes.
 _DP_URL=""; _DP_BASE=""; _DP_NAME=""; _DP_PIN=""
@@ -504,12 +504,12 @@ _default_profile_parse() {
     fi
     if [[ "${item}" != https://* ]]; then
         error "GENTIAN_DEFAULT_PROFILES names ${item}, which is not an https address."
-        error "  A default profile is fetched from a catalogue and held to a digest; a local file"
-        error "  or an http address has neither a catalogue to record nor an index to state one."
+        error "  A default profile is fetched from a catalog and held to a digest; a local file"
+        error "  or an http address has neither a catalog to record nor an index to state one."
         error "  What to do, one of:"
         error "    - remove the line from install.env: unset, step 0 places the extra services"
-        error "      from the store's catalogue, at the digests the catalogue's index lists;"
-        error "    - publish the file in a catalogue (https, profiles/<name>.yaml beside index.yaml)"
+        error "      from the store's catalog, at the digests the catalog's index lists;"
+        error "    - publish the file in a catalog (https, profiles/<name>.yaml beside index.yaml)"
         error "      and name that address, with @sha256:<digest> to pin the build;"
         error "    - set GENTIAN_DEFAULT_PROFILES= (empty) and install the profile through the"
         error "      director once the cluster is up:  kubectl gentian apps install"
@@ -528,7 +528,7 @@ _default_profile_parse() {
     for reserved in ${_PLATFORM_PROFILE_NAMES}; do
         if [[ "${_DP_NAME}" == "${reserved}" ]]; then
             error "GENTIAN_DEFAULT_PROFILES names the profile ${_DP_NAME}, which the platform ships itself;"
-            error "  a catalogue entry cannot take its name. Remove the entry."
+            error "  a catalog entry cannot take its name. Remove the entry."
             return 1
         fi
     done
@@ -542,7 +542,7 @@ _GENTIAN_DEFAULT_PROFILE_NOTES=""
 # list: read the index, settle the digest, fetch, check, write.
 #
 #   returns 0   placed, already there, kept as it is, or skipped because the
-#               catalogue cannot be reached (a warning)
+#               catalog cannot be reached (a warning)
 #   returns 1   everything else, and nothing of the profile was written
 _default_profile_place() {
     local cluster="$1" dir="$2" entry="$3"
@@ -551,7 +551,7 @@ _default_profile_place() {
     _default_profile_parse "${entry}" || return 1
     name="${_DP_NAME}"; base="${_DP_BASE}"; url="${_DP_URL}"; pin="${_DP_PIN}"
 
-    # The index first: it is where the catalogue says which build an entry is.
+    # The index first: it is where the catalog says which build an entry is.
     index="$(mktemp)"
     rc=0; _catalogue_fetch "${base}/index.yaml" "${index}" || rc=$?
     if [[ "${rc}" == "2" ]]; then
@@ -560,7 +560,7 @@ _default_profile_place() {
             warn "The catalogue ${base} cannot be reached; default profile ${name} stays as the cluster's definition has it."
         else
             warn "The catalogue ${base} cannot be reached; default profile ${name} is not placed."
-            warn "  The install goes on without it. Run the installer again when the catalogue answers,"
+            warn "  The install goes on without it. Run the installer again when the catalog answers,"
             warn "  or install it through the director:  kubectl gentian apps install"
         fi
         return 0
@@ -577,7 +577,7 @@ _default_profile_place() {
     elif [[ -n "${listed}" ]]; then
         want="${listed}"; how="listed by the index of ${base}"
     elif [[ "${rc}" == "0" && -z "${GENTIAN_DEFAULT_PROFILES+set}" ]] && _default_profile_is_extra_service "${entry}"; then
-        # One of the extra services the store's catalogue does not list (yet):
+        # One of the extra services the store's catalog does not list (yet):
         # the default list names what a store offers, and a store that offers
         # less is not a reason to stop an install.
         if [[ -f "${dir}/${name}.yaml" ]]; then
@@ -602,8 +602,8 @@ _default_profile_place() {
     # What the cluster's definition already holds under that name. A build
     # that differs from the one wanted is somebody's, or an earlier decision,
     # and is kept and said -- except an extra service this installer placed
-    # from the store's catalogue and nobody pinned: that follows the
-    # catalogue, and is replaced by the build its index lists.
+    # from the store's catalog and nobody pinned: that follows the
+    # catalog, and is replaced by the build its index lists.
     body="$(mktemp)"
     if [[ -f "${dir}/${name}.yaml" ]]; then
         recorded="$(_profile_bundle_recorded "${dir}" "${name}")"
@@ -653,13 +653,13 @@ _default_profile_place() {
         if [[ "${rc}" == "2" ]]; then
             rm -f "${body}"
             warn "The catalogue ${base} stopped answering; default profile ${name} is not placed${unrecorded:+, and the copy in the definition stays}."
-            warn "  The install goes on without it. Run the installer again when the catalogue answers."
+            warn "  The install goes on without it. Run the installer again when the catalog answers."
             return 0
         fi
         if [[ "${rc}" != "0" ]]; then
             rm -f "${body}"
             error "Default profile ${name}: ${url} answered ${_CATALOGUE_FETCH_CODE}."
-            error "  The catalogue answers and does not serve the file. Nothing was written."
+            error "  The catalog answers and does not serve the file. Nothing was written."
             error "  Check the address, or leave the profile out: GENTIAN_DEFAULT_PROFILES= (empty)."
             return 1
         fi
@@ -669,12 +669,12 @@ _default_profile_place() {
             error "Default profile ${name}: what ${url} serves is not the build ${how}."
             error "    wanted:  ${want}"
             error "  The bytes do not hash to it, so nothing was written and the install stops here:"
-            error "  a catalogue that serves another build than the one stated is either out of step"
-            error "  with its own index or not the catalogue it says it is."
+            error "  a catalog that serves another build than the one stated is either out of step"
+            error "  with its own index or not the catalog it says it is."
             if [[ -n "${pin}" ]]; then
-                error "  If the catalogue published a new build on purpose, check it and move the pin."
+                error "  If the catalog published a new build on purpose, check it and move the pin."
             else
-                error "  Run the installer again in a few minutes if the catalogue was being published;"
+                error "  Run the installer again in a few minutes if the catalog was being published;"
                 error "  if it still disagrees with itself, tell whoever runs it."
             fi
             error "  To install without the profile: GENTIAN_DEFAULT_PROFILES= (empty), or --disable-api-extensions."
@@ -694,7 +694,7 @@ _default_profile_place() {
         rm -f "${body}"
         error "Default profile ${name}: the file is the build ${how}, and is not a bundle that is placed:"
         error "  ${refusal}."
-        error "  Nothing was written. This is the catalogue's to correct."
+        error "  Nothing was written. This is the catalog's to correct."
         return 1
     fi
 
@@ -725,7 +725,7 @@ _default_profile_place() {
 
 # preview_default_profiles <cluster> -- what an install would do about the
 # default profiles, for --dry-run and --validate. It reads the cluster's
-# definition and asks no catalogue.
+# definition and asks no catalog.
 preview_default_profiles() {
     local cluster="$1" dir list entry recorded
     local -a entries=()
@@ -761,25 +761,25 @@ preview_default_profiles() {
 }
 
 # =============================================================================
-# The store's catalogues (store API 1.5, docs/design/store-contract.md §9).
+# The store's catalogs (store API 1.5, docs/design/store-contract.md §9).
 #
-# A store lists in GET /v1/meta the catalogue sources its entries come from.
-# An app bought there is installed from the catalogue its coordinate names,
-# and the director refuses a catalogue the cluster declares no source for. So
+# A store lists in GET /v1/meta the catalog sources its entries come from.
+# An app bought there is installed from the catalog its coordinate names,
+# and the director refuses a catalog the cluster declares no source for. So
 # on every run step 0 reads the list of the store the claim names and adds to
-# spec.catalogue.sources each catalogue of a name the claim does not have,
+# spec.catalogue.sources each catalog of a name the claim does not have,
 # marked addedBy: store. It adds and does nothing else: a source the claim
 # has is never changed or removed, whoever added it; a name it holds at
-# another address is left and said; a name a tenant uses for a catalogue of
+# another address is left and said; a name a tenant uses for a catalog of
 # its own is not added, as the director would refuse it; only https is
 # added; a store that cannot be reached, or lists none, is a warning. A
-# catalogue the store stops listing stays on the claim.
+# catalog the store stops listing stays on the claim.
 #
-# This takes the store's word for where its catalogues are. Every bundle
+# This takes the store's word for where its catalogs are. Every bundle
 # fetched from one is still held to the digest of its install.
 # =============================================================================
 
-# _store_catalogue_name_ok <name> -- a catalogue's name: lower-case letters,
+# _store_catalogue_name_ok <name> -- a catalog's name: lower-case letters,
 # digits and hyphens, the first half of a coordinate.
 _store_catalogue_name_ok() {
     local pattern='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
@@ -804,7 +804,7 @@ _claim_sources_tsv() {
 }
 
 # _tenant_catalogue_holders <tenants dir> <name> -- the tenants, comma
-# separated, that have a catalogue of their own of this name.
+# separated, that have a catalog of their own of this name.
 _tenant_catalogue_holders() {
     local dir="$1" name="$2" file out=""
     [[ -d "${dir}" ]] || return 0
@@ -822,7 +822,7 @@ _tenant_catalogue_holders() {
 # entries ("<name>\t<url>" lines) to spec.catalogue.sources, each marked
 # addedBy: store, after the last source the list has; or as the list, when
 # the claim has none or `sources: []`. A line editor: nothing else of the
-# claim moves, its comments included. Fails, writing nothing, on a catalogue
+# claim moves, its comments included. Fails, writing nothing, on a catalog
 # section written on one line.
 _claim_append_sources() {
     local claim="$1" listed_file="$2" store="$3" tmp rc=0
@@ -895,9 +895,9 @@ _claim_append_sources() {
 _GENTIAN_STORE_CATALOGUE_NOTES=""
 
 # ensure_claim_store_catalogues <claim file> <tenants dir> -- add to the claim
-# the catalogues its store lists and it has no source for (above).
+# the catalogs its store lists and it has no source for (above).
 #
-# Never fails the install: whatever keeps a catalogue from being added is a
+# Never fails the install: whatever keeps a catalog from being added is a
 # warning, and the claim is then as it was.
 ensure_claim_store_catalogues() {
     local claim="$1" tenants="$2" store meta rc=0 have name url row holders
@@ -909,11 +909,11 @@ ensure_claim_store_catalogues() {
     [[ -n "${store}" ]] || return 0
     if ! _store_catalogue_url_ok "${store}"; then
         warn "claims/cluster.yaml names the store ${store}, which is not an https address;"
-        warn "  the catalogues it lists are not read."
+        warn "  the catalogs it lists are not read."
         return 0
     fi
     if [[ "$(gentian_usage_statistics_enabled)" != "true" ]]; then
-        info "The store's catalogues are not read: usage statistics are off, so the App Store is not offered."
+        info "The store's catalogs are not read: usage statistics are off, so the App Store is not offered."
         return 0
     fi
 
@@ -926,14 +926,14 @@ ensure_claim_store_catalogues() {
         else
             warn "The store ${store} answered ${_CATALOGUE_FETCH_CODE} to GET /v1/meta; the catalogues it lists are not checked this run."
         fi
-        warn "  The install goes on. An app bought there installs only from a catalogue the cluster"
+        warn "  The install goes on. An app bought there installs only from a catalog the cluster"
         warn "  has; add one by hand with:  kubectl gentian catalogues add <name> <https address>"
         return 0
     fi
     if ! jq -e 'type == "object" and ((.catalogues // null) | type == "array")' "${meta}" >/dev/null 2>&1; then
         rm -f "${meta}"
         warn "The store ${store} lists no catalogues in GET /v1/meta (store API 1.5); none were added."
-        warn "  An app bought there installs only from a catalogue the cluster has; add one by hand with:"
+        warn "  An app bought there installs only from a catalog the cluster has; add one by hand with:"
         warn "    kubectl gentian catalogues add <name> <https address>"
         return 0
     fi
@@ -991,7 +991,7 @@ ensure_claim_store_catalogues() {
     copy="$(mktemp)"; cat "${claim}" > "${copy}"
     if ! _claim_append_sources "${claim}" "${entries}" "${store}"; then
         rm -f "${entries}" "${copy}"
-        warn "claims/cluster.yaml: spec.catalogue is not written as a block, so the store's catalogues"
+        warn "claims/cluster.yaml: spec.catalogue is not written as a block, so the store's catalogs"
         warn "  ${added} were not added. Write the section as a block, or add them by hand."
         return 0
     fi
@@ -1005,7 +1005,7 @@ ensure_claim_store_catalogues() {
     if [[ -z "${after}" || "$(wc -l <<< "${after}" | tr -d '[:space:]')" != "$(( before + $(wc -l < "${entries}") ))" ]]; then
         cat "${copy}" > "${claim}"
         rm -f "${entries}" "${copy}"
-        warn "claims/cluster.yaml did not read back as written once the store's catalogues were added;"
+        warn "claims/cluster.yaml did not read back as written once the store's catalogs were added;"
         warn "  it is left as it was. Add them by hand: ${added}."
         return 0
     fi
@@ -1015,7 +1015,7 @@ tenant with addedBy: store: ${added}.
 "
     info "claims/cluster.yaml: added the catalogues the store ${store} lists: ${added}."
     info "  Marked addedBy: store. Each bundle is still held to the digest of its install; a"
-    info "  catalogue the store stops listing stays until it is removed (kubectl gentian catalogues remove)."
+    info "  catalog the store stops listing stays until it is removed (kubectl gentian catalogues remove)."
 }
 
 # preview_claim_store_catalogues <claim file> <tenants dir> -- what

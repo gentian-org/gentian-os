@@ -554,7 +554,7 @@ func TestAnApprovalThatNoLongerCoversTheEntryTakesItDown(t *testing.T) {
 	if n, err := r.ensurePerimeter(ctx, comp, plain, tenant, r.zoneOf(tenant)); err != nil || n != 1 {
 		t.Fatalf("published %d, %v", n, err)
 	}
-	// The catalogue entry comes to ask for the credential; nobody approved that.
+	// The catalog entry comes to ask for the credential; nobody approved that.
 	asks := davProfile(gentianov1alpha1.AuthModeApp)
 	if n, err := r.ensurePerimeter(ctx, comp, asks, tenant, r.zoneOf(tenant)); err != nil || n != 0 {
 		t.Fatalf("published %d, %v", n, err)

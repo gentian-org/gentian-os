@@ -132,7 +132,7 @@ func clusterMailServiceMode(ctx context.Context, c client.Reader, fallback strin
 // chart's llmSupport value) is only a fallback for when the ConfigMap cannot
 // answer — first boot before the Cluster composition has produced it, a
 // ConfigMap predating the key, or a read error. Falling back rather than
-// failing keeps the pre-ConfigMap behaviour on exactly the clusters that
+// failing keeps the pre-ConfigMap behavior on exactly the clusters that
 // still have it.
 func clusterLLMEnabled(ctx context.Context, c client.Reader) bool {
 	return clusterConfigValue(ctx, c, clusterConfigLLMKey, "LLM_SUPPORT") == "true"
@@ -175,7 +175,7 @@ func kernelConsolesRouted(ctx context.Context, c client.Reader) kernelConsoles {
 //
 // From the claim for the same reason as the mode above. Getting this from a
 // second place is not a tidiness question: SPF names the sending address, so a
-// stale answer authorises the wrong host and every message soft-fails against a
+// stale answer authorizes the wrong host and every message soft-fails against a
 // record that reads as correct.
 func clusterMailEgressHost(ctx context.Context, c client.Reader, fallback string) string {
 	return clusterConfigValueOr(ctx, c, clusterConfigMailEgressKey, fallback)

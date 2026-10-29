@@ -136,7 +136,7 @@ func TestSelectableWithholdsBespokePlansFromSelfService(t *testing.T) {
 		}
 	}
 	if len(names(c.Selectable(false, nil))) != 3 {
-		t.Fatal("a cluster operator sees the whole catalogue")
+		t.Fatal("a cluster operator sees the whole catalog")
 	}
 }
 

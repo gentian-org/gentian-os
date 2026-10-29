@@ -59,7 +59,7 @@ Implementation, split by concern rather than by kind:
 |---|---|
 | `controller/` | The operator's reconcilers. `tenant_controller.go` and `tenant_reconcile_stages.go` are the tenant loop; `component_reconciler.go` installs each app; the rest are per-concern (identity, gateway and edge, database, storage, cache, mail, customization, backup and restore, authorization projection, tiles, …). |
 | `controller/provisioner/` | Service-requirement provisioning helpers shared across reconcilers. |
-| `director/` | The director's API (`api/`), token verification (`authn/`), the questions it asks OpenFGA (`authz/`), catalogue fetching and materialising (`catalogue/`), and its git writes (`gitops/`). |
+| `director/` | The director's API (`api/`), token verification (`authn/`), the questions it asks OpenFGA (`authz/`), catalog fetching and materializing (`catalogue/`), and its git writes (`gitops/`). |
 | `usher/`, `custodian/`, `registrar/`, `bouncer/` | The four other services. |
 | `applifecycle/` | The operator's listener: the live state and the actions the director and the usher ask it for. |
 | `authz/`, `membership/` | OpenFGA and Keycloak clients; keeping OpenFGA's group memberships equal to Keycloak's. |
@@ -100,7 +100,7 @@ License-header templates used by `controller-gen` and `golangci-lint`
 | `namespaces.yaml` | The cluster's namespace layout: the one list the installer creates from, the operator selects on and the lints check against. |
 | `platforms.yaml` | Where a cluster runs and who hosts its DNS: one table, passed as a values file to the charts that need to know. |
 | `bootstrap/chart/` | Helm chart of the Argo CD bootstrap objects — the `gentian` AppProject, the kernel Applications (Reloader, CNPG, Kyverno, Headlamp, OpenBao and its seal, the kernel Postgres, external-dns), the `gentian-os` Application and the root of the ApplicationSets — rendered by the install steps with cluster, stage and ref values. |
-| `appsets/` | A Helm chart whose only job is to pass `raw/*.yaml` through while substituting stage, git ref, repositories and namespaces. `raw/NN-*.yaml` are the child ApplicationSets: data plane, identity, mail, model gateway, claims, catalogue, tenants, the Keycloak provider. |
+| `appsets/` | A Helm chart whose only job is to pass `raw/*.yaml` through while substituting stage, git ref, repositories and namespaces. `raw/NN-*.yaml` are the child ApplicationSets: data plane, identity, mail, model gateway, claims, catalog, tenants, the Keycloak provider. |
 | `argocd/` | Argo CD's own install values and repository credentials. |
 | `services/<name>/` | One chart per kernel or system service (Keycloak, OpenFGA, the data stores, Postfix, Dovecot, the mail edge, the model gateway, …). |
 | `data/` | The two CloudNativePG clusters: `kernel-postgres` and `tenant-postgres`. |
@@ -109,14 +109,14 @@ License-header templates used by `controller-gen` and `golangci-lint`
 | `manifests/` | cert-manager issuers and the kernel wildcard certificate, the GatewayClass, EnvoyProxy and Gateways, and the Job-GC CronJob. |
 | `security/kyverno/policies/` | Admission policies. |
 | `security/network-policies/` | The NetworkPolicies of the kernel namespaces (generated). |
-| `credentials/` | The `CredentialRequirement` catalogue, generated from `credentials.yaml` at the root. |
+| `credentials/` | The `CredentialRequirement` catalog, generated from `credentials.yaml` at the root. |
 | `extensions/keycloak-event-listener/` | The Keycloak extension that sends signed membership events to the operator. |
 
 ### `crossplane/` — the provisioning plane
 | Path | Purpose |
 |---|---|
 | `xrds/` | Composite definitions: `Cluster`, `Tenant`, `App`, `Repository`. These generate the `apps.gentianos.io` / `xtenants.gentianos.io` CRDs on-cluster — which is exactly why the chart must *not* ship them. |
-| `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `app-default`, `repository-default`. A catalogue entry may bring a Composition of its own in its bundle and name it in `spec.package.composition`. |
+| `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `app-default`, `repository-default`. A catalog entry may bring a Composition of its own in its bundle and name it in `spec.package.composition`. |
 | `providers/` | `Provider` and `Function` packages, their `ProviderConfig`s, the RBAC they need, and `activation.yaml` — the provider resource types a cluster creates. |
 | `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **copy** of the deployed Composition + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. A copy, not a symlink, so `check-render-fixtures.sh` has something to compare — a stale copy keeps a golden test green against a Composition nobody runs. |
 | `tests/unit/schema/` | `valid/` fixtures that must pass and `invalid/` fixtures that must be rejected by `crossplane beta validate` against `xrds/`. |
@@ -176,7 +176,7 @@ Configuration surfaces at the repo root:
 |---|---|
 | `install.env.template` | Non-secret installer inputs: how to run the install. What the cluster is lives on the Cluster claim in the deployments repository. |
 | `versions.yaml` | The version of every external component the installer pulls, pinned once per release. |
-| `credentials.yaml` | The catalogue of credentials that must be supplied from outside the cluster. |
+| `credentials.yaml` | The catalog of credentials that must be supplied from outside the cluster. |
 
 ---
 
@@ -200,7 +200,7 @@ troubleshooting and non-default installs are in `docs/install-reference.md`).
 | Change | Goes in |
 |---|---|
 | New CRD field | `api/v1alpha1/`, then `make gen-all` |
-| New reconciler behaviour | `internal/controller/` (generic — never `case "myapp"`) |
+| New reconciler behavior | `internal/controller/` (generic — never `case "myapp"`) |
 | New kernel service | `kernel/services/<name>/` + an element in the matching `kernel/appsets/raw/NN-*.yaml` |
 | New tenant/app provisioning graph | `crossplane/compositions/` + a golden test under `crossplane/tests/unit/render/` |
 | App-specific anything | **`gentian-apps`**, not here |

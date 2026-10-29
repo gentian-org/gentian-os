@@ -264,9 +264,8 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 // Who approves a tenant's perimeter follows the Cluster claim and nothing
 // else: a role holder of scope tenant:<t> holds perimeter_approver while the
 // claim names them and loses it when it stops, the cluster's perimeter
-// approver approves on every tenant, the cluster's administrator wherever the
-// tenant is operated by its cluster, and a tenant's administrator only when
-// named.
+// approver and the cluster's administrator approve on every tenant, and a
+// tenant's administrator only when named.
 func TestWhoApprovesThePerimeterFollowsTheClaim(t *testing.T) {
 	o := requireOpenFGA(t)
 	ctx := context.Background()
@@ -331,14 +330,75 @@ func TestWhoApprovesThePerimeterFollowsTheClaim(t *testing.T) {
 	project()
 	expect("written by hand", map[string]bool{"p-mia": false})
 
-	// A tenant that withdrew the operator is not approved for by the
-	// cluster's administrator; its named approver and the cluster's
-	// perimeter approver still approve.
+	// A tenant that withdrew the operator is still approved for by the
+	// cluster's administrator: the perimeter is the cluster's, and derives
+	// through `cluster`, not `operated_by`. Its named approver and the
+	// cluster's perimeter approver approve as before.
 	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("p-acme")}}); err != nil {
 		t.Fatal(err)
 	}
 	project("user:p-acme/p-tom")
-	expect("the operator withdrawn", map[string]bool{"p-root": false, "p-acme/p-tom": true, "kernel/p-petra": true})
+	expect("the operator withdrawn", map[string]bool{"p-root": true, "p-acme/p-tom": true, "kernel/p-petra": true})
+}
+
+// Who reads a tenant's evidence follows the Cluster claim the same way: a
+// person of the platform tenant named its auditor holds it while named, the
+// cluster's auditors on every tenant, and nobody of the tenant itself.
+func TestWhoReadsATenantsEvidenceFollowsTheClaim(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := "evidence-test"
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"},
+		[]RoleHolder{{Relation: "auditor", Realm: "kernel", Subject: "e-audrey"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, []Tuple{
+		{User: "user:e-tom", Relation: "member", Object: "group:gentian/tenant/e-acme/admins"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	expect := func(when, tenant string, want map[string]bool) {
+		t.Helper()
+		for user, allowed := range want {
+			ok, err := c.Check(ctx, "test", "user:"+user, "can_read_evidence", Tenant(tenant))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != allowed {
+				t.Errorf("%s: can_read_evidence on %s for %s = %v, want %v", when, tenant, user, ok, allowed)
+			}
+		}
+	}
+	project := func(auditors ...string) {
+		t.Helper()
+		if err := c.ReconcileTenants(ctx, cluster, []TenantRights{
+			{Name: "platform"}, {Name: "e-acme", Auditors: auditors}, {Name: "e-globex"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	project()
+	expect("nobody named", "e-acme", map[string]bool{"kernel/e-audrey": true, "kernel/e-dana": false, "e-tom": false})
+
+	project("user:kernel/e-dana")
+	expect("named", "e-acme", map[string]bool{"kernel/e-dana": true, "e-dana": false, "e-tom": false})
+	expect("named for another", "e-globex", map[string]bool{"kernel/e-dana": false, "kernel/e-audrey": true})
+
+	if err := c.Write(ctx, []Tuple{{User: "user:e-tom", Relation: "auditor", Object: Tenant("e-acme")}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	project()
+	expect("no longer named, and one written by hand", "e-acme", map[string]bool{"kernel/e-dana": false, "e-tom": false})
 }
 
 // fakeStores is an OpenFGA holding the stores in have, each with no model.

@@ -15,17 +15,17 @@
 #   repositories/deployments  is written with `username` and `password` — by the
 #                  seeder, and by the XRepository Composition that builds the
 #                  ArgoCD repository Secret from the same two names — while the
-#                  catalogue declared the second field as `token`. Its probe
+#                  catalog declared the second field as `token`. Its probe
 #                  reported SecretSyncedError with the value sitting beside it
 #                  under the other name.
 #
-# Once the consumer was wrong, once the catalogue was. So the check runs both
-# ways, and it cannot stop at credentials.yaml: openfga is a path the catalogue
+# Once the consumer was wrong, once the catalog was. So the check runs both
+# ways, and it cannot stop at credentials.yaml: openfga is a path the catalog
 # does not describe at all.
 #
 # Two tiers, by how exactly the answer can be known:
 #
-#   ERROR  Catalogue against consumers. Both sides are YAML naming fields
+#   ERROR  Catalog against consumers. Both sides are YAML naming fields
 #          explicitly, so a disagreement is a fact, not an inference.
 #   WARN   Consumers against writers. Finding what a shell script writes means
 #          reading heredocs and jq filters, and a writer this misses would
@@ -48,7 +48,7 @@ RED, YELLOW, GREEN, NC = "\033[0;31m", "\033[1;33m", "\033[0;32m", "\033[0m"
 errors = []
 warnings = []
 
-# The catalogue is the only generated carrier; comparing a consumer against it
+# The catalog is the only generated carrier; comparing a consumer against it
 # would compare the file against itself.
 GENERATED = ("kernel/credentials/credential-requirements.yaml",)
 
@@ -64,7 +64,7 @@ def yaml_files():
                 yield os.path.relpath(os.path.join(root, n), ".")
 
 
-# ── What the catalogue declares ──────────────────────────────────────────────
+# ── What the catalog declares ──────────────────────────────────────────────
 #
 # Parsed with regex rather than a YAML library: this runs in CI before anything
 # is installed, and adding PyYAML as a lint dependency would make the check
@@ -237,7 +237,7 @@ for vault_path in sorted(consumed):
     for field, files in sorted(consumed[vault_path].items()):
         where = ", ".join(sorted(files)[:2])
 
-        # ERROR: the catalogue describes this path and does not list this field.
+        # ERROR: the catalog describes this path and does not list this field.
         if vault_path in declared and declared[vault_path]:
             if field not in declared[vault_path]:
                 errors.append(
@@ -255,9 +255,9 @@ for vault_path in sorted(consumed):
                     f"installer writes {sorted(written[vault_path])} there."
                 )
 
-# A field the catalogue declares that the installer never writes at that path is
+# A field the catalog declares that the installer never writes at that path is
 # the other direction of the same bug: repositories/deployments was written with
-# `username` and `password` while the catalogue called the second one `token`,
+# `username` and `password` while the catalog called the second one `token`,
 # and the probe reported the credential missing with the value sitting beside it.
 #
 # Only for paths where a writer was actually found — an empty writer set means

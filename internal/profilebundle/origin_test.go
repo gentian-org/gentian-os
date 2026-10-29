@@ -37,7 +37,7 @@ func TestTheRecordedOriginDoesNotDisturbTheCheckOfTheBundle(t *testing.T) {
 	refused(t, "the origin as a label", Verify(p, pinned), ReasonMismatch, OriginAnnotation)
 
 	// A bundle that states an origin itself is held to it, like anything
-	// else it states: the director refuses to materialise one, and a profile
+	// else it states: the director refuses to materialize one, and a profile
 	// that arrived some other way is not verified with another origin on it.
 	stating := strings.Replace(wiki, "  annotations:\n", "  annotations:\n    "+OriginAnnotation+": cluster/gentian\n", 1)
 	if !strings.Contains(stating, OriginAnnotation) {

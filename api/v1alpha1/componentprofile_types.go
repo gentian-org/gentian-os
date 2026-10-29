@@ -72,9 +72,9 @@ const (
 	ComponentLaunchNone ComponentLaunch = "none"
 )
 
-// ComponentProfileSpec is one catalogue entry: what a component is, what it
+// ComponentProfileSpec is one catalog entry: what a component is, what it
 // needs from the platform, and what it may expose. The presentation of a
-// catalogue listing stays the store's, outside the cluster. The one piece of
+// catalog listing stays the store's, outside the cluster. The one piece of
 // presentation an entry carries here is the tile on an exposure, because the
 // portal has to be able to show what the cluster routes without asking the
 // store, and because an app that cannot appear on the portal until a service
@@ -121,7 +121,7 @@ const (
 //
 // chart and composition together are the one legal pair, because they answer
 // different halves of one question: the chart is WHAT is installed, and the
-// composition is WHAT ELSE is created beside it. Two catalogue entries are
+// composition is WHAT ELSE is created beside it. Two catalog entries are
 // like this -- Odoo and Element each render their chart through a
 // Composition that also emits an SSO sidecar or a stable service alias.
 // Refusing the pair sent that fact into an annotation, where nothing
@@ -183,7 +183,7 @@ type ComponentProfileSpec struct {
 	// the tier is a statement a reviewer made, not an absence.
 	TrustTier TrustTier `json:"trustTier"`
 
-	// Version is the catalogue entry's version, not the upstream project's.
+	// Version is the catalog entry's version, not the upstream project's.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	Version string `json:"version"`
@@ -303,7 +303,7 @@ type PackageSpec struct {
 	Composition string `json:"composition,omitempty"`
 
 	// API describes a component the platform routes to rather than runs. It
-	// does not mean external: the catalogue's own example points at a Service
+	// does not mean external: the catalog's own example points at a Service
 	// inside the cluster. Delivery: api.
 	// +optional
 	API *APIIntegration `json:"api,omitempty"`
@@ -630,7 +630,7 @@ type ExposureSpec struct {
 
 	// Apex publishes this entry on the cluster's bare domain -- its main
 	// address -- instead of a host under the zone's domain. Only a perimeter
-	// entry may say it. The operator honours it for the platform tenant,
+	// entry may say it. The operator honors it for the platform tenant,
 	// and for the one tenant that may hold the main address -- the tenant
 	// the Cluster claim names (mainAddress.tenant), or the user tenant of a
 	// single-tenancy cluster -- when that tenant's approver published the
@@ -736,7 +736,7 @@ type ExposureSpec struct {
 // It is here rather than in the store because the portal must be able to show
 // an app the moment the cluster routes it, and because the operator already
 // holds everything else a tile needs: the host it wrote the route for, and the
-// tenant the component runs in. What the store adds is the catalogue listing a
+// tenant the component runs in. What the store adds is the catalog listing a
 // person browses before installing, which is a different page with a different
 // audience.
 //
@@ -762,7 +762,7 @@ type ExposureTile struct {
 	// not have to restate the fallback in a map.
 	//
 	// It exists because the old AppProfile tile carried displayName as a map
-	// and thirty tiles across the catalogue were genuinely translated --
+	// and thirty tiles across the catalog were genuinely translated --
 	// "Automatisierung", "Dateien", "Präsentation", every Odoo module. When the
 	// tile path moved to this type those strings stopped being read, and
 	// rewriting the profiles is the moment they would have been deleted rather
@@ -779,7 +779,7 @@ type ExposureTile struct {
 
 	// Logo is the tile's default image: a square PNG, 128x128, inline as a
 	// data URI. Every component brings its own -- an app, an API entry and an
-	// addon alike -- because a tile is how a person recognises the thing
+	// addon alike -- because a tile is how a person recognizes the thing
 	// before they can read the label. Where a component has no art of its
 	// own, it is a rendering of a platform glyph.
 	//
@@ -937,7 +937,7 @@ type ComponentProfileStatus struct {
 	Delivery ComponentDelivery `json:"delivery,omitempty"`
 }
 
-// ComponentDelivery is how the platform realises a component, derived from
+// ComponentDelivery is how the platform realizes a component, derived from
 // which member of the package union is set.
 // +kubebuilder:validation:Enum=workload;api;addon
 type ComponentDelivery string
@@ -946,7 +946,7 @@ const (
 	// ComponentDeliveryWorkload is a chart or a composition: the platform runs it.
 	ComponentDeliveryWorkload ComponentDelivery = "workload"
 	// ComponentDeliveryAPI is a component already running elsewhere, which the
-	// platform routes to. It does not mean external: the catalogue's own
+	// platform routes to. It does not mean external: the catalog's own
 	// example points at a Service inside the cluster.
 	ComponentDeliveryAPI ComponentDelivery = "api"
 	// ComponentDeliveryAddon is a switch inside another component's own addon
@@ -966,7 +966,7 @@ func (s ComponentProfileSpec) Delivery() ComponentDelivery {
 	}
 }
 
-// ComponentProfile is a catalogue entry for a system service, an app or an
+// ComponentProfile is a catalog entry for a system service, an app or an
 // agent. The cluster holds only the profiles something installed refers to.
 //
 // +kubebuilder:object:root=true

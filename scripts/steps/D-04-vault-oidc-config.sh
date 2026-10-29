@@ -76,7 +76,7 @@ _oidc_values() {
     OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-openbao}"
     # Where the composed client secret lands. The claim may say, and usually
     # does not: spec.openbao has no default object, so its nested defaults
-    # never materialise and the field comes back empty. v4 fell back to the
+    # never materialize and the field comes back empty. v4 fell back to the
     # literal "openbao", which is v4's namespace -- on v5 the secret is in the
     # secrets namespace, and looking in the wrong one makes this step defer
     # for ever on a cluster where the secret is present.
@@ -256,7 +256,7 @@ apply() {
         # Safety net, not the normal path: B-08 created the ExternalSecret long
         # before this step, so by now ESO has almost always synced it.
         info "Secret ${OIDC_SECRET_NS}/openbao-oidc-client has no client-secret yet."
-        info "  ESO materialises it from gentian-os/kernel/oidc/openbao. It should"
+        info "  ESO materializes it from gentian-os/kernel/oidc/openbao. It should"
         info "  already exist by this step; re-run once it has synced."
         return 0
     fi
@@ -568,7 +568,7 @@ _dd_tls_ok() {
     # resync_credential_consumers in scripts/lib/bootstrap.sh.
     #
     # Note which side sees this. The pre-check above reads the PUBLIC edge,
-    # which on a tunnelled cluster is Cloudflare terminating TLS with its own
+    # which on a tunneled cluster is Cloudflare terminating TLS with its own
     # valid certificate, so it passes. OpenBao resolves the same name to the
     # in-cluster gateway and sees the stale leaf. Two different certificates for
     # one hostname, and only one of them is the one that matters here.

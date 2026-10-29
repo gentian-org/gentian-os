@@ -18,7 +18,7 @@ import (
 
 // The cluster roles a profile may ask for.
 //
-// A profile asks for a role by name and never states its rules: a catalogue
+// A profile asks for a role by name and never states its rules: a catalog
 // entry that could write the rules of a ClusterRole would decide what it may
 // do on every node and in every tenant. The set is the platform's, kept in
 // this repository in two places that a test holds together: the names here,
@@ -34,7 +34,7 @@ import (
 type ClusterRoleSet map[string]string
 
 // PlatformClusterRoles is the set this build of the platform ships. Empty: no
-// profile of the catalogue asks for a cluster role, so there is none to
+// profile of the catalog asks for a cluster role, so there is none to
 // define yet. docs/design/security.md says how one is added.
 var PlatformClusterRoles = ClusterRoleSet{}
 

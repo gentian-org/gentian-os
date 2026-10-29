@@ -27,16 +27,16 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// Catalogues added by administrators.
+// Catalogs added by administrators.
 //
-// One web server plays every catalogue, each under its own path: the first
-// path segment is the catalogue, and what it serves is that catalogue's
+// One web server plays every catalog, each under its own path: the first
+// path segment is the catalog, and what it serves is that catalog's
 // profiles/<name>.yaml and an index.yaml listing them. The people are the
 // fixture's: alice administers the cluster (and, through operated_by, tenant
 // demo but not solo), tom administers demo, tina administers solo, mia is a
 // member of demo.
 
-// served is what each catalogue serves: catalogue -> profile name -> body.
+// served is what each catalog serves: catalogue -> profile name -> body.
 type served map[string]map[string]string
 
 func profileNamed(name, note string) string {
@@ -74,7 +74,7 @@ func catalogues(t *testing.T, content served) *httptest.Server {
 					edition = m[1]
 				}
 				index += "  - name: " + name + "\n    version: \"1.0.0\"\n    edition: " + edition + "\n    digest: " + sha(body) + "\n"
-				// The floor, repeated in the index as the catalogue build does.
+				// The floor, repeated in the index as the catalog build does.
 				if m := platformFloorLine.FindStringSubmatch(body); m != nil {
 					index += "    platform: " + m[1] + "\n"
 				}
@@ -96,7 +96,7 @@ func catalogues(t *testing.T, content served) *httptest.Server {
 	return srv
 }
 
-// startCatalogues is the harness with one catalogue of the whole cluster,
+// startCatalogues is the harness with one catalog of the whole cluster,
 // "gentian", served by src under /gentian.
 func startCatalogues(t *testing.T, src *httptest.Server, opts ...func(*api.Config)) *harness {
 	t.Helper()
@@ -115,7 +115,7 @@ func clusterTenant(tenant, rest string) string {
 
 func urlBody(address string) string { return fmt.Sprintf(`{"url":%q}`, address) }
 
-// names lists the catalogues of an answer as "name:scope:addedBy".
+// names lists the catalogs of an answer as "name:scope:addedBy".
 func names(out map[string]any) string {
 	list, _ := out["catalogues"].([]any)
 	parts := make([]string, 0, len(list))
@@ -218,7 +218,7 @@ func TestOnlyTheClustersAdministratorChangesTheClustersCatalogues(t *testing.T) 
 	}
 }
 
-// A tenant's administrator adds a catalogue only where the cluster's
+// A tenant's administrator adds a catalog only where the cluster's
 // administrator delegated that to the tenant. Not delegated, the request is
 // refused before the address is so much as looked up; delegated, it is a
 // commit that says the tenant added it.
@@ -270,7 +270,7 @@ func TestATenantAddsACatalogueOnlyWhenDelegated(t *testing.T) {
 	// The same again changes nothing.
 	tip := h.tip(t)
 	if code, out := h.do(t, "PUT", "/v1/tenants/demo/catalogues/ours", tom, urlBody(src.URL+"/ours")); code != http.StatusOK || out["status"] != "unchanged" || h.tip(t) != tip {
-		t.Fatalf("the same catalogue again: %d %v", code, out)
+		t.Fatalf("the same catalog again: %d %v", code, out)
 	}
 	// Delegation is per tenant: solo's administrator is still refused.
 	if code, _ := h.do(t, "PUT", "/v1/tenants/solo/catalogues/ours", h.token(t, "tenant-solo", "tina"), urlBody(src.URL+"/ours")); code != http.StatusForbidden {
@@ -331,7 +331,7 @@ func TestATenantCannotTouchWhatTheClusterAdded(t *testing.T) {
 	if h.tip(t) != before {
 		t.Fatal("a refused request moved the repository")
 	}
-	// The tenant's other writes leave the catalogue section as it is: an
+	// The tenant's other writes leave the catalog section as it is: an
 	// install, an uninstall and a selection of add-ons edit the same file.
 	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"defaultGrant":true}`); code != http.StatusAccepted {
 		t.Fatalf("install: %d %v", code, out)
@@ -360,7 +360,7 @@ func TestATenantCannotTouchWhatTheClusterAdded(t *testing.T) {
 	}
 }
 
-// A tenant sees the cluster's catalogues and its own. Another tenant's are
+// A tenant sees the cluster's catalogs and its own. Another tenant's are
 // not listed, cannot be read, and are refused in an install with the words an
 // unknown catalogue is refused in.
 func TestATenantSeesTheClustersCataloguesAndItsOwnAndNoOtherTenants(t *testing.T) {
@@ -389,7 +389,7 @@ func TestATenantSeesTheClustersCataloguesAndItsOwnAndNoOtherTenants(t *testing.T
 	if code != http.StatusOK || !strings.Contains(fmt.Sprint(out["entries"]), "ours/demo-notes") || out["scope"] != "tenant" {
 		t.Fatalf("demo's own entries: %d %v", code, out)
 	}
-	// To another tenant the catalogue does not exist.
+	// To another tenant the catalog does not exist.
 	unknownCode, unknown := h.do(t, "GET", "/v1/tenants/solo/catalogues/nothing/entries", tina, "")
 	code, out = h.do(t, "GET", "/v1/tenants/solo/catalogues/ours/entries", tina, "")
 	if code != http.StatusNotFound || code != unknownCode || out["error"] != unknown["error"] {
@@ -426,7 +426,7 @@ func TestATenantSeesTheClustersCataloguesAndItsOwnAndNoOtherTenants(t *testing.T
 	}
 }
 
-// A name means one catalogue to a tenant. A tenant's catalogue does not take
+// A name means one catalog to a tenant. A tenant's catalog does not take
 // the name of one of the cluster's or of another of its own, and the cluster
 // does not take a name a tenant already uses; two tenants may each use the
 // same name, and each gets its own.
@@ -440,7 +440,7 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 
 	code, out := h.do(t, "PUT", "/v1/tenants/demo/catalogues/gentian", tom, urlBody(src.URL+"/demo-own"))
 	if code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "whole cluster") {
-		t.Fatalf("a tenant took a cluster catalogue's name: %d %v", code, out)
+		t.Fatalf("a tenant took a cluster catalog's name: %d %v", code, out)
 	}
 	// The same name in two tenants, at two addresses.
 	if code, out := h.do(t, "PUT", "/v1/tenants/demo/catalogues/own", tom, urlBody(src.URL+"/demo-own")); code != http.StatusAccepted {
@@ -450,15 +450,15 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 		t.Fatalf("solo: %d %v", code, out)
 	}
 	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/catalogues/own", tom, urlBody(src.URL+"/other")); code != http.StatusConflict {
-		t.Fatalf("a second catalogue of the same name in one tenant: %d", code)
+		t.Fatalf("a second catalog of the same name in one tenant: %d", code)
 	}
 	// The cluster cannot take it now, and is told whose it is.
 	code, out = h.do(t, "PUT", clusterCatalogues+"/own", alice, urlBody(src.URL+"/other"))
 	if code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "demo, solo") {
-		t.Fatalf("the cluster took a tenant catalogue's name: %d %v", code, out)
+		t.Fatalf("the cluster took a tenant catalog's name: %d %v", code, out)
 	}
 	if code, _ := h.do(t, "PUT", clusterCatalogues+"/gentian", alice, urlBody(src.URL+"/other")); code != http.StatusConflict {
-		t.Fatalf("a second cluster catalogue of the same name: %d", code)
+		t.Fatalf("a second cluster catalog of the same name: %d", code)
 	}
 
 	// Each tenant's "own" is its own: the same coordinate prefix fetches
@@ -471,7 +471,7 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 	}
 	// What demo's serves is not in solo's, although both are called "own".
 	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/demo-app", tina, fmt.Sprintf(`{"coordinate":"own/demo-app","digest":%q}`, sha(demoApp))); code != http.StatusNotFound {
-		t.Fatalf("solo fetched from demo's catalogue through a shared name: %d", code)
+		t.Fatalf("solo fetched from demo's catalog through a shared name: %d", code)
 	}
 	for profile, origin := range map[string]string{"demo-app": "tenant/demo/own", "solo-app": "tenant/solo/own"} {
 		bundle := dt.RemoteFile(t, h.remote, dt.CataloguePath(gitops.BundleFile(profile)))
@@ -479,7 +479,7 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 			t.Errorf("%s is not recorded as %s:\n%s", profile, origin, bundle)
 		}
 	}
-	// The pin says the catalogue by the name the tenant knows it by.
+	// The pin says the catalog by the name the tenant knows it by.
 	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); !strings.Contains(manifest, "  - profile: demo-app\n    digest: "+sha(demoApp)+"\n    catalogue: own\n") {
 		t.Fatalf("demo's pin:\n%s", manifest)
 	}
@@ -487,8 +487,8 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 
 // ComponentProfiles are cluster-scoped: one name, one profile. A tenant's
 // catalogue does not take a name another origin has, and nothing takes a name
-// a tenant's catalogue has. The refusal says the name is taken and what to
-// publish instead; the same catalogue installing its own entry again, or a
+// a tenant's catalog has. The refusal says the name is taken and what to
+// publish instead; the same catalog installing its own entry again, or a
 // new build of it, is not a clash.
 func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	theirs := profileNamed("element", "demo-fork")
@@ -513,7 +513,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 		return h.do(t, "POST", "/v1/tenants/"+tenant+"/apps/"+app, token, fmt.Sprintf(`{"coordinate":%q,"digest":%q}`, coordinate, sha(body)))
 	}
 
-	// The cluster's catalogue first, then a tenant's under the same name.
+	// The cluster's catalog first, then a tenant's under the same name.
 	if code, out := install(tina, "solo", "gentian/element", elementProfile); code != http.StatusAccepted {
 		t.Fatalf("from the cluster's catalogue: %d %v", code, out)
 	}
@@ -521,15 +521,15 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	code, out := install(tom, "demo", "own/element", theirs)
 	said := fmt.Sprint(out["error"])
 	if code != http.StatusConflict || !strings.Contains(said, "already taken") || !strings.Contains(said, "demo-element") {
-		t.Fatalf("a tenant's profile took a name the cluster's catalogue has: %d %v", code, out)
+		t.Fatalf("a tenant's profile took a name the cluster's catalog has: %d %v", code, out)
 	}
-	// A profile the platform itself ships, from either kind of catalogue.
+	// A profile the platform itself ships, from either kind of catalog.
 	code, out = install(tom, "demo", "own/desktop", desktop)
 	if code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "platform ships") || !strings.Contains(fmt.Sprint(out["error"]), "demo-desktop") {
 		t.Fatalf("a tenant's profile took a platform component's name: %d %v", code, out)
 	}
 	if code, out = install(tina, "solo", "gentian/desktop", desktop); code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "platform ships") {
-		t.Fatalf("a catalogue's profile took a platform component's name: %d %v", code, out)
+		t.Fatalf("a catalog's profile took a platform component's name: %d %v", code, out)
 	}
 	// A profile that was on the cluster before origins were recorded.
 	// (wiki is in every fixture's catalogue directory, with no bundle.)
@@ -540,7 +540,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 		t.Fatal("a refused install moved the repository")
 	}
 
-	// A tenant's catalogue first, then the other direction.
+	// A tenant's catalog first, then the other direction.
 	if code, out := install(tom, "demo", "own/notes-app", notes); code != http.StatusAccepted {
 		t.Fatalf("a tenant's own profile: %d %v", code, out)
 	}
@@ -554,7 +554,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	// The cluster's catalogue: refused, saying it is the tenant's to rename.
 	code, out = install(tina, "solo", "gentian/notes-app", profileNamed("notes-app", "gentian"))
 	said = fmt.Sprint(out["error"])
-	if code != http.StatusConflict || !strings.Contains(said, "tenant's own catalogue") || !strings.Contains(said, "has to rename") || strings.Contains(said, "demo") {
+	if code != http.StatusConflict || !strings.Contains(said, "tenant's own catalog") || !strings.Contains(said, "has to rename") || strings.Contains(said, "demo") {
 		t.Fatalf("the cluster's profile took a tenant's name: %d %v", code, out)
 	}
 	if h.tip(t) != before {
@@ -580,7 +580,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	}
 }
 
-// A profile from a tenant's own catalogue is installable in that tenant and
+// A profile from a tenant's own catalog is installable in that tenant and
 // in no other -- by coordinate, which the clash rule above covers, and by
 // name alone, which is this. The answer to another tenant is the one for a
 // profile that is not on the cluster.
@@ -672,7 +672,7 @@ func TestANameWithNoBuildNeedsAProfileOnTheCluster(t *testing.T) {
 	}
 }
 
-// An uninstalled app's profile stays in the cluster's catalogue directory:
+// An uninstalled app's profile stays in the cluster's catalog directory:
 // its data is still there, and a purge needs the profile to know what the
 // data is. Nothing removes it when the last install goes.
 func TestAnUninstalledAppsProfileStays(t *testing.T) {
@@ -735,7 +735,7 @@ func TestAnAddressThatReachesInsideIsRefusedOnEveryRoute(t *testing.T) {
 			"/v1/tenants/demo/catalogues/typo":        tom,
 		} {
 			code, out := h.do(t, "PUT", route, token, urlBody(address))
-			if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "not one a catalogue is fetched from") {
+			if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "not one a catalog is fetched from") {
 				t.Errorf("%s on %s: %d %v, want 422", address, route, code, out)
 			}
 		}
@@ -753,7 +753,7 @@ func TestAnAddressThatReachesInsideIsRefusedOnEveryRoute(t *testing.T) {
 	}
 }
 
-// A catalogue added through the routes is there for the next request: the
+// A catalog added through the routes is there for the next request: the
 // director reads what there is when it is asked, not once when it starts.
 func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 	app := profileNamed("planner", "partner")
@@ -763,7 +763,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 	install := fmt.Sprintf(`{"coordinate":"partner/planner","digest":%q}`, sha(app))
 
 	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/planner", tom, install); code != http.StatusUnprocessableEntity {
-		t.Fatalf("before the catalogue exists: %d", code)
+		t.Fatalf("before the catalog exists: %d", code)
 	}
 	code, out := h.do(t, "PUT", clusterCatalogues+"/partner", alice, urlBody(src.URL+"/partner"))
 	if code != http.StatusAccepted || out["scope"] != "cluster" {
@@ -780,7 +780,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 		t.Fatalf("solo sees %v", out)
 	}
 	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/planner", tom, install); code != http.StatusAccepted {
-		t.Fatalf("after the catalogue was added: %d %v", code, out)
+		t.Fatalf("after the catalog was added: %d %v", code, out)
 	}
 	bundle := dt.RemoteFile(t, h.remote, dt.CataloguePath(gitops.BundleFile("planner")))
 	if !strings.Contains(bundle, profilebundle.OriginAnnotation+": cluster/partner") {
@@ -791,7 +791,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 		t.Fatal("remove")
 	}
 	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/planner", tina, install); code != http.StatusUnprocessableEntity {
-		t.Fatalf("after the catalogue was removed: %d", code)
+		t.Fatalf("after the catalog was removed: %d", code)
 	}
 	if code, _ := h.do(t, "DELETE", clusterCatalogues+"/partner", alice, ""); code != http.StatusNotFound {
 		t.Fatal("removing what is not there")
@@ -806,7 +806,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 	}
 }
 
-// The platform tenant takes no apps, so it takes no catalogues either.
+// The platform tenant takes no apps, so it takes no catalogs either.
 func TestThePlatformTenantTakesNoCatalogues(t *testing.T) {
 	src := catalogues(t, served{"gentian": {}, "x": {}})
 	h := startSeeded(t, nil, func(remote string) {
@@ -818,7 +818,7 @@ func TestThePlatformTenantTakesNoCatalogues(t *testing.T) {
 	alice := h.token(t, "gentian", "alice")
 	before := h.tip(t)
 	if code, out := h.do(t, "PUT", clusterTenant("platform", "/catalogues/x"), alice, urlBody(src.URL+"/x")); code != http.StatusConflict {
-		t.Fatalf("a catalogue for the platform tenant: %d %v", code, out)
+		t.Fatalf("a catalog for the platform tenant: %d %v", code, out)
 	}
 	if code, out := h.do(t, "PUT", clusterTenant("platform", "/catalogue-delegation"), alice, ""); code != http.StatusConflict {
 		t.Fatalf("delegation for the platform tenant: %d %v", code, out)

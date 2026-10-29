@@ -43,12 +43,12 @@ const forceSyncAnnotation = "force-sync"
 //
 // Best effort, deliberately. The credential is already stored by the time this
 // runs, so a failure here means it takes effect within the refresh interval
-// rather than immediately — which is exactly the old behaviour. Reporting the
+// rather than immediately — which is exactly the old behavior. Reporting the
 // write as failed because the nudge failed would turn a slow success into a
 // visible error and invite someone to store it twice.
 //
 // The probe ExternalSecret reads the same path, so it is nudged with the rest;
-// its force-sync stamp is also what lets the catalogue report the credential as
+// its force-sync stamp is also what lets the catalog report the credential as
 // pending rather than missing until ESO has answered (see probeStatus).
 func (s *Server) refreshConsumers(ctx context.Context, vaultPath string) {
 	log := ctrl.Log.WithName("custodian")

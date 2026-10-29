@@ -93,7 +93,7 @@ func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 			}
 		}
 		if !isInit {
-			t.Errorf("%s: fetch is not an init container, so a bad artefact would still be loaded", name)
+			t.Errorf("%s: fetch is not an init container, so a bad artifact would still be loaded", name)
 		}
 	}
 }
@@ -217,7 +217,7 @@ func TestRestoreFetchesNothingButTheArtefact(t *testing.T) {
 // A failed restore leaves objects owned by the admin that ran it, and the next
 // attempt — running as the app, correctly — cannot drop what it does not own.
 // The database wedges precisely when someone is recovering it, and only
-// hand-written psql gets it back. So the restore normalises ownership first.
+// hand-written psql gets it back. So the restore normalizes ownership first.
 func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 	job := PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_nextcloud_base_ce"), "demo_nextcloud_base_ce")
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
@@ -248,7 +248,7 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 		"pg_restore --role=",
 		// Extension members, and serial/identity sequences, are owned by
 		// something else that owns them: skipping them is what lets the rest
-		// of the normaliser run to completion.
+		// of the normalizer run to completion.
 		"deptype IN ('a', 'i', 'e')",
 	} {
 		if !strings.Contains(script, want) {
@@ -257,7 +257,7 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 	}
 	// Ownership must be settled before the load, or the load is what fails.
 	if strings.Index(script, "ALTER SCHEMA") > strings.Index(script, "pg_restore") {
-		t.Error("ownership is normalised after the restore, which is too late")
+		t.Error("ownership is normalized after the restore, which is too late")
 	}
 }
 
@@ -312,7 +312,7 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 // its label implies.
 //
 // This is the one place where a Job's label and its database disagree on
-// purpose: the shell is labelled with the tenant-wide component so its progress
+// purpose: the shell is labeled with the tenant-wide component so its progress
 // aggregates there, while its database and role are named for the shell. The
 // role was derived from the label, so every restore ended at
 //

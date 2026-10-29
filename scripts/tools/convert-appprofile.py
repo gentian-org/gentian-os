@@ -197,7 +197,7 @@ def drop_proxy_route(route, review):
 
 # A tile's label was a map of locale to string; it is now a required fallback
 # plus an optional map. en_US is the fallback where there is one, because the
-# catalogue is written in English and every other locale is a translation of
+# catalog is written in English and every other locale is a translation of
 # it; where there is none, any entry is better than none.
 def tile_label(display):
     if isinstance(display, str):

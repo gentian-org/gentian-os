@@ -54,7 +54,7 @@ func mainScript(job *batchv1.Job) string {
 	return strings.Join(job.Spec.Template.Spec.Containers[0].Args, "\n")
 }
 
-// The producer writes a fixed filename and the artefact is named after the
+// The producer writes a fixed filename and the artifact is named after the
 // database. Deriving one from the other uploads nothing at all, silently, so
 // the two are pinned together here.
 func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
@@ -80,7 +80,7 @@ func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
 }
 
 // A dump that fails must never be followed by an upload, or the bundle gains a
-// truncated artefact and the export reports success. Init containers give that
+// truncated artifact and the export reports success. Init containers give that
 // for free: they run in order and a failure stops the pod.
 func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 	for name, job := range map[string]*batchv1.Job{
@@ -151,7 +151,7 @@ func TestVolumeArchiveMountsClaimReadOnlyAndAppliesExcludes(t *testing.T) {
 
 // Bucket capture stages on disk rather than mirroring object to object, and
 // that is a deliberate reversal: mirroring needed no scratch space but put the
-// objects into the bundle as plaintext, since artefacts are encrypted
+// objects into the bundle as plaintext, since artifacts are encrypted
 // individually. Paying for staging is what makes bucket contents as protected
 // as everything else.
 func TestS3CaptureStagesSoItCanBeEncrypted(t *testing.T) {
@@ -282,7 +282,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 		t.Fatalf("ManifestJob: %v", err)
 	}
 	// The manifest is staged, then encrypted, then uploaded like any other
-	// artefact — it carries the tenant's spec and app inventory, which has no
+	// artifact — it carries the tenant's spec and app inventory, which has no
 	// business sitting readable beside an encrypted bundle.
 	staged := initContainerScript(job)
 	if strings.Count(staged, "GENTIAN_MANIFEST_EOF") != 2 {
@@ -541,7 +541,7 @@ func TestEveryContainerThatRunsTarHasIt(t *testing.T) {
 // account, and the credential a policy carries is scoped to objects. Creating
 // the bucket or rewriting its anonymous policy is denied there, and "make it
 // if it is not there" does not cover a denial — so issuing them killed the upload
-// container on its first command, before any artefact was sent, and every
+// container on its first command, before any artifact was sent, and every
 // backup to an external destination failed with nothing written.
 func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 	p := params()

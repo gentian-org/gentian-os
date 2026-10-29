@@ -35,7 +35,7 @@ import (
 // console hit exactly that the first time its tile was opened.
 //
 // The operator is what knows every host a zone serves, because it composes the
-// routes. This projects that per tenant, the way the tile catalogue is already
+// routes. This projects that per tenant, the way the tile catalog is already
 // projected, so the list follows the components.
 //
 // What it does NOT cover, and cannot: argocd, headlamp and id are kernel tier.
@@ -95,7 +95,7 @@ const (
 )
 
 // zoneHostsConfigMapName is one ConfigMap per tenant, in the control
-// namespace beside the tile catalogue rather than in the tenant's own, so a
+// namespace beside the tile catalog rather than in the tenant's own, so a
 // tenant that has not been provisioned yet still has somewhere for this to
 // land.
 func zoneHostsConfigMapName(tenant string) string { return "gentian-zone-hosts-" + tenant }

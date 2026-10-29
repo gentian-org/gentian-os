@@ -89,7 +89,7 @@ func (r *ComponentReconciler) rollOnPartnersSecret(ctx context.Context, comp *ge
 	}
 	for i := range deployments.Items {
 		d := &deployments.Items[i]
-		if !workloadBelongsToApp(d.Labels, d.Name, comp.Name) {
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, comp.Name) {
 			continue
 		}
 		patch := client.MergeFrom(d.DeepCopy())
@@ -105,7 +105,7 @@ func (r *ComponentReconciler) rollOnPartnersSecret(ctx context.Context, comp *ge
 	}
 	for i := range statefulSets.Items {
 		st := &statefulSets.Items[i]
-		if !workloadBelongsToApp(st.Labels, st.Name, comp.Name) {
+		if !workloadOfApp(st.ObjectMeta, st.Spec.Template, comp.Name) {
 			continue
 		}
 		patch := client.MergeFrom(st.DeepCopy())

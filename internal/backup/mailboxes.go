@@ -41,7 +41,7 @@ import (
 // message being moved from new/ to cur/, or renamed because a flag changed,
 // is in neither listing for an instant, and an archiver that reads the two
 // directories one after the other leaves it out without an error. The mail
-// server's own synchronisation does not have the problem: `doveadm backup`
+// server's own synchronization does not have the problem: `doveadm backup`
 // opens the mailbox the way the server does, under the locks the server
 // takes, and writes every folder and message with its flags, its UID and its
 // GUID. So that is what copies a mailbox here, in the image and version the
@@ -239,7 +239,7 @@ echo "archived the mailboxes"`, workDir)},
 //
 // The archive comes from a bundle, and a bundle can come from anywhere. A
 // name in its INDEX is used as a directory's and is refused unless it is
-// one; a link in the archive is refused, because the synchronisation would
+// one; a link in the archive is refused, because the synchronization would
 // follow it, and what it reads it writes into the tenant's mailbox.
 func MailboxRestoreJob(p JobParams, d Decryption, artefact, claim, domain string) *batchv1.Job {
 	unpack := corev1.Container{
@@ -351,7 +351,7 @@ echo "the archived mailboxes of ${DOMAIN} are gone"
 
 // MailboxDestroyJob destroys every mailbox of one mail domain: the Job a
 // tenant's deletion runs. It is shaped like the stores' destroy Jobs --
-// labelled so the deletion finds it, bounded, failing rather than retrying
+// labeled so the deletion finds it, bounded, failing rather than retrying
 // for ever -- and runs where the mail server's volume is, on the node the
 // server holds it on.
 func MailboxDestroyJob(namespace, tenantName, claim, node, domain string, deadline DestroyDeadline) *batchv1.Job {
@@ -368,7 +368,7 @@ func MailboxDestroyJob(namespace, tenantName, claim, node, domain string, deadli
 	return job
 }
 
-// mailStore is the name the mailbox Jobs are labelled with, in the place of
+// mailStore is the name the mailbox Jobs are labeled with, in the place of
 // an app's: like the desktop's and the backup bucket's it is shaped like an
 // app's name and is none.
 const mailStore = "gentian-mail"

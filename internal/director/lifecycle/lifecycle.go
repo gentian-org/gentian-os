@@ -248,7 +248,7 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("app-lifecycle API answered %d: %s", e.Status, e.Message)
 }
 
-// Plans fetches the catalogue as it applies to one tenant. selfService
+// Plans fetches the catalog as it applies to one tenant. selfService
 // withholds the plans a tenant administrator may not pick for themselves.
 func (c *Client) Plans(ctx context.Context, tenant string, selfService bool) ([]Plan, error) {
 	q := url.Values{}

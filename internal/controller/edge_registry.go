@@ -18,7 +18,7 @@ import (
 // Which EdgeIngress a cluster runs, chosen by name.
 //
 // The name is the key in kernel/platforms.yaml's edgeIngress table, so the
-// catalogue that decides which credential to ask for and the code that decides
+// catalog that decides which credential to ask for and the code that decides
 // which implementation to build agree by construction rather than by two people
 // remembering the same string.
 //
@@ -34,7 +34,7 @@ import (
 // is the coupling this registry exists to remove. Fields no implementation
 // reads cost nothing.
 type EdgeIngressConfig struct {
-	// Token authorises the ingress's own API, whatever that is.
+	// Token authorizes the ingress's own API, whatever that is.
 	Token string
 	// Target is the address or hostname traffic arrives at, when the ingress
 	// is told rather than asked — a tunnel CNAME, an exit node's address.

@@ -62,7 +62,7 @@ var iconExtensions = map[string]string{
 
 // Render publishes a brand: nil is the platform's own. The custom tokens
 // override the default ones path by path, so a brand that sets only its
-// primary colour keeps the rest of the default look.
+// primary color keeps the rest of the default look.
 //
 // An icon's src in brand.json and in the manifest is relative to the file it
 // is in, as the manifest specification resolves it; a page reading brand.json
@@ -147,7 +147,7 @@ func merge(base, over []Token) []Token {
 }
 
 // webManifest is the Web App Manifest an installed page uses: the brand's
-// name and icons, its primary colour as the theme and its page colour as
+// name and icons, its primary color as the theme and its page color as
 // the background.
 func webManifest(id Identity, tokens []Token) map[string]any {
 	m := map[string]any{

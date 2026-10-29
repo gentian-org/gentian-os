@@ -39,7 +39,7 @@ func claimWith(t *testing.T, spec string) *gitops.GitOps {
 }
 
 // The list is the claim's, which is the whole point of AD-14: naming a
-// catalogue source is a commit somebody can review, not a Deployment's
+// catalog source is a commit somebody can review, not a Deployment's
 // environment.
 func TestCatalogueSourcesComeFromTheClusterClaim(t *testing.T) {
 	g := claimWith(t, `  catalogue:
@@ -65,7 +65,7 @@ func TestCatalogueSourcesComeFromTheClusterClaim(t *testing.T) {
 }
 
 // One malformed entry must not stop a director from serving: it costs installs
-// from that catalogue, which is where somebody will see it, and not the
+// from that catalog, which is where somebody will see it, and not the
 // console.
 func TestAMalformedSourceIsSkippedRatherThanFatal(t *testing.T) {
 	g := claimWith(t, `  catalogue:
@@ -86,7 +86,7 @@ func TestAMalformedSourceIsSkippedRatherThanFatal(t *testing.T) {
 	}
 }
 
-// A cluster that declares none materialises nothing, which is a cluster whose
+// A cluster that declares none materializes nothing, which is a cluster whose
 // profiles arrive some other way -- not an error.
 func TestAClaimWithNoCatalogueYieldsNoSources(t *testing.T) {
 	g := claimWith(t, "")

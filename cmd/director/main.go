@@ -258,20 +258,20 @@ func run(log *slog.Logger) error {
 	// They are read when they are needed, per request and per tenant, so a
 	// catalogue added through the API is there for the next install and one
 	// removed is gone. What is read here, once, is only the App Store's
-	// address, and the cluster's own catalogues for the log.
+	// address, and the cluster's own catalogs for the log.
 	//
 	// The fetcher connects to public https addresses and to nothing else
 	// (internal/director/catalogue/address.go): an address somebody typed
 	// must not be a way to reach into the cluster this process runs in.
 	entries := catalogue.NewFetcher()
-	// A catalogue may instead be an OCI artifact, read with the credential of
-	// a repository its owner declared: a tenant's for a tenant's catalogue,
+	// A catalog may instead be an OCI artifact, read with the credential of
+	// a repository its owner declared: a tenant's for a tenant's catalog,
 	// the cluster's for one of the whole cluster. The declaration is read
 	// from git, and answers only the owner's own repository
 	// (gitops.RegistryRepository); the credential from the vault, where this
 	// process logs in as itself to a role that reads repository
 	// credentials and nothing else (cluster-default, director-repository-read).
-	// Without a vault address, a catalogue artifact can be read only from a
+	// Without a vault address, a catalog artifact can be read only from a
 	// repository that declares no credential.
 	registries := catalogue.VaultRegistries{Declared: repo.RegistryRepository}
 	if addr := os.Getenv("DIRECTOR_BAO_ADDR"); addr != "" {
@@ -279,7 +279,7 @@ func run(log *slog.Logger) error {
 			envOr("DIRECTOR_BAO_TOKEN_FILE", "/var/run/secrets/gentian/openbao/token"))
 		registries.Read = vault.Get
 	} else {
-		log.Info("no vault address (DIRECTOR_BAO_ADDR): a catalogue kept as an OCI artifact is read only from a repository without a credential")
+		log.Info("no vault address (DIRECTOR_BAO_ADDR): a catalog kept as an OCI artifact is read only from a repository without a credential")
 	}
 	entries.Registries = registries
 	var storeURL string
@@ -289,17 +289,17 @@ func run(log *slog.Logger) error {
 	storeURL = catalogues.StoreURL
 	if err != nil {
 		// Not fatal. A director that cannot read the claim still serves
-		// every call, and reads the claim again when a catalogue is asked
+		// every call, and reads the claim again when a catalog is asked
 		// for; refusing to start would take the console down with it.
-		log.Warn("the Cluster claim could not be read at start; its catalogues are read again when they are needed",
+		log.Warn("the Cluster claim could not be read at start; its catalogs are read again when they are needed",
 			"error", err)
 	}
 	for _, src := range catalogues.Sources {
-		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL,
+		log.Info("catalog of the cluster", "catalogue", src.Name, "url", src.URL,
 			"artifact", src.OCI.Artifact, "repository", src.OCI.Repository)
 	}
 	if storeURL == "" {
-		// Worth one line: without it the cluster's own catalogue view can
+		// Worth one line: without it the cluster's own catalog view can
 		// list its ce, me and ie entries but has nowhere to send anybody for
 		// the rest, which looks like the platform having no store at all.
 		log.Info("the Cluster claim names no App Store; nothing points anywhere for proprietary entries",

@@ -3,7 +3,7 @@ namespace: kernel-edge
 # The address DNS points at. Empty leaves the cloud controller to allocate one,
 # which is what NETWORK_MODE=tunnel wants.
 #
-# Whether it is honoured, and how, is the platform's business — see
+# Whether it is honored, and how, is the platform's business — see
 # kernel/platforms.yaml. On GCP it must already be reserved as a regional
 # external static address; on AWS and Azure it is not used at all, because
 # neither resolves an edge address by IP (see addressRef).
@@ -45,10 +45,10 @@ envoy:
   replicas: 2
 
   # How the data plane is reached. LoadBalancer is right where an address is
-  # claimed from the platform (NETWORK_MODE=static-ip). A tunnelled cluster is
+  # claimed from the platform (NETWORK_MODE=static-ip). A tunneled cluster is
   # reached from inside — the tunnel daemon dials out — so it asks for
   # ClusterIP: a LoadBalancer there waits on a cloud that is not there, and a
   # Gateway with no address is never Programmed. The address fields and the
   # platform's annotations apply to a LoadBalancer only, and are dropped
-  # otherwise rather than left as claims nothing honours.
+  # otherwise rather than left as claims nothing honors.
   serviceType: LoadBalancer

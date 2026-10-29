@@ -414,7 +414,7 @@ func (w *secretsWorld) restarted(t *testing.T, name string) bool {
 	return d.Spec.Template.Annotations[restartWorkloadAnnotation] != ""
 }
 
-// An export puts an app's own secrets into the bundle as one more artefact
+// An export puts an app's own secrets into the bundle as one more artifact
 // of the app: every one its profile declares and the vault holds, its
 // extensions' too, encrypted by the operator under the bundle's own key. No
 // value is in the manifest, in the status or in a Job.
@@ -428,7 +428,7 @@ func TestAnExportCarriesAnAppsOwnSecretsEncryptedAndNowhereElse(t *testing.T) {
 
 	entry := w.export.Status.Apps[0]
 	if got := entry.Artefacts[len(entry.Artefacts)-1]; !reflect.DeepEqual(got, gentianov1alpha1.BundleArtefact{Kind: bundle.ArtefactSecrets, Name: "wiki", Path: "secrets/wiki.json"}) {
-		t.Fatalf("the secrets artefact = %+v", got)
+		t.Fatalf("the secrets artifact = %+v", got)
 	}
 	if !reflect.DeepEqual(entry.Secrets.Names, []string{"encryption_key", "search/index_key", "session_key"}) {
 		t.Errorf("status names %v", entry.Secrets.Names)
@@ -450,7 +450,7 @@ func TestAnExportCarriesAnAppsOwnSecretsEncryptedAndNowhereElse(t *testing.T) {
 	}
 	spec, _ := json.Marshal(job)
 	for path, value := range values {
-		for where, text := range map[string][]byte{"the artefact": cipher, "the manifest": manifest, "the export's status": status, "the manifest's Job": spec} {
+		for where, text := range map[string][]byte{"the artifact": cipher, "the manifest": manifest, "the export's status": status, "the manifest's Job": spec} {
 			if bytes.Contains(text, []byte(value)) {
 				t.Errorf("%s holds the value of %s in the clear", where, path)
 			}
@@ -467,11 +467,11 @@ func TestAnExportCarriesAnAppsOwnSecretsEncryptedAndNowhereElse(t *testing.T) {
 		Secrets:    map[string]string{"encryption_key": values[wikiEncryption], "session_key": values[wikiSession]},
 		Extensions: map[string]map[string]string{"search": {"index_key": values[wikiIndex]}}}
 	if !reflect.DeepEqual(doc, want) {
-		t.Errorf("the artefact holds names %v", heldNames(doc))
+		t.Errorf("the artifact holds names %v", heldNames(doc))
 	}
 	wrong, _ := age.NewScryptIdentity("another passphrase")
 	if _, err := backup.OpenAppSecrets(cipher, []age.Identity{wrong}); err == nil {
-		t.Error("the artefact opened with another passphrase")
+		t.Error("the artifact opened with another passphrase")
 	}
 
 	// To the cluster's recipients as well, where that is how the bundle is
@@ -955,7 +955,7 @@ func TestAManifestThatMisfilesSecretsIsRefused(t *testing.T) {
 			t.Errorf("%s: planned", name)
 		}
 	}
-	// As an export writes it, it is planned: the artefact with no target,
+	// As an export writes it, it is planned: the artifact with no target,
 	// and the plan says what will be done.
 	m := &backup.Manifest{SchemaVersion: 4, Tenant: "demo", Apps: []backup.ManifestApp{{Name: "wiki", ChartVersion: "2.0.0",
 		Stores: []backup.ManifestStore{{Kind: bundle.ArtefactPostgres, Name: "demo_wiki", Path: "postgres/demo_wiki.pgc"},
@@ -1025,7 +1025,7 @@ func TestARestoreOfSecretsWithoutAVaultFails(t *testing.T) {
 
 // A key a profile declares under spec.secrets.derived is kept in the vault
 // like a generated secret, an app may encrypt with it, and it travels the
-// same way: in the app's secrets artefact, apart from the generated ones,
+// same way: in the app's secrets artifact, apart from the generated ones,
 // and set again by a restore at the app's own derived/ path in the tenant
 // restored into, under a key the profile declares there and no other. It
 // reaches the app in the Secret the operator writes itself
@@ -1074,7 +1074,7 @@ func TestADeclaredKeyTravelsAndIsSetLikeAGeneratedSecret(t *testing.T) {
 	}
 	data := appEncrypt(t, first, "a token the wiki keeps for a person")
 
-	// Backed up: the key is in the artefact, in a section of its own.
+	// Backed up: the key is in the artifact, in a section of its own.
 	entry := gentianov1alpha1.AppExportStatus{Name: "wiki", ChartVersion: "2.0.0",
 		Artefacts: []gentianov1alpha1.BundleArtefact{{Kind: bundle.ArtefactPostgres, Name: "demo_wiki", Path: backup.PostgresArtefact("demo_wiki")}}}
 	if err := w.er.withAppSecrets(ctx, w.export, tenant, "wiki", profile, passphraseEncryption, &entry); err != nil {
@@ -1086,7 +1086,7 @@ func TestADeclaredKeyTravelsAndIsSetLikeAGeneratedSecret(t *testing.T) {
 	ref := *w.restore(t).Spec.Bundle
 	doc, err := w.bundles.AppSecrets(ctx, ref, "secrets/wiki.json", bundlestore.Key{Passphrase: "correct horse"})
 	if err != nil || !reflect.DeepEqual(doc.Derived, map[string]string{"WIKI_SECRET_KEY": first}) || doc.Secrets["WIKI_SECRET_KEY"] != "" {
-		t.Fatalf("the artefact's declared keys: %v, %v", err, len(doc.Derived))
+		t.Fatalf("the artifact's declared keys: %v, %v", err, len(doc.Derived))
 	}
 	// And one the profile here does not declare, with a name made to be a path.
 	doc.Derived["OTHER_KEY"] = "not-declared"
@@ -1103,7 +1103,7 @@ func TestADeclaredKeyTravelsAndIsSetLikeAGeneratedSecret(t *testing.T) {
 	status, _ := json.Marshal(w.export.Status)
 	manifest, _ := json.Marshal(m)
 	if bytes.Contains(status, []byte(first)) || bytes.Contains(manifest, []byte(first)) || bytes.Contains(w.bundles.objects[ref.Bucket+"/"+ref.Prefix+"/secrets/wiki.json"], []byte(first)) {
-		t.Error("the key's value is in the clear in the status, the manifest or the artefact")
+		t.Error("the key's value is in the clear in the status, the manifest or the artifact")
 	}
 
 	// Purged and installed again: another key, and the old data unreadable.
@@ -1164,8 +1164,8 @@ func TestADeclaredKeyTravelsAndIsSetLikeAGeneratedSecret(t *testing.T) {
 	}
 }
 
-// A bundle whose secrets artefact was written before declared keys
-// travelled holds none. It restores as before: the key stays as it is, and
+// A bundle whose secrets artifact was written before declared keys
+// traveled holds none. It restores as before: the key stays as it is, and
 // the result says so.
 func TestABundleWithoutDeclaredKeysLeavesThemAndSaysSo(t *testing.T) {
 	w := newSecretsWorld(t, nil)

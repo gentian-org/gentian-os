@@ -231,7 +231,7 @@ func TestPassphraseHonoursACustomKey(t *testing.T) {
 func TestRecipientsComeFromOpenBaoBeforeTheEnvironment(t *testing.T) {
 	t.Setenv(backupRecipientsEnv, "age1fromenv")
 
-	// No OpenBao wired up: the environment is still honoured, so a cluster that
+	// No OpenBao wired up: the environment is still honored, so a cluster that
 	// sets the value explicitly keeps working.
 	r := &TenantExportReconciler{}
 	got := r.clusterRecipients(context.Background())

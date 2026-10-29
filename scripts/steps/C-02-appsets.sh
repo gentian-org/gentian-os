@@ -100,7 +100,7 @@ apply() {
 
     # The kernel Postgres first: Keycloak and OpenFGA below are its readers.
     # B-01 created it and could not wait for it -- its role passwords come
-    # through the store C-01 composed, from the vault B-03 initialised -- and
+    # through the store C-01 composed, from the vault B-03 initialized -- and
     # Argo CD spent its retries on it in the meantime, so it is asked for a
     # fresh sync rather than waited on.
     for app in $(_v5_apps_deferred); do

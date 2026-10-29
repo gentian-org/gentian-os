@@ -101,8 +101,8 @@ func alone(name string) string {
 		"\n  labels:\n    gentianos.io/profile-name: " + name + "\nspec:\n  classes: [app]\n  launch: none\n  trustTier: certified\n  version: \"1.0.0\"\n"
 }
 
-// carrying is a profile on the cluster as the director materialised it: the
-// bundle beside it, from a catalogue of the whole cluster.
+// carrying is a profile on the cluster as the director materialized it: the
+// bundle beside it, from a catalog of the whole cluster.
 func carrying(p *gentianov1alpha1.ComponentProfile, bundle string) *gentianov1alpha1.ComponentProfile {
 	if p.Annotations == nil {
 		p.Annotations = map[string]string{}
@@ -160,7 +160,7 @@ func of(profile string) map[string]string {
 	return map[string]string{profilebundle.ProfileLabel: profile}
 }
 
-// argoCatalogue is the Application that applies the catalogue directory,
+// argoCatalogue is the Application that applies the catalog directory,
 // reporting what Argo CD found of the objects named: "kind/name" for one it
 // finds declared, "kind/name!" for one it would prune.
 func argoCatalogue(reports ...string) *unstructured.Unstructured {
@@ -191,14 +191,14 @@ func argoCatalogue(reports ...string) *unstructured.Unstructured {
 
 // residueWorld is a cluster after some history. Tenant demo has shop
 // installed, with an add-on, and drive; it uninstalled wiki and kept its
-// data. Around them is everything the catalogue leaves behind, beside
+// data. Around them is everything the catalog leaves behind, beside
 // everything that must never be taken for it.
 //
 // On the list, by class:
 //
 //	dropped         ConfigMap shop.old-page (shop's label; shop's bundle no longer brings it)
 //	                Composition app-notes (the name notes' Composition would have; notes brings none)
-//	orphaned        OIDCPackCatalog gone-oidc (labelled for a profile that is not there)
+//	orphaned        OIDCPackCatalog gone-oidc (labeled for a profile that is not there)
 //	unowned         Composition app-odoo, OIDCPackCatalog gentian-element-oidc,
 //	                ConfigMap legacy.asset, ConfigMap desktop.page (its profile has no bundle),
 //	                Composition shop-composition (an app's, under a name no bundle gives)
@@ -243,7 +243,7 @@ func residueWorld(t *testing.T, more ...client.Object) *purgeWorld {
 		customization(provisioningNS, "hand-written", "shop", nil),
 
 		// A tenant's namespace: the same names and labels, and not the
-		// catalogue's business.
+		// catalog's business.
 		configMap("tenant-demo", "shop.old-page", map[string]string{profilebundle.ProfileLabel: "shop", profilebundle.AssetLabel: "old-page"}),
 		customization("tenant-demo", "shop.local", "shop", of("shop")),
 
@@ -354,37 +354,37 @@ func TestTheResidueListHoldsEachClassAndNothingThatIsOwned(t *testing.T) {
 }
 
 // A pack catalog on the list says whether it is still read: a client is
-// configured from the catalog labelled with its profile, and from no other.
+// configured from the catalog labeled with its profile, and from no other.
 func TestAResidualPackCatalogSaysWhetherItIsStillInEffect(t *testing.T) {
 	w := residueWorld(t,
-		// Labelled for shop, which is installed and has its own catalog:
+		// Labeled for shop, which is installed and has its own catalog:
 		// two carry shop's label, and shop's clients are refused.
 		packs("shop-old-oidc", of("shop"), "shop-admin"),
-		// Labelled for drive, installed, and the only one: in effect.
+		// Labeled for drive, installed, and the only one: in effect.
 		packs("drive-oidc", of("drive"), "drive"),
 		// Holds nothing.
 		packs("empty-oidc", of("gone")),
 	)
 	_, by := residueOf(t, w)
 
-	// The only catalog holding "gone", labelled for a profile that is not
+	// The only catalog holding "gone", labeled for a profile that is not
 	// installed: nothing reads it.
 	if o := by["OIDCPackCatalog/gone-oidc"].OIDC; o == nil || o.Effective != EffectiveNo ||
 		len(o.Clients) != 0 || len(o.Contested) != 0 {
-		t.Errorf("labelled for no installed profile: %+v", o)
+		t.Errorf("labeled for no installed profile: %+v", o)
 	}
 	// Holds "shop" and carries no profile's label: nothing reads it.
 	if o := by["OIDCPackCatalog/gentian-element-oidc"].OIDC; o == nil || o.Effective != EffectiveNo ||
 		len(o.Clients) != 0 || len(o.Contested) != 0 {
-		t.Errorf("an unlabelled catalog: %+v", o)
+		t.Errorf("an unlabeled catalog: %+v", o)
 	}
 	if o := by["OIDCPackCatalog/drive-oidc"].OIDC; o == nil || o.Effective != EffectiveYes ||
 		!reflect.DeepEqual(o.Clients, []string{"drive"}) || len(o.Contested) != 0 || o.Composition != "drive" {
-		t.Errorf("the one catalog labelled for an installed profile: %+v", o)
+		t.Errorf("the one catalog labeled for an installed profile: %+v", o)
 	}
 	if o := by["OIDCPackCatalog/shop-old-oidc"].OIDC; o == nil || o.Effective != EffectiveContested ||
 		!reflect.DeepEqual(o.Contested, []string{"shop-admin"}) || len(o.Clients) != 0 || o.Composition != "shop" {
-		t.Errorf("a second catalog labelled for an installed profile: %+v", o)
+		t.Errorf("a second catalog labeled for an installed profile: %+v", o)
 	}
 	if o := by["OIDCPackCatalog/empty-oidc"].OIDC; o == nil || o.Effective != EffectiveNo {
 		t.Errorf("a catalog holding nothing: %+v", o)
@@ -474,7 +474,7 @@ func TestARemovalDeletesExactlyTheOneObjectNamed(t *testing.T) {
 	}
 	var want []string
 	for _, name := range before {
-		// The one in the catalogue's namespace; the tenant's of the same
+		// The one in the catalog's namespace; the tenant's of the same
 		// name stays.
 		if name != "ConfigMap/"+provisioningNS+"/shop.old-page" {
 			want = append(want, name)
@@ -488,7 +488,7 @@ func TestARemovalDeletesExactlyTheOneObjectNamed(t *testing.T) {
 	if res, err := w.svc.RemoveResidue(context.Background(), "Composition", "app-odoo", "", "ada"); err != nil || res.Status != "deleted" {
 		t.Fatalf("app-odoo: %+v, %v", res, err)
 	}
-	// Given the catalogue's namespace by name, a namespaced one is found.
+	// Given the catalog's namespace by name, a namespaced one is found.
 	if res, err := w.svc.RemoveResidue(context.Background(), "ConfigMap", "legacy.asset", provisioningNS, "ada"); err != nil || res.Status != "deleted" {
 		t.Fatalf("legacy.asset: %+v, %v", res, err)
 	}
@@ -505,7 +505,7 @@ func TestARemovalRefusesWhatIsNotOnTheList(t *testing.T) {
 		says                  string
 	}{
 		// What a bundle on the cluster brings.
-		{"Composition", "app-shop", "", ErrNotResidue, "the bundle now materialised for profile shop brings it"},
+		{"Composition", "app-shop", "", ErrNotResidue, "the bundle now materialized for profile shop brings it"},
 		{"OIDCPackCatalog", "shop-oidc", "", ErrNotResidue, "profile shop brings it"},
 		{"ConfigMap", "shop.theme", "", ErrNotResidue, "profile shop brings it"},
 		{"Customization", "shop.patch", "", ErrNotResidue, "profile shop brings it"},
@@ -530,7 +530,7 @@ func TestARemovalRefusesWhatIsNotOnTheList(t *testing.T) {
 		{"ComponentProfile", "shop", "", ErrNotResidue, "is in use"},
 		{"ComponentProfile", "shop-gift", "", ErrNotResidue, "is in use"},
 		{"ComponentProfile", "wiki", "", ErrNotResidue, "a tenant retains data for it"},
-		{"ComponentProfile", "desktop", "", ErrNotResidue, "not materialised from a catalogue"},
+		{"ComponentProfile", "desktop", "", ErrNotResidue, "not materialized from a catalog"},
 		{"ComponentProfile", "absent", "", ErrNotResidue, "there is no ComponentProfile absent"},
 	} {
 		res, err := w.svc.RemoveResidue(context.Background(), c.kind, c.name, c.namespace, "ada")
@@ -619,7 +619,7 @@ func exists(t *testing.T, w *purgeWorld, apiVersion, kind, namespace, name strin
 	return err == nil
 }
 
-// What Argo CD still finds declared in the catalogue directory is not
+// What Argo CD still finds declared in the catalog directory is not
 // deleted, and neither is anything while Argo CD cannot be asked.
 func TestARemovalIsRefusedForWhatArgoStillFindsDeclared(t *testing.T) {
 	w := residueWorld(t, argoCatalogue("ConfigMap/shop.old-page", "Composition/app-odoo!"))
@@ -651,7 +651,7 @@ func TestARemovalIsRefusedForWhatArgoStillFindsDeclared(t *testing.T) {
 	}
 }
 
-// An unused profile is deleted only once Argo CD reports that the catalogue
+// An unused profile is deleted only once Argo CD reports that the catalog
 // directory no longer declares it: until then it would be applied again.
 func TestAnUnusedProfileGoesOnlyOnceArgoReportsItGoneFromTheDirectory(t *testing.T) {
 	w := residueWorld(t)
@@ -757,7 +757,7 @@ func TestTheResidueRoutesAreAReadAndADirectorsCommand(t *testing.T) {
 	}
 }
 
-// What the operator may delete of the catalogue's kinds is what the removal
+// What the operator may delete of the catalog's kinds is what the removal
 // needs and no more. For a Composition that is get, list and delete -- it
 // never writes one -- and nothing else of Crossplane's definitions.
 func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T) {
@@ -822,7 +822,7 @@ func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T)
 			t.Errorf("the operator holds rights on %s: %v", key, held(key))
 		}
 	}
-	// What the catalogue brings is not the operator's to write: Argo CD
+	// What the catalog brings is not the operator's to write: Argo CD
 	// applies it from git.
 	for _, key := range []string{"gentianos.io/oidcpackcatalogs", "gentianos.io/componentprofiles"} {
 		for _, verb := range []string{"create", "update", "patch", "*"} {
@@ -859,7 +859,7 @@ func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T)
 	}
 }
 
-// A profile that declares itself a default is not residue while the catalogue
+// A profile that declares itself a default is not residue while the catalog
 // directory declares it. Once it has left the directory the operator places it
 // nowhere, and it is listed as an unused profile like any other.
 func TestADefaultProfileThatLeftTheDirectoryIsAnUnusedProfile(t *testing.T) {

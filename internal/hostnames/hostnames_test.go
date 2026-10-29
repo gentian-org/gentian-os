@@ -20,7 +20,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// app is a profile as a catalogue serves one and the director materialises
+// app is a profile as a catalog serves one and the director materializes
 // it: with an origin, and one gateway entry at the label asked for.
 func app(name, subDomain string) *gentianov1alpha1.ComponentProfile {
 	p := shipped(name, subDomain)
@@ -119,7 +119,7 @@ func TestAnAppMayTakeNoPlatformNameInAnyTenant(t *testing.T) {
 }
 
 // The platform's own component holds its own name and no other, and is the
-// platform's only when no catalogue brought it.
+// platform's only when no catalog brought it.
 func TestOnlyThePlatformsOwnComponentHoldsItsName(t *testing.T) {
 	own := map[string]string{"desktop": "desktop", "admin-console": "admin", "app-store": "store"}
 	for profile, label := range own {
@@ -136,8 +136,8 @@ func TestOnlyThePlatformsOwnComponentHoldsItsName(t *testing.T) {
 					t.Errorf("%s: %s was admitted to %s", zoneName, profile, other)
 				}
 			}
-			// A profile of that name a catalogue brought is not it: the
-			// director records an origin on everything it materialises, and
+			// A profile of that name a catalog brought is not it: the
+			// director records an origin on everything it materializes, and
 			// the bundle beside it.
 			for _, annotation := range []string{profilebundle.OriginAnnotation, profilebundle.Annotation} {
 				p := shipped(profile, label)
@@ -203,7 +203,7 @@ func TestTheKernelsNamesAreRefusedOnTheClustersDomainOnly(t *testing.T) {
 }
 
 // What is an app's business stays one: the list is the list, with no
-// look-alike matching, and operations -- a catalogue component's address --
+// look-alike matching, and operations -- a catalog component's address --
 // is not on it.
 func TestNamesThatAreNotReservedAreAdmitted(t *testing.T) {
 	for _, label := range []string{
@@ -323,7 +323,7 @@ func TestTheDocumentsCarryTheList(t *testing.T) {
 }
 
 // The App Store app's name is held for it as it comes from the cluster's own
-// catalogue, and from no tenant's; the desktop's and the console's only as
+// catalog, and from no tenant's; the desktop's and the console's only as
 // the platform ships them.
 func TestTheStoreNameIsAdmittedFromTheClustersCatalogueOnly(t *testing.T) {
 	from := func(name, label, origin string) *gentianov1alpha1.ComponentProfile {
@@ -333,16 +333,16 @@ func TestTheStoreNameIsAdmittedFromTheClustersCatalogueOnly(t *testing.T) {
 	}
 	for _, zone := range []Zone{ownDomain, custom, onCluster} {
 		if r := Check("app-store", from("app-store", "store", "cluster/aluvian"), zone); r != nil {
-			t.Errorf("the App Store app from the cluster's catalogue was refused: %s", r.Message())
+			t.Errorf("the App Store app from the cluster's catalog was refused: %s", r.Message())
 		}
 		if Check("app-store", from("app-store", "store", "tenant/acme/ours"), zone) == nil {
-			t.Error("an app-store from a tenant's catalogue was admitted to store")
+			t.Error("an app-store from a tenant's catalog was admitted to store")
 		}
 		if Check("app-store", app("app-store", "store"), zone) == nil {
 			t.Error("an app-store with an origin and no bundle was admitted to store")
 		}
 		if Check("desktop", from("desktop", "desktop", "cluster/aluvian"), zone) == nil {
-			t.Error("a desktop from a catalogue was admitted to desktop")
+			t.Error("a desktop from a catalog was admitted to desktop")
 		}
 		if Check("app-store", from("app-store", "admin", "cluster/aluvian"), zone) == nil {
 			t.Error("the App Store app was admitted to admin")
@@ -352,11 +352,11 @@ func TestTheStoreNameIsAdmittedFromTheClustersCatalogueOnly(t *testing.T) {
 		pe := from("app-store-pe", "store", "cluster/aluvian")
 		pe.Labels = map[string]string{gentianov1alpha1.LabelProfileEdition: "pe"}
 		if r := Check("app-store-pe", pe, zone); r != nil {
-			t.Errorf("app-store-pe from the cluster's catalogue was refused: %s", r.Message())
+			t.Errorf("app-store-pe from the cluster's catalog was refused: %s", r.Message())
 		}
 		pe.Labels[gentianov1alpha1.LabelProfileEdition] = "ee"
 		if Check("app-store-pe", pe, zone) == nil {
-			t.Error("app-store-pe labelled ee was admitted to store")
+			t.Error("app-store-pe labeled ee was admitted to store")
 		}
 		if Check("app-store-x", from("app-store-x", "store", "cluster/aluvian"), zone) == nil {
 			t.Error("app-store-x was admitted to store")

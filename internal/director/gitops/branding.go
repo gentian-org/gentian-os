@@ -59,7 +59,7 @@ func (g *GitOps) SetClusterBranding(ctx context.Context, spec gentianov1alpha1.B
 	return g.writeClaimsFile(ctx, BrandingFile, header+stripEmptyStatus(string(body)), "Set the cluster's branding", meta)
 }
 
-// stripEmptyStatus drops the status and creationTimestamp a marshalled
+// stripEmptyStatus drops the status and creationTimestamp a marshaled
 // object carries, which belong to the cluster and not to git.
 func stripEmptyStatus(text string) string {
 	var out strings.Builder

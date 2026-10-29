@@ -40,7 +40,7 @@ func ResolveTenantComponentProfile(ctx context.Context, c client.Client, app gen
 	}
 	if app.ProfileRef.Name == "" {
 		return "", fmt.Errorf(
-			"profileRef resolves a catalogue identity, and the catalogue's metadata is the " +
+			"profileRef resolves a catalog identity, and the catalog's metadata is the " +
 				"store's now — name the profile, or let the store resolve it and commit the name")
 	}
 

@@ -310,7 +310,7 @@ init_openbao() {
                     warn "Bootstrap token: no longer authenticates, and no revocation"
                     warn "  is recorded — OpenBao was likely re-initialised since this"
                     warn "  file was written. If you still hold the recovery key from"
-                    warn "  when this cluster was first initialised, mint a new root"
+                    warn "  when this cluster was first initialized, mint a new root"
                     warn "  token with 'bao operator generate-root', export it as"
                     warn "  BAO_TOKEN, and re-run. Otherwise recovery is from a kit."
                 fi
@@ -355,7 +355,7 @@ init_openbao() {
         # downstream of here needs the raw text: E-03 later refuses to revoke
         # this token until `./install.sh --export-recovery-kit` has run.
         echo ""
-        info "OpenBao initialised. The recovery key and root token are in"
+        info "OpenBao initialized. The recovery key and root token are in"
         info "  ${OPENBAO_INIT_FILE} (mode 600) — nowhere else."
         warn "Before this cluster can finish handover, run:"
         warn "    ./install.sh --export-recovery-kit"
@@ -405,7 +405,7 @@ init_openbao() {
         # already in the mode-600 init file, and a recovery kit — not this
         # terminal — is where a durable copy belongs.
         echo ""
-        info "OpenBao initialised. The unseal key and root token are in"
+        info "OpenBao initialized. The unseal key and root token are in"
         info "  ${OPENBAO_INIT_FILE} (mode 600) — nowhere else."
         warn "Before this cluster can finish handover, run:"
         warn "    ./install.sh --export-recovery-kit"
@@ -423,7 +423,7 @@ init_openbao() {
 # 10b. Seed kernel secrets
 # _dns_credential_fields_json — the active DNS provider's fields as one object.
 #
-# Field names come from the catalogue, which reads them from
+# Field names come from the catalog, which reads them from
 # kernel/platforms.yaml, and values from the environment variables the prompt
 # loop wrote. Empty when the provider is Cloudflare (which has its own
 # variables, kept for compatibility), "none", or when nothing was collected.
@@ -454,7 +454,7 @@ _provider_credential_fields_json() {
 # have a requirement, a validator and a vault path with nothing ever seeding
 # it.
 #
-# The vault path comes from the catalogue and is stripped of the store prefix
+# The vault path comes from the catalog and is stripped of the store prefix
 # the seeder adds back, so the path an operator reads in platforms.yaml is the
 # path the secret lands at.
 _provider_seed_pairs() {
@@ -648,7 +648,7 @@ seed_secrets() {
     fi
 
     # A provider other than Cloudflare hands its fields over as one JSON object,
-    # built from the catalogue rather than from a variable per provider — the
+    # built from the catalog rather than from a variable per provider — the
     # installer already knows which fields the provider declares, and a second
     # list here would be the place they stop matching.
     local provider_seed_pairs=""

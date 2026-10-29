@@ -311,7 +311,7 @@ func TestOnlyThePlatformSetsANamespacesTier(t *testing.T) {
 				allowed(id, "create a namespace with a "+set.what, create(c, ns, map[string]string{set.key: set.value}))
 				allowed(id, "change a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.other }))
 				allowed(id, "remove a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { delete(l, set.key) }))
-				allowed(id, "give an unlabelled namespace a "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
+				allowed(id, "give an unlabeled namespace a "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
 				ns = labelled()
 				allowed(id, "change a "+set.what+" another writer set", relabel(c, ns, func(l map[string]string) { l[set.key] = set.other }))
 				continue
@@ -320,7 +320,7 @@ func TestOnlyThePlatformSetsANamespacesTier(t *testing.T) {
 
 			ns := name()
 			allowed(id, "create a namespace with no "+set.what, create(c, ns, map[string]string{"app": "x"}))
-			refused(id, "give an unlabelled namespace a "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
+			refused(id, "give an unlabeled namespace a "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.value }))
 
 			ns = labelled()
 			refused(id, "change a namespace's "+set.what, relabel(c, ns, func(l map[string]string) { l[set.key] = set.other }))

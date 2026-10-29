@@ -10,7 +10,7 @@
 # The namespace is composed by the Cluster claim (C-01), not created here:
 # which engines a cluster runs is a property of what it declares. This
 # ApplicationSet therefore runs in C-02 and not in B-01, and CreateNamespace
-# is false so that an Application cannot quietly create an unlabelled
+# is false so that an Application cannot quietly create an unlabeled
 # namespace that no policy selects on.
 #
 # The kernel's own Postgres is NOT here. kernel-postgres lives in kernel-data,

@@ -108,7 +108,7 @@ func matchPostgresProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 
 // schemaPreferenceFor reports the search_path order an app's profile asked for.
 // Unset means the app's own schema comes first, which is the safe default: it is
-// what an app doing its own schema isolation expects, and it is the behaviour
+// what an app doing its own schema isolation expects, and it is the behavior
 // every app had before the preference was declarable.
 func schemaPreferenceFor(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.SchemaPreference {
 	if profile == nil || profile.Services() == nil ||
@@ -243,7 +243,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // PostgreSQL password equals the OpenBao-seeded value. The pod reads it from
 // the Secret of the Job's name, which the Job owns (jobSecret); it is in no
 // Job spec, no ConfigMap and no composed Object. Without it the Job
-// generates a random password locally (legacy behaviour).
+// generates a random password locally (legacy behavior).
 func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string, withPassword bool, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
@@ -312,7 +312,7 @@ func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.Schema
 	// that exact password to the role via CREATE/ALTER ROLE WITH PASSWORD,
 	// keeping the live PostgreSQL password in lockstep with OpenBao. When
 	// unset, a random password is generated locally and discarded after Job
-	// completion (legacy behaviour — apps without seeded OpenBao cannot
+	// completion (legacy behavior — apps without seeded OpenBao cannot
 	// connect, but backends that only need the database to exist still work).
 	// The app's own schema first, unless the profile asked for public first
 	// (spec.kernelRequirements.database.schemaPreference).

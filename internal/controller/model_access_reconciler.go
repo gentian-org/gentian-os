@@ -370,7 +370,7 @@ func (r *TenantReconciler) derivedKey(ctx context.Context, tenant *gentianov1alp
 
 // namesOnlyDerivedKey is the value an earlier version delivered for every
 // declared key: a digest of the tenant's and the app's name, which anybody
-// who knew the two could compute. It is here only to be recognised and
+// who knew the two could compute. It is here only to be recognized and
 // replaced.
 func namesOnlyDerivedKey(tenantName, appName string) string {
 	h := sha256.Sum256([]byte(tenantName + "-" + appName + "-secret-salt-value"))
@@ -591,7 +591,7 @@ func placedModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 //
 // Only a profile of platform trust: a placed component is given a key at the
 // gateway on every tenant without any tenant having asked for it, which is
-// the platform's to decide and not a catalogue entry's. And no key among the
+// the platform's to decide and not a catalog entry's. And no key among the
 // release values: the operator renders this release, and its values are read
 // by whoever may read the release.
 func placedModelAccessRefusal(profile *gentianov1alpha1.ComponentProfile) string {

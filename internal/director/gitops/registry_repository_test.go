@@ -20,7 +20,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// The repository a catalogue artifact is read with is one its owner
+// The repository a catalog artifact is read with is one its owner
 // declared, and nobody else's: a tenant's own, or the cluster's. Every other
 // name is answered as one nobody declared.
 func TestARepositoryIsAnsweredToItsOwnerOnly(t *testing.T) {

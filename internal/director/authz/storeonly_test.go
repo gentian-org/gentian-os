@@ -109,15 +109,20 @@ func TestWhatTheProjectionWritesIsNotStoreOnly(t *testing.T) {
 	// Who approves the tenant's perimeter is the Cluster claim's to say and
 	// the projection's to write: never a right only the store knows, so a
 	// bundle does not carry it.
-	approve := Tuple{User: "user:demo/tom", Relation: "perimeter_approver", Object: "tenant:demo"}
-	store[approve] = true
-	got, _ = StoreOnlyOf(context.Background(), store, "c1", "demo", apps, nil)
-	for _, tuple := range got.Granted {
-		if tuple == approve {
-			t.Errorf("a perimeter approver travels as a store-only right: %v", got.Granted)
+	// Nor is who reads its evidence.
+	for _, held := range []Tuple{
+		{User: "user:demo/tom", Relation: "perimeter_approver", Object: "tenant:demo"},
+		{User: "user:kernel/dana", Relation: "auditor", Object: "tenant:demo"},
+	} {
+		store[held] = true
+		got, _ = StoreOnlyOf(context.Background(), store, "c1", "demo", apps, nil)
+		for _, tuple := range got.Granted {
+			if tuple == held {
+				t.Errorf("%s travels as a store-only right: %v", held.Relation, got.Granted)
+			}
 		}
+		delete(store, held)
 	}
-	delete(store, approve)
 
 	// The platform tenant is always operated by its cluster.
 	platform := projection(t, "c1", PlatformTenant, nil)

@@ -42,7 +42,7 @@ func TestNormaliseLocales(t *testing.T) {
 }
 
 // The fallback is the platform's own set, and it is the languages the desktop
-// ships catalogues for. If these drift apart, a person signs in translated and
+// ships catalogs for. If these drift apart, a person signs in translated and
 // lands on an English desktop.
 func TestTheDefaultIsTheLanguagesTheDesktopShips(t *testing.T) {
 	if got := strings.Join(locales.Default, ","); got != "en,de" {

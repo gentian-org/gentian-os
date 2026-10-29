@@ -34,7 +34,7 @@ func TestResolveIconUnknown(t *testing.T) {
 	}
 }
 
-// Every glyph of the catalogue is a square PNG of 128 pixels, the size a
+// Every glyph of the catalog is a square PNG of 128 pixels, the size a
 // profile's tile is drawn at.
 func TestCatalogueGlyphsArePNGs(t *testing.T) {
 	ids, err := CatalogueIconIDs()

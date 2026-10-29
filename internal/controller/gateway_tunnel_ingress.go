@@ -111,7 +111,7 @@ func ensureKernelGatewayTunnelIngress(
 			return err
 		}
 	}
-	// A stale wildcard RULE, retired in favour of the explicit per-host rules
+	// A stale wildcard RULE, retired in favor of the explicit per-host rules
 	// above. Nothing to undo in DNS: the wildcard record is still wanted.
 	if err := edgeDeleteRoute(ctx, ing, "*."+kernelDomain); err != nil {
 		logger.Error(err, "delete kernel wildcard tunnel route", "host", "*."+kernelDomain)
@@ -120,7 +120,7 @@ func ensureKernelGatewayTunnelIngress(
 
 	// The same hostnames, as records — through a DNSEndpoint the crd source
 	// reads, not the gateway-httproute source. That source takes its target
-	// from the Gateway's status addresses, which a tunnelled Gateway never
+	// from the Gateway's status addresses, which a tunneled Gateway never
 	// has; see edge_dnsendpoint.go for the deadlock that surfaced this. A
 	// no-op when the ingress supplies no target, which is the static-ip
 	// cluster — its records keep coming from gateway-httproute exactly as

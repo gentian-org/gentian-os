@@ -111,7 +111,7 @@ func groupsOf(t *testing.T, store membership.Store, user string) string {
 	return strings.Join(out, " ")
 }
 
-// ---- behaviour ------------------------------------------------------------
+// ---- behavior ------------------------------------------------------------
 
 func TestAnEventMakesTheStoreMatchKeycloak(t *testing.T) {
 	store := newStore(t)

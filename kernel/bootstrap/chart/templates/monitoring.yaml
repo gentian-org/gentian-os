@@ -150,12 +150,12 @@ spec:
                   - url: {{ . | quote }}
                     send_resolved: true
           {{- end }}
-        {{- if (.Values.logForwarding | default dict).endpoint }}
         # The platform's rules on its own audit records, counted by the log
         # forwarder (gentian_audit_records_total, by source, kind, outcome
         # and tenant) and on the forwarder itself (docs/design/audit-events.md
-        # §5). Only where both run: without the forwarder there is nothing to
-        # count.
+        # §5). Always present: the forwarder follows the claim through the
+        # Cluster Composition, and without it these series do not exist and
+        # no rule fires.
         additionalPrometheusRulesMap:
           gentian-audit:
             groups:
@@ -189,7 +189,6 @@ spec:
                 labels: { severity: warning }
                 annotations:
                   summary: "Refusals in tenant {{ "{{" }} $labels.tenant {{ "}}" }} are ten times their weekly rate."
-        {{- end }}
         prometheusOperator:
           resources:
             requests: { cpu: 50m, memory: 128Mi }

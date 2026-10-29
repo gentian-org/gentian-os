@@ -67,7 +67,7 @@ func source(t *testing.T, body string) served {
 	return served{f, catalogue.Source{Key: "cluster/main", Name: "main", URL: srv.URL}}
 }
 
-// served is a fetcher and the one catalogue the test serves, asked by
+// served is a fetcher and the one catalog the test serves, asked by
 // coordinate the way an install asks.
 type served struct {
 	*catalogue.Fetcher
@@ -181,7 +181,7 @@ data:
 `
 
 // The digest is of the file: the profile and its companions together. The
-// same profile with another companion is another build, and a catalogue of a
+// same profile with another companion is another build, and a catalog of a
 // tenant's own brings the profile alone.
 func TestABundleArrivesWithItsCompanionsAtTheDigestOfTheWholeFile(t *testing.T) {
 	body := nextcloudProfile + "---\n" + nextcloudPage
@@ -209,12 +209,12 @@ func TestABundleArrivesWithItsCompanionsAtTheDigestOfTheWholeFile(t *testing.T) 
 	own := source(t, body)
 	own.src.Key = profilebundle.TenantOrigin("acme", "own")
 	if _, err := own.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body)); !errors.Is(err, profilebundle.ErrRefused) ||
-		!strings.Contains(err.Error(), "only a catalogue of the whole cluster") {
-		t.Fatalf("a tenant's own catalogue brought a companion: %v", err)
+		!strings.Contains(err.Error(), "only a catalog of the whole cluster") {
+		t.Fatalf("a tenant's own catalog brought a companion: %v", err)
 	}
 	alone := source(t, nextcloudProfile)
 	alone.src.Key = profilebundle.TenantOrigin("acme", "own")
 	if _, err := alone.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(nextcloudProfile)); err != nil {
-		t.Fatalf("a tenant's own catalogue could not bring a profile: %v", err)
+		t.Fatalf("a tenant's own catalog could not bring a profile: %v", err)
 	}
 }

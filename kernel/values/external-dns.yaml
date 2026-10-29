@@ -25,7 +25,7 @@
 # record after mail.egressHost was set. In every case the DNSEndpoint asked for
 # the new value, external-dns owned the record, and it logged "All records are
 # already up to date" while serving the old one. A signature nobody can verify
-# and an SPF record that authorises the wrong address both fail silently, and
+# and an SPF record that authorizes the wrong address both fail silently, and
 # the only signal was a bounce from Gmail.
 #
 # The condition this comment previously set for moving to sync has been met and
@@ -84,7 +84,7 @@ txtPrefix: "_extdns-%{record_type}."
 # ownership under the same name, and "mine" would mean "some Gentian cluster's".
 
 # No sources: here. Which sources run depends on the cluster's networkMode —
-# a tunnelled Gateway deadlocks the gateway-httproute source, see the
+# a tunneled Gateway deadlocks the gateway-httproute source, see the
 # bootstrap template — so the per-cluster inline values set them, and a list
 # here would be dead weight that Helm always overrides and a reader always
 # trusts.

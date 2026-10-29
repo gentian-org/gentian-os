@@ -536,7 +536,7 @@ func TestACallWithNoRequestIdSendsNoHeader(t *testing.T) {
 	}
 }
 
-// ZoneLanding reads the landing page off the client, and normalises the
+// ZoneLanding reads the landing page off the client, and normalizes the
 // trailing slash: the permitted URI carries one, rootUrl conventionally does
 // not, and a redirect that differs from the permitted URI by that slash is
 // refused.

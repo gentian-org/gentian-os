@@ -51,6 +51,13 @@ var ErrNotScalar = errors.New("setting takes a scalar value")
 // registrable domain, the pattern the Cluster XRD declares for the item.
 var zoneName = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`)
 
+// httpsURL is a log destination as the Cluster XRD takes it: an HTTPS URL, or
+// nothing, which removes the forwarder.
+var httpsURL = regexp.MustCompile(`^(https://\S+)?$`)
+
+// logStream is one stream the log forwarder sends.
+var logStream = regexp.MustCompile(`^(audit|operations)$`)
+
 // ClusterSetting describes one changeable leaf of the claim.
 type ClusterSetting struct {
 	// Path is the dotted path under spec, e.g. "mail.serviceMode".
@@ -71,6 +78,11 @@ type ClusterSetting struct {
 	List bool
 	// Each, on a list setting, is what every item has to match.
 	Each *regexp.Regexp
+	// Match, on a scalar setting, is what the value has to match.
+	Match *regexp.Regexp
+	// Shape says in words what Each or Match holds a value to, for the
+	// refusal.
+	Shape string
 	// InstallStep names the installer step that reads this setting, for the
 	// settings the installer applies rather than the operator: a commit
 	// changes nothing on the cluster until that step runs again. Empty for
@@ -88,10 +100,12 @@ type ClusterSetting struct {
 var clusterSettings = []ClusterSetting{
 	{Path: "certificates.acmeEnv", Doc: "Which Let's Encrypt environment issues certificates.", OneOf: []string{"staging", "production"}},
 	{Path: "certificates.issuerMode", Doc: "How control of the domain is proved.", OneOf: []string{"acme-dns01", "acme-http01", "self-signed", "private-ca"}},
-	{Path: "certificates.dnsZones", Doc: "Zones external-dns may write besides the kernel domain's: the zones of tenants served on a domain of their own. Comma-separated; the DNS credential has to cover them. Read when the installer installs external-dns (step B-01).", List: true, Each: zoneName, InstallStep: "B-01"},
+	{Path: "certificates.dnsZones", Doc: "Zones external-dns may write besides the kernel domain's: the zones of tenants served on a domain of their own. Comma-separated; the DNS credential has to cover them. Read when the installer installs external-dns (step B-01).", List: true, Each: zoneName, Shape: "zone names such as example.org", InstallStep: "B-01"},
 	{Path: "certManager.letsencryptEmail", Doc: "Where Let's Encrypt sends expiry warnings."},
 	{Path: "llm.enabled", Doc: "Whether this cluster serves language models.", OneOf: []string{"true", "false"}},
 	{Path: "llm.gpuAcceleration", Doc: "Whether model serving uses a GPU.", OneOf: []string{"true", "false"}},
+	{Path: "logForwarding.destination.endpoint", Doc: "Where the log forwarder sends the platform's logs: an HTTPS URL taking newline-delimited JSON, with the log-destination credential as its bearer. Empty: no forwarder.", Match: httpsURL, Shape: "an https:// URL, or nothing"},
+	{Path: "logForwarding.destination.streams", Doc: "Which streams the forwarder sends: audit, the audit records; operations, every other line. Comma-separated; both when empty.", List: true, Each: logStream, Shape: "audit or operations"},
 	{Path: "mail.serviceMode", Doc: "Whether the platform runs its own mail stack in system-mail, or relays through an external provider.", OneOf: []string{"system", "external"}},
 	{Path: "mail.host", Doc: "The external relay's hostname, when mail is external."},
 	{Path: "mail.port", Doc: "The external relay's port."},
@@ -167,7 +181,7 @@ func lookupPath(node any, path []string) (string, bool) {
 }
 
 // joinItems is a list setting as the API carries it: its items joined with
-// commas. A list of anything but strings is not a value this catalogue knows.
+// commas. A list of anything but strings is not a value this catalog knows.
 func joinItems(items []any) (string, bool) {
 	out := make([]string, 0, len(items))
 	for _, it := range items {
@@ -214,9 +228,12 @@ func validateSetting(s ClusterSetting, v string) error {
 	if s.List && s.Each != nil {
 		for _, it := range splitItems(v) {
 			if !s.Each.MatchString(it) {
-				return fmt.Errorf("%w: %s takes zone names such as example.org, not %q", ErrUnknownSetting, s.Path, it)
+				return fmt.Errorf("%w: %s takes %s, not %q", ErrUnknownSetting, s.Path, s.Shape, it)
 			}
 		}
+	}
+	if !s.List && s.Match != nil && !s.Match.MatchString(v) {
+		return fmt.Errorf("%w: %s takes %s, not %q", ErrUnknownSetting, s.Path, s.Shape, v)
 	}
 	return nil
 }

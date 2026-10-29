@@ -210,7 +210,7 @@ type tileOut struct {
 
 // catalogue is what the operator projected.
 //
-// A catalogue that cannot be read is a failure and is answered as one. An
+// A catalog that cannot be read is a failure and is answered as one. An
 // empty list in its place would show a person a desktop with nothing on it,
 // which looks exactly like holding no rights and says nothing about the
 // projection being missing.
@@ -247,8 +247,8 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	catalogue, err := s.catalogue()
 	if err != nil {
-		s.cfg.Log.ErrorContext(ctx, "the tile catalogue cannot be read", "path", s.cfg.TilesPath, "error", err.Error())
-		fail(w, http.StatusServiceUnavailable, "the tile catalogue cannot be read")
+		s.cfg.Log.ErrorContext(ctx, "the tile catalog cannot be read", "path", s.cfg.TilesPath, "error", err.Error())
+		fail(w, http.StatusServiceUnavailable, "the tile catalog cannot be read")
 		return
 	}
 	out := []tileOut{}

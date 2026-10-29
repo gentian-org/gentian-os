@@ -220,7 +220,7 @@ secrets across namespaces under the tenant's ReferenceGrant.
 ### 3.1 Address names an app cannot take
 
 The label of a host is the profile's to state (`subDomain`, or the
-component's name), and a catalogue's profile is not written by the platform.
+component's name), and a catalog's profile is not written by the platform.
 Two routes that claim one host are resolved by the Gateway by age, with no
 error anywhere. So the names the platform depends on are refused to
 everything but the platform's own component for each. One list
@@ -277,12 +277,12 @@ deceive people under any domain (`id`, `platform`) are in the first table.
   `desk-top`). An apex entry has no label and its own rule (§5). An add-on's
   entry served by its base has the base's host.
 - **Who the platform's own component is.** The profile named in the table,
-  and only when no catalogue brought it: the director records an origin and
-  a bundle on every profile it materialises
+  and only when no catalog brought it: the director records an origin and
+  a bundle on every profile it materializes
   (`gentianos.io/catalogue-origin`, `gentianos.io/profile-bundle`), refuses a
-  catalogue's profile that states either itself, and refuses to materialise
-  any catalogue's profile under a name the platform ships. `trustTier:
-  platform` is not asked: it is a field any catalogue can write. And the
+  catalog's profile that states either itself, and refuses to materialize
+  any catalog's profile under a name the platform ships. `trustTier:
+  platform` is not asked: it is a field any catalog can write. And the
   label has to be that component's own: the desktop holds `desktop`, not
   `admin`.
 - **Where it is refused.** The director refuses the install, the add-on
@@ -292,7 +292,7 @@ deceive people under any domain (`id`, `platform`) are in the first table.
   and a warning event, before any policy, release, route or listener is
   written for it. Both ask `hostnames.Check`.
 - **What is not on the list.** `operations`: the Operations Console is a
-  catalogue component, and reserving its label would refuse it. `www` and
+  catalog component, and reserving its label would refuse it. `www` and
   `api` in a tenant with its own domain, and every name that is an app's
   business (`mail`, `chat`, `files`, `docs`, `wiki`).
 
@@ -359,7 +359,7 @@ had no DNS writer at all and a static-ip cluster had none either. Both failed
 silently — names simply never resolved.
 
 What a tunnel actually lacks is not a writer but a **target**. external-dns
-publishes what a Gateway resolves to, and a tunnelled Gateway has no address:
+publishes what a Gateway resolves to, and a tunneled Gateway has no address:
 traffic arrives through `cloudflared`, not a LoadBalancer. So the ingress
 declares what its hostnames must point at, and the operator writes every routed
 hostname -- the kernel's and each tenant's -- as a `DNSEndpoint` with that
@@ -732,7 +732,7 @@ domain, with the cluster's certificate.
    cluster's own domain and is Ready, and no other surface holds the address.
 
 *The rule, and the acknowledgement.* A website goes on the main address only
-if the organisation itself controls every script it runs: no third-party
+if the organization itself controls every script it runs: no third-party
 scripts, no pages uploaded by users. A script on the bare domain can set
 cookies that the browser also sends to `desktop.`, `admin.`, `platform.` and
 `id.<kernelDomain>`; it cannot read a session, but it can stop people from
@@ -853,7 +853,7 @@ allowed by policy resources.
 
 ---
 
-## 7. App Catalogue Contract
+## 7. App Catalog Contract
 
 A profile declares each entry point under `expose[]` (`ExposureSpec`): a
 name, a `surface` (`gateway`, behind the zone's session, or `perimeter`, with
@@ -900,7 +900,7 @@ one was approved (`kind`):
 | `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
 | `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
 
-An approval holds for the kind it was given for. If the app's catalogue
+An approval holds for the kind it was given for. If the app's catalog
 entry later declares another kind, the platform does nothing for the entry
 — a public address is taken down, a kept header is removed again — and the
 read lists it as `requested` with the earlier approval beside it, until it
@@ -971,10 +971,10 @@ when). An approver's review keeps it; withdrawing the entry takes it away.
 The operator asks the same rule again where it publishes
 (`addresses.AliasHost`), so an alias written by hand that the director would
 have refused publishes nothing, and of two entries carrying one alias only
-the one given it first answers there. An honoured alias gets a listener of
+the one given it first answers there. An honored alias gets a listener of
 its own on the perimeter Gateway with the cluster's certificate, which
 names every label under the cluster's domain, and is a second parent and
-hostname of the entry's route. On a tunnelled cluster it is added to the
+hostname of the entry's route. On a tunneled cluster it is added to the
 tunnel's rules and to the cluster's DNS record set; elsewhere the record
 follows from the route. Where the platform does not publish the cluster's
 records, the record is the administrator's to make.

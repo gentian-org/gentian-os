@@ -67,7 +67,7 @@ func (r *TenantReconciler) kernelRealmLocales(ctx context.Context, kernelRealm s
 	for i := range tenants.Items {
 		t := &tenants.Items[i]
 		if t.DeletionTimestamp == nil && tenantAdoptsKernelRealm(t, kernelRealm) {
-			// Normalised here, never empty: this is the kernel realm's only
+			// Normalized here, never empty: this is the kernel realm's only
 			// writer, so "the platform tenant declares nothing" has to come
 			// back as the platform's own set rather than as silence. Silence
 			// would leave internationalization off and the login page English.

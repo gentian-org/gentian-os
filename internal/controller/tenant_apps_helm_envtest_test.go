@@ -58,7 +58,7 @@ func rbacDocs[T any](t *testing.T, raw []byte, kind string) []*T {
 // Against a real API server, as provider-helm acts through the ProviderConfig
 // tenant-apps: impersonating provider-helm-tenant-apps, bound in one tenant
 // namespace by the operator under the operator's own role. What the tenant
-// charts of the catalogue render goes through, their own Roles included;
+// charts of the catalog render goes through, their own Roles included;
 // anything at cluster scope, in another namespace, or of the platform's kinds
 // in the tenant's namespace is refused.
 func TestTheTenantAppsAccountCanInstallTenantChartsAndNothingElse(t *testing.T) {
@@ -149,7 +149,7 @@ func TestTheTenantAppsAccountCanInstallTenantChartsAndNothingElse(t *testing.T) 
 	}
 	in := "tenant-acme"
 
-	// What the catalogue's tenant charts render.
+	// What the catalog's tenant charts render.
 	_, err = helm.CoreV1().ConfigMaps(in).Create(ctx, &corev1.ConfigMap{ObjectMeta: om("c")}, metav1.CreateOptions{})
 	allowed("create a ConfigMap", err)
 	_, err = helm.CoreV1().Secrets(in).Create(ctx, &corev1.Secret{ObjectMeta: om("app-release-signingkey")}, metav1.CreateOptions{})

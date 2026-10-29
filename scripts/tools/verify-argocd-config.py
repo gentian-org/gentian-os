@@ -79,7 +79,7 @@ PATCH_STATIC = re.compile(
 # Every patch invocation, whatever the payload's quoting. Keys are read out of
 # the region that follows rather than by matching the payload as a string: the
 # interpolated ones embed `$(jq ... <<<"${var}")`, whose bare quote ends any
-# regex that tries to honour shell quoting. Region-scanning does not care.
+# regex that tries to honor shell quoting. Region-scanning does not care.
 PATCH_ANY = re.compile(
     r"kubectl\s+(?:-n\s+\S+\s+)?patch\s+configmap\s+(?P<cm>[a-z0-9-]+)"
     r"(?:\s+-n\s+\S+)?\s+--type\s+merge",

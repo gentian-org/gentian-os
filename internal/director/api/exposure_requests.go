@@ -30,7 +30,7 @@ import (
 // A perimeter approver decides that an entry is published. Before this they
 // were shown nothing to decide on: the registry lists what somebody already
 // approved, and the entry a profile declares -- its address, its paths,
-// whether anybody signs in -- was in a catalogue file the approver had no
+// whether anybody signs in -- was in a catalog file the approver had no
 // reason to have open. So the read of the registry also answers, for every
 // app the tenant has installed, each entry its profile declares for the
 // internet, with what approving it would publish and whether it was approved.
@@ -48,7 +48,7 @@ import (
 // command line show as they are.
 //
 // Everything here is read from git, which is all the director reads: the
-// tenant's apps, the profiles in the cluster's catalogue directory, the
+// tenant's apps, the profiles in the cluster's catalog directory, the
 // domain bound to the tenant, and the cluster's tenancy mode and domain. The
 // address is resolved by the function the operator publishes it with
 // (internal/addresses), given those.
@@ -423,7 +423,7 @@ func approvedAsAnother(entry *gentianov1alpha1.ExposureSpec, approval *gitops.Ex
 		return ""
 	}
 	return fmt.Sprintf(
-		"This entry was approved by %s as %q, and the app's catalogue entry now asks for %q. "+
+		"This entry was approved by %s as %q, and the app's catalog entry now asks for %q. "+
 			"The earlier approval does not cover that: the platform does nothing for this entry until it is approved again as what it is now. "+
 			"Withdraw it to clear the earlier approval",
 		approval.Owner, kindLabels[was], kindLabels[now])
@@ -538,7 +538,7 @@ func (v *exposureView) unmatched(install, name string) string {
 		return ""
 	case exists && surfaceOf(profile, name) == gentianov1alpha1.SurfacePerimeter:
 		return fmt.Sprintf(
-			"entry %s of %s declares a way of checking callers that the platform does not offer on a public address, so nothing is published for it. Its catalogue entry has to declare authMode none or authMode app",
+			"entry %s of %s declares a way of checking callers that the platform does not offer on a public address, so nothing is published for it. Its catalog entry has to declare authMode none or authMode app",
 			name, install)
 	case exists:
 		return fmt.Sprintf(

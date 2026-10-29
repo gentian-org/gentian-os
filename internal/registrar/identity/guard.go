@@ -38,7 +38,7 @@ import (
 // The rule is applied in ONE place: guard, which doAt calls before every
 // request that is not a read. Every call this package makes to Keycloak
 // leaves through doAt, so a method added later is covered without knowing
-// about the rule, and a write whose shape guard does not recognise is refused
+// about the rule, and a write whose shape guard does not recognize is refused
 // rather than let through.
 //
 // What is refused, for every one of those groups alike:

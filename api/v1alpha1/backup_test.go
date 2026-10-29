@@ -24,7 +24,7 @@ import (
 )
 
 // A profile that declares no backup block must still be captured correctly.
-// Most of the catalogue will never set spec.backup, so these defaults are the
+// Most of the catalog will never set spec.backup, so these defaults are the
 // contract for nearly every app, not an edge case.
 func TestBackupDefaultsForProfileDeclaringNothing(t *testing.T) {
 	var spec *BackupSpec // nil: exactly what a profile without the block yields

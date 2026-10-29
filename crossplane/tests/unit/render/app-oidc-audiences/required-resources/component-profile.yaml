@@ -31,6 +31,6 @@ spec:
             - "https://demo.${TENANT_DOMAIN}/oidc/callback"
           postLogoutRedirectUris:
             - "https://demo.${TENANT_DOMAIN}/"
-          # The profile's own name and a label; from any catalogue.
+          # The profile's own name and a label; from any catalog.
           audiences:
             - demo-app-api

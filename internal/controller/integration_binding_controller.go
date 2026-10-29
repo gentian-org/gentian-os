@@ -150,8 +150,8 @@ func (r *IntegrationBindingReconciler) seedContract(ctx context.Context, ib *gen
 	case ib.Spec.Contract == "calendar", ib.Spec.Contract == "contacts":
 		// The provider's profile, for the Service its contract is served on.
 		//
-		// A ComponentProfile: AD-4 leaves one catalogue kind, and this read
-		// asked for the other one long after the catalogue stopped shipping
+		// A ComponentProfile: AD-4 leaves one catalog kind, and this read
+		// asked for the other one long after the catalog stopped shipping
 		// it -- so every binding failed here with a NotFound and no contract
 		// credential was ever seeded. Found by deleting the AppProfile type
 		// rather than by anything noticing at runtime, which is the argument

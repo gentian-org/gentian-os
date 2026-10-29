@@ -64,7 +64,7 @@ import (
 // VerifyOnCluster is Verify and then VerifyCompanions: whether what the
 // cluster holds under a profile's name is, all of it, the build digest names.
 //
-// namespace is where the catalogue is applied: the namespace of the
+// namespace is where the catalog is applied: the namespace of the
 // companions that have one.
 func VerifyOnCluster(
 	ctx context.Context, c client.Reader, namespace string, profile *gentianov1alpha1.ComponentProfile, digest string,

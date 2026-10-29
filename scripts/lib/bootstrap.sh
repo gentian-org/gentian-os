@@ -21,7 +21,7 @@ GENTIAN_BOOTSTRAP_LOADED=1
 #   crossplane-write  — the policy its token carries
 #   the token Secret  — how provider-vault authenticates
 #
-# A composition that managed its own authorisation could lock itself out: drift
+# A composition that managed its own authorization could lock itself out: drift
 # or a delete on any of the three leaves provider-vault unable to reconcile the
 # resource that would restore it.
 #
@@ -276,7 +276,7 @@ create_crossplane_secrets() {
             warn "  ${path}: no bao on PATH, so missing keys were not added"
             return 0
         fi
-        # The token and the address are both by-products of initialising the
+        # The token and the address are both by-products of initializing the
         # vault, and they do not always travel together: a step that has the
         # token from its own init may still have no address, and then every
         # read fails with nothing to say for itself. Both are required.
@@ -488,7 +488,7 @@ for x in doc.get("items", []):
 # auth/oidc/config, and at this point in the install there is nothing there to
 # read: B-07 enables the mount, but the config is written by
 # D-07-openbao-oidc-config, which is four phases later because it needs both
-# the Keycloak client secret ESO materialises from a KV path THIS step creates
+# the Keycloak client secret ESO materializes from a KV path THIS step creates
 # and a Keycloak actually serving its discovery document. Waiting here for an
 # observe-only resource to reflect a write that a later phase makes is waiting
 # for this run to have already finished.
@@ -760,7 +760,7 @@ _seed_once() {
 #
 # A self-signed cluster that predates this had its CA made by cert-manager,
 # and clients may have been told to trust it. That CA is imported instead of
-# generating one, from the Secret cert-manager wrote -- recognised by the
+# generating one, from the Secret cert-manager wrote -- recognized by the
 # Certificate that wrote it, so a Secret somebody supplied for private-ca is
 # never read -- and the Secret is then written again without its key.
 #
@@ -1102,7 +1102,7 @@ seed_repository_credentials() {
 #   names finally appears. Same cluster, same run: the ClusterIssuer latched
 #   `failed to get secret "cloudflare-api-token": not found` at 17:13:15 and
 #   was still reporting it at 17:44:03 — seventeen minutes after ESO had
-#   materialised that exact Secret in that exact namespace at 17:27:21.
+#   materialized that exact Secret in that exact namespace at 17:27:21.
 #
 # The second one does not clear on its own within any patience the installer
 # has, and everything downstream of it fails while naming something else. No
@@ -1159,7 +1159,7 @@ resync_credential_consumers() {
     if (( count > 0 )); then
         info "Re-syncing ${count} ExternalSecret(s) that failed before their paths were seeded..."
         # Waited out by PROGRESS, not by emptiness. Emptiness never arrives: the
-        # credential catalogue declares a CredentialRequirement for every DNS
+        # credential catalog declares a CredentialRequirement for every DNS
         # provider it supports, so a cluster on Cloudflare carries permanently
         # unsynced ExternalSecrets for azuredns, clouddns, hetzner, route53 and
         # the rest — twelve of them on the cluster this was written against.
@@ -1648,6 +1648,11 @@ _claim_cluster_fields() {
         printf '  logForwarding:\n'
         printf '    destination:\n'
         printf '      endpoint: "%s"\n' "${LOG_FORWARDING_ENDPOINT}"
+        # The streams, where the claim names some: the director may have set
+        # them, and a claim written again must not lose them.
+        if [[ -n "${LOG_FORWARDING_STREAMS:-}" ]]; then
+            printf '      streams: [%s]\n' "${LOG_FORWARDING_STREAMS//,/, }"
+        fi
     else
         printf '  # logForwarding:\n'
         printf '  #   destination:\n'
@@ -1887,13 +1892,13 @@ _claim_cluster_fields() {
 
     # Where software may enter this cluster (AD-14).
     #
-    # The App Store and its catalogue are set, because a vanilla installation
+    # The App Store and its catalog are set, because a vanilla installation
     # comes with them: the store is where people are sent for apps, and the
     # Gentian source is where the Operations Console's entries come from. Changing a source is an edit to this file
     # rather than an environment variable on the director -- opening a
-    # catalogue to a tenant is then a commit with an author and a date, and
+    # catalog to a tenant is then a commit with an author and a date, and
     # "what may this cluster install from" is answerable without cluster
-    # access. A cluster with no source still works: it materialises nothing on
+    # access. A cluster with no source still works: it materializes nothing on
     # reference, and its profiles arrive with the kernel.
     _claim_catalogue_section
     if [[ "$(gentian_extra_services_enabled)" == "true" ]]; then
@@ -1901,7 +1906,7 @@ _claim_cluster_fields() {
     fi
     # The API extensions of add-ons. Recorded here even while nothing reads
     # it, so the choice an installer made is in git beside everything else it
-    # chose; the grant and the service entries follow when the catalogue
+    # chose; the grant and the service entries follow when the catalog
     # serves them.
     if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
         printf '  # apiExtensions: disabled (--disable-api-extensions): no Operations Console\n'
@@ -1996,9 +2001,9 @@ EXPOSURES
 # _remove_retired_apps_repository_claim <kernel dir>
 #
 # Removes the Repository claim earlier installers scaffolded for the app
-# catalogue's git repository, and answers 0 when it removed one.
+# catalog's git repository, and answers 0 when it removed one.
 #
-# Only the file this installer wrote, recognised by what it declared: the
+# Only the file this installer wrote, recognized by what it declared: the
 # claim named gentian-apps, a git repository with role apps. A file of that
 # name saying anything else is somebody's own and is left alone.
 _remove_retired_apps_repository_claim() {
@@ -2009,7 +2014,7 @@ _remove_retired_apps_repository_claim() {
     grep -q '^  role: apps$' "${file}" || return 1
     rm -f "${file}"
     info "Removed ${file}: profiles are no longer copied from the gentian-apps git repository;"
-    info "  they arrive one at a time from the catalogue source on the Cluster claim."
+    info "  they arrive one at a time from the catalog source on the Cluster claim."
     return 0
 }
 
@@ -2167,14 +2172,14 @@ _claim_carry_over_role_holders() {
 
 # gentian_catalogue_url
 #
-# The address a new Cluster claim names for the default catalogue, `gentian`.
+# The address a new Cluster claim names for the default catalog, `gentian`.
 #
-# gentian-apps publishes two: the released catalogue, built from its main, and
+# gentian-apps publishes two: the released catalog, built from its main, and
 # the development one, built from its develop. Which a cluster reads follows
 # from which gentian-os it is installed from, the ref in GENTIAN_OS_BRANCH (or,
 # unset, this checkout's branch -- gentian_os_ref): a release tag or
-# main is released software and reads the released catalogue; any other branch
-# is software under development and reads the catalogue under development,
+# main is released software and reads the released catalog; any other branch
+# is software under development and reads the catalog under development,
 # whose profiles may need what only that platform has. A ref that cannot be
 # read gets the released one. GENTIAN_CATALOGUE_URL, set, is the answer
 # whatever the ref.
@@ -2217,7 +2222,7 @@ gentian_catalogue_reason() {
 
 # _claim_catalogue_section
 #
-# The claim's catalogue section: the App Store people are sent to, and the
+# The claim's catalog section: the App Store people are sent to, and the
 # source its entries are fetched from. One function, because it is written in
 # two places that must agree: a new claim's scaffold, and an existing claim
 # that has none (ensure_claim_catalogue_section).
@@ -2248,7 +2253,7 @@ _claim_catalogue_section() {
     fi
     printf '    sources:\n'
     printf '      - name: gentian\n'
-    # The public catalogue of the gentian-apps repository, which is where the
+    # The public catalog of the gentian-apps repository, which is where the
     # ce and me profiles are published: the released one or the development
     # one, by what is being installed (gentian_catalogue_url).
     printf '        # %s\n' "$(gentian_catalogue_reason)"
@@ -2267,7 +2272,7 @@ _claim_extra_services_lines() {
 
 # _claim_record_extra_services <claim file> -- writes the run's
 # --no-extra-services, or GENTIAN_NO_EXTRA_SERVICES=0, into a claim that has
-# a catalogue section. A run that says neither leaves the claim as it is.
+# a catalog section. A run that says neither leaves the claim as it is.
 _claim_record_extra_services() {
     local claim="$1" tmp lines said="${GENTIAN_NO_EXTRA_SERVICES:-}"
     # --no-usage-statistics says no extra services as well.
@@ -2378,7 +2383,7 @@ _claim_record_partners() {
 # section is removing the fields the schema no longer has
 # (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants). The same
 # pass removes the one field the schema lost outside this section
-# (_claim_drop_external_dns), whatever the claim says of the catalogue, and
+# (_claim_drop_external_dns), whatever the claim says of the catalog, and
 # gives a claim that has no cluster id one (ensure_claim_cluster_uid).
 ensure_claim_catalogue_section() {
     local claim="$1"
@@ -2406,7 +2411,7 @@ ensure_claim_catalogue_section() {
     local last
     last="$(grep -E '^[A-Za-z]' "${claim}" | tail -n 1)"
     if [[ "${last}" != "spec:" ]]; then
-        warn "claims/cluster.yaml names no catalogue, and spec is not its last section,"
+        warn "claims/cluster.yaml names no catalog, and spec is not its last section,"
         warn "  so the App Store default is not added. Add spec.catalogue by hand, or"
         warn "  write 'catalogue: {}' there to say this cluster has no store."
         return 0
@@ -2487,9 +2492,9 @@ preview_claim_catalogue_section() {
 # _claim_warn_retired_catalogue_addresses <claim file>
 #
 # Two addresses an earlier installer wrote into every new claim never served
-# anything: the store at gentian.org/apps and the catalogue at
+# anything: the store at gentian.org/apps and the catalog at
 # store.gentian.org/catalogue. A claim still naming them gives its tenants an
-# App Store that cannot reach a store and a catalogue that lists nothing, and
+# App Store that cannot reach a store and a catalog that lists nothing, and
 # nothing on the cluster says why. The claim is not rewritten -- it is
 # somebody's -- so the installer says which line it is and what a new claim
 # would say there.
@@ -2504,7 +2509,7 @@ _claim_warn_retired_catalogue_addresses() {
     fi
     urls="$(yq_get '.spec.catalogue.sources[].url' "${claim}" 2>/dev/null || true)"
     if grep -qE '^https://store\.gentian\.org/catalogue/?$' <<< "${urls}"; then
-        warn "claims/cluster.yaml names the catalogue https://store.gentian.org/catalogue"
+        warn "claims/cluster.yaml names the catalog https://store.gentian.org/catalogue"
         warn "  (spec.catalogue.sources), an address earlier installs wrote that never served"
         warn "  one: no app could be listed or installed from it. A new claim names"
         warn "  $(gentian_catalogue_url)."
@@ -2515,7 +2520,7 @@ _claim_warn_retired_catalogue_addresses() {
 
 # _claim_drop_catalogue_access <claim file>
 #
-# A catalogue source used to say `access: entitled` or `access: open`. The
+# A catalog source used to say `access: entitled` or `access: open`. The
 # schema no longer has the field, and a claim still carrying it is refused
 # when it is applied, because an unknown field is an error rather than something ignored.
 # So the lines are removed from a claim written before, and only there: under
@@ -2531,7 +2536,7 @@ _claim_drop_catalogue_access() {
         { print }
     ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
     rm -f "${tmp}"
-    info "claims/cluster.yaml: removed 'access' from its catalogue sources; the schema no longer has the field."
+    info "claims/cluster.yaml: removed 'access' from its catalog sources; the schema no longer has the field."
 }
 
 # _claim_drop_external_dns <claim file>
@@ -2600,7 +2605,7 @@ preview_branding_removed_fields() {
 
 # _claim_drop_catalogue_tenants <claim file>
 #
-# A catalogue source used to list the tenants it was open to. The list gated
+# A catalog source used to list the tenants it was open to. The list gated
 # nothing -- an install asks whether the person may install apps in the
 # tenant, and never asked about the source -- so the schema no longer has it:
 # a source the claim names is offered to every tenant. A claim still carrying
@@ -2638,7 +2643,7 @@ _claim_drop_catalogue_tenants() {
     ' "${claim}" > "${tmp}"
     if ! cmp -s "${tmp}" "${claim}"; then
         cat "${tmp}" > "${claim}"
-        info "claims/cluster.yaml: removed 'tenants' from its catalogue sources; a source is offered to every tenant."
+        info "claims/cluster.yaml: removed 'tenants' from its catalog sources; a source is offered to every tenant."
     fi
     rm -f "${tmp}"
 }
@@ -2911,10 +2916,10 @@ EOF
     # would then sit in the custodian as a requirement nobody can
     # satisfy. A mirror sets the matching AUTH and gets the credential block.
     #
-    # The app catalogue is not one of them. Its git repository was claimed
+    # The app catalog is not one of them. Its git repository was claimed
     # here so that an ApplicationSet could copy every profile in it into the
     # cluster; a profile now arrives one at a time through the director, from
-    # the catalogue source the Cluster claim names (_claim_catalogue_section),
+    # the catalog source the Cluster claim names (_claim_catalogue_section),
     # and nothing on the cluster reads that git repository. A deployments
     # checkout scaffolded before then still holds the claim file, and it is
     # removed here so that a fresh install from it declares no such claim.
@@ -3095,11 +3100,11 @@ EOF
     gentian_publish_signing_material "${kernel_dir}" || true
 
     # The profiles every tenant gets without asking (AD-14, the installer's
-    # default profile): materialised into the same directory the director
-    # materialises an installed entry into, so the operator sees them like
+    # default profile): materialized into the same directory the director
+    # materializes an installed entry into, so the operator sees them like
     # any other.
     #
-    # Not `|| true` any more: a catalogue that cannot be reached returns 0 and
+    # Not `|| true` any more: a catalog that cannot be reached returns 0 and
     # the install goes on, and what returns 1 -- a profile that is not the
     # build its digest names -- is a reason to stop before anything of this
     # run is committed.
@@ -3487,10 +3492,10 @@ print_roles_summary() {
 }
 
 # _scaffold_default_profiles <cluster> -- the store's entries a vanilla
-# installation comes with, written as materialised profiles.
+# installation comes with, written as materialized profiles.
 #
 # GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
-# of a profile in a catalogue (<catalogue>/profiles/<name>.yaml), optionally
+# of a profile in a catalog (<catalogue>/profiles/<name>.yaml), optionally
 # pinned with @sha256:<digest>. The default is the store's extra services from
 # its catalogue: the Operations Console, the App Store app and the
 # Aluvian Center. --no-extra-services leaves those out, and takes them
@@ -3498,11 +3503,11 @@ print_roles_summary() {
 # none.
 #
 # Each is held to a digest before a byte of it is written -- the pin, or else
-# what the catalogue's index lists -- and written as the director writes an
+# what the catalog's index lists -- and written as the director writes an
 # install of the same bundle, with its origin and its bundle recorded
 # (scripts/lib/catalogue.sh; AD-14).
 #
-# A catalogue that cannot be reached is a warning and not a failed install:
+# A catalog that cannot be reached is a warning and not a failed install:
 # the OS needs none of these, and the Admin Console promotes what is missing.
 # Everything else that keeps a profile from being placed stops step 0 -- bytes
 # that do not hash to the digest above all -- because the alternative is a
@@ -3513,7 +3518,7 @@ _scaffold_default_profiles() {
     dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/catalogue"
     # The directory and its kustomization exist whatever goes in them: the
     # gentian-catalogue Application syncs this path from the first install,
-    # and a path that does not exist is a sync error, not an empty catalogue.
+    # and a path that does not exist is a sync error, not an empty catalog.
     mkdir -p "${dir}"
     if [[ ! -f "${dir}/kustomization.yaml" ]]; then
         printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n' > "${dir}/kustomization.yaml"
@@ -3780,7 +3785,7 @@ require_cluster_deployment() {
     # produces a Service whose address nothing pins — the failure the old
     # requirement existed to prevent, now stated against the claim.
     local claim="${kernel_dir}/claims/cluster.yaml"
-    # The store's catalogues are asked for on every run, after the section
+    # The store's catalogs are asked for on every run, after the section
     # exists: the store may list one it did not list last time
     # (ensure_claim_store_catalogues, catalogue.sh).
     if gentian_read_only; then

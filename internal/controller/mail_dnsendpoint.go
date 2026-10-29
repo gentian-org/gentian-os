@@ -67,8 +67,8 @@ func dnsEndpointRecord(name, recordType string, targets ...string) map[string]in
 // cluster with mail.serviceMode external there is no Dovecot, no mailbox, and
 // no mail.<kernelDomain> to point an MX at. Every tenant on such a cluster
 // published `MX 0 mail.<kernelDomain>` naming a host with no address, and
-// `v=spf1 mx ~all` authorising that same absent MX. Inbound mail was
-// undeliverable and the SPF record authorised nothing.
+// `v=spf1 mx ~all` authorizing that same absent MX. Inbound mail was
+// undeliverable and the SPF record authorized nothing.
 //
 // The gate is the same one Dovecot uses, for the same reason and read from the
 // same place — see dovecotDeployed. Steps 4 to 6 of ensureMailSelfhosted were
@@ -251,7 +251,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	// it. The MX therefore named a host with no address, which fails twice over:
 	// a sender cannot deliver inbound mail at all, and "v=spf1 mx ~all" — the
 	// fallback used when no egressHost is configured — resolves the MX to no
-	// address and so authorises nothing, failing SPF by construction.
+	// address and so authorizes nothing, failing SPF by construction.
 	//
 	// Taken from the inbound Service rather than a configured value because that
 	// is where the address actually lives: it is assigned by the cloud, can change

@@ -35,7 +35,7 @@ import (
 // export used to capture installed apps only, so the one copy of that data
 // outside the cluster was a bundle taken before the uninstall. It is
 // captured now as an installed app's is: the same stores, found by the rule
-// a purge destroys them by, written as the same artefacts, and marked as
+// a purge destroys them by, written as the same artifacts, and marked as
 // retained in the status and in the manifest. Nothing is paused for it:
 // nothing of the app runs.
 

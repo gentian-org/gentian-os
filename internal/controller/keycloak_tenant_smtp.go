@@ -277,7 +277,7 @@ func makeTenantSMTPJob(tenantName, realmName, kernelMailHost, fromName string) *
 					LocalObjectReference: corev1.LocalObjectReference{Name: keycloakSMTPCredentialsSecret},
 					Key:                  "mail_service_mode",
 					// Older installs predate this key; default to the external
-					// relay behaviour rather than failing the Job.
+					// relay behavior rather than failing the Job.
 					Optional: &optionalKey,
 				},
 			},

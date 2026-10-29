@@ -281,7 +281,7 @@ expect "${ESO_TOKEN}" "allowed reading a tenant's repository credentials" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "read"
 # The escrowed backup identity, denied by an exact path that has to beat the
 # kernel/* glob two lines above it in the same policy. If OpenBao ever resolved
-# those the other way, anything able to write an ExternalSecret could materialise
+# those the other way, anything able to write an ExternalSecret could materialize
 # the key that opens every bundle into an ordinary Secret — and escrow would
 # silently mean "the cluster holds its own decryption key" rather than "a cluster
 # administrator can read it". Asserted against a real bao, because the precedence
@@ -313,9 +313,9 @@ expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 
 # ── director-repository-read ─────────────────────────────────────────────────
-# The director reads the credential of a repository a catalogue artifact is
+# The director reads the credential of a repository a catalog artifact is
 # pulled with, and nothing else: one path per repository, a tenant's or the
-# cluster's, read only. Which of them it may use for which catalogue is the
+# cluster's, read only. Which of them it may use for which catalog is the
 # director's code; what it could read if that were wrong is this policy.
 director_body="$(policy_from_golden director-repository-read)"
 if [[ -z "${director_body}" || "${director_body}" == "null" ]]; then

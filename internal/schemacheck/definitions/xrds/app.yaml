@@ -185,7 +185,7 @@ spec:
 # aggregated role; adding the aggregate-to-crossplane label here injects the
 # rule without patching the auto-generated role directly.
 #
-# This names componentprofiles because AD-4 left one catalogue kind and
+# This names componentprofiles because AD-4 left one catalog kind and
 # app-default fetches it. The grant HAS to move in the same commit as the
 # fetch: the failure below is what a missing half looks like, and it does not
 # mention RBAC anywhere.

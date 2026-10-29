@@ -81,7 +81,7 @@ type Sampler struct {
 	lastPrune time.Time
 }
 
-// Start runs until ctx is cancelled. It implements manager.Runnable.
+// Start runs until ctx is canceled. It implements manager.Runnable.
 func (s *Sampler) Start(ctx context.Context) error {
 	s.RunOnce(ctx)
 	ticker := time.NewTicker(s.Interval)

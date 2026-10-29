@@ -12,7 +12,7 @@ SPDX-License-Identifier: MPL-2.0
 // inside the operator: to read its manifest, and to remove an uploaded one
 // once it has been used.
 //
-// The capture and restore Jobs move a bundle's artefacts; nothing here does.
+// The capture and restore Jobs move a bundle's artifacts; nothing here does.
 // What the operator itself has to read is the manifest, which is small and is
 // what says what a bundle holds -- an inspection shows it to a person, and a
 // restore decides by it what to put back. Both read it through this package,
@@ -195,12 +195,12 @@ func ParseSignature(raw []byte) *bundle.ManifestSignature {
 	return &sig
 }
 
-// appSecretsLimit bounds an app's secrets artefact as it is read: a handful
+// appSecretsLimit bounds an app's secrets artifact as it is read: a handful
 // of short values, with room to spare.
 const appSecretsLimit = 4 << 20
 
-// PutArtefact writes one artefact the operator made itself into a bundle,
-// already encrypted. path is the artefact's place below the bundle's prefix,
+// PutArtefact writes one artifact the operator made itself into a bundle,
+// already encrypted. path is the artifact's place below the bundle's prefix,
 // without the suffix encryption adds; the suffix is added here, so that
 // nothing written through this is ever named as a plaintext file.
 func (s *Store) PutArtefact(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, cipher []byte) error {
@@ -208,7 +208,7 @@ func (s *Store) PutArtefact(ctx context.Context, ref gentianov1alpha1.BundleRef,
 		return errors.New("bundle.bucket and bundle.prefix are required")
 	}
 	if !bytes.HasPrefix(cipher, []byte("age-encryption.org/")) {
-		return errors.New("refusing to write an artefact that is not an age file")
+		return errors.New("refusing to write an artifact that is not an age file")
 	}
 	mc, err := s.Minio(ctx, &ref)
 	if err != nil {
@@ -222,7 +222,7 @@ func (s *Store) PutArtefact(ctx context.Context, ref gentianov1alpha1.BundleRef,
 	return nil
 }
 
-// AppSecrets reads an app's secrets artefact and opens it with the key.
+// AppSecrets reads an app's secrets artifact and opens it with the key.
 func (s *Store) AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key Key) (*bundle.AppSecrets, error) {
 	if ref.Bucket == "" || ref.Prefix == "" {
 		return nil, errors.New("bundle.bucket and bundle.prefix are required")
@@ -242,7 +242,7 @@ func (s *Store) AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, 
 	return backup.OpenAppSecrets(cipher, ids)
 }
 
-// AppAuthorization reads an app's authorization artefact and opens it with
+// AppAuthorization reads an app's authorization artifact and opens it with
 // the key.
 func (s *Store) AppAuthorization(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key Key) (*bundle.AppAuthorization, error) {
 	if ref.Bucket == "" || ref.Prefix == "" {
@@ -263,7 +263,7 @@ func (s *Store) AppAuthorization(ctx context.Context, ref gentianov1alpha1.Bundl
 	return backup.OpenAppAuthorization(cipher, ids)
 }
 
-// appAuthorizationLimit bounds an authorization artefact read into memory:
+// appAuthorizationLimit bounds an authorization artifact read into memory:
 // a store of some hundred thousand tuples.
 const appAuthorizationLimit = 64 << 20
 

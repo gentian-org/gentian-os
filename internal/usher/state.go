@@ -90,7 +90,7 @@ func (s *Server) stateRoutes() {
 	if s.cfg.Cluster != "" {
 		// The cluster's own state, read under can_audit: every tenant's
 		// ceiling, what the platform keeps and for how long, what may escape
-		// the default posture, and how much customisation it carries.
+		// the default posture, and how much customization it carries.
 		s.guarded("GET /v1/clusters/{c}/resources", "can_audit", clusterObject, s.clusterResources)
 		s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", clusterObject, s.relayCluster("/v1/backup-policy"))
 		s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", clusterObject, s.relayCluster("/v1/backup-schedules"))
@@ -101,7 +101,7 @@ func (s *Server) stateRoutes() {
 		// report. The operator's answer, like the rest: it is the one that
 		// sends.
 		s.guarded("GET /v1/clusters/{c}/usage-statistics", "can_audit", clusterObject, s.relayCluster("/v1/usage-statistics"))
-		// What the catalogue left behind: objects a profile's bundle once
+		// What the catalog left behind: objects a profile's bundle once
 		// brought and no bundle owns now, and profiles nobody uses. They are
 		// the cluster's and no tenant's -- most have no namespace -- so the
 		// read is the platform's, under can_audit. Removing one is the
@@ -176,7 +176,7 @@ func (s *Server) unreachable(w http.ResponseWriter, r *http.Request, err error) 
 	fail(w, http.StatusBadGateway, "the operator's API did not answer")
 }
 
-// resourcePlans answers the catalogue as it applies to this tenant and this
+// resourcePlans answers the catalog as it applies to this tenant and this
 // caller. The plans come from the operator, which marks the ones this tenant
 // may not move to and why. Whether the caller chooses for themselves, as a
 // tenant's administrator does, or for the cluster is decided here from the

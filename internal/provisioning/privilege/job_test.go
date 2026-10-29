@@ -115,7 +115,7 @@ func TestSyncJob_TakesEverythingAppSpecificFromTheProfile(t *testing.T) {
 	// The app's NetworkPolicies select on this label; without it the Job cannot
 	// reach the workload it is meant to provision.
 	if got := job.Spec.Template.Labels["gentianos.io/app"]; got != "someapp-ce" {
-		t.Errorf("pod not labelled for the app's network policy: %q", got)
+		t.Errorf("pod not labeled for the app's network policy: %q", got)
 	}
 }
 

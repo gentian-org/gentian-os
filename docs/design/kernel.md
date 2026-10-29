@@ -16,11 +16,11 @@ OS kernel does the same for cloud-native applications.
 | Filesystem | VFS, ext4 | S3 object storage (SeaweedFS); hierarchical files via installable apps (e.g. Nextcloud WebDAV) | v1 |
 | Networking | TCP/IP stack | K8s CNI + Gateway API edge + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) | v1 |
 | Process execution | Scheduler, init | K8s scheduling + GitOps deployment | v1 |
-| Secrets keyring | Keychain | Centralised secret store with tenant-scoped policies | v1 |
+| Secrets keyring | Keychain | Centralized secret store with tenant-scoped policies | v1 |
 | Database services | — | Shared SQL clusters with per-app-per-tenant isolation | v1 |
 | Cache | Page cache, tmpfs | Shared Redis / Memcached with per-app isolation | v1 |
 | Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage (optional kernel extension; no spam filter) | v1 |
-| Package manager | apt, App Store | Catalogues of `ComponentProfile` bundles, installed through the director; rendered by the `app-default` Crossplane Composition | v1 |
+| Package manager | apt, App Store | Catalogs of `ComponentProfile` bundles, installed through the director; rendered by the `app-default` Crossplane Composition | v1 |
 | App-to-app permissions | Capabilities, Android intents | Contracts between apps: an `AppGrant` by the tenant's administrator opens the network path and gives the consumer a key of its own ([multi-tenancy.md §4](multi-tenancy.md)) | v1 |
 | Window manager | Desktop env | The tenant desktop: tiles for what a person may open, opened in a frame or a tab, on one session | v1 |
 | Notifications | Notification daemon | Notices an administrator publishes to a tenant's people, shown on the desktop. Notifications from apps are not built | v1 (notices) |
@@ -67,7 +67,7 @@ A desktop OS ships with default mounts: `C:`, `/`, `~/`. These are not
 somewhere to read/write data through a standard API.
 
 Gentian OS ships a **kernel** that must be Ready before any tenant app
-can run. Kernel components provide **platform primitives**; catalogue
+can run. Kernel components provide **platform primitives**; catalog
 apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 `ComponentProfile`, rendered by the `app-default` Composition
 ([app-catalogue.md](app-catalogue.md)).
@@ -79,17 +79,17 @@ apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Redis / Memcached** | Page cache, `tmpfs` | `cache` requirement |
 | Edge routing | **Gateway API** (Envoy Gateway) | Network stack + firewall | TLS termination, HTTPRoute, tenant wildcards |
-| Window manager | The **desktop** and the **administration console**, components installed for every tenant, ([gentian-ui](https://github.com/gentian-org/gentian-ui)), and the **App Store app** where a store is offered (from the store's catalogue, implementing [store-contract.md](store-contract.md)) | Desktop shell, Start menu, Settings | Tiles (`spec.expose[].tile`) |
+| Window manager | The **desktop** and the **administration console**, components installed for every tenant, ([gentian-ui](https://github.com/gentian-org/gentian-ui)), and the **App Store app** where a store is offered (from the store's catalog, implementing [store-contract.md](store-contract.md)) | Desktop shell, Start menu, Settings | Tiles (`spec.expose[].tile`) |
 | Secret store | **OpenBao** | Keychain | Underlying store for ESO-backed Secrets |
 
-**Not kernel** — installed from a catalogue; what a tenant has installed
+**Not kernel** — installed from a catalog; what a tenant has installed
 is listed in `Tenant.spec.apps`:
 
-| Capability | Catalogue profile(s) | Contract |
+| Capability | Catalog profile(s) | Contract |
 |---|---|---|
-| Hierarchical files (WebDAV) | catalogue file-store profiles | `file-store` |
-| Collaborative editing | catalogue WOPI providers | WOPI |
-| Office editing | **Collabora** (catalogue app) | embed |
+| Hierarchical files (WebDAV) | catalog file-store profiles | `file-store` |
+| Collaborative editing | catalog WOPI providers | WOPI |
+| Office editing | **Collabora** (catalog app) | embed |
 | Self-hosted mail UI | mail app profiles in `gentian-apps` | SMTP/IMAP kernel requirements |
 
 In Crossplane terms: the default install is the set of `Cluster`-XR
@@ -105,7 +105,7 @@ the way a desktop user can replace `C:` without breaking
 ## 4. Kernel Extensions
 
 Some kernel functions are **optional** — not every deployment needs
-them. These are modelled as **kernel extensions**: shared
+them. These are modeled as **kernel extensions**: shared
 infrastructure with tenant-scoped configuration, enableable per cluster.
 
 The primary extension today is **mail**. Not every tenant runs

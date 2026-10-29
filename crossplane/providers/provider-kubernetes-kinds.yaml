@@ -64,6 +64,7 @@ kinds:
       - services         # Service
   - group: argoproj.io
     resources:
+      - applications     # Application
       - applicationsets  # ApplicationSet
       - appprojects      # AppProject
   - group: batch

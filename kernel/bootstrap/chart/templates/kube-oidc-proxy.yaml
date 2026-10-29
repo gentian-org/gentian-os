@@ -161,7 +161,7 @@ spec:
         - "--tls-private-key-file=/etc/oidc/tls/tls.key"
         - "--oidc-client-id=headlamp"
         - "--oidc-issuer-url={{ $issuer }}"
-        # The name a person recognises in an audit log and in a RoleBinding.
+        # The name a person recognizes in an audit log and in a RoleBinding.
         - "--oidc-username-claim=preferred_username"
         - "--oidc-groups-claim=groups"
         # The issuer is served with a public certificate, so the roots the

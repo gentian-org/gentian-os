@@ -60,7 +60,7 @@ func TestAFetchReadsTheSourceWithItsOwnKeys(t *testing.T) {
 		}
 	}
 	if job.Spec.Template.Labels[FetchLabel] != "bundle-fetch-1" || job.Spec.Template.Labels[meta.ComponentLabel] != FetchComponent {
-		t.Errorf("the pod is not labelled for its way out: %v", job.Spec.Template.Labels)
+		t.Errorf("the pod is not labeled for its way out: %v", job.Spec.Template.Labels)
 	}
 
 	if _, err := BundleFetchJob(FetchParams{Namespace: "system-s3", Name: "f",

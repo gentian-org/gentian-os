@@ -69,7 +69,7 @@ metadata:
 """
 
 # Anything not decodable as UTF-8 goes to binaryData. The favicon is the only such
-# file today; the kubelet materialises both maps as real files, so the init
+# file today; the kubelet materializes both maps as real files, so the init
 # container copies them identically.
 BINARY_HEADER = "binaryData:\n"
 TEXT_HEADER = "data:\n"

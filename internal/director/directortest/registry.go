@@ -105,13 +105,13 @@ func (r *Registry) Requests() []Request {
 	return append([]Request(nil), r.requests...)
 }
 
-// Artifact types a catalogue is pushed with.
+// Artifact types a catalog is pushed with.
 const (
 	CatalogueArtifactType = "application/vnd.gentianos.catalogue.v1"
 	CatalogueLayerType    = "application/vnd.gentianos.catalogue.v1.tar+gzip"
 )
 
-// CatalogueLayer packs files, path -> body, as a catalogue's layer: a gzip'd
+// CatalogueLayer packs files, path -> body, as a catalog's layer: a gzip'd
 // tar, in path order, each entry below "./".
 func CatalogueLayer(t *testing.T, files map[string]string) []byte {
 	t.Helper()
@@ -141,7 +141,7 @@ func CatalogueLayer(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// Push stores layer as the one layer of a catalogue artifact at
+// Push stores layer as the one layer of a catalog artifact at
 // <host>/<path>:<tag>, and answers the manifest's digest.
 func (r *Registry) Push(t *testing.T, host, path, tag string, layer []byte) string {
 	t.Helper()

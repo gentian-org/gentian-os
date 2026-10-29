@@ -92,8 +92,8 @@ func start(t *testing.T) *harness {
 	return startWith(t, nil)
 }
 
-// startWithCatalogue is the harness with catalogues of the whole cluster, for
-// the installs that materialise a profile on reference (AD-3). They are
+// startWithCatalogue is the harness with catalogs of the whole cluster, for
+// the installs that materialize a profile on reference (AD-3). They are
 // written on the Cluster claim, which is where the director reads them from
 // when it needs them. The fetcher is given the test server's own client, so
 // it trusts that certificate and no other -- and connects to the test
@@ -120,7 +120,7 @@ func startWithCatalogue(
 }
 
 // withFetcher gives the director a fetcher that reaches the test server and
-// accepts any address for a new catalogue. Address checks have tests of their
+// accepts any address for a new catalog. Address checks have tests of their
 // own (catalogue/address_test.go, and catalogues_test.go with the real one).
 func withFetcher(src *httptest.Server) func(*api.Config) {
 	return func(cfg *api.Config) {
@@ -134,7 +134,7 @@ func withFetcher(src *httptest.Server) func(*api.Config) {
 	}
 }
 
-// claimWith is the fixture Cluster claim naming catalogues of the cluster.
+// claimWith is the fixture Cluster claim naming catalogs of the cluster.
 func claimWith(sources ...gitops.CatalogueSource) string {
 	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
 		"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n"
@@ -363,7 +363,7 @@ func TestThePlatformAdminReachesOnlyTenantsThatAreOperated(t *testing.T) {
 }
 
 // Installing asks one question, of the person: may they install apps in this
-// tenant. Nothing is asked about the app, the catalogue it comes from or the
+// tenant. Nothing is asked about the app, the catalog it comes from or the
 // tenant's right to it -- the platform does no license gating. (An install
 // for everyone asks a second, about granting: install_for_everyone_test.go.)
 func TestInstallAsksOnlyWhetherThePersonMayInstallInTheTenant(t *testing.T) {
@@ -748,7 +748,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	}
 	settings, _ := body["settings"].([]any)
 	if len(settings) == 0 {
-		t.Fatal("the catalogue is empty; a console has nothing to render")
+		t.Fatal("the catalog is empty; a console has nothing to render")
 	}
 	// Which platform this is travels with the settings: the version line an
 	// import measures a bundle against, so a console can say what a bundle

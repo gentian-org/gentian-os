@@ -381,7 +381,7 @@ func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) 
 // check in the installer establishes that the parts are present; this one
 // establishes that they open.
 //
-// Never fails the request. A caller who has just been authorised should not be
+// Never fails the request. A caller who has just been authorized should not be
 // refused because a ConfigMap write lost a conflict — and the next request
 // records it anyway.
 func (s *Server) recordHandover(ctx context.Context, c caller) {
@@ -411,7 +411,7 @@ func (s *Server) recordHandover(ctx context.Context, c caller) {
 
 // writeIdentityErr maps an identify() failure onto a status an operator can act on.
 //
-// A caller who could not be authorised and an OpenBao that could not be reached
+// A caller who could not be authorized and an OpenBao that could not be reached
 // are different faults with different owners, and collapsing them into 401 cost
 // a real afternoon: the portal renders 401 as "OpenBao refused the token —
 // check that you are in the cluster-admin group", which was sound advice about
@@ -434,7 +434,7 @@ func (s *Server) writeIdentityErr(w http.ResponseWriter, err error) {
 }
 
 // writeVaultErr answers a failure of the custodian's own access to the vault.
-// It is never about the caller, who has been authorised by the time it is
+// It is never about the caller, who has been authorized by the time it is
 // reached, and says so.
 func (s *Server) writeVaultErr(w http.ResponseWriter, err error) {
 	ctrl.Log.WithName("custodian").Error(err, "the custodian cannot use OpenBao")
@@ -476,7 +476,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // decorate adds "who set it and when" from OpenBao's metadata endpoint.
 //
 // Best-effort on purpose: a caller whose policy cannot read metadata still gets
-// the catalogue and ESO's satisfaction verdict, which is the useful part. A
+// the catalog and ESO's satisfaction verdict, which is the useful part. A
 // failure here must not turn a working list into an error page.
 func (s *Server) decorate(ctx context.Context, c caller, items []Status) {
 	token, err := s.Bao.Token(ctx)

@@ -230,7 +230,7 @@ func profilePrivilegedRole(profile *gentianov1alpha1.ComponentProfile) *gentiano
 // membership; the script decides what that means for its own application.
 //
 // Nothing here may branch on a profile name, family or protocol: an app the
-// kernel has to recognise by name is an app the kernel would have to be
+// kernel has to recognize by name is an app the kernel would have to be
 // modified to support, which is precisely what the platform boundary in
 // gentian-apps/docs/app-profile-guide.md forbids.
 func (r *TenantReconciler) syncAppPrivilegedRole(

@@ -71,7 +71,7 @@ func ResolveAddons(
 		}
 
 		// An addon activates inside one specific base. Selecting an odoo addon into a
-		// nextcloud install would otherwise render an activation the app cannot honour.
+		// nextcloud install would otherwise render an activation the app cannot honor.
 		if decl.Of != base.Name {
 			errs = append(errs, fmt.Errorf(
 				"addon %q activates into %q, not %q", name, decl.Of, base.Name))

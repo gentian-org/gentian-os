@@ -144,7 +144,7 @@ type Terms struct {
 // App is one app installed through the App Store.
 type App struct {
 	// Coordinate is <catalogue>/<app>. Null when the install did not record
-	// which catalogue its build was fetched from; the digest still says
+	// which catalog its build was fetched from; the digest still says
 	// which build it is.
 	Coordinate *string `json:"coordinate"`
 	Digest     string  `json:"digest"`
@@ -160,7 +160,7 @@ type App struct {
 // Addon is one pinned addon of a listed app.
 type Addon struct {
 	// Coordinate is <catalogue>/<addon>. Null when the pin did not record
-	// which catalogue its build was fetched from.
+	// which catalog its build was fetched from.
 	Coordinate *string `json:"coordinate"`
 	Digest     string  `json:"digest"`
 	// Users is how many people are entitled to the addon. Null when they
@@ -193,7 +193,7 @@ type Identity struct {
 //
 // Only an entry of spec.apps that carries a digest is listed. The director
 // records a digest on an entry when an install states the build it wants,
-// which is what the App Store's confirmation and a catalogue source's listing
+// which is what the App Store's confirmation and a catalog source's listing
 // do; an app that arrived with the kernel, or was named with no build, has
 // none and is not reported.
 //

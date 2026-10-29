@@ -793,7 +793,7 @@ func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
 }
 
 // A tile that opens a blank window is worse than no tile, and that is what a
-// console's own framing defence does to the desktop: the request succeeds, the
+// console's own framing defense does to the desktop: the request succeeds, the
 // browser refuses to paint it, and nothing anywhere says why.
 func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	// Not parallel: the observability namespace is resolved once at process
@@ -960,12 +960,12 @@ func TestThePlatformTenantHasAListenerForItsConsoles(t *testing.T) {
 		t.Fatalf("the platform tenant's listener certificate = %+v", ref)
 	}
 	if _, ok := listeners[tenantGatewayListenerName("acme")]; !ok {
-		t.Fatal("a tenant with no catalogue apps lost its listener")
+		t.Fatal("a tenant with no catalog apps lost its listener")
 	}
 }
 
 // A tenant with a zone of its own has one whether or not it installs
-// catalogue apps; the tenant in the kernel zone and one on the kernel domain
+// catalog apps; the tenant in the kernel zone and one on the kernel domain
 // do not.
 func TestATenantWithoutAppsStillHasItsZone(t *testing.T) {
 	t.Parallel()
@@ -989,7 +989,7 @@ func TestATenantWithoutAppsStillHasItsZone(t *testing.T) {
 	}
 }
 
-// A tenant with no catalogue apps still gets what its listener needs: the
+// A tenant with no catalog apps still gets what its listener needs: the
 // wildcard certificate and the grants that let the Gateway use it. They were
 // composed only beside app routes, so a tenant with a desktop and no apps
 // had an invalid listener and a console that answered 502.

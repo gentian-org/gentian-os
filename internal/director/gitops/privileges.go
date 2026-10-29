@@ -234,7 +234,7 @@ func renderPrivileges(tenant string, grants []PrivilegeGrant) string {
 func yamlScalar(s string) string {
 	out, err := json.Marshal(s)
 	if err != nil {
-		// Marshalling a string cannot fail. Go's own quoting is a valid
+		// Marshaling a string cannot fail. Go's own quoting is a valid
 		// double-quoted YAML scalar too, so the fallback is still correct.
 		return fmt.Sprintf("%q", s)
 	}

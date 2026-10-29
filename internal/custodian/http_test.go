@@ -212,7 +212,7 @@ func (f *fakeStore) Object(scope, tenant string) (string, bool) {
 }
 
 // allowAll is a view that may read and set everything, for the tests that are
-// about the catalogue rather than about who is looking at it.
+// about the catalog rather than about who is looking at it.
 func allowAll() Viewer {
 	return Viewer{ClusterAdmin: true, check: func(string, string, string) bool { return true }}
 }
@@ -637,7 +637,7 @@ func TestValidateHostReachesTheCatalogue(t *testing.T) {
 // is not that: it is a gap in the requirement's declaration, and refusing the
 // write because of it blocks whatever was waiting on the credential. The
 // deployments token could not be set at all for exactly this reason — its
-// catalogue entry asks for a git-https probe and named no host — which left
+// catalog entry asks for a git-https probe and named no host — which left
 // every console write answering 503 for want of a credential nobody was
 // allowed to store.
 func TestACredentialThatCannotBeProbedIsStoredAndSaysSo(t *testing.T) {
@@ -677,7 +677,7 @@ func TestAProbeThatRefusesStillBlocksTheWrite(t *testing.T) {
 }
 
 // TestListingCarriesTheProvider is what lets a screen keep one vendor's
-// tokens together: the catalogue's provider label comes back as a field, and
+// tokens together: the catalog's provider label comes back as a field, and
 // a requirement without one carries none.
 func TestListingCarriesTheProvider(t *testing.T) {
 	dns := requirement("acme-dns-infomaniak", "cluster", "gentian-os/kernel/dns/infomaniak", 0)
@@ -699,6 +699,6 @@ func TestListingCarriesTheProvider(t *testing.T) {
 		t.Errorf("provider label not carried: %q", providers["acme-dns-infomaniak"])
 	}
 	if p, ok := providers["master-password"]; !ok || p != "" {
-		t.Errorf("an unlabelled requirement should be listed with no provider, got %q (listed=%v)", p, ok)
+		t.Errorf("an unlabeled requirement should be listed with no provider, got %q (listed=%v)", p, ok)
 	}
 }

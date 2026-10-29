@@ -19,7 +19,7 @@ const testIdentity = "AGE-SECRET-KEY-1QZS05PTS7RRWH8GJMHW3JDVVQEVCMJH8AS9EEXAMPL
 
 // The path is derived from the verified claim, never from the request.
 //
-// This is the whole authorisation model for escrow. A tenant name taken from
+// This is the whole authorization model for escrow. A tenant name taken from
 // the body would let any workspace administrator write a key into another
 // workspace's subtree — and OpenBao would allow it for whichever of the two the
 // caller's policy happened to cover, so the failure would be silent for the
@@ -31,7 +31,7 @@ func TestBackupIdentityPathComesFromTheClaim(t *testing.T) {
 
 	s, _ := newServerAsTenant(t, "acme")
 	// A body naming a different tenant. There is no field for it, which is the
-	// point — this asserts that adding one later would be a change in behaviour
+	// point — this asserts that adding one later would be a change in behavior
 	// somebody has to make deliberately.
 	w := do(t, s, "PUT", "/v1/backup-identity",
 		`{"identity":"`+testIdentity+`","tenant":"globex"}`)

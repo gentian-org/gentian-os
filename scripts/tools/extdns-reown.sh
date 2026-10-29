@@ -66,7 +66,7 @@ TOKEN_KEY="${TOKEN_KEY:-cloudflare_api_token}"
 
 API=https://api.cloudflare.com/client/v4
 RECORD_TEMPLATE='%{record_type}'
-# The types extractRecordTypeDefaultPosition() recognises, so an old-format name
+# The types extractRecordTypeDefaultPosition() recognizes, so an old-format name
 # is split where external-dns would split it.
 KNOWN_TYPES=" a aaaa cname txt mx ns srv caa ptr naptr "
 

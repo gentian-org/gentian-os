@@ -20,7 +20,7 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// ProfileBuild is one build of a profile, as a catalogue published it: the
+// ProfileBuild is one build of a profile, as a catalog published it: the
 // bundle at one digest, kept on the cluster for as long as a tenant runs it.
 //
 // A ComponentProfile is one object per name for the whole cluster, and it is
@@ -31,7 +31,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // share nothing, and a tenant moved back to a build it ran before finds it
 // without fetching anything.
 //
-// Written by the director beside the profile, into the catalogue directory of
+// Written by the director beside the profile, into the catalog directory of
 // the deployments repository, and applied from there by Argo CD; the
 // installer writes the same file for the profile it places. Nothing edits
 // it: a build is its digest. The operator reads the bundle, holds it to the
@@ -63,12 +63,12 @@ type ProfileBuildSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Profile string `json:"profile"`
 
-	// Digest is the sha256 of the bundle, "sha256:<hex>", as the catalogue's
+	// Digest is the sha256 of the bundle, "sha256:<hex>", as the catalog's
 	// index states it and as an install pins it.
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest"`
 
-	// Origin is which catalogue the bundle was fetched from, as the director
+	// Origin is which catalog the bundle was fetched from, as the director
 	// records it on the profile (cluster/<source> or tenant/<t>/<source>).
 	// +kubebuilder:validation:MinLength=1
 	Origin string `json:"origin"`

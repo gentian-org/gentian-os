@@ -322,7 +322,7 @@ spec:
 	}
 }
 
-// Every profile the conversion tool produced from the real catalogue must be
+// Every profile the conversion tool produced from the real catalog must be
 // something the API server would admit. Run by scripts/tools/convert-appprofiles.sh.
 func TestConvertedProfilesAreAdmitted(t *testing.T) {
 	dir := os.Getenv("COMPONENT_PROFILE_DIR")

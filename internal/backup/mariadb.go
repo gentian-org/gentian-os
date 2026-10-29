@@ -146,7 +146,7 @@ func mariadbStraySQL(database, user string, dynamic bool) string {
      OR EXISTS (SELECT 1 FROM mysql.tables_priv WHERE User = '%[1]s' AND Host = '%%')`, user, held)
 }
 
-// mariadbProvisioningLock serialises the provisioning of MariaDB apps on
+// mariadbProvisioningLock serializes the provisioning of MariaDB apps on
 // the server: the refusals below read what other accounts hold and then
 // grant, and two apps whose names overlap must not both pass.
 const mariadbProvisioningLock = "gentian-mariadb-provisioning"

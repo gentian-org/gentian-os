@@ -90,7 +90,7 @@ func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ cal
 //
 // The route itself carries only can_view, because who may approve follows from
 // the kind and the kind is not known until the request arrives. This function
-// is therefore the authorisation for both writes, and neither handler may skip
+// is therefore the authorization for both writes, and neither handler may skip
 // it -- which is why it takes the ResponseWriter and answers the call itself
 // rather than returning a reason for a caller to remember to use.
 //

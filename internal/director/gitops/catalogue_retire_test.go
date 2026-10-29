@@ -28,7 +28,7 @@ func inRemote(remote, path string) bool {
 	return exec.Command("git", "--git-dir", remote, "cat-file", "-e", "main:"+path).Run() == nil
 }
 
-// A profile is taken out of the catalogue directory whole -- its bundle, the
+// A profile is taken out of the catalog directory whole -- its bundle, the
 // carrier, both kustomization entries -- and the entries of the others stay
 // as they were. Taking the last one out leaves the kustomization as it was
 // before the first went in.
@@ -61,7 +61,7 @@ func TestRetiringAProfileRemovesItsFilesAndItsEntriesOnly(t *testing.T) {
 		t.Fatal("another profile's files went with it")
 	}
 	subject := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%an|%s", "main")
-	if !strings.Contains(subject, "Ada Lovelace|feat(catalogue): remove unused profile shop") {
+	if !strings.Contains(subject, "Ada Lovelace|feat(catalog): remove unused profile shop") {
 		t.Fatalf("commit = %q", subject)
 	}
 

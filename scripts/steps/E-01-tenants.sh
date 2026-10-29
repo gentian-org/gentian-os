@@ -25,7 +25,7 @@
 # un-finalizable, when a required field was renamed under them.
 
 check() {
-    # Never satisfied and never missing: there is no install-time artefact to
+    # Never satisfied and never missing: there is no install-time artifact to
     # look for, because tenants arrive after the install. UNDEFINED keeps it
     # silent on the forward pass without claiming a fresh cluster has tenants.
     #

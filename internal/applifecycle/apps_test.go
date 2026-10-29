@@ -105,7 +105,7 @@ func TestAnAppIsInstallingReadyOrFailing(t *testing.T) {
 		component("wiki", "Ready", "release deployed", true),
 		component("drive", "Installing", "release created; waiting for the chart to deploy", false),
 		component("crm", "PrivilegesPending", "waiting for podSecurity/run-as-root", false),
-		component("notes", "ProfileMissing", "profile notes is not in the catalogue", false),
+		component("notes", "ProfileMissing", "profile notes is not in the catalog", false),
 		component("fresh", "", "", false),
 	)
 	states, err := s.AppStates(context.Background(), "demo")
@@ -124,7 +124,7 @@ func TestAnAppIsInstallingReadyOrFailing(t *testing.T) {
 	if !got["wiki"].Ready || got["drive"].Ready {
 		t.Errorf("ready: wiki=%v drive=%v", got["wiki"].Ready, got["drive"].Ready)
 	}
-	if got["notes"].Failure != "ProfileMissing" || !strings.Contains(got["notes"].Message, "not in the catalogue") {
+	if got["notes"].Failure != "ProfileMissing" || !strings.Contains(got["notes"].Message, "not in the catalog") {
 		t.Errorf("the failing app does not say why: %+v", got["notes"])
 	}
 }

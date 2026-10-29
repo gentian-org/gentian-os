@@ -106,7 +106,7 @@ func notesHandlerDigest() string {
 }
 
 // notesFromTheClusterCatalogue is the notes profile as a cluster holds it
-// after an install from a catalogue of the whole cluster.
+// after an install from a catalog of the whole cluster.
 func notesFromTheClusterCatalogue(t *testing.T) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
 	profile := materialised(t, notesBundle())
@@ -130,7 +130,7 @@ func TestASignInSidecarRunsOnlyAReviewedHandler(t *testing.T) {
 
 	sidecar, refusal := r.signInSidecarFor(pinnedNotes(tenant), notesFromTheClusterCatalogue(t), tenant, zone)
 	if refusal != "" || sidecar == nil {
-		t.Fatalf("a pinned install from a cluster catalogue whose bundle brings the handler was refused: %s", refusal)
+		t.Fatalf("a pinned install from a cluster catalog whose bundle brings the handler was refused: %s", refusal)
 	}
 	if sidecar.handler != notesHandler || sidecar.handlerDigest != notesHandlerDigest() {
 		t.Fatalf("handler %q with digest %s, want the handler of the bundle and its sha256, %s", sidecar.handler, sidecar.handlerDigest, notesHandlerDigest())
@@ -141,14 +141,14 @@ func TestASignInSidecarRunsOnlyAReviewedHandler(t *testing.T) {
 		edit func(*gentianov1alpha1.ComponentProfile, *gentianov1alpha1.Component, *gentianov1alpha1.Tenant)
 		want string
 	}{
-		{"a profile of a tenant's own catalogue",
+		{"a profile of a tenant's own catalog",
 			func(p *gentianov1alpha1.ComponentProfile, _ *gentianov1alpha1.Component, _ *gentianov1alpha1.Tenant) {
 				p.Annotations[profilebundle.OriginAnnotation] = profilebundle.TenantOrigin("acme", "own")
-			}, "only from a catalogue of the whole cluster"},
+			}, "only from a catalog of the whole cluster"},
 		{"a profile nobody says the origin of",
 			func(p *gentianov1alpha1.ComponentProfile, _ *gentianov1alpha1.Component, _ *gentianov1alpha1.Tenant) {
 				delete(p.Annotations, profilebundle.OriginAnnotation)
-			}, "only from a catalogue of the whole cluster"},
+			}, "only from a catalog of the whole cluster"},
 		{"an install that is not pinned",
 			func(_ *gentianov1alpha1.ComponentProfile, c *gentianov1alpha1.Component, _ *gentianov1alpha1.Tenant) {
 				c.Spec.ProfileRef.Digest = ""
@@ -538,7 +538,7 @@ func TestAProfileThatMayNotHaveASidecarIsNotInstalled(t *testing.T) {
 	if ready == nil || ready.Status != "False" {
 		t.Fatalf("condition = %+v, want the install held", ready)
 	}
-	// A tenant's own catalogue brings no companions at all, which the bundle
+	// A tenant's own catalog brings no companions at all, which the bundle
 	// check says first; a sidecar's own refusal is the second lock.
 	if ready.Reason != profilebundle.ReasonRefused && ready.Reason != reasonSignInSidecarRefused {
 		t.Fatalf("reason = %s", ready.Reason)
@@ -554,7 +554,7 @@ func TestAProfileThatMayNotHaveASidecarIsNotInstalled(t *testing.T) {
 	h = startDigestHarness(t, alone, profilebundle.Digest([]byte(notesProfile)))
 	ready = componentReadyCondition(h.reconcile())
 	if ready == nil || ready.Status != "False" || ready.Reason != reasonSignInSidecarRefused ||
-		!strings.Contains(ready.Message, "only from a catalogue of the whole cluster") {
+		!strings.Contains(ready.Message, "only from a catalog of the whole cluster") {
 		t.Fatalf("condition = %+v, want %s", ready, reasonSignInSidecarRefused)
 	}
 	if h.route("notes-web") != nil {
@@ -662,10 +662,10 @@ func TestTheSidecarAndTheRealmAgreeOnTheSignOutAddress(t *testing.T) {
 	}
 }
 
-// The profiles of the catalogue that declare a sign-in sidecar, as
+// The profiles of the catalog that declare a sign-in sidecar, as
 // gentian-apps publishes them (internal/profilebundle/testdata/bundles), are
 // served: each brings its handler, names its own secrets and stands on its
-// own entry. A catalogue and a platform that disagreed about the declaration
+// own entry. A catalog and a platform that disagreed about the declaration
 // would install the app with no way in.
 func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
@@ -723,10 +723,10 @@ func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 		if got := appComposition(comp, profile); got != "" {
 			t.Errorf("%s: rendered by %s, which registers no sidecar", name, got)
 		}
-		// The same from a tenant's own catalogue is not served.
+		// The same from a tenant's own catalog is not served.
 		profile.Annotations[profilebundle.OriginAnnotation] = profilebundle.TenantOrigin("acme", "own")
 		if got, refusal := r.signInSidecarFor(comp, profile, tenant, r.zoneOf(tenant)); got != nil || refusal == "" {
-			t.Errorf("%s from a tenant's own catalogue was served", name)
+			t.Errorf("%s from a tenant's own catalog was served", name)
 		}
 	}
 }
@@ -840,7 +840,7 @@ func TestTheSidecarIsWrittenBesideTheApp(t *testing.T) {
 	// Not one of the app's pods: none of the app's own network paths, and
 	// nothing that selects the app selects it.
 	if _, isApp := deploy.Spec.Template.Labels["gentianos.io/app"]; isApp || deploy.Spec.Template.Labels[signInSidecarLabel] != "notes" {
-		t.Fatalf("the sidecar's pod is labelled %v", deploy.Spec.Template.Labels)
+		t.Fatalf("the sidecar's pod is labeled %v", deploy.Spec.Template.Labels)
 	}
 
 	// What it is handed: this app's own database and the one secret the

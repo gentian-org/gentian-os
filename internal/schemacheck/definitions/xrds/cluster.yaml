@@ -77,7 +77,7 @@ spec:
                 identity:
                   type: object
                   # The object itself defaults, not just its fields. A nested default
-                  # only materialises when its parent is present, so without this the
+                  # only materializes when its parent is present, so without this the
                   # kernelRealm default below is unreachable on any cluster whose claim
                   # does not mention identity — which is every one of them. spec.oidc
                   # shows the same shape: its realm has defaulted to "kernel" since it
@@ -394,15 +394,19 @@ spec:
                         cluster and by people of the platform tenant only;
                         perimeterApprover over the cluster by a person of the
                         platform tenant, and over their own tenant
-                        (tenant:<t>) by a tenant's administrator. An entry
-                        whose expiresAt has passed grants nothing.
+                        (tenant:<t>) by a tenant's administrator;
+                        tenantAuditor, reading one tenant's evidence, by a
+                        person of the platform tenant over the tenant the
+                        entry names (tenant:<t>, never platform), so one
+                        account audits one tenant. An entry whose expiresAt
+                        has passed grants nothing.
                       items:
                         type: object
                         required: [role, tenant, subject, username]
                         properties:
                           role:
                             type: string
-                            enum: [securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover]
+                            enum: [securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover, tenantAuditor]
                           scope:
                             type: string
                             pattern: '^(cluster|tenant:[a-z0-9]([-a-z0-9]*[a-z0-9])?)$'
@@ -499,16 +503,16 @@ spec:
                   type: object
                   description: >
                     Where the platform's logs go (docs/design/audit-events.md
-                    §4). Read by the installer (B-01), which renders a log
-                    forwarder in the observability namespace when a
-                    destination is named; no Composition consumes it.
+                    §4). The Composition renders a log forwarder in the
+                    observability namespace while a destination is named, and
+                    removes it when none is; the director may set both fields.
                   properties:
                     destination:
                       type: object
                       properties:
                         endpoint:
                           type: string
-                          pattern: '^https://'
+                          pattern: '^(https://\S+)?$'
                           description: >
                             An HTTPS URL taking newline-delimited JSON over
                             POST, gzip-compressed, with a bearer token from the
@@ -523,7 +527,7 @@ spec:
                           description: >
                             Which streams to send: audit, the platform's audit
                             records (an envelope with audit true); operations,
-                            every other line. Both when absent.
+                            every other line. Both when absent or empty.
                 monitoring:
                   type: object
                   description: >

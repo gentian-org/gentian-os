@@ -171,11 +171,11 @@ func MaxTier(tenant *gentianov1alpha1.Tenant) *int32 {
 	return &out
 }
 
-// Selectable filters the catalogue to the plans a caller may move a tenant to.
+// Selectable filters the catalog to the plans a caller may move a tenant to.
 //
 // maxTier, when non-nil, is the tenant's entitlement ceiling: plans above it
 // are withheld. A nil ceiling means none is set, and every plan is on offer —
-// so that an unreachable backend leaves the catalogue usable rather than
+// so that an unreachable backend leaves the catalog usable rather than
 // blocking it.
 func (c *Catalogue) Selectable(selfService bool, maxTier *int32) []gentianov1alpha1.ResourcePlan {
 	if c == nil {

@@ -15,7 +15,7 @@
 #   - a refusal is the director's own words and a non-zero exit;
 #   - `catalogues add` sends an address or an OCI artifact with the repository
 #     it is read with (--oci, --repository), never both, refuses --path (no
-#     catalogue is kept in the deployments repository), and `catalogues list`
+#     catalog is kept in the deployments repository), and `catalogues list`
 #     shows which;
 #   - `catalogues rename` is one request to the cluster administrator's route,
 #     with --tenant as without, carrying the new name and nothing else;
@@ -336,7 +336,7 @@ refused "a tenant name that is not a name is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
-echo "kubectl gentian tenants: who adds catalogues"
+echo "kubectl gentian tenants: who adds catalogs"
 echo ""
 
 SWITCHES='{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false,"cataloguesDelegated":false},{"name":"acme","displayName":"Acme","apps":["cloud"],"protected":false,"cataloguesDelegated":true}]}'
@@ -890,7 +890,7 @@ gentian catalogues list
 has "list shows an address as it is" "$(grep '^gentian' <<<"${OUT}" | tr -s ' ')" "gentian every tenant the cluster https://apps.example"
 has "... for a tenant as well" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme tenant demo the cluster https://acme.example/apps"
 
-# A catalogue kept as an OCI artifact: the artifact and the repository it is
+# A catalog kept as an OCI artifact: the artifact and the repository it is
 # read with, nothing else. Whose repository is the route's, never the body's.
 fresh; reply PUT /v1/clusters/c1/tenants/demo/catalogues/acme 403 '{"error":"forbidden"}'
 reply PUT /v1/tenants/demo/catalogues/acme 202 '{"status":"added","commit":"0123456789abcdef"}'
@@ -1049,7 +1049,7 @@ reply POST /v1/tenants/acme/apps/notes 200 '{"status":"already_installed"}'
 gentian apps install notes --tenant acme
 has "a current app installed again commits nothing" "${OUT}" "notes is already installed in acme at this build; nothing was committed."
 
-# An entry the catalogue leaves to the store (me or ee) is not in the
+# An entry the catalog leaves to the store (me or ee) is not in the
 # listing, only counted, so by name it is not installed from here: the store
 # is the route. Once a tenant has it, the update report moves it like any
 # other app; a new install of it is still the store's.
@@ -1140,6 +1140,17 @@ fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
 reply PUT /v1/clusters/c1/platform-roles/holders/serviceAdmin/platform/k-1 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian platform-roles holders add serviceAdmin platform sam@k.example --reason services
 is "a person of the platform tenant is named the same way" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/holders/serviceAdmin/platform/k-1{"username":"sam@k.example","email":"","reason":"services"}'
+
+fresh; reply GET /v1/clusters/c1/role-candidates 200 "${ADMINS}"
+reply PUT /v1/clusters/c1/platform-roles/holders/tenantAuditor/platform/k-1 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian platform-roles holders add tenantAuditor platform sam@k.example --reason "acme's records" --scope tenant:acme
+is "a tenant's auditor is committed with the tenant they read" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/platform-roles/holders/tenantAuditor/platform/k-1{"username":"sam@k.example","email":"","reason":"acme'"'"'srecords","scope":"tenant:acme"}'
+has "... and says over which" "${OUT}" "sam@k.example of platform holds tenantAuditor over tenant:acme: committed"
+
+fresh
+gentian platform-roles holders add tenantAuditor platform sam@k.example --reason x
+refused "a tenant's auditor without a tenant is refused"
+has "... and told to name it" "${OUT}" "--scope tenant:<t>"
 
 fresh
 gentian platform-roles holders add securityOfficer acme it@acme.example

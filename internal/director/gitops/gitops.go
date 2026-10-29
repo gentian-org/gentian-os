@@ -13,10 +13,10 @@ SPDX-License-Identifier: MPL-2.0
 //
 // It began as a copy of internal/applifecycle's GitOps and differs in what a
 // commit says and how a push is allowed to fail. A commit is authored by the
-// human whose token authorised it and carries the authorization decision as a
+// human whose token authorized it and carries the authorization decision as a
 // trailer, so the repository is an audit log and not just a history. A rejected
 // push is the concurrency signal: another writer got there first, so the change
-// is rebased and retried instead of being serialised by a lock that only one
+// is rebased and retried instead of being serialized by a lock that only one
 // process could hold.
 package gitops
 
@@ -45,11 +45,11 @@ type GitOps struct {
 	// committer is the director's own identity: the human is the author, the
 	// director is what wrote the commit.
 	committer Person
-	// mu serialises operations on the one working tree this process owns.
+	// mu serializes operations on the one working tree this process owns.
 	// It is not the concurrency control between writers — a rejected push is —
 	// it only keeps two handlers from editing the same checkout at once.
 	mu sync.Mutex
-	// syncedAt is when the checkout last equalled the remote, which is what
+	// syncedAt is when the checkout last equaled the remote, which is what
 	// lets a read skip the fetch. Guarded by mu, like the checkout itself.
 	syncedAt time.Time
 	// signArgs are the git flags that sign a commit, set by EnableSigning.
@@ -125,7 +125,7 @@ type Result struct {
 }
 
 // landed reads the commit just pushed. It runs under the same lock as the
-// write, so it is this change's commit and not a neighbour's.
+// write, so it is this change's commit and not a neighbor's.
 func (g *GitOps) landed(ctx context.Context, status string) (Result, error) {
 	head, err := g.head(ctx)
 	if err != nil {
@@ -142,7 +142,7 @@ type Person struct {
 
 // Meta is what a commit records beyond the change itself.
 type Meta struct {
-	// Author is the human whose token authorised the change.
+	// Author is the human whose token authorized the change.
 	Author Person
 	// Subject is the token's sub, the stable identifier the decision log and
 	// the OpenFGA tuples use. Names and addresses change; this does not.
@@ -153,7 +153,7 @@ type Meta struct {
 	// Decision is the authorization that allowed the change, as
 	// "<relation> <object>" — what was asked, of what.
 	Decision string
-	// Principal replaces "user:<Subject>" in the trailer when what authorised
+	// Principal replaces "user:<Subject>" in the trailer when what authorized
 	// the change was not a person — a fact signed by the store, say.
 	Principal string
 }
@@ -501,13 +501,13 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 // Install adds profile to the tenant's manifest, pinned to digest when one is
-// given. It is InstallFrom with no catalogue to record.
+// given. It is InstallFrom with no catalog to record.
 func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
 	return g.InstallFrom(ctx, tenant, profile, digest, "", nil, meta)
 }
 
 // InstallFrom adds profile to the tenant's manifest, pinned to digest when one
-// is given, and records the catalogue the build was fetched from when the
+// is given, and records the catalog the build was fetched from when the
 // caller vouches for one.
 //
 // The digest is the build the install was asked for, and it is recorded as a
@@ -516,9 +516,9 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 // its group, its object in the authorization store, its route -- is spelled
 // from the name.
 //
-// The catalogue is the first half of the coordinate the build was fetched
+// The catalog is the first half of the coordinate the build was fetched
 // under, and with the name it is the coordinate. It is recorded only beside a
-// digest, and only by a caller that fetched the bundle from that catalogue's
+// digest, and only by a caller that fetched the bundle from that catalog's
 // source and saw it hash to the digest: the entry then says where the pinned
 // build came from, which nothing else in the cluster does.
 //
@@ -531,7 +531,7 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 //
 // Installing an app that is already there at another digest moves the pin and
 // reports "updated", and so does stating a default grant the entry does not
-// already have; with neither, nothing changes. A pin moved with no catalogue
+// already have; with neither, nothing changes. A pin moved with no catalog
 // named loses the one it had, because that one described the build it no
 // longer points at.
 func (g *GitOps) InstallFrom(
@@ -544,7 +544,7 @@ func (g *GitOps) InstallFrom(
 		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
 	}
 	if catalogue != "" && (digest == "" || !ValidName(catalogue)) {
-		return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, catalogue)
+		return Result{}, fmt.Errorf("%w: catalog %q", ErrInvalidName, catalogue)
 	}
 	msg := fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, meta.actor())
 	if digest != "" {

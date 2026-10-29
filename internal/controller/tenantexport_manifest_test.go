@@ -27,8 +27,8 @@ import (
 
 // An export captures everything a purge of the app would destroy that a
 // bundle can hold: the database, every other database the app's role owns,
-// the bucket and the app's own volumes -- and writes down, artefact by
-// artefact, what it captured and where it put it. That record is the
+// the bucket and the app's own volumes -- and writes down, artifact by
+// artifact, what it captured and where it put it. That record is the
 // manifest a restore goes by.
 func TestAnExportCapturesWhatAPurgeDestroysAndTheManifestNamesIt(t *testing.T) {
 	scheme := deleteGapsScheme()

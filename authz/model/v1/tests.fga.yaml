@@ -43,6 +43,8 @@ tuples:
   - {user: group:gentian/tenant/demo/admins#member,    relation: admin,              object: tenant:demo}
   - {user: group:gentian/tenant/demo/members#member,   relation: member,             object: tenant:demo}
   - {user: user:demo/pat, relation: perimeter_approver, object: tenant:demo}
+  # and dana, a person of the platform tenant, its auditor: she reads demo's evidence and no other tenant's
+  - {user: user:kernel/dana, relation: auditor, object: tenant:demo}
 
   # --- tenant solo administers itself: cluster stays, operated_by was removed
   - {user: cluster:main, relation: cluster, object: tenant:solo}
@@ -222,3 +224,18 @@ tests:
       - {user: user:mia, object: session:sid-ended, assertions: {revoked: true}}
       - {user: user:mia, object: session:sid-live,  assertions: {revoked: false}}
       - {user: user:max, object: session:sid-ended, assertions: {revoked: false}}
+
+  - name: a tenant's evidence is read by its auditor and the cluster's, by nobody of the tenant
+    check:
+      - {user: user:kernel/dana,   object: tenant:demo,  assertions: {can_read_evidence: true,  can_enter: false, can_view: false, can_administer: false, can_read_credential: false}}
+      - {user: user:kernel/dana,   object: tenant:solo,  assertions: {can_read_evidence: false}}
+      - {user: user:kernel/dana,   object: cluster:main, assertions: {can_audit: false}}
+      - {user: user:dana,          object: tenant:demo,  assertions: {can_read_evidence: false}}
+      - {user: user:demo/dana,     object: tenant:demo,  assertions: {can_read_evidence: false}}
+      - {user: user:kernel/audrey, object: tenant:demo,  assertions: {can_read_evidence: true}}
+      - {user: user:kernel/audrey, object: tenant:solo,  assertions: {can_read_evidence: true}}
+      - {user: user:kernel/sam,    object: tenant:solo,  assertions: {can_read_evidence: true}}
+      - {user: user:alice,         object: tenant:solo,  assertions: {can_read_evidence: true}}
+      - {user: user:tom,           object: tenant:demo,  assertions: {can_read_evidence: false}}
+      - {user: user:demo/pat,      object: tenant:demo,  assertions: {can_read_evidence: false}}
+      - {user: user:mia,           object: tenant:demo,  assertions: {can_read_evidence: false}}

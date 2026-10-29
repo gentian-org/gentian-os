@@ -136,8 +136,8 @@ func TestTheCompositionOwnsAnExtensionsClientWithoutAPack(t *testing.T) {
 }
 
 // The operator looks for a pack where the app Composition does: in the
-// catalogue labelled with the profile, an extension's in its parent's. A pack
-// any other catalogue holds under the same client id leaves the client the
+// catalog labelled with the profile, an extension's in its parent's. A pack
+// any other catalog holds under the same client id leaves the client the
 // Composition's, so it is never also a pack Job's.
 func TestAClientsPackIsLookedUpInItsProfilesCatalogueOnly(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -175,9 +175,9 @@ func TestAClientsPackIsLookedUpInItsProfilesCatalogueOnly(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		profile("shop"), profile("drive"),
-		// shop's own catalogue holds the extension's pack, not the app's.
+		// shop's own catalog holds the extension's pack, not the app's.
 		catalog("shop-oidc", "shop", "shop-till"),
-		// Another profile's, and an unlabelled one, hold the rest.
+		// Another profile's, and an unlabeled one, hold the rest.
 		catalog("drive-oidc", "drive", "shop"),
 		catalog("kernel", "", "shop", "drive", "drive-till"),
 	).Build()
@@ -202,7 +202,7 @@ func TestAClientsPackIsLookedUpInItsProfilesCatalogueOnly(t *testing.T) {
 	}
 }
 
-// Two catalogues labelled with one profile: the Composition reads one of
+// Two catalogs labelled with one profile: the Composition reads one of
 // them and which is not defined, so the app's clients are refused rather
 // than given to whichever writer guessed.
 func TestTwoCataloguesOfOneProfileRefuseItsClients(t *testing.T) {

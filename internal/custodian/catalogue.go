@@ -23,7 +23,7 @@ import (
 	gentianv1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ProviderLabel names who issues a requirement's credential; the catalogue
+// ProviderLabel names who issues a requirement's credential; the catalog
 // generator sets it from kernel/platforms.yaml and credentials.yaml.
 const ProviderLabel = "gentianos.io/credential-provider"
 
@@ -40,7 +40,7 @@ type Field struct {
 // Status is everything the API will say about one requirement.
 //
 // The read-back prohibition lives here as a type: there is no field capable of
-// carrying a credential value, so no handler can accidentally serialise one.
+// carrying a credential value, so no handler can accidentally serialize one.
 type Status struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
@@ -49,7 +49,7 @@ type Status struct {
 	Scope       string `json:"scope"`
 	Tenant      string `json:"tenant,omitempty"`
 	// Provider is who issues the credential (cloudflare, infomaniak, aws...),
-	// from the catalogue's gentianos.io/credential-provider label, so a screen
+	// from the catalog's gentianos.io/credential-provider label, so a screen
 	// can keep one vendor's tokens together. Empty for the platform's own.
 	Provider  string  `json:"provider,omitempty"`
 	Optional  bool    `json:"optional"`
@@ -76,7 +76,7 @@ type Status struct {
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
-// The custodian reads the catalogue and ESO's verdict on it. Read-only
+// The custodian reads the catalog and ESO's verdict on it. Read-only
 // on both: it never creates a requirement, and it never touches the Secret an
 // ExternalSecret would produce.
 //
@@ -214,7 +214,7 @@ func (c *Catalogue) probeStatus(ctx context.Context, name string) (satisfied, pe
 	key := client.ObjectKey{Namespace: c.ProbeNamespace, Name: "credreq-" + name}
 
 	if err := c.Client.Get(ctx, key, &es); err != nil {
-		return false, false, "no satisfaction probe found — is the credential catalogue applied?"
+		return false, false, "no satisfaction probe found — is the credential catalog applied?"
 	}
 	satisfied, since, reason := readyCondition(&es)
 	if satisfied {

@@ -30,12 +30,12 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// catalogueNamespace is where the test's cluster applies its catalogue.
+// catalogueNamespace is where the test's cluster applies its catalog.
 const catalogueNamespace = "kernel-provisioning"
 
 // applied is a bundle as a cluster holds it once Argo CD has synced the
-// catalogue directory: every document an object, read here by another YAML
-// reader than the one under test, the namespaced ones in the catalogue's
+// catalog directory: every document an object, read here by another YAML
+// reader than the one under test, the namespaced ones in the catalog's
 // namespace, each with the label Argo CD tracks it by, and the profile
 // carrying the bundle and where it came from.
 func applied(t *testing.T, bundle, origin string) (*gentianov1alpha1.ComponentProfile, []client.Object) {
@@ -140,7 +140,7 @@ func TestABundleWhoseCompanionsAreAllThereAsItSaysIsVerified(t *testing.T) {
 	}
 }
 
-// A profile materialised before bundles brought anything: its carrier holds
+// A profile materialized before bundles brought anything: its carrier holds
 // the profile alone, no origin was recorded, and nothing beside it is read.
 func TestTheOldCarrierIsStillRead(t *testing.T) {
 	profile, _ := applied(t, wiki, "")
@@ -203,7 +203,7 @@ func TestACompanionThatIsNotWhatTheBundleSaysHoldsTheRollout(t *testing.T) {
 		{"a Composition made another kind's", KindComposition, func(u *unstructured.Unstructured) {
 			set(t, u, "XTenant", "spec", "compositeTypeRef", "kind")
 		}, "spec.compositeTypeRef.kind"},
-		{"a Composition relabelled", KindComposition, func(u *unstructured.Unstructured) {
+		{"a Composition relabeled", KindComposition, func(u *unstructured.Unstructured) {
 			set(t, u, "wiki", "metadata", "labels", ProfileLabel)
 		}, "label " + ProfileLabel},
 		{"a page edited", KindConfigMap, func(u *unstructured.Unstructured) {
@@ -268,12 +268,12 @@ func TestWhatTheClusterAddsIsNotADifference(t *testing.T) {
 // rolled out, and neither is one whose companions no origin vouches for.
 func TestABundleInTheClusterIsHeldToTheListAgain(t *testing.T) {
 	profile, objects := applied(t, shopBundle, TenantOrigin("acme", "own"))
-	refused(t, "companions on a tenant's profile", verifyOn(t, profile, objects, shopBundle), ReasonRefused, "only a catalogue of the whole cluster")
+	refused(t, "companions on a tenant's profile", verifyOn(t, profile, objects, shopBundle), ReasonRefused, "only a catalog of the whole cluster")
 
 	profile, objects = applied(t, shopBundle, "")
-	refused(t, "companions with no origin", verifyOn(t, profile, objects, shopBundle), ReasonRefused, "only a catalogue of the whole cluster")
+	refused(t, "companions with no origin", verifyOn(t, profile, objects, shopBundle), ReasonRefused, "only a catalog of the whole cluster")
 	if got := OwnComposition(profile); got != "" {
-		t.Fatalf("a Composition no cluster catalogue brought is the profile's own: %q", got)
+		t.Fatalf("a Composition no cluster catalog brought is the profile's own: %q", got)
 	}
 
 	secret := stream(shop, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: shop\n")
@@ -294,11 +294,11 @@ func TestTheLargestBundleFitsItsCarrier(t *testing.T) {
 
 // The bundles gentian-apps builds, as its build script wrote them
 // (testdata/bundles/README.md says from which commit). Each has to be a
-// bundle the director accepts from a cluster catalogue and refuses from a
+// bundle the director accepts from a cluster catalog and refuses from a
 // tenant's when it brings anything, and -- applied to a cluster -- has to
 // verify whole.
 //
-// Applied means what `kubectl kustomize` prints for the catalogue directory,
+// Applied means what `kubectl kustomize` prints for the catalog directory,
 // where kubectl is to be had: that is the reading the cluster receives.
 func TestTheBuiltBundlesAreAcceptedAndVerify(t *testing.T) {
 	want := map[string]string{

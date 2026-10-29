@@ -43,7 +43,7 @@ func collectOIDCIngressSubdomainsByTenant(
 		// Addons alongside apps, for the same reason the ingress collector walks
 		// both: an addon may declare a hostname, and a host absent from this
 		// list is an origin the app's own OIDC client will refuse. No addon in
-		// the catalogue declares one today, so this changes nothing yet -- it
+		// the catalog declares one today, so this changes nothing yet -- it
 		// keeps the two walks agreeing, rather than leaving one of them to be
 		// discovered later by a login that fails on a host nobody allowed.
 		for _, app := range tenant.Spec.Apps {

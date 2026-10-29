@@ -38,7 +38,7 @@ import (
 
 // BundleSourceReconciler turns a declared source into what reading it needs:
 // the credential requirement the custodian fills, its satisfaction probe, and
-// the Secret the keys are materialised into beside the object store, where
+// the Secret the keys are materialized into beside the object store, where
 // the Jobs that read a source run. The same three a backup destination is
 // given (BackupPolicyReconciler.ensureDestinationCredential), at the source's
 // own names, each owned by the source and collected with it.

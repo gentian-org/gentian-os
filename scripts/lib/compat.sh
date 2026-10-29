@@ -64,7 +64,7 @@ to_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # xargs_r <command...> — run only when stdin is non-empty.
 #
 # GNU xargs has -r for this; BSD xargs makes it the default and older BSD
-# rejects the flag outright. Neither behaviour is safe to assume, and dropping
+# rejects the flag outright. Neither behavior is safe to assume, and dropping
 # -r changes GNU semantics (it would run the command once with no arguments),
 # so the emptiness test moves here where it is explicit.
 xargs_r() {

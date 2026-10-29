@@ -65,7 +65,7 @@ func TestATenantsOrganizationIsDeclaredInItsManifest(t *testing.T) {
 		t.Fatalf("organization = %+v, want the name trimmed and the country's currency", o)
 	}
 	if res, err := g.SetTenantOrganization(ctx, "acme", "", org, tenantMeta()); err != nil || res.Changed {
-		t.Fatalf("the same organisation again is no commit: %+v, %v", res, err)
+		t.Fatalf("the same organization again is no commit: %+v, %v", res, err)
 	}
 	if _, err := g.SetTenantLocales(ctx, "acme", []string{"de", "en"}, tenantMeta()); err != nil {
 		t.Fatal(err)

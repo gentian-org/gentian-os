@@ -314,7 +314,7 @@ func TestMain(m *testing.M) {
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,
-		// The mail tests assert the shared Postfix AND Dovecot artefacts, which
+		// The mail tests assert the shared Postfix AND Dovecot artifacts, which
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
 		MailServiceMode: "system",
@@ -399,7 +399,7 @@ func TestMain(m *testing.M) {
 	// The kernel OIDCPackCatalog, as the operator chart ships it. Selfhosted mail
 	// resolves the gentian-dovecot service pack from it to provision the client
 	// Dovecot introspects IMAP XOAUTH2 tokens with, so without it every tenant
-	// using mail waits on a catalogue that never arrives.
+	// using mail waits on a catalog that never arrives.
 	if err := testClient.Create(context.Background(), &gentianov1alpha1.OIDCPackCatalog{
 		ObjectMeta: metav1.ObjectMeta{Name: "gentian-kernel"},
 		Spec: gentianov1alpha1.OIDCPackCatalogSpec{

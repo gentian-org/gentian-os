@@ -389,7 +389,7 @@ if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
 fi
 
 # Every other provider credential, from every provider table, as
-# "<path><TAB><json>" lines the installer assembled from the catalogue.
+# "<path><TAB><json>" lines the installer assembled from the catalog.
 #
 # One loop rather than a block per provider. The installer already knows which
 # fields each provider declares and which ones it collected, so a second list

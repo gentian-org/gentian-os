@@ -2,18 +2,18 @@
 # =============================================================================
 # scripts/tests/test-catalogue-default.sh
 # =============================================================================
-# A new Cluster claim names one catalogue, `gentian`, and gentian-apps
-# publishes two addresses for it: the released catalogue and the development
+# A new Cluster claim names one catalog, `gentian`, and gentian-apps
+# publishes two addresses for it: the released catalog and the development
 # one. Which the claim is given follows from which gentian-os is being
 # installed, and getting it wrong is quiet -- a released platform offered
 # profiles it cannot read, or a development cluster that never sees the
 # profiles written for it:
 #
-#   - a release tag, or main: the released catalogue;
-#   - any other branch: the development catalogue;
+#   - a release tag, or main: the released catalog;
+#   - any other branch: the development catalog;
 #   - GENTIAN_CATALOGUE_URL, set: that address, whatever the ref;
 #   - the claim says which and why, in a comment above the address;
-#   - a claim that names a catalogue already is left exactly as it is.
+#   - a claim that names a catalog already is left exactly as it is.
 #
 # Runs the library's own functions under set -u, the way the installer runs
 # them. No cluster, no network.
@@ -51,7 +51,7 @@ is() { # <what> <output> <exactly>
 }
 
 echo ""
-echo "Step 0: the default catalogue, by what is being installed"
+echo "Step 0: the default catalog, by what is being installed"
 echo ""
 
 is "a release tag reads the released catalogue" \

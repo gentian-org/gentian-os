@@ -77,10 +77,10 @@ type BundleReader interface {
 	// SignedManifest reads the manifest, and what its signature is checked
 	// against: the bytes it was parsed from and the bundle's signature.
 	SignedManifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, *bundlestore.Signed, error)
-	// AppSecrets reads an app's secrets artefact, at the path the manifest
+	// AppSecrets reads an app's secrets artifact, at the path the manifest
 	// gives for it, and opens it with the key.
 	AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppSecrets, error)
-	// AppAuthorization reads an app's authorization artefact and opens it.
+	// AppAuthorization reads an app's authorization artifact and opens it.
 	AppAuthorization(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppAuthorization, error)
 	RemoveImported(ctx context.Context, ref gentianov1alpha1.BundleRef) error
 }
@@ -532,7 +532,7 @@ func (r *TenantRestoreReconciler) awaitRollout(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-// recordOwnedNames keeps, on the artefact a Job restored databases an app
+// recordOwnedNames keeps, on the artifact a Job restored databases an app
 // made itself from, the names it reported putting each one back under: they
 // are known only once it has run, and the app's post-restore commands are
 // told them. A pod that is no longer there to say leaves them unrecorded.
@@ -645,7 +645,7 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 }
 
 // restoreUnits builds the Jobs that put one app back, from the plan the
-// restore recorded for it: each artefact the manifest names, into the store
+// restore recorded for it: each artifact the manifest names, into the store
 // of that kind the installed app has.
 func (r *TenantRestoreReconciler) restoreUnits(
 	ctx context.Context,
@@ -686,7 +686,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 		case bundle.ArtefactPostgresOwned:
 			// The provisioned database the bundle's app had, which the names
 			// in the archive are told from: the manifest names it on the
-			// app's own database artefact.
+			// app's own database artifact.
 			source := a.Target
 			for _, sibling := range entry.Artefacts {
 				if sibling.Kind == bundle.ArtefactPostgres && sibling.Name != "" {
@@ -733,7 +733,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 		default:
 			// The plan refuses a kind it does not know; reaching this is a
 			// plan written by something else.
-			return nil, fmt.Errorf("the plan for %s names an artefact of kind %q, which cannot be restored", appName, a.Kind)
+			return nil, fmt.Errorf("the plan for %s names an artifact of kind %q, which cannot be restored", appName, a.Kind)
 		}
 	}
 	return units, nil
@@ -792,7 +792,7 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 				continue
 			}
 			// Named for the shell, not for the tenant-wide component the Job is
-			// labelled with -- that is the role the provisioner created alongside the
+			// labeled with -- that is the role the provisioner created alongside the
 			// database.
 			p.Role = backup.PostgresRole(tenant.Name, portalShellAppName)
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
@@ -815,7 +815,7 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 		default:
 			// The plan lists only what it knows; reaching this is a plan
 			// written by something else.
-			return nil, fmt.Errorf("the plan names a tenant's artefact of kind %q, which cannot be restored", a.Kind)
+			return nil, fmt.Errorf("the plan names a tenant's artifact of kind %q, which cannot be restored", a.Kind)
 		}
 	}
 	return units, nil
@@ -829,7 +829,7 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 func (r *TenantRestoreReconciler) catalogueClients(ctx context.Context) ([]string, error) {
 	profiles := &gentianov1alpha1.ComponentProfileList{}
 	if err := r.List(ctx, profiles); err != nil {
-		return nil, fmt.Errorf("list the catalogue's profiles: %w", err)
+		return nil, fmt.Errorf("list the catalog's profiles: %w", err)
 	}
 	var names []string
 	for i := range profiles.Items {
@@ -1286,7 +1286,7 @@ func (r *TenantRestoreReconciler) bundleKey(ctx context.Context, restore *gentia
 }
 
 // recordPlan writes the plan into the restore's status: one entry per app
-// with the artefacts it will restore, the tenant's own, what is not restored
+// with the artifacts it will restore, the tenant's own, what is not restored
 // and why, and what no restore brings back.
 func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.BundleSchemaVersion = plan.schemaVersion

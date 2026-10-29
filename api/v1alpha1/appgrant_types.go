@@ -64,7 +64,7 @@ type AllowConsumerSpec struct {
 	Scope []string `json:"scope"`
 }
 
-// AppGrantPhase summarises grant reconciliation.
+// AppGrantPhase summarizes grant reconciliation.
 // +kubebuilder:validation:Enum=Pending;Ready;Degraded
 type AppGrantPhase string
 
@@ -76,7 +76,7 @@ const (
 
 // AppGrantStatus holds observed grant state.
 type AppGrantStatus struct {
-	// Phase summarises OpenFGA tuple sync.
+	// Phase summarizes OpenFGA tuple sync.
 	// +optional
 	Phase AppGrantPhase `json:"phase,omitempty"`
 

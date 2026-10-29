@@ -33,7 +33,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          ProfileBuild is one build of a profile, as a catalogue published it: the
+          ProfileBuild is one build of a profile, as a catalog published it: the
           bundle at one digest, kept on the cluster for as long as a tenant runs it.
 
           A ComponentProfile is one object per name for the whole cluster, and it is
@@ -44,7 +44,7 @@ spec:
           share nothing, and a tenant moved back to a build it ran before finds it
           without fetching anything.
 
-          Written by the director beside the profile, into the catalogue directory of
+          Written by the director beside the profile, into the catalog directory of
           the deployments repository, and applied from there by Argo CD; the
           installer writes the same file for the profile it places. Nothing edits
           it: a build is its digest. The operator reads the bundle, holds it to the
@@ -79,13 +79,13 @@ spec:
                 type: string
               digest:
                 description: |-
-                  Digest is the sha256 of the bundle, "sha256:<hex>", as the catalogue's
+                  Digest is the sha256 of the bundle, "sha256:<hex>", as the catalog's
                   index states it and as an install pins it.
                 pattern: ^sha256:[a-f0-9]{64}$
                 type: string
               origin:
                 description: |-
-                  Origin is which catalogue the bundle was fetched from, as the director
+                  Origin is which catalog the bundle was fetched from, as the director
                   records it on the profile (cluster/<source> or tenant/<t>/<source>).
                 minLength: 1
                 type: string
@@ -202,7 +202,7 @@ spec:
                             type: string
                           versions:
                             description: |-
-                              Versions are the catalogue versions of the app this adapter was
+                              Versions are the catalog versions of the app this adapter was
                               reviewed against. Empty means the reviewer named none.
                             items:
                               maxLength: 64
@@ -698,7 +698,7 @@ spec:
                               description: |-
                                 UpstreamDocumented reports whether upstream documents this path as an
                                 extension point. When false the mount is really L4, not L1: upstream has
-                                made no promise about the path surviving a reorganisation.
+                                made no promise about the path surviving a reorganization.
                               type: boolean
                           required:
                           - format
@@ -787,7 +787,7 @@ spec:
                             type: boolean
                           owner:
                             description: |-
-                              Owner is the team or organisation accountable for the fork, including its
+                              Owner is the team or organization accountable for the fork, including its
                               CVE response. Free-form so an external maintainer can hold it later.
                             type: string
                           repo:
@@ -800,7 +800,7 @@ spec:
                         type: object
                       grade:
                         description: |-
-                          Grade rates customization readiness (see CustomizationGrade). It summarises
+                          Grade rates customization readiness (see CustomizationGrade). It summarizes
                           the rubric score recorded in the profile's customization.md. Empty is
                           equivalent to GradeUnknown — treat it that way rather than defaulting it
                           in the schema, which would make every profile that omits it permanently
@@ -993,7 +993,7 @@ spec:
                           description: |-
                             Apex publishes this entry on the cluster's bare domain -- its main
                             address -- instead of a host under the zone's domain. Only a perimeter
-                            entry may say it. The operator honours it for the platform tenant,
+                            entry may say it. The operator honors it for the platform tenant,
                             and for the one tenant that may hold the main address -- the tenant
                             the Cluster claim names (mainAddress.tenant), or the user tenant of a
                             single-tenancy cluster -- when that tenant's approver published the
@@ -1178,7 +1178,7 @@ spec:
                                 not have to restate the fallback in a map.
 
                                 It exists because the old AppProfile tile carried displayName as a map
-                                and thirty tiles across the catalogue were genuinely translated --
+                                and thirty tiles across the catalog were genuinely translated --
                                 "Automatisierung", "Dateien", "Präsentation", every Odoo module. When the
                                 tile path moved to this type those strings stopped being read, and
                                 rewriting the profiles is the moment they would have been deleted rather
@@ -1199,7 +1199,7 @@ spec:
                               description: |-
                                 Logo is the tile's default image: a square PNG, 128x128, inline as a
                                 data URI. Every component brings its own -- an app, an API entry and an
-                                addon alike -- because a tile is how a person recognises the thing
+                                addon alike -- because a tile is how a person recognizes the thing
                                 before they can read the label. Where a component has no art of its
                                 own, it is a rendering of a platform glyph.
 
@@ -1479,7 +1479,7 @@ spec:
                                     way are the app's by ownership: the app role owns each one it made, so
                                     an export copies them, a restore puts them back and a purge drops them
                                     with the role. They are not otherwise governed — the tenant chooses the
-                                    names, and they do not appear in the catalogue's provisioning model.
+                                    names, and they do not appear in the catalog's provisioning model.
 
                                     On mariadb a database has no owner and the server is shared by every
                                     tenant, so the app's databases are the ones named for it: the app may
@@ -1527,7 +1527,7 @@ spec:
                                     the other.
 
                                     This is declared rather than inferred: the platform cannot know an app's
-                                    migration behaviour from its name, and matching on the name is how a
+                                    migration behavior from its name, and matching on the name is how a
                                     second app with the same need silently gets the wrong search_path.
                                   enum:
                                   - app-schema
@@ -1626,7 +1626,7 @@ spec:
                                         wrong with that. Every profile wrote the app's public address, where
                                         every path is behind a session, so the realm's own request was answered
                                         with a redirect to the sign-in and never arrived. And it let a
-                                        catalogue entry make the identity provider send a request to any
+                                        catalog entry make the identity provider send a request to any
                                         address at all, inside the cluster or outside it.
 
                                         The field stays in the definition so that a profile which still
@@ -1824,7 +1824,7 @@ spec:
                                     path to the gateway, and told so through valueMapping.llm.availableKey.
                                     When the key arrives the component is rendered again with it.
 
-                                    Honoured for a component the platform places on tenants itself. For an
+                                    Honored for a component the platform places on tenants itself. For an
                                     app a tenant installs the requirement holds the release as if this
                                     were not set: its chart is rendered by the app Composition, which
                                     reads the key from where it is kept and cannot render without it.
@@ -1933,6 +1933,17 @@ spec:
                                 may use an app of its tenant, for a person who is not at a browser.
                                 Only a component that declares it is given a key for that question and
                                 a network path to where it is answered.
+                              properties:
+                                audit:
+                                  description: |-
+                                    Audit lets the same key ask two more questions, for a person of the
+                                    platform tenant: may they audit the cluster (cluster#can_audit), and
+                                    may they read one tenant's evidence (tenant#can_read_evidence, which
+                                    the cluster's auditors and that tenant's auditor hold). It is for the
+                                    service that keeps the evidence and the console that shows it, and is
+                                    honored for a component of the platform tenant only: anywhere else
+                                    the key asks the app question alone.
+                                  type: boolean
                               type: object
                             storage:
                               description: Storage specifies object storage (S3) and/or
@@ -2186,7 +2197,7 @@ spec:
                               The division is deliberate and load-bearing: resolving a Keycloak group,
                               detecting membership changes and running a Job to completion are platform
                               concerns, so they live here. Knowing that one app wants a JSON-RPC call
-                              and another an OCS POST is not, so it lives in the catalogue entry that
+                              and another an OCS POST is not, so it lives in the catalog entry that
                               owns that app. No application's protocol, endpoint or account model may
                               be encoded in the kernel — see the platform boundary in
                               gentian-apps/docs/app-profile-guide.md.
@@ -2347,7 +2358,7 @@ spec:
                       api:
                         description: |-
                           API describes a component the platform routes to rather than runs. It
-                          does not mean external: the catalogue's own example points at a Service
+                          does not mean external: the catalog's own example points at a Service
                           inside the cluster. Delivery: api.
                         properties:
                           baseUrl:
@@ -2429,7 +2440,7 @@ spec:
                                   not have to restate the fallback in a map.
 
                                   It exists because the old AppProfile tile carried displayName as a map
-                                  and thirty tiles across the catalogue were genuinely translated --
+                                  and thirty tiles across the catalog were genuinely translated --
                                   "Automatisierung", "Dateien", "Präsentation", every Odoo module. When the
                                   tile path moved to this type those strings stopped being read, and
                                   rewriting the profiles is the moment they would have been deleted rather
@@ -2450,7 +2461,7 @@ spec:
                                 description: |-
                                   Logo is the tile's default image: a square PNG, 128x128, inline as a
                                   data URI. Every component brings its own -- an app, an API entry and an
-                                  addon alike -- because a tile is how a person recognises the thing
+                                  addon alike -- because a tile is how a person recognizes the thing
                                   before they can read the label. Where a component has no art of its
                                   own, it is a rendering of a platform glyph.
 
@@ -2897,7 +2908,7 @@ spec:
                               zoneKindKey:
                                 description: |-
                                   ZoneKindKey receives "kernel" for a component served in the kernel zone
-                                  and "tenant" otherwise. A component whose behaviour differs between the
+                                  and "tenant" otherwise. A component whose behavior differs between the
                                   platform's own zone and a customer's decides that from this, rather
                                   than from a list of capabilities the operator composes for it.
                                 type: string
@@ -3500,7 +3511,7 @@ spec:
                                   way are the app's by ownership: the app role owns each one it made, so
                                   an export copies them, a restore puts them back and a purge drops them
                                   with the role. They are not otherwise governed — the tenant chooses the
-                                  names, and they do not appear in the catalogue's provisioning model.
+                                  names, and they do not appear in the catalog's provisioning model.
 
                                   On mariadb a database has no owner and the server is shared by every
                                   tenant, so the app's databases are the ones named for it: the app may
@@ -3548,7 +3559,7 @@ spec:
                                   the other.
 
                                   This is declared rather than inferred: the platform cannot know an app's
-                                  migration behaviour from its name, and matching on the name is how a
+                                  migration behavior from its name, and matching on the name is how a
                                   second app with the same need silently gets the wrong search_path.
                                 enum:
                                 - app-schema
@@ -3647,7 +3658,7 @@ spec:
                                       wrong with that. Every profile wrote the app's public address, where
                                       every path is behind a session, so the realm's own request was answered
                                       with a redirect to the sign-in and never arrived. And it let a
-                                      catalogue entry make the identity provider send a request to any
+                                      catalog entry make the identity provider send a request to any
                                       address at all, inside the cluster or outside it.
 
                                       The field stays in the definition so that a profile which still
@@ -3845,7 +3856,7 @@ spec:
                                   path to the gateway, and told so through valueMapping.llm.availableKey.
                                   When the key arrives the component is rendered again with it.
 
-                                  Honoured for a component the platform places on tenants itself. For an
+                                  Honored for a component the platform places on tenants itself. For an
                                   app a tenant installs the requirement holds the release as if this
                                   were not set: its chart is rendered by the app Composition, which
                                   reads the key from where it is kept and cannot render without it.
@@ -3954,6 +3965,17 @@ spec:
                               may use an app of its tenant, for a person who is not at a browser.
                               Only a component that declares it is given a key for that question and
                               a network path to where it is answered.
+                            properties:
+                              audit:
+                                description: |-
+                                  Audit lets the same key ask two more questions, for a person of the
+                                  platform tenant: may they audit the cluster (cluster#can_audit), and
+                                  may they read one tenant's evidence (tenant#can_read_evidence, which
+                                  the cluster's auditors and that tenant's auditor hold). It is for the
+                                  service that keeps the evidence and the console that shows it, and is
+                                  honored for a component of the platform tenant only: anywhere else
+                                  the key asks the app question alone.
+                                type: boolean
                             type: object
                           storage:
                             description: Storage specifies object storage (S3) and/or
@@ -4221,8 +4243,8 @@ spec:
                     - experimental
                     type: string
                   version:
-                    description: Version is the catalogue entry's version, not the
-                      upstream project's.
+                    description: Version is the catalog entry's version, not the upstream
+                      project's.
                     maxLength: 64
                     minLength: 1
                     type: string

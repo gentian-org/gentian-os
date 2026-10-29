@@ -39,7 +39,7 @@ server:
     size: 1Gi
     accessMode: ReadWriteOnce
 
-  # Report ready even when sealed or uninitialised so `kubectl wait` works
+  # Report ready even when sealed or uninitialized so `kubectl wait` works
   # and the primary's seal backend can probe the health endpoint.
   readinessProbe:
     enabled: true

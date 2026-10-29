@@ -74,11 +74,11 @@ tenantDNS01ClusterIssuer: ""
 # for. List more than one to allow independent recovery keys.
 backupRecipients: []
 
-# tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
+# tenantProvisioning controls operator orchestration behavior. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, portal redirect)
 # so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).
 # Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
-# if a cutover regresses; leave false for normal production behaviour.
+# if a cutover regresses; leave false for normal production behavior.
 tenantProvisioning:
   crossplaneOnly: false
 
@@ -165,7 +165,7 @@ layout: {}
 # The director: the only writer to gentian-deployments, and the read API the
 # desktop and the store render from. It runs beside the operator with its own
 # ServiceAccount, which is granted nothing — every request it serves is
-# authorised against OpenFGA with the caller's own token.
+# authorized against OpenFGA with the caller's own token.
 director:
   enabled: false
   replicas: 1
@@ -188,7 +188,7 @@ director:
   signingKeySecret: "gentian-director-signing"
   # The vault role the director logs in to, and the audience of the token it
   # logs in with. The role reads repository credentials and nothing else,
-  # for catalogues kept as OCI artifacts (cluster-default,
+  # for catalogs kept as OCI artifacts (cluster-default,
   # director-repository-read). The director reaches the vault at
   # openbao.address; empty there, it reads no credential.
   vaultRole: gentian-os-director
@@ -563,7 +563,7 @@ metrics:
     additionalLabels: {}
 
 # App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
-# The custodian: a view over the CredentialRequirement catalogue and
+# The custodian: a view over the CredentialRequirement catalog and
 # ESO's satisfaction status, plus a write path that writes AS THE CALLER —
 # it holds no OpenBao token of its own and exchanges the user's OIDC token.
 #
@@ -606,7 +606,7 @@ custodian:
   vaultRole: gentian-os-custodian
   # Namespace holding the ESO satisfaction probes it reads. Empty means the
   # namespace this chart is released into, which is where the operator runs
-  # and where the catalogue step writes them.
+  # and where the catalog step writes them.
   #
   # It said "gentian-system", which is v4's control namespace. On v5 the
   # probes are in kernel-control, so the custodian looked in a
@@ -661,7 +661,7 @@ usage:
   metricsServer:
     enabled: false
 
-  # The priced catalogue of tenant ceilings. Selecting a plan is the only way
+  # The priced catalog of tenant ceilings. Selecting a plan is the only way
   # the resources API will change a tenant's quotas — it accepts a plan name and
   # never a quantity — so every ceiling reachable through the API or the console
   # is one the platform has priced, and a month of usage resolves to SKUs.
@@ -846,7 +846,7 @@ usageStatistics:
   # Where reports go. https only; anything else counts as no address.
   url: ""
   signingKey:
-    # The Secret the operator reads its signing key from, materialised from
+    # The Secret the operator reads its signing key from, materialized from
     # the vault by the ExternalSecret this chart renders while reporting is
     # on. Only the 32-byte private seed is stored; the key pair is derived
     # from it, and the public half is in every report.
@@ -882,7 +882,7 @@ mailEgressHost: ""
 #
 # Empty is honest, not broken: the mail keeps landing where it lands today and
 # the reconciler logs that it is unreadable. Set it before registering with a
-# reputation programme — RFC 5321 §4.5.1 requires postmaster, RFC 2142 §4
+# reputation program — RFC 5321 §4.5.1 requires postmaster, RFC 2142 §4
 # requires abuse, and Microsoft's JMRP and SNDS enrolments mail both and enrol
 # nobody who does not answer.
 mailAdminContact: ""
@@ -901,7 +901,7 @@ mailAdminContact: ""
 # PERMANENT — the sender does not retry and the mail is gone. So the switch has
 # three positions rather than two:
 #
-#   catchall  today's behaviour, and the default. No Keycloak call is made.
+#   catchall  today's behavior, and the default. No Keycloak call is made.
 #   observe   build the recipient list and log it; keep accepting everything.
 #             Nothing is rejected. This is how you check the list against real
 #             traffic before it can cost you anything.

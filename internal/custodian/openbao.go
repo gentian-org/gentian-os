@@ -9,7 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // Package custodian serves the custodian: a view over the
-// CredentialRequirement catalogue and ESO's satisfaction status, plus the one
+// CredentialRequirement catalog and ESO's satisfaction status, plus the one
 // write path by which a person sets a credential.
 //
 // It follows the director's pattern. The director holds the credential to
@@ -318,7 +318,7 @@ func (b *OpenBao) WriteWithMetadata(ctx context.Context, token, path string, fie
 	//
 	// gentian-os/kernel/dns/cloudflare is the case that found this. The
 	// installer seeds api-token, zone-id and tunnel-cname there as one
-	// document; the catalogue declares only api-token as an operator-supplied
+	// document; the catalog declares only api-token as an operator-supplied
 	// field, because the other two are derived from the token and the running
 	// cloudflared rather than typed by anyone. Supplying a rotated token
 	// through the console therefore wrote a document containing api-token
@@ -381,7 +381,7 @@ func (b *OpenBao) WriteWithMetadata(ctx context.Context, token, path string, fie
 
 // createAndRecord writes the whole document, for a path that does not exist yet.
 //
-// Only reachable from Write's 404 branch. It is the pre-patch behaviour, kept
+// Only reachable from Write's 404 branch. It is the pre-patch behavior, kept
 // for the one case where replacing the document cannot lose anything: there is
 // no document.
 func (b *OpenBao) createAndRecord(ctx context.Context, token, path, url string, body []byte, setBy string, extra map[string]string) error {

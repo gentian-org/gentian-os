@@ -375,7 +375,7 @@ func TestAKeyDoesNothingElse(t *testing.T) {
 	}
 }
 
-// With no list from the operator no key is recognised, and the people who
+// With no list from the operator no key is recognized, and the people who
 // may link and unlink still can.
 func TestWithoutAListNoKeyIsRecognised(t *testing.T) {
 	f := vouchingFake()

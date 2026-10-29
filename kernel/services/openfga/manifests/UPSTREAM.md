@@ -12,7 +12,7 @@
 the `Chart.lock` that listed them). The `common` subchart stays: the
 templates use it. Nothing under `templates/` or in `values.yaml` is changed.
 
-Why removed rather than switched off: Helm honours a nested chart's
+Why removed rather than switched off: Helm honors a nested chart's
 `condition` only when the parent chart declares its dependencies, and a
 parent that declares them makes Argo CD's repo-server run
 `helm dependency build`, which reaches out to the chart repositories. With

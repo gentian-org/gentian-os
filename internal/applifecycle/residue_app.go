@@ -24,7 +24,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
-// What the catalogue left behind of one app, as a tenant that has the app
+// What the catalog left behind of one app, as a tenant that has the app
 // sees it.
 //
 // The list (residue.go) is the cluster's: a profile is on a cluster once,
@@ -34,7 +34,7 @@ import (
 // add-on switched on inside it, dropped -- and nothing else of it: not what
 // no bundle owns, not the profiles nobody uses, and nothing about a profile
 // the tenant does not have, which would be a way to read the cluster's
-// catalogue.
+// catalog.
 //
 // Removing is the cluster administrator's, with one exception. On a cluster
 // whose tenancy mode is single there is one user tenant, the pieces are

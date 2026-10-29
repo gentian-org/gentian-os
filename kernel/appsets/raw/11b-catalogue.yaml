@@ -1,10 +1,10 @@
 ---
-# The cluster's materialised catalogue, from the deployments repository.
+# The cluster's materialized catalog, from the deployments repository.
 #
 # AD-3: a profile arrives when a tenant installs it, at a content digest,
 # through the director, which commits it to clusters/<cluster>/catalogue/.
 # Step 0 writes the default profiles there too (AD-14).
-# Nothing synced that directory: every materialised entry stayed a file in
+# Nothing synced that directory: every materialized entry stayed a file in
 # git, and the first default profile -- the Operations Console -- never
 # became a ComponentProfile. This is the Application that reads it.
 #
@@ -38,7 +38,7 @@ spec:
       source:
         repoURL: deployments.repo.placeholder
         targetRevision: deployments.revision.placeholder
-        # A kustomization: the director lists each entry it materialises in
+        # A kustomization: the director lists each entry it materializes in
         # it, and step 0 always writes one, so the path exists from the
         # first install even with nothing in it.
         path: clusters/deployments.cluster.placeholder/catalogue
@@ -47,7 +47,7 @@ spec:
         namespace: ns.provisioning.placeholder
       syncPolicy:
         automated:
-          # No prune: a profile leaves the cluster through the catalogue's
+          # No prune: a profile leaves the cluster through the catalog's
           # own retirement, not because a file moved -- a Component of a
           # tenant may still name it.
           prune: false

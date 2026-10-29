@@ -251,8 +251,8 @@ func TestACompanionGitStillDeclaresIsNotRemoved(t *testing.T) {
 	}
 }
 
-// installedThenUninstalled leaves notes-app as the director materialised it:
-// in the catalogue directory, with its carrier, and in no tenant's manifest.
+// installedThenUninstalled leaves notes-app as the director materialized it:
+// in the catalog directory, with its carrier, and in no tenant's manifest.
 func installedThenUninstalled(t *testing.T, op api.Lifecycle) *harness {
 	t.Helper()
 	app := profileNamed("notes-app", "gentian")
@@ -288,8 +288,8 @@ func TestAnUnusedProfileLeavesGitAndThenTheCluster(t *testing.T) {
 	defer api.SetResiduePoll(20 * time.Millisecond)()
 	op := &residueOperator{unused: []string{"notes-app"}, answers: []residueAnswer{
 		// Argo CD has not synced the commit yet, twice; then it has.
-		refusedAnswer("still-declared", "Argo CD does not yet report the ComponentProfile notes-app as gone from the catalogue directory"),
-		refusedAnswer("still-declared", "Argo CD does not yet report the ComponentProfile notes-app as gone from the catalogue directory"),
+		refusedAnswer("still-declared", "Argo CD does not yet report the ComponentProfile notes-app as gone from the catalog directory"),
+		refusedAnswer("still-declared", "Argo CD does not yet report the ComponentProfile notes-app as gone from the catalog directory"),
 		{http.StatusOK, `{"status":"deleted","deleted":{"kind":"ComponentProfile","name":"notes-app","class":"unused-profile"},"message":"deleted"}`},
 	}}
 	h := installedThenUninstalled(t, op)
@@ -310,13 +310,13 @@ func TestAnUnusedProfileLeavesGitAndThenTheCluster(t *testing.T) {
 		t.Fatalf("tip %s, answer names %v", h.tip(t), out["commit"])
 	}
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%s|%(trailers:key=Gentian-Authz,valueonly)", "main")
-	if !strings.Contains(log, "Alice|feat(catalogue): remove unused profile notes-app") ||
+	if !strings.Contains(log, "Alice|feat(catalog): remove unused profile notes-app") ||
 		!strings.Contains(log, "can_configure cluster:"+dt.Cluster+" allowed") {
 		t.Fatalf("commit = %q", log)
 	}
 	for _, file := range []string{"notes-app.yaml", gitops.BundleFile("notes-app")} {
 		if inCatalogue(h, file) {
-			t.Errorf("%s is still in the catalogue directory", file)
+			t.Errorf("%s is still in the catalog directory", file)
 		}
 	}
 	k := dt.RemoteFile(t, h.remote, dt.CataloguePath("kustomization.yaml"))

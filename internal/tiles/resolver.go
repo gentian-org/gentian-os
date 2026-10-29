@@ -19,7 +19,7 @@ import (
 	"sync"
 )
 
-// The catalogue is the platform's glyphs, each a PNG rendered from its
+// The catalog is the platform's glyphs, each a PNG rendered from its
 // template in glyphs/ by scripts/tools/render-tiles.py. The templates are
 // not embedded: nothing draws or serves an SVG.
 //
@@ -69,7 +69,7 @@ func CatalogueIconIDs() ([]string, error) {
 	return ids, nil
 }
 
-// ResolveIcon returns the data URI for a catalogue icon id.
+// ResolveIcon returns the data URI for a catalog icon id.
 func ResolveIcon(iconID string) (string, error) {
 	load()
 	if loadErr != nil {

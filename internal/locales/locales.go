@@ -27,7 +27,7 @@ import "strings"
 // realm offers until a tenant says otherwise. ISO 639-1, which is what
 // Keycloak's realm representation takes.
 //
-// It matches the catalogues in gentian-ui/frontend/src/locales. If these drift
+// It matches the catalogs in gentian-ui/frontend/src/locales. If these drift
 // apart, a person signs in translated and lands on an English desktop.
 var Default = []string{"en", "de"}
 
@@ -38,7 +38,7 @@ const DefaultLanguage = "en"
 
 // Normalise drops blanks and falls back to Default.
 //
-// Languages, not locales: Keycloak serves de-CH from its German catalogue, so
+// Languages, not locales: Keycloak serves de-CH from its German catalog, so
 // a realm listing regional codes offers a picker full of entries that render
 // identically.
 func Normalise(declared []string) []string {

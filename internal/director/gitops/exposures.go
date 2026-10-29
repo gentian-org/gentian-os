@@ -87,7 +87,7 @@ type Exposure struct {
 	Apex bool `json:"apex,omitempty"`
 	// ApexAcknowledgedBy and ApexAcknowledgedAt are who acknowledged the rule
 	// for a website on the main address -- only a site whose scripts the
-	// organisation itself controls -- and when. The approver's, from the
+	// organization itself controls -- and when. The approver's, from the
 	// caller's token, on every publication and every review of an apex
 	// entry. Empty on an entry approved before the rule was asked.
 	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`

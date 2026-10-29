@@ -17,7 +17,7 @@
 #   $(shell bash scripts/lib/versions.sh crossplane cli)
 #
 # Version strings are stored EXACTLY as the upstream publishes them. Some
-# projects prefix chart versions with "v" and some do not; normalising that here
+# projects prefix chart versions with "v" and some do not; normalizing that here
 # would mean translating it back at every call site, and getting one case wrong
 # produces a "chart not found" that reads like a network fault. Where a project
 # publishes a chart and a CLI under different schemes, both are listed.
@@ -84,8 +84,9 @@ monitoring:
   repo: https://prometheus-community.github.io/helm-charts
 
 # Vector (MPL-2.0, chart Apache-2.0): the log forwarder, where the Cluster
-# claim names a logForwarding destination. Rendered by B-01 into the bootstrap
-# chart's log-forwarding Application.
+# claim names a logForwarding destination. The Cluster Composition composes its
+# Application and writes the version out (crossplane/compositions/
+# cluster-default.yaml); test-log-forwarding.sh holds the two equal.
 logForwarding:
   chart: "0.59.0"
   repo: https://helm.vector.dev

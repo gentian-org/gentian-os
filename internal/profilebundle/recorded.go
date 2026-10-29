@@ -28,7 +28,7 @@ import (
 // still be one that was placed at a digest: the installer places a default
 // profile only at a stated one, and what it records is what the director
 // records for an install, the bundle beside the profile (Annotation) and the
-// catalogue it came from (OriginAnnotation). The digest recorded for such a
+// catalog it came from (OriginAnnotation). The digest recorded for such a
 // profile is the digest of that bundle, and the profile and every companion
 // are held to it at rollout as a pinned install's are.
 //
@@ -40,9 +40,9 @@ import (
 
 // RecordedDigest answers the digest recorded for a profile: that of the
 // bundle it carries. Empty, and no refusal, for a profile with no record at
-// all -- one the platform's chart ships, which came from no catalogue. A
-// profile that states a catalogue origin and carries no bundle that can be
-// read is refused: it says it was placed from a catalogue, and nothing shows
+// all -- one the platform's chart ships, which came from no catalog. A
+// profile that states a catalog origin and carries no bundle that can be
+// read is refused: it says it was placed from a catalog, and nothing shows
 // at which build.
 func RecordedDigest(profile *gentianov1alpha1.ComponentProfile) (string, *Refusal) {
 	encoded, carries := profile.Annotations[Annotation]
@@ -53,7 +53,7 @@ func RecordedDigest(profile *gentianov1alpha1.ComponentProfile) (string, *Refusa
 	}
 	if encoded == "" {
 		return "", &Refusal{Reason: ReasonUnverifiable, Message: fmt.Sprintf(
-			"ComponentProfile %q was placed from a catalogue (%s) and carries no bundle to check it against (annotation %s)",
+			"ComponentProfile %q was placed from a catalog (%s) and carries no bundle to check it against (annotation %s)",
 			profile.Name, origin, Annotation)}
 	}
 	bundle, err := base64.StdEncoding.DecodeString(encoded)

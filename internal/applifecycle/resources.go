@@ -171,7 +171,7 @@ func (s *Service) AllResourceStates(ctx context.Context) ([]*ResourceStateResult
 	return states, unavailable, nil
 }
 
-// Plans lists the catalogue as it applies to one tenant.
+// Plans lists the catalog as it applies to one tenant.
 func (s *Service) Plans(
 	ctx context.Context,
 	tenantName string,

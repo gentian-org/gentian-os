@@ -53,8 +53,8 @@ type planEventStoreFor func(ctx context.Context, tenant string) (planEventStore,
 //
 // The previous plan is what the status recorded, or, for a tenant whose
 // history predates the status field, the plan the store last saw; the caller
-// fills that in. The SKU comes from the catalogue when the plan is in it. A
-// plan the catalogue does not know is recorded all the same: it is what
+// fills that in. The SKU comes from the catalog when the plan is in it. A
+// plan the catalog does not know is recorded all the same: it is what
 // landed, and a bill that omits it would be a bill that omits a change.
 func resourcePlanChange(
 	tenant *gentianov1alpha1.Tenant, catalogue *resourceplan.Catalogue, previous string, now time.Time,
@@ -94,7 +94,7 @@ func (r *TenantReconciler) recordResourcePlan(ctx context.Context, tenant *genti
 
 	catalogue, err := resourceplan.Load(ctx, r.Client)
 	if err != nil {
-		// The catalogue only supplies the SKU. Record without it rather than
+		// The catalog only supplies the SKU. Record without it rather than
 		// lose the event to a transient list failure.
 		logger.Info("resource plans unavailable; recording the plan change without its SKU", "reason", err.Error())
 		catalogue = nil

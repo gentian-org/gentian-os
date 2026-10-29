@@ -33,7 +33,7 @@ func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// Reads of state.
 	mux.Read("GET /v1/tenants/{tenant}/backups", h.handleBackups)
 	mux.Read("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
-	// The bundle itself, as one file. Not JSON: a tar of the artefacts, for
+	// The bundle itself, as one file. Not JSON: a tar of the artifacts, for
 	// the person who wants their data in their hands. The director's alone:
 	// the reader's identity lists backups and does not fetch one.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}/download", h.handleBundleDownload)
@@ -166,8 +166,8 @@ func (h *HTTPServer) handleAllBackupSchedules(w http.ResponseWriter, r *http.Req
 // registerPlatformRoutes serves the reads behind the console's remaining
 // screens. Reads only, like the rest of this API: what an app may consume is
 // declared in git, what the cluster permits to escape the default posture is
-// the operator chart's, and a customisation record is written where the
-// customisation is.
+// the operator chart's, and a customization record is written where the
+// customization is.
 func (h *HTTPServer) registerPlatformRoutes(mux router) {
 	mux.Read("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
 	mux.Read("GET /v1/platform-security", h.handlePlatformSecurity)

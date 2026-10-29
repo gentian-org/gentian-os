@@ -481,7 +481,7 @@ func TestAPurgeDestroysEveryKindTheAppOwnsAndNothingElse(t *testing.T) {
 
 	// The records.
 	if _, err := w.kube.CoreV1().Secrets("tenant-demo").Get(context.Background(), "wiki-llm", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("the app's labelled Secret is still there: %v", err)
+		t.Errorf("the app's labeled Secret is still there: %v", err)
 	}
 }
 
@@ -766,7 +766,7 @@ func TestAPurgeWithoutTheProfileIsRefusedAndDestroysNothing(t *testing.T) {
 	if code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409: %s", code, body)
 	}
-	for _, want := range []string{"ComponentProfile wiki is not on this cluster", "Nothing was destroyed", "catalogue source"} {
+	for _, want := range []string{"ComponentProfile wiki is not on this cluster", "Nothing was destroyed", "catalog source"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the refusal does not say %q: %s", want, body)
 		}
@@ -1035,7 +1035,7 @@ func TestAPurgeRemovesTheAppsSignInScope(t *testing.T) {
 			OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: name, OIDCPackRef: pack}}
 		return p
 	}
-	// Each profile's packs are in the catalogue labelled with it, where they
+	// Each profile's packs are in the catalog labeled with it, where they
 	// are looked up; drive's holds the same shared pack as wiki's.
 	packs := &gentianov1alpha1.OIDCPackCatalog{
 		ObjectMeta: metav1.ObjectMeta{Name: "wiki-oidc", Labels: map[string]string{gentianov1alpha1.LabelProfileName: "wiki"}},

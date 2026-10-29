@@ -80,7 +80,7 @@ func TestAppSecretsAreSealedToTheBundlesOwnKey(t *testing.T) {
 		}
 	}
 	if _, err := SealAppSecrets(Encryption{Mode: gentianov1alpha1.ExportEncryptionPassphrase}, "p", &bundle.AppSecrets{App: "wiki"}); err == nil {
-		t.Error("an artefact with no secret in it was made")
+		t.Error("an artifact with no secret in it was made")
 	}
 	// A failure to read says nothing of what was read.
 	var buf bytes.Buffer
@@ -104,7 +104,7 @@ func TestAnAppsSecretsDocumentHoldsNamesAndValuesAndNoPath(t *testing.T) {
 		t.Errorf("the document is %s", raw)
 	}
 	if SecretsArtefact("wiki") != "secrets/wiki.json" || !slices.Contains(bundle.AppArtefacts, bundle.ArtefactSecrets) {
-		t.Errorf("the artefact is %q", SecretsArtefact("wiki"))
+		t.Errorf("the artifact is %q", SecretsArtefact("wiki"))
 	}
 	if !(&bundle.AppSecrets{App: "wiki", Extensions: map[string]map[string]string{"search": {}}}).Empty() || (&bundle.AppSecrets{Secrets: map[string]string{"a": "1"}}).Empty() {
 		t.Error("Empty is wrong")

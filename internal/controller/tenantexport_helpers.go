@@ -106,7 +106,7 @@ func runObjectIsOurs(labels map[string]string, tenantName, runName string) bool 
 // Quiesced — and each had its own copy of every one of these, differing only in
 // the receiver type: appStatus/restoreAppStatus, nextPendingApp/
 // nextPendingRestoreApp, markQuiesced/markRestoreQuiesced, and unmark likewise.
-// Eight functions for four behaviours, on the two paths where getting it wrong
+// Eight functions for four behaviors, on the two paths where getting it wrong
 // means a backup that silently skips an app or a restore that leaves one
 // quiesced. Taking the slice makes them one set that both callers share.
 
@@ -235,7 +235,7 @@ func unitArtefacts(units []captureUnit) []gentianov1alpha1.BundleArtefact {
 	return out
 }
 
-// manifestStores is one entry per artefact captured for the app: its kind,
+// manifestStores is one entry per artifact captured for the app: its kind,
 // what it was captured from and where in the bundle it is.
 func manifestStores(app gentianov1alpha1.AppExportStatus) []backup.ManifestStore {
 	stores := make([]backup.ManifestStore, 0, len(app.Artefacts))
@@ -292,7 +292,7 @@ func timeOrEmpty(t *metav1.Time) string {
 }
 
 // resolveProfile looks up the ComponentProfile backing an installed app, so every
-// capture decision is driven by the catalogue rather than by the app's name.
+// capture decision is driven by the catalog rather than by the app's name.
 //
 // A missing profile is an error rather than a shrug: without it there is no
 // kernelRequirements to enumerate, and an export that quietly captured nothing
@@ -320,7 +320,7 @@ func resolveProfile(
 	}
 	profile, ok := appProfileFromIndex(index, appName)
 	if !ok {
-		return nil, fmt.Errorf("ComponentProfile %q not found in the catalogue", appName)
+		return nil, fmt.Errorf("ComponentProfile %q not found in the catalog", appName)
 	}
 	return profile, nil
 }

@@ -20,13 +20,13 @@ import (
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
-// registerResidueRoutes serves what the catalogue left behind (residue.go):
+// registerResidueRoutes serves what the catalog left behind (residue.go):
 // the list, which the usher answers whoever may audit the cluster with, and
 // the removal of one object on it, which is the director's command.
 //
 // Neither is under a tenant. The objects are the cluster's: Compositions and
 // pack catalogs have no namespace, and the rest are in the namespace the
-// catalogue is applied in, where a tenant decides nothing.
+// catalog is applied in, where a tenant decides nothing.
 //
 // A tenant is shown the part of the list that is about an app it has
 // (residue_app.go). That read is under the tenant. There is no second

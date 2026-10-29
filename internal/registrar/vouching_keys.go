@@ -85,7 +85,7 @@ func LoadVouchingKeys(path string) ([]VouchingKey, error) {
 }
 
 // VouchingKeys is the list the registrar currently holds. The zero value
-// holds none, and so does nil: no component is recognised by its key.
+// holds none, and so does nil: no component is recognized by its key.
 type VouchingKeys struct {
 	keys atomic.Pointer[[]VouchingKey]
 }
@@ -147,7 +147,7 @@ func (v *VouchingKeys) Follow(ctx context.Context, path string, every time.Durat
 				v.Set(nil)
 				present = false
 				last = time.Time{}
-				log.Info("the vouching keys are gone; no component is recognised by its key", "path", path)
+				log.Info("the vouching keys are gone; no component is recognized by its key", "path", path)
 			}
 			return
 		}

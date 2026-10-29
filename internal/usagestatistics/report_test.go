@@ -307,7 +307,7 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 
 // Only what was installed through the App Store is listed: an entry that
 // carries a digest. The coordinate is given where the install recorded its
-// catalogue, and is null where it did not.
+// catalog, and is null where it did not.
 func TestOnlyAppsThatCarryADigestAreListed(t *testing.T) {
 	c := newClient(t, tenants()...)
 	got, err := Build(context.Background(), c, counter(),
@@ -323,7 +323,7 @@ func TestOnlyAppsThatCarryADigestAreListed(t *testing.T) {
 		t.Errorf("the store install = %+v", apps[0])
 	}
 	if apps[1].Digest != unsourced || apps[1].Coordinate != nil || *apps[1].Users != 4 {
-		t.Errorf("the install with no catalogue recorded = %+v", apps[1])
+		t.Errorf("the install with no catalog recorded = %+v", apps[1])
 	}
 	// A tenant with nothing from the store says so with an empty list.
 	if got[1].Apps == nil || len(got[1].Apps) != 0 {
@@ -353,7 +353,7 @@ func TestOnlyPinnedAddonsAreListedUnderTheirApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Sorted by digest, whatever order the entry has them in. The one whose
-	// pin recorded no catalogue has a null coordinate, and the one whose
+	// pin recorded no catalog has a null coordinate, and the one whose
 	// people could not be counted has null users.
 	want := `[{"coordinate":"gentian/nextcloud-base-ee","digest":"` + storeApp + `","users":25,"addons":[` +
 		`{"coordinate":null,"digest":"` + addonOffice + `","users":null},` +

@@ -33,7 +33,7 @@ import (
 //
 // The profile is known at every install. One named with a coordinate is the
 // bundle that was just fetched; one named alone is in the cluster's
-// catalogue directory, which is what the cluster was given.
+// catalog directory, which is what the cluster was given.
 
 // reservedAddressZone is what the list has to know of where a tenant's apps
 // are published. On a single-tenancy cluster the user tenant's hosts are
@@ -49,11 +49,11 @@ func (s *Server) reservedAddressZone(ctx context.Context) (hostnames.Zone, error
 	return hostnames.Zone{OnClusterDomain: single}, nil
 }
 
-// fetchedTakesReservedAddress is why a bundle fetched from a catalogue may
+// fetchedTakesReservedAddress is why a bundle fetched from a catalog may
 // not be installed under name, or "".
 //
 // The profile is asked as the cluster will hold it: with the origin the
-// director records on everything it materialises. So nothing a catalogue
+// director records on everything it materializes. So nothing a catalog
 // serves is ever the platform's own component, whatever it is called and
 // whatever trust tier it states.
 func fetchedTakesReservedAddress(definition *gentianov1alpha1.ComponentProfile, origin string, zone hostnames.Zone) string {
@@ -74,7 +74,7 @@ func fetchedTakesReservedAddress(definition *gentianov1alpha1.ComponentProfile, 
 }
 
 // onClusterTakesReservedAddress is why a profile named with no build may not
-// be installed, or "": read from the cluster's catalogue directory.
+// be installed, or "": read from the cluster's catalog directory.
 func (s *Server) onClusterTakesReservedAddress(ctx context.Context, name string, zone hostnames.Zone) (string, error) {
 	definition, err := s.cfg.Repo.ProfileDefinition(ctx, name)
 	if errors.Is(err, gitops.ErrProfileUnreadable) {

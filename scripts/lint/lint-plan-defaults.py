@@ -21,7 +21,7 @@
 #
 # storage and maxApps are deliberately NOT compared. maxApps is a policy limit
 # the scaffold sets and no plan carries -- resourceplans.yaml says so -- and
-# storage is per-plan in the catalogue while the scaffold pins the base figure.
+# storage is per-plan in the catalog while the scaffold pins the base figure.
 # Comparing them would report a difference that is meant to be there.
 # =============================================================================
 

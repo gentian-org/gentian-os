@@ -108,7 +108,7 @@ func newGateway(t *testing.T) (*gateway, *Client) {
 }
 
 func TestTheNamesOfAKeyAndATeam(t *testing.T) {
-	// The key made from names is spelled only to be recognised and removed.
+	// The key made from names is spelled only to be recognized and removed.
 	if got := LegacyKey("demo", "wiki"); got != "sk-gentian-demo-wiki" {
 		t.Errorf("LegacyKey = %q", got)
 	}
@@ -265,7 +265,7 @@ func TestEnsureKeyRegistersOnceAndReplacesAnotherKey(t *testing.T) {
 		// The key made from names is registered: it is replaced.
 		g.keys["demo-wiki"] = HashKey(LegacyKey("demo", "wiki"))
 		if is, _ := c.KeyIs(ctx, "demo-wiki", LegacyKey("demo", "wiki")); !is {
-			t.Fatal("the key made from names is not recognised")
+			t.Fatal("the key made from names is not recognized")
 		}
 		replaced, err = c.EnsureKey(ctx, "demo-wiki", "sk-generated")
 		if err != nil || !replaced {

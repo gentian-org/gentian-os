@@ -49,7 +49,7 @@ var appClaimListGVK = schema.GroupVersionKind{
 
 // startXTenantShellSimulator applies tenant shell resources when the operator
 // creates an XTenant composite. Envtest has no Crossplane; this mimics
-// tenant-default Composition behaviour for controller integration tests.
+// tenant-default Composition behavior for controller integration tests.
 func startXTenantShellSimulator(ctx context.Context, c client.Client) {
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)

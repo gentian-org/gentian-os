@@ -593,9 +593,9 @@ const (
 // The administration console is the second, and rather than teach this
 // function a second name the profile says it: a component the platform ships
 // to everyone declares that on itself, and this creates whatever declares it.
-// The placement is declarative. A Component this function placed (labelled
+// The placement is declarative. A Component this function placed (labeled
 // origin default) that the profiles no longer assign to the tenant -- the
-// declaration withdrawn, the profile gone from the cluster's catalogue, a
+// declaration withdrawn, the profile gone from the cluster's catalog, a
 // profile for the platform tenant found in another, or one that needs usage
 // statistics on a cluster that does not report -- is removed, with the
 // cleanup any Component's removal has; what it retained is purged as an
@@ -662,7 +662,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if !wanted {
 			continue
 		}
-		// A profile materialised from a catalogue that has since left the
+		// A profile materialized from a catalog that has since left the
 		// catalogue directory -- retired, or replaced under another name --
 		// is still an object (the Application never prunes) and still
 		// declares itself a default. It is placed no more.
@@ -671,7 +671,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 				gone, goneErr = profilebundle.GoneFromCatalogue(ctx, r.Client, layout.Namespace(layout.GitOps))
 				goneRead = true
 				if goneErr != nil {
-					log.FromContext(ctx).V(1).Info("which profiles left the catalogue directory could not be read; "+
+					log.FromContext(ctx).V(1).Info("which profiles left the catalog directory could not be read; "+
 						"every default profile is placed", "tenant", tenant.Name, "error", goneErr.Error())
 				}
 			}
@@ -704,13 +704,13 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 // requiresUsageStatisticsAnnotation on a ComponentProfile says the component
 // is placed by default only on a cluster that reports usage statistics: with
 // reporting off it is not placed, and the default Components of it are
-// removed. An annotation and not a field, so a catalogue can say it to a
+// removed. An annotation and not a field, so a catalog can say it to a
 // cluster of any version.
 const requiresUsageStatisticsAnnotation = "gentianos.io/requires-usage-statistics"
 
 // removeDefaultComponent deletes the Component this reconciler placed for a
 // profile, and only that one: named after the profile, of the profile, and
-// labelled as a default. A Component of the same name a tenant installed is
+// labeled as a default. A Component of the same name a tenant installed is
 // the tenant's and stays.
 func (r *TenantReconciler) removeDefaultComponent(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) error {
 	comp := &gentianov1alpha1.Component{}

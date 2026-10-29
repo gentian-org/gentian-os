@@ -1,7 +1,7 @@
 # A private Git repository the operator also pushes to, with the install host
 # reaching it at a different address than in-cluster pods do.
 #
-# Where each artefact lands comes from the cluster-config ConfigMap in
+# Where each artifact lands comes from the cluster-config ConfigMap in
 # required-resources, not from this claim: the git credential beside the
 # director, which pushes with it, and the repository Secret beside Argo CD.
 apiVersion: gentianos.io/v1alpha1

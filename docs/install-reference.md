@@ -49,7 +49,7 @@ phase, so a new step only ever affects its own phase.
 |---|---|---|
 | **A** | `control-plane` | Namespaces, cert-manager, ESO, Crossplane, Envoy Gateway, Argo CD, metrics-server, image pre-warm, cluster issuers |
 | **B** | `secrets` | Kernel bootstrap Applications, transit seal and OpenBao, Crossplane providers and definitions, credential seeding, deployment signing keys |
-| **C** | `platform` | The Cluster claim, ApplicationSets, wildcard certificate, credential catalogue, repository hand-off |
+| **C** | `platform` | The Cluster claim, ApplicationSets, wildcard certificate, credential catalog, repository hand-off |
 | **D** | `applications` | Operator and director, the kernel hostnames resolving, kernel realm and platform desktop, OpenBao OIDC, kernel Gateway |
 | **E** | `handover` | Recovery kit, revoke the bootstrap token; on a single-tenancy cluster, the user tenant after that |
 
@@ -66,7 +66,7 @@ is the whole of a reconfigure.
 |---|---|
 | `satisfied` | The step's `provides:` is present on the cluster |
 | `missing` | It is not; `apply()` has work to do |
-| `undefined` | The step has nothing persistent to check, or does not apply to this cluster — a feature that is switched off, or no install-time artefact |
+| `undefined` | The step has nothing persistent to check, or does not apply to this cluster — a feature that is switched off, or no install-time artifact |
 
 `undefined` is never a failure. `E-01-tenants` always reads that way — it acts
 only on an uninstall — and `E-04-user-tenant` does on a multi-tenancy cluster,
@@ -280,7 +280,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod`. A cluster keeps one stage for life, which is why there is no `<stage>` segment inside its own tree. |
 | `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. Argo CD reads the deployments repository and `gentian-os` with the same setting — see *How Argo CD gets a repository's credential* below. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. `GENTIAN_DEPLOYMENTS_REPO` has no default: unset, the install asks for it, and an unattended run stops. |
-| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). Unset, it is the branch of the checkout the installer is run from, everywhere it is used: the gentian-os Repository claim step 0 writes, the bootstrap Applications, the default catalogue and the image tag. A release tag has to be named here; with a detached checkout and no value the install stops. The installer runs the image built from the checkout's commit under that name. |
+| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). Unset, it is the branch of the checkout the installer is run from, everywhere it is used: the gentian-os Repository claim step 0 writes, the bootstrap Applications, the default catalog and the image tag. A release tag has to be named here; with a detached checkout and no value the install stops. The installer runs the image built from the checkout's commit under that name. |
 | `GENTIAN_UI_BRANCH` | The branch of `gentian-ui` written to that repository's claim when step 0 scaffolds it. `main` by default. |
 | `GENTIAN_DEPLOYMENTS_PATH` | The local checkout of the deployments repository. `~/.gentian/gentian-deployments` by default. |
 | `CLUSTER_ADMIN_RECOVERY_EMAIL` | Where the platform admin's activation link is mailed at the handover, and the account's recovery address afterwards. Unset, the handover asks; with no address, or while the kernel realm cannot send mail yet, the link is shown once in the terminal. |
@@ -292,20 +292,20 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_MASK_SECRETS` | `1` reads secret fields without showing them. By default what is typed or pasted is shown. |
 | `GENTIAN_GPG_HOME` | The keyring of the two deployment signing keys. `~/.gentian/gnupg` by default. |
 | `PORTAL_IMAGE_TAG` | The branch whose charts are installed for the platform's own apps. `develop` by default — see *Image tags* below. |
-| `GENTIAN_CATALOGUE_URL` | The address of the default catalogue, `gentian`, written to `spec.catalogue.sources` when step 0 scaffolds a new Cluster claim. Unset, the address follows from what is installed: a cluster installed from a release tag or from `main` (`GENTIAN_OS_BRANCH`, or the checkout's branch) gets the released catalogue, `https://gentian-org.github.io/gentian-apps`; one installed from any other branch gets the development catalogue, `https://gentian-org.github.io/gentian-apps/develop`. Set, it is used whatever the ref. Step 0 prints the choice and writes the reason above the address in the claim. A public https address; the director fetches from nothing else ([custom-catalogues.md](custom-catalogues.md)). An existing claim is never rewritten: on an existing cluster the address is changed with `kubectl gentian catalogues` ([custom-catalogues.md §3](custom-catalogues.md)). |
-| `GENTIAN_STORE_URL` | The base address of the App Store API, written to `spec.catalogue.storeUrl` when step 0 scaffolds a new Cluster claim. Defaults to `https://store-service.aluvian.io`. It must not be an address a cluster's own App Store app could have — `store.<a domain a cluster is installed under>` — which is why the default is `store-service.…` and not `store.…`; a cluster whose claim names its own App Store host offers no App Store (`store-address-is-own-host`). On every run, step 0 adds to the claim each catalogue the named store lists in `GET /v1/meta` that the claim has no source of that name for (`addedBy: store`), and changes or removes none ([custom-catalogues.md](custom-catalogues.md) §1). |
+| `GENTIAN_CATALOGUE_URL` | The address of the default catalog, `gentian`, written to `spec.catalogue.sources` when step 0 scaffolds a new Cluster claim. Unset, the address follows from what is installed: a cluster installed from a release tag or from `main` (`GENTIAN_OS_BRANCH`, or the checkout's branch) gets the released catalog, `https://gentian-org.github.io/gentian-apps`; one installed from any other branch gets the development catalog, `https://gentian-org.github.io/gentian-apps/develop`. Set, it is used whatever the ref. Step 0 prints the choice and writes the reason above the address in the claim. A public https address; the director fetches from nothing else ([custom-catalogues.md](custom-catalogues.md)). An existing claim is never rewritten: on an existing cluster the address is changed with `kubectl gentian catalogues` ([custom-catalogues.md §3](custom-catalogues.md)). |
+| `GENTIAN_STORE_URL` | The base address of the App Store API, written to `spec.catalogue.storeUrl` when step 0 scaffolds a new Cluster claim. Defaults to `https://store-service.aluvian.io`. It must not be an address a cluster's own App Store app could have — `store.<a domain a cluster is installed under>` — which is why the default is `store-service.…` and not `store.…`; a cluster whose claim names its own App Store host offers no App Store (`store-address-is-own-host`). On every run, step 0 adds to the claim each catalog the named store lists in `GET /v1/meta` that the claim has no source of that name for (`addedBy: store`), and changes or removes none ([custom-catalogues.md](custom-catalogues.md) §1). |
 | `GENTIAN_STORE_PARTNER_ISSUER` | The realm of the store's vendor, which step 0 writes to the Cluster claim as every tenant's partner (`spec.partners.defaults`, name `aluvian`) and allows (`spec.partners.allowedIssuers`), with the store's extra services, when the claim names no partners. Defaults to `https://id.aluvian.io/auth/realms/customers`. `--no-extra-services` leaves it out and takes out a section an earlier run wrote unchanged; a `partners` section somebody edited is left as it is (AD-17, [identity-brokering.md](identity-brokering.md)). |
 | `TENANCY_MODE`, `SECRET_MODE` | Not for `install.env`. Step 0 asks for both; an unattended first run exports them (`multi` or `single`; `derived` or `random`). They are written to the Cluster claim (`spec.tenancyMode`, `spec.secretMode`), which owns them from then on. See *Tenancy modes* and *What the master password does* below. |
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
-| `GENTIAN_OPERATOR_OBJECTS_WAIT_SECS` | How long `E-05` waits for the catalogue and every tenant declared in git to be synced -- their Argo CD Applications are asked again when a sync failed, as on a fresh install, where they first run before the operator's CRDs exist -- before it fails naming each with Argo CD's message. 600 by default. |
+| `GENTIAN_OPERATOR_OBJECTS_WAIT_SECS` | How long `E-05` waits for the catalog and every tenant declared in git to be synced -- their Argo CD Applications are asked again when a sync failed, as on a fresh install, where they first run before the operator's CRDs exist -- before it fails naming each with Argo CD's message. 600 by default. |
 | `GENTIAN_REQUIRE_SECRET_ENCRYPTION` | `true` makes pre-flight refuse a cluster whose Secrets are not encrypted at rest; unset or `false`, it warns. See *Secrets at rest* below. |
 | `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([design/security.md §2.7](design/security.md)). |
-| `GENTIAN_NO_EXTRA_SERVICES` | `1` leaves the three extra services out of the default profiles, and the store's vendor out of the tenants' partners, as `--no-extra-services` does, takes away the ones an earlier run placed, and records `spec.catalogue.extraServices: false` on the Cluster claim so a later run keeps them out; `0` brings them back and removes the record. Unset keeps what the claim says. The operator removes the Components it placed of them once their profiles leave the catalogue. |
+| `GENTIAN_NO_EXTRA_SERVICES` | `1` leaves the three extra services out of the default profiles, and the store's vendor out of the tenants' partners, as `--no-extra-services` does, takes away the ones an earlier run placed, and records `spec.catalogue.extraServices: false` on the Cluster claim so a later run keeps them out; `0` brings them back and removes the record. Unset keeps what the claim says. The operator removes the Components it placed of them once their profiles leave the catalog. |
 | `GENTIAN_NO_USAGE_STATISTICS` | `1` turns the usage statistics report off, as `--no-usage-statistics` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and there are no extra services, as with `GENTIAN_NO_EXTRA_SERVICES=1` (recorded on the claim the same way): no App Store, Operations Console or Aluvian Center; the operator does not place a profile annotated `gentianos.io/requires-usage-statistics: "true"` and removes the ones it placed. For people who manage their own cluster at their own risk — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_USAGE_STATISTICS_URL` | Where the usage statistics report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. The archive is fetched from the OpenBao release for Linux or macOS on x86_64 or arm64, compared with that release's checksum list, and installed to `~/.local/bin` only when it matches; on any other host install `bao` yourself. |
-| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalogue (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is the store's three extra services from `https://catalogue.aluvian.io/profiles/`: `operations-console.yaml`, `app-store.yaml` and `subscription-center.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`); one the catalogue's index does not list is skipped with a warning. Each profile says where it runs: the Operations Console in the platform tenant (`defaultForPlatform`), the App Store app and the Aluvian Center in every other tenant, those made later included, while the cluster offers a store (`defaultWhereStoreOffered`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
+| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalog (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is the store's three extra services from `https://catalogue.aluvian.io/profiles/`: `operations-console.yaml`, `app-store.yaml` and `subscription-center.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`); one the catalog's index does not list is skipped with a warning. Each profile says where it runs: the Operations Console in the platform tenant (`defaultForPlatform`), the App Store app and the Aluvian Center in every other tenant, those made later included, while the cluster offers a store (`defaultWhereStoreOffered`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
 | `CROSSPLANE_ACTIVATE_ALL` | `true` installs every resource type of every Crossplane provider, as installs did before; unset, only the types `crossplane/providers/activation.yaml` names exist. The way back if a fresh install waits on a type that list lacks — see *Provider resource types* below. |
 | `GENTIAN_OS_IMAGE_TAG` | Leave it unset — see *Image tags* below. |
 
@@ -352,13 +352,13 @@ collected at the prompt.
 
 | Repository | Why it is read too early |
 |---|---|
-| `gentian-os` | The bootstrap Applications (`B-01`) read it before OpenBao is initialised. |
-| deployments | Its own `Repository` claim is `clusters/<id>/kernel/claims/deployments-repository.yaml` — a file in the repository, delivered by the `gentian-claims-<stage>` Application, which reads that repository. So do the catalogue and the tenants ApplicationSets. |
+| `gentian-os` | The bootstrap Applications (`B-01`) read it before OpenBao is initialized. |
+| deployments | Its own `Repository` claim is `clusters/<id>/kernel/claims/deployments-repository.yaml` — a file in the repository, delivered by the `gentian-claims-<stage>` Application, which reads that repository. So do the catalog and the tenants ApplicationSets. |
 
 Where `GENTIAN_<repository>_AUTH` is `basic` or `bearer`:
 
 1. `A-06-argocd` applies a Secret `argocd-repo-creds-bootstrap-<name>` in
-   the gitops namespace, labelled `argocd.argoproj.io/secret-type:
+   the gitops namespace, labeled `argocd.argoproj.io/secret-type:
    repo-creds`, for the repository's address. With `basic` it carries the
    user name (`x-access-token` when none was given, which is also what the
    vault is seeded with) and the token; with `bearer`, the token alone.
@@ -390,9 +390,9 @@ from the installer's environment into the Secret through a pipe.
 ### Where app profiles come from
 
 A `ComponentProfile` reaches a cluster when a tenant installs the app: the
-director fetches that one profile from a catalogue, checks it against the
+director fetches that one profile from a catalog, checks it against the
 digest the install names, and commits it under `clusters/<cluster>/catalogue/`
-in the deployments repository. The catalogues are addresses declared on the
+in the deployments repository. The catalogs are addresses declared on the
 Cluster claim and on tenants ([custom-catalogues.md](custom-catalogues.md));
 a new claim names the default one.
 
@@ -410,8 +410,8 @@ every other — a profile reaches a cluster only at a stated digest:
    the bytes hash to that digest.
 3. It writes what the director writes for an install of the same bundle, byte
    for byte: `<name>.yaml` as served (the profile and whatever travels with
-   it), `<name>.bundle.yaml` carrying the same bytes and the catalogue's
-   origin (`cluster/<source>`: the name the Cluster claim gives the catalogue
+   it), `<name>.bundle.yaml` carrying the same bytes and the catalog's
+   origin (`cluster/<source>`: the name the Cluster claim gives the catalog
    at that address, else one made of the address), and both listed in
    `kustomization.yaml`.
 4. The digest, who stated it — the index or the pin — and the address go into
@@ -419,7 +419,7 @@ every other — a profile reaches a cluster only at a stated digest:
 
 | What happens | The install |
 |---|---|
-| The catalogue cannot be reached (no answer, or a 5xx) | goes on without the profile, with a warning. Run the installer again later, or install the profile through the director |
+| The catalog cannot be reached (no answer, or a 5xx) | goes on without the profile, with a warning. Run the installer again later, or install the profile through the director |
 | The bytes do not hash to the digest | **stops** at step 0; nothing of the profile was written |
 | The index does not list the entry, or there is no index, and nothing is pinned | **stops**: there is no digest to hold the file to -- except an extra service of the unset default list that an index which answers does not list, which is skipped with a warning |
 | The file is at the right digest and holds what a bundle may not (another kind, a name that is not this profile's) | **stops** |
@@ -429,7 +429,7 @@ every other — a profile reaches a cluster only at a stated digest:
 | It holds a copy an earlier installer wrote, with no record | the record is added if the copy hashes to the digest; otherwise the copy is replaced by the verified file, as earlier installers replaced it on every run, and the run says so |
 
 `--dry-run` says which address would be read and which digest would be
-required, and asks no catalogue.
+required, and asks no catalog.
 
 The operator compares a profile with its bundle at rollout. For a Component
 pinned to a digest the bundle must hash to that digest. The Component the
@@ -527,7 +527,7 @@ it; an `install.env` that still sets them is read without effect.
   coordinate and digest, or switched off.
 - The ApplicationSet synced a profile's whole directory, not only the profile:
   a `composition.yaml`, an `oidc-catalog.yaml` and `customizations/` beside it
-  were applied too, and pruning removes those with the profiles. A catalogue
+  were applied too, and pruning removes those with the profiles. A catalog
   serves profiles only. An app whose profile names a Composition of its own
   (`spec.package.composition`) or relies on an OIDC pack shipped beside it
   needs those objects applied separately before it is installed again.
@@ -538,7 +538,7 @@ it; an `install.env` that still sets them is read without effect.
   nothing but an Argo CD repository entry in the meantime.
 - A tenant's own `Repository` of `type: git` and `role: apps` copies nothing any
   more either, and the director refuses to declare a new one. Publish those
-  profiles as a catalogue instead and add it for the tenant.
+  profiles as a catalog instead and add it for the tenant.
 
 ### Upgrading a cluster whose roles were held by groups
 
@@ -626,7 +626,7 @@ claim ([routing.md §5](design/routing.md#5-redirects-and-url-control)).
 Who approves in the user tenant, its public addresses and its egress: the
 platform admin, and whoever the platform admin names its perimeter approver
 on the Cluster claim -- the user admin, or a person of the platform tenant.
-Adding catalogues is off here as everywhere. Both are the platform admin's
+Adding catalogs is off here as everywhere. Both are the platform admin's
 to change after the handover:
 
 ```bash
@@ -958,11 +958,11 @@ as optional: it has a form in the Credentials screen and a path in OpenBao
 (`gentian-os/kernel/storage/registry`), an install without it is complete,
 and no chart is pulled through it yet.
 
-App profiles are not part of this: they are fetched from a catalogue, which is
+App profiles are not part of this: they are fetched from a catalog, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A
-catalogue on a private network is refused, so a cluster that cannot reach a
-public catalogue has profiles committed into `clusters/<cluster>/catalogue/` by
-hand. (Step 0's own default profile is fetched from a public https catalogue
+catalog on a private network is refused, so a cluster that cannot reach a
+public catalog has profiles committed into `clusters/<cluster>/catalogue/` by
+hand. (Step 0's own default profile is fetched from a public https catalog
 too, and is skipped with a warning when that cannot be reached — §4.)
 
 `versions.yaml` is the inventory of everything else the install pulls —
@@ -1121,7 +1121,7 @@ look first, by symptom:
 | The vault stays sealed after a restart | the vault to its seal (`kernel-seal`, 8200) |
 | Realm or client Jobs time out; `Realm` objects not Ready | the Jobs and provider-keycloak to Keycloak (`kernel-authentication`, 8080) |
 | The desktop or the administration console shows errors after sign-in | the tenant's namespace to the director, usher, custodian, registrar (`kernel-control`, 8080, 9444, 9445) |
-| A tenant's apps answer 503 from the Gateway while their pods are Ready | the Envoy proxies into the tenant's namespace: the operator's `tenant-isolation` policy then admits pods labelled `app.kubernetes.io/name=envoy` in `kernel-edge` only. It follows the switch through `B-01`, not through the `kubectl delete` above |
+| A tenant's apps answer 503 from the Gateway while their pods are Ready | the Envoy proxies into the tenant's namespace: the operator's `tenant-isolation` policy then admits pods labeled `app.kubernetes.io/name=envoy` in `kernel-edge` only. It follows the switch through `B-01`, not through the `kubectl delete` above |
 | A published page (the bare domain's sign-in form) answers 503 | the Envoy proxies to the publishing proxy in the tenant's DMZ: its `<name>-ingress` policy, which follows the switch the same way |
 | "failed calling webhook" on any apply | not these rules: every webhook port admits any source. Check the webhook's pod |
 

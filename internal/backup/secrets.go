@@ -25,7 +25,7 @@ import (
 
 // An app's own secrets in a bundle.
 //
-// Every other artefact is produced by a Job: a container dumps a store, the
+// Every other artifact is produced by a Job: a container dumps a store, the
 // next encrypts the file, the last uploads it. An app's secrets do not go
 // that way. What a Job is handed is in its pod's specification or in a
 // Secret beside it, and either would be a second copy of the values, in the
@@ -42,7 +42,7 @@ func SecretsArtefact(app string) string { return "secrets/" + app + ".json" }
 // names are listed: in a status and in a message.
 func ExtensionSecretName(extension, name string) string { return extension + "/" + name }
 
-// SealAppSecrets encrypts an app's secrets as the bundle's other artefacts
+// SealAppSecrets encrypts an app's secrets as the bundle's other artifacts
 // are encrypted: to the export's recipients, or under its passphrase.
 // passphrase is read only in passphrase mode.
 //
@@ -74,7 +74,7 @@ func SealAppSecrets(e Encryption, passphrase string, secrets *bundle.AppSecrets)
 	return out.Bytes(), nil
 }
 
-// OpenAppSecrets decrypts an app's secrets artefact and reads it.
+// OpenAppSecrets decrypts an app's secrets artifact and reads it.
 func OpenAppSecrets(cipher []byte, ids []age.Identity) (*bundle.AppSecrets, error) {
 	plain, err := age.Decrypt(bytes.NewReader(cipher), ids...)
 	if err != nil {
@@ -150,7 +150,7 @@ func SealAppAuthorization(e Encryption, passphrase string, doc *bundle.AppAuthor
 	return out.Bytes(), nil
 }
 
-// OpenAppAuthorization decrypts an app's authorization artefact and reads it.
+// OpenAppAuthorization decrypts an app's authorization artifact and reads it.
 func OpenAppAuthorization(cipher []byte, ids []age.Identity) (*bundle.AppAuthorization, error) {
 	plain, err := age.Decrypt(bytes.NewReader(cipher), ids...)
 	if err != nil {

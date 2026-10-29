@@ -20,7 +20,7 @@ package v1alpha1
 
 import "k8s.io/apimachinery/pkg/runtime"
 
-// Types in this file describe the customization surface of a catalogue app —
+// Types in this file describe the customization surface of a catalog app —
 // which rungs of the Gentian customization ladder the app supports, and by which
 // mechanism. They are deliberately app-neutral: no per-app fields, no profile
 // names. See docs/app-customization.md.
@@ -51,7 +51,7 @@ const (
 )
 
 // CustomizationGrade rates how far up the ladder an app can be customized.
-// Assigned by hand by the catalogue maintainer for v0.4; see roadmap item 2.13.
+// Assigned by hand by the catalog maintainer for v0.4; see roadmap item 2.13.
 // +kubebuilder:validation:Enum=A;B;C;D;unknown
 type CustomizationGrade string
 
@@ -65,17 +65,17 @@ const (
 	GradeC CustomizationGrade = "C"
 	// GradeD requires touching source for anything beyond a value change.
 	GradeD CustomizationGrade = "D"
-	// GradeUnknown means the app has not been characterised yet. Agents must not
+	// GradeUnknown means the app has not been characterized yet. Agents must not
 	// infer more than the L0/L4 default.
 	GradeUnknown CustomizationGrade = "unknown"
 )
 
-// CustomizationSurface declares the customization ladder for one catalogue app.
+// CustomizationSurface declares the customization ladder for one catalog app.
 //
 // When absent, consumers must assume {Grade: unknown, SupportedRungs: [L0, L4]}
-// and raise a task to characterise the app. L2 is always available regardless.
+// and raise a task to characterize the app. L2 is always available regardless.
 type CustomizationSurface struct {
-	// Grade rates customization readiness (see CustomizationGrade). It summarises
+	// Grade rates customization readiness (see CustomizationGrade). It summarizes
 	// the rubric score recorded in the profile's customization.md. Empty is
 	// equivalent to GradeUnknown — treat it that way rather than defaulting it
 	// in the schema, which would make every profile that omits it permanently
@@ -195,7 +195,7 @@ type CustomizationDropIn struct {
 
 	// UpstreamDocumented reports whether upstream documents this path as an
 	// extension point. When false the mount is really L4, not L1: upstream has
-	// made no promise about the path surviving a reorganisation.
+	// made no promise about the path surviving a reorganization.
 	// +optional
 	UpstreamDocumented bool `json:"upstreamDocumented,omitempty"`
 
@@ -383,7 +383,7 @@ type CustomizationFork struct {
 	// +optional
 	Upstream string `json:"upstream,omitempty"`
 
-	// Owner is the team or organisation accountable for the fork, including its
+	// Owner is the team or organization accountable for the fork, including its
 	// CVE response. Free-form so an external maintainer can hold it later.
 	// +optional
 	Owner string `json:"owner,omitempty"`
@@ -401,7 +401,7 @@ type CustomizationFork struct {
 // ("odoo-crm-ce"), but the app's own addon system knows them by its own
 // identifier — Odoo installs the module "crm", Nextcloud enables the app
 // "richdocuments". Declaring that identifier here keeps the mapping in the
-// catalogue, where app-specific knowledge belongs, instead of putting
+// catalog, where app-specific knowledge belongs, instead of putting
 // per-app parsing in a reconciler (see the platform boundary rule in
 // gentian-apps/docs/app-profile-guide.md).
 type CustomizationAddon struct {

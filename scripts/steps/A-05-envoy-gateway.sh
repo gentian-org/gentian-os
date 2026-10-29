@@ -13,7 +13,7 @@
 #
 # The EnvoyProxy belongs here because it shapes the data plane a Gateway gets,
 # and it has to exist before the operator creates one: a Service's address is
-# honoured at creation only.
+# honored at creation only.
 
 check() {
     helm_pinned_ok envoy-gateway envoy-gateway edge &&

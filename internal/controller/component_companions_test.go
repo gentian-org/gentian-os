@@ -152,7 +152,7 @@ spec:
 `
 
 // Which Composition renders an app is the platform's unless the app's own
-// came with it: in the bundle the install is pinned to, from a catalogue of
+// came with it: in the bundle the install is pinned to, from a catalog of
 // the cluster. A name in a profile selects nothing by itself.
 func TestOnlyAVerifiedBundlesOwnCompositionRendersAnApp(t *testing.T) {
 	pinned := &gentianov1alpha1.Component{}

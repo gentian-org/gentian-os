@@ -43,7 +43,7 @@ func audiences(names ...string) gentianov1alpha1.OIDCClientSpec {
 }
 
 // An audience is the profile's own and nothing else's: its name, a dash and
-// a label, from any catalogue, and never what the platform, a realm's own
+// a label, from any catalog, and never what the platform, a realm's own
 // clients or another profile are called.
 func TestAnAudienceIsTheProfilesOwn(t *testing.T) {
 	others := []gentianov1alpha1.ComponentProfile{clientProfile("store-web", gentianov1alpha1.OIDCClientSpec{})}

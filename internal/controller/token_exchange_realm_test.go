@@ -269,7 +269,7 @@ func TestOneAppScopePerProfileThatAsks(t *testing.T) {
 }
 
 // The exchange client's secret is where the operator looks for it and says
-// what the operator reads from it: a Secret of the edge namespace, labelled
+// what the operator reads from it: a Secret of the edge namespace, labeled
 // with the realm it belongs to, holding the secret under one key. The realm
 // and not the tenant -- for the tenant that adopts the kernel realm the two
 // differ, and the realm is what a token is exchanged at.

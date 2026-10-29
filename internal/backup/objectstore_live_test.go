@@ -535,7 +535,7 @@ func TestObjectStorageJobsAgainstAServer(t *testing.T) {
 			if strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("the bundle holds %v, want %v", got, want)
 			}
-			// The checksum beside an artefact is one line, the hex digest of
+			// The checksum beside an artifact is one line, the hex digest of
 			// the ciphertext and a newline: the format every bundle carries.
 			for _, artefact := range []string{"manifest.json.age", "s3/" + bucket + ".tar.gz.age", "volumes/data.tar.gz.age"} {
 				cipher := l.admin("", "cat", "s:"+p.Bucket+"/"+p.Prefix+"/"+artefact)

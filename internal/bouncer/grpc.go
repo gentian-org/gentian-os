@@ -26,7 +26,7 @@ import (
 // deniedPage is what a browser gets instead of the word "Forbidden": the
 // refusal, and the one link that can change it. Inline and tiny, because this
 // service serves no assets and must answer without reaching anything. Its
-// colours are the cluster's brand when brandingBase names where that is
+// colors are the cluster's brand when brandingBase names where that is
 // published (the browser fetches it, not this service), and the platform's
 // own otherwise.
 func deniedPage(brandingBase string) string {
@@ -69,7 +69,7 @@ type Server struct {
 	authv3.UnimplementedAuthorizationServer
 	Decider *Decider
 	// BrandingBase is where the denied page loads the cluster's brand
-	// from; empty keeps the platform's own colours.
+	// from; empty keeps the platform's own colors.
 	BrandingBase string
 }
 

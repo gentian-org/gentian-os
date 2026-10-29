@@ -17,7 +17,7 @@ import (
 
 // The denied page wears the cluster's brand, loaded by the browser from the
 // cluster's bare domain, where the concierge serves it; without one it keeps
-// the platform's colours.
+// the platform's colors.
 func TestTheDeniedPageWearsTheBrand(t *testing.T) {
 	if got := BrandingBase("https://id.k.example/auth"); got != "https://k.example/branding/" {
 		t.Fatalf("branding base = %q", got)
@@ -32,7 +32,7 @@ func TestTheDeniedPageWearsTheBrand(t *testing.T) {
 		t.Fatalf("no brand stylesheet:\n%s", page)
 	}
 	if !strings.Contains(page, "var(--brand-color-brand-500,#262696)") {
-		t.Fatal("the button lost its fallback colour")
+		t.Fatal("the button lost its fallback color")
 	}
 	if strings.Contains(deniedPage(""), "<link") {
 		t.Fatal("a page without a brand still links one")

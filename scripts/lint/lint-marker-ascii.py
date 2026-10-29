@@ -53,7 +53,7 @@ DIM = "\033[2m"
 NC = "\033[0m"
 
 # What a marker most often gets by accident, and what it meant to say. Named so
-# the report can suggest the repair rather than only the offence.
+# the report can suggest the repair rather than only the offense.
 LIKELY = {
     "“": "\" or ''",
     "”": "\" or ''",

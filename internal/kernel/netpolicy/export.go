@@ -111,7 +111,7 @@ func ExportDestinationNetworkPolicy(tenantName, nsName, name, runLabelKey, runLa
 // restricts no egress of its own (security.md, gap G28): a policy that
 // selects it is what confines it, and it confines it to these three.
 //
-// Labelled with the platform tenant's name, as every policy of the kernel's.
+// Labeled with the platform tenant's name, as every policy of the kernel's.
 //
 // An empty endpoint is a bucket of the cluster's own storage, and opens no
 // way out of the cluster at all.

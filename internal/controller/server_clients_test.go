@@ -195,7 +195,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 		}
 	}
 	if got := layout.TenantLabels(platform.Name, false); got[layout.LabelTier] != "tenant" {
-		t.Errorf("the namespace of the tenant that adopts the kernel realm is labelled %v", got)
+		t.Errorf("the namespace of the tenant that adopts the kernel realm is labeled %v", got)
 	}
 
 	// The ports the file gives are the ones the code hands out.

@@ -96,7 +96,7 @@ Then, on the identity provider, *Mappers* → *Add mapper*:
 
 ## 4. Use the group
 
-Whatever is to recognise these people is configured with the target group:
+Whatever is to recognize these people is configured with the target group:
 an app that edits for a group, a role in the tenant's Admin Console given to
 the group. Try it with a person of the source: the target's sign-in page
 shows the button (or, to go straight to the source, add

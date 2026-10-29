@@ -164,7 +164,7 @@ func TestBouncerTableHoldsOnlyCheckersTheOperatorMade(t *testing.T) {
 		}
 	}
 
-	checkers, err := rightsCheckers(ctx, c)
+	checkers, err := rightsCheckers(ctx, c, bouncerCheckerAudit{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestBouncerTableHoldsOnlyCheckersTheOperatorMade(t *testing.T) {
 	if err := c.Update(ctx, current); err != nil {
 		t.Fatal(err)
 	}
-	if after, err := rightsCheckers(ctx, c); err != nil || len(after) != 0 {
+	if after, err := rightsCheckers(ctx, c, bouncerCheckerAudit{}); err != nil || len(after) != 0 {
 		t.Fatalf("after the profile stopped declaring it: %+v, %v", after, err)
 	}
 
@@ -204,6 +204,71 @@ func TestBouncerTableHoldsOnlyCheckersTheOperatorMade(t *testing.T) {
 	}
 	if without, _ := bouncerTable(nil, nil, nil); strings.Contains(without, "checkers") {
 		t.Fatal("a table with no checker mentions them")
+	}
+}
+
+// The audit questions are the platform tenant's: a key asks them when its
+// component is of that tenant and its profile, of platform trust, asks for
+// them. The same profile in another tenant asks the app question alone.
+func TestOnlyThePlatformTenantsKeyAsksTheAuditQuestions(t *testing.T) {
+	ctx := context.Background()
+	scheme := rightsScheme(t)
+	auditing := func(name string, trust gentianov1alpha1.TrustTier) *gentianov1alpha1.ComponentProfile {
+		profile := rightsProfile(name, true)
+		profile.Spec.Requires.Services.Rights.Audit = true
+		profile.Spec.TrustTier = trust
+		return profile
+	}
+	evidence, elsewhere := rightsComponent("platform", "evidence"), rightsComponent("acme", "evidence")
+	notary, untrusted := rightsComponent("platform", "notary"), rightsComponent("platform", "untrusted")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(evidence, elsewhere, notary, untrusted,
+		auditing("evidence", gentianov1alpha1.TrustTierPlatform), rightsProfile("notary", true),
+		auditing("untrusted", "")).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme}
+	for _, comp := range []*gentianov1alpha1.Component{evidence, elsewhere, notary, untrusted} {
+		profile := &gentianov1alpha1.ComponentProfile{}
+		if err := c.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	audit := bouncerCheckerAudit{Cluster: "main", Realm: "kernel"}
+	checkers, err := rightsCheckers(ctx, c, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asks := map[string]bool{}
+	for _, ch := range checkers {
+		asks[ch.Tenant+"/"+ch.Component] = ch.Audit != nil
+		if ch.Audit != nil && *ch.Audit != audit {
+			t.Errorf("%s/%s asks against %+v", ch.Tenant, ch.Component, *ch.Audit)
+		}
+	}
+	want := map[string]bool{"platform/evidence": true, "acme/evidence": false, "platform/notary": false, "platform/untrusted": false}
+	if len(asks) != len(want) {
+		t.Fatalf("checkers = %v", asks)
+	}
+	for k, v := range want {
+		if asks[k] != v {
+			t.Errorf("%s asks the audit questions: %v, want %v", k, asks[k], v)
+		}
+	}
+
+	rendered, err := bouncerTable(nil, nil, checkers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table, err := bouncer.ParseTable([]byte(rendered))
+	if err != nil {
+		t.Fatalf("the bouncer refuses the operator's table: %v", err)
+	}
+	for _, ch := range table.Checkers {
+		if (ch.Audit != nil) != want[ch.Tenant+"/"+ch.Component] {
+			t.Errorf("the bouncer read %s/%s with audit %+v", ch.Tenant, ch.Component, ch.Audit)
+		}
 	}
 }
 

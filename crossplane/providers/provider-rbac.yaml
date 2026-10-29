@@ -66,7 +66,7 @@ rules:
     resources: ['configmaps', 'limitranges', 'namespaces', 'resourcequotas', 'secrets', 'services']
     verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
   - apiGroups: ['argoproj.io']
-    resources: ['applicationsets', 'appprojects']
+    resources: ['applications', 'applicationsets', 'appprojects']
     verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
   - apiGroups: ['batch']
     resources: ['jobs']
@@ -150,7 +150,7 @@ metadata:
 automountServiceAccountToken: false
 ---
 # What a tenant chart may do in its own namespace: the kinds the tenant
-# charts of the catalogue render (docs/design/security.md §12.4 lists them),
+# charts of the catalog render (docs/design/security.md §12.4 lists them),
 # and the reads Helm's wait needs. Bound per tenant namespace, never by a
 # ClusterRoleBinding. A chart's own Roles and RoleBindings are allowed because
 # escalation prevention holds them to a subset of this.
