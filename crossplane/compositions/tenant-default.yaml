@@ -2067,12 +2067,24 @@ spec:
                  here through the provider "kernel" (below), which grants
                  nothing itself. The scope partner-<name> reads the attribute
                  off the person's groups and nothing else does. The groups Job
-                 sets the same, so the two writers agree. */}}
+                 sets the same, so the two writers agree.
+
+                 app-admins is the exception: the groups Job writes onto it the
+                 roles an app's administrator gets, collected from the installed
+                 profiles (gentianOdooGroupRoles, from each one's
+                 gentianOdooAdminRoles), which this Composition cannot see.
+                 Declared here, the group's attributes were put back to the mark
+                 alone on every reconcile, and app administrators lost every
+                 app's administrator roles -- Odoo's Sales/Administrator among
+                 them -- until the Job ran again. So its mark is set when the
+                 group is made (initProvider) and the attributes are the Job's
+                 after that; without LateInitialize, so they are not copied into
+                 forProvider and enforced from there either. */}}
             {{- $groupNames := list
                   (dict "name" (printf "gentian:tenant:%s:members" $tenant) "attributes" (dict))
                   (dict "name" (printf "gentian:tenant:%s:admins" $tenant) "attributes" (dict "gentianPartnerRole" "tenant-admin"))
                   (dict "name" (printf "gentian:tenant:%s:platform-admins" $tenant) "attributes" (dict "gentianPartnerRole" "cluster-admin"))
-                  (dict "name" (printf "gentian:tenant:%s:app-admins" $tenant) "attributes" (dict)) }}
+                  (dict "name" (printf "gentian:tenant:%s:app-admins" $tenant) "attributes" (dict) "jobOwnsAttributes" true) }}
             {{- range $group := $groupNames }}
             {{- $g := $group.name }}
             {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
@@ -2085,6 +2097,15 @@ spec:
               name: {{ $gslug }}
             spec:
               deletionPolicy: Orphan
+              {{- if $group.jobOwnsAttributes }}
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              initProvider:
+                attributes:
+                  gentianos.io/managed-by: platform
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $g | quote }}
+              {{- else }}
               forProvider:
                 realmId: {{ $realm }}
                 name: {{ $g | quote }}
@@ -2093,6 +2114,7 @@ spec:
                   {{- range $k, $v := $group.attributes }}
                   {{ $k }}: {{ $v | quote }}
                   {{- end }}
+              {{- end }}
               providerConfigRef:
                 name: keycloak
             {{- end }}

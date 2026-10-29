@@ -1262,10 +1262,16 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    attributes:
-      gentianos.io/managed-by: platform
     name: gentian:tenant:render-fixture:app-admins
     realmId: render-fixture
+  initProvider:
+    attributes:
+      gentianos.io/managed-by: platform
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
   providerConfigRef:
     name: keycloak
 ---
