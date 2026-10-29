@@ -1247,6 +1247,131 @@ spec:
                 name: openbao
             {{- end }}
 
+            {{- /* ── The platform tenant's Services: a signer of their own ─────
+                 A component of the platform tenant may receive the
+                 platform's log forwarder inside the cluster
+                 (requires.services.logDestination); the operator then asks
+                 for its Service's names a certificate the forwarder trusts.
+                 gentian-ca's role signs the object store's names and no
+                 others, so these are signed on a role of their own, which
+                 signs names under the platform tenant's namespace and
+                 nothing else, for servers only, and by an issuer of their
+                 own whose vault identity may sign on that role alone.
+
+                 The admission policy keeps this issuer, as gentian-ca, to
+                 the kernel and system namespaces: the operator asks for the
+                 certificate in the observability namespace and copies it to
+                 the component.
+
+                 On a private-ca cluster the issuer is the person's own CA, as
+                 gentian-ca is there, and the vault has no part in it. */}}
+            {{- $platformNs := "tenant-platform" }}
+            {{- if ne (dig "certificates" "issuerMode" "acme-dns01" $spec) "private-ca" }}
+            ---
+            apiVersion: pki.vault.upbound.io/v1alpha1
+            kind: SecretBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-pki-role-platform-services
+              name: {{ $name }}-pki-role-platform-services
+            spec:
+              forProvider:
+                backend: pki-internal
+                name: platform-services
+                allowedDomains:
+                  - {{ $platformNs }}.svc
+                  - {{ $platformNs }}.svc.cluster.local
+                allowSubdomains: true
+                allowBareDomains: false
+                allowGlobDomains: false
+                allowWildcardCertificates: false
+                allowAnyName: false
+                allowLocalhost: false
+                allowIpSans: false
+                enforceHostnames: true
+                serverFlag: true
+                clientFlag: false
+                keyType: ec
+                keyBits: 256
+                ttl: "2160h"
+                maxTtl: "2160h"
+                noStore: true
+                requireCn: false
+              providerConfigRef:
+                name: openbao
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-cert-manager-platform-services
+              name: {{ $name }}-policy-cert-manager-platform-services
+            spec:
+              forProvider:
+                name: cert-manager-platform-services
+                policy: |
+                  path "pki-internal/sign/platform-services" { capabilities = ["update"] }
+              providerConfigRef:
+                name: openbao
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-cert-manager-platform-services
+              name: {{ $name }}-auth-role-cert-manager-platform-services
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: cert-manager-platform-services
+                boundServiceAccountNames:
+                  - gentian-ca-issuer
+                boundServiceAccountNamespaces:
+                  - kernel-edge
+                audience: vault://gentian-ca-platform-services
+                tokenPolicies:
+                  - cert-manager-platform-services
+                tokenTtl: 600
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: issuer-platform-services
+              name: {{ $name }}-issuer-platform-services
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: cert-manager.io/v1
+                  kind: ClusterIssuer
+                  metadata:
+                    name: gentian-ca-platform-services
+                    labels:
+                      gentianos.io/issuer-role: internal-ca
+                  spec:
+                    {{- if eq (dig "certificates" "issuerMode" "acme-dns01" $spec) "private-ca" }}
+                    ca:
+                      secretName: {{ dig "certificates" "caBundleSecretRef" "name" "gentian-root-ca-tls" $spec }}
+                    {{- else }}
+                    vault:
+                      server: {{ $openbaoServer }}
+                      path: pki-internal/sign/platform-services
+                      caBundleSecretRef:
+                        name: openbao-ca-bundle
+                        key: ca.crt
+                      auth:
+                        kubernetes:
+                          mountPath: /v1/auth/{{ $authMount }}
+                          role: cert-manager-platform-services
+                          serviceAccountRef:
+                            name: gentian-ca-issuer
+                    {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
             kind: AuthBackendRole
@@ -1713,6 +1838,11 @@ spec:
             {{- $lfEndpoint := default "" (dig "endpoint" "" $lfDest) }}
             {{- $lfStreams  := default (list "audit" "operations") (dig "streams" list $lfDest) }}
             {{- $obsNs      := "kernel-observability" }}
+            {{- /* A destination inside the cluster is a Service of the
+                 platform tenant, whose certificate the operator had issued
+                 into this namespace (log-destination-tls): the forwarder
+                 trusts that certificate's CA, and waits for it. */}}
+            {{- $lfInCluster := regexMatch "^https://[a-z0-9.-]+\\.svc(\\.cluster\\.local)?(:[0-9]+)?(/|$)" $lfEndpoint }}
             {{- if $lfEndpoint }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -1813,10 +1943,23 @@ spec:
                                 items:
                                   - key: token
                                     path: token
+                            {{- if $lfInCluster }}
+                            - name: log-destination-ca
+                              secret:
+                                secretName: log-destination-tls
+                                items:
+                                  - key: ca.crt
+                                    path: ca.crt
+                            {{- end }}
                           extraVolumeMounts:
                             - name: log-destination
                               mountPath: /etc/log-destination
                               readOnly: true
+                            {{- if $lfInCluster }}
+                            - name: log-destination-ca
+                              mountPath: /etc/log-destination-ca
+                              readOnly: true
+                            {{- end }}
                           resources:
                             requests: { cpu: 100m, memory: 128Mi }
                             limits: { memory: 256Mi }
@@ -1918,6 +2061,10 @@ spec:
                                 auth:
                                   strategy: bearer
                                   token: "SECRET[destination.token]"
+                                {{- if $lfInCluster }}
+                                tls:
+                                  ca_file: /etc/log-destination-ca/ca.crt
+                                {{- end }}
                                 # The audit stream waits on disk rather than being dropped when
                                 # the destination is away: a record lost here is the one an
                                 # auditor asks for.
@@ -1943,6 +2090,10 @@ spec:
                                 auth:
                                   strategy: bearer
                                   token: "SECRET[destination.token]"
+                                {{- if $lfInCluster }}
+                                tls:
+                                  ca_file: /etc/log-destination-ca/ca.crt
+                                {{- end }}
                                 buffer:
                                   type: memory
                                   max_events: 10000

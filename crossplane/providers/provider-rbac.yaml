@@ -72,7 +72,7 @@ rules:
     resources: ['jobs']
     verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
   - apiGroups: ['cert-manager.io']
-    resources: ['certificates']
+    resources: ['certificates', 'clusterissuers']
     verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
   - apiGroups: ['external-secrets.io']
     resources: ['clusterexternalsecrets', 'clustersecretstores', 'externalsecrets']

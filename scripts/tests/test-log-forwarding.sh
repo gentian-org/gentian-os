@@ -9,6 +9,8 @@
 #
 #   - a claim with no destination composes no forwarder and no credential;
 #     one with a destination composes both, restarted when the token changes;
+#   - a destination inside the cluster is trusted by the CA of the
+#     certificate the platform had issued for it, and only such a one;
 #   - streams names which sinks exist;
 #   - the chart version the Composition writes out is versions.yaml's pin;
 #   - with Docker, Vector's own test runner holds the transforms to it: an
@@ -64,6 +66,13 @@ check "streams [audit]: an audit sink and no operations sink" \
     'grep -q destination_audit <<<"${on}" && ! grep -q destination_operations <<<"${on}"'
 check "a new token restarts the forwarder" \
     'grep -q "\"secret.reloader.stakater.com/reload\": \"log-destination\"" <<<"${on}"'
+
+check "an external destination: the forwarder trusts the public roots only" '! grep -q ca_file <<<"${on}"'
+inside="$(objects "${FIXTURES}/cluster-log-forwarding-in-cluster/expected.yaml")"
+check "a destination in the cluster: the forwarder trusts the certificate the platform had issued for it" \
+    'grep -q "\"ca_file\": \"/etc/log-destination-ca/ca.crt\"" <<<"${inside}" && grep -q "\"secretName\": \"log-destination-tls\"" <<<"${inside}"'
+check "its issuer signs the platform tenant's Service names, here from the person's own CA" \
+    'has ClusterIssuer gentian-ca-platform-services "${inside}" && grep -q "\"secretName\": \"acme-ca\"" <<<"${inside}"'
 
 pin="$(sed -n '/^logForwarding:/,/^$/s/^  chart: "\(.*\)"/\1/p' versions.yaml)"
 repo="$(sed -n '/^logForwarding:/,/^$/s/^  repo: \(.*\)/\1/p' versions.yaml)"

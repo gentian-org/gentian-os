@@ -121,6 +121,14 @@ spec:
       streams: [audit, operations]                    # both when absent or empty
 ```
 
+A destination inside the cluster is a Service of the platform tenant
+whose component declares `requires.services.logDestination`
+([custom-catalogues.md](../custom-catalogues.md)): the platform issues its
+names a certificate from the internal CA, on a signing role that covers the
+platform tenant's Service names and nothing else, and the forwarder trusts
+that CA for an endpoint under `.svc`; the component's network rule admits
+the forwarder's pods to that port alone.
+
 The destination takes newline-delimited JSON over HTTPS POST, gzip
 compressed, one request per batch, with `X-Gentian-Stream: audit` or
 `operations` and the `log-destination` credential as its bearer token,

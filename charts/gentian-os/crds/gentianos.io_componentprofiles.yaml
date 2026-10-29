@@ -1742,6 +1742,29 @@ spec:
                                 reads the key from where it is kept and cannot render without it.
                               type: boolean
                           type: object
+                        logDestination:
+                          description: |-
+                            LogDestination declares that the component receives the platform's log
+                            forwarder over HTTPS inside the cluster. See LogDestinationRequirement.
+                          properties:
+                            port:
+                              description: |-
+                                Port is the port that Service and its pods serve HTTPS on, the same
+                                number on both: it is the pods' port the network admits.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            service:
+                              description: |-
+                                Service is the name of the component's Service the forwarder is sent
+                                to.
+                              pattern: ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$
+                              type: string
+                          required:
+                          - port
+                          - service
+                          type: object
                         mail:
                           description: Mail specifies SMTP and/or IMAP requirements.
                           properties:
@@ -3766,6 +3789,29 @@ spec:
                               reads the key from where it is kept and cannot render without it.
                             type: boolean
                         type: object
+                      logDestination:
+                        description: |-
+                          LogDestination declares that the component receives the platform's log
+                          forwarder over HTTPS inside the cluster. See LogDestinationRequirement.
+                        properties:
+                          port:
+                            description: |-
+                              Port is the port that Service and its pods serve HTTPS on, the same
+                              number on both: it is the pods' port the network admits.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          service:
+                            description: |-
+                              Service is the name of the component's Service the forwarder is sent
+                              to.
+                            pattern: ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$
+                            type: string
+                        required:
+                        - port
+                        - service
+                        type: object
                       mail:
                         description: Mail specifies SMTP and/or IMAP requirements.
                         properties:
@@ -4199,6 +4245,10 @@ spec:
               rule: '!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken)
                 && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) &&
                 e.exchangeToken))'
+            - message: 'requires.services.logDestination requires trustTier platform:
+                the component is sent every record the platform writes'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.logDestination)
+                || self.trustTier == ''platform'''
             - message: 'requires.services.vouching requires trustTier platform: the
                 component can obtain a person''s token for any app of the tenant'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)

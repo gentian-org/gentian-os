@@ -807,7 +807,11 @@ namespaces:
     sameNamespace: true
     sameNamespaceWhy: Headlamp reaches the API server through kube-oidc-proxy, beside it; Prometheus scrapes and alerts beside it.
     egress: open
-    egressWhy: kube-oidc-proxy calls the API server and the identity provider's public address.
+    egressWhy: >-
+      kube-oidc-proxy calls the API server and the identity provider's public
+      address; the log forwarder sends to the destination the Cluster claim
+      names, outside the cluster or a Service of the platform tenant, whose
+      own rule admits it (requires.services.logDestination).
     workloads:
       - name: headlamp
         installedBy: bootstrap-application:headlamp

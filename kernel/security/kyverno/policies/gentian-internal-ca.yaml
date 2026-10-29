@@ -1,5 +1,10 @@
 # Only the platform asks the internal CA for a certificate.
 #
+# That is gentian-ca and gentian-ca-platform-services, the issuer of the
+# platform tenant's Service names (the Cluster Composition), which the
+# operator asks in the observability namespace for the cluster's log
+# destination and copies to it.
+#
 # gentian-ca (kernel/manifests/cert-manager/internal-ca.yaml) signs whatever
 # a Certificate or CertificateRequest asks of it within its role's names, and
 # the object store accepts the client whose common name is seaweedfs-shell,
@@ -30,8 +35,8 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/description: >-
       Denies cert-manager Certificates, CertificateRequests and ingress-shim
-      Ingresses that name the ClusterIssuer gentian-ca outside the kernel and
-      system namespaces.
+      Ingresses that name the ClusterIssuer gentian-ca or
+      gentian-ca-platform-services outside the kernel and system namespaces.
 spec:
   validationFailureAction: Enforce
   background: true
@@ -76,8 +81,10 @@ spec:
         conditions:
           all:
           - key: "{{ request.object.spec.issuerRef.name || '' }}"
-            operator: Equals
-            value: gentian-ca
+            operator: AnyIn
+            value:
+            - gentian-ca
+            - gentian-ca-platform-services
           - key: "{{ request.object.spec.issuerRef.kind || '' }}"
             operator: Equals
             value: ClusterIssuer
@@ -128,9 +135,13 @@ spec:
         conditions:
           any:
           - key: "{{ annotations.\"cert-manager.io/cluster-issuer\" || '' }}"
-            operator: Equals
-            value: gentian-ca
+            operator: AnyIn
+            value:
+            - gentian-ca
+            - gentian-ca-platform-services
           - key: >-
               {{ annotations."cert-manager.io/issuer" || '' }}:{{ annotations."cert-manager.io/issuer-kind" || '' }}
-            operator: Equals
-            value: gentian-ca:ClusterIssuer
+            operator: AnyIn
+            value:
+            - gentian-ca:ClusterIssuer
+            - gentian-ca-platform-services:ClusterIssuer
