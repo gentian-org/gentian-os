@@ -1848,10 +1848,12 @@ spec:
                           properties:
                             audit:
                               description: |-
-                                Audit lets the same key ask two more questions, for a person of the
-                                platform tenant: may they audit the cluster (cluster#can_audit), and
-                                may they read one tenant's evidence (tenant#can_read_evidence, which
-                                the cluster's auditors and that tenant's auditor hold). It is for the
+                                Audit lets the same key ask three more questions, for a person of the
+                                platform tenant: may they audit the cluster (cluster#can_audit), may
+                                they configure it (cluster#can_configure), which keeps the evidence's
+                                own settings from its readers, and may they read one tenant's evidence
+                                (tenant#can_read_evidence, which the cluster's auditors and that
+                                tenant's auditor hold). It is for the
                                 service that keeps the evidence and the console that shows it, and is
                                 honored for a component of the platform tenant only: anywhere else
                                 the key asks the app question alone.
@@ -3869,10 +3871,12 @@ spec:
                         properties:
                           audit:
                             description: |-
-                              Audit lets the same key ask two more questions, for a person of the
-                              platform tenant: may they audit the cluster (cluster#can_audit), and
-                              may they read one tenant's evidence (tenant#can_read_evidence, which
-                              the cluster's auditors and that tenant's auditor hold). It is for the
+                              Audit lets the same key ask three more questions, for a person of the
+                              platform tenant: may they audit the cluster (cluster#can_audit), may
+                              they configure it (cluster#can_configure), which keeps the evidence's
+                              own settings from its readers, and may they read one tenant's evidence
+                              (tenant#can_read_evidence, which the cluster's auditors and that
+                              tenant's auditor hold). It is for the
                               service that keeps the evidence and the console that shows it, and is
                               honored for a component of the platform tenant only: anywhere else
                               the key asks the app question alone.
