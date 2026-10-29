@@ -65,6 +65,10 @@ type Record struct {
 	// Size is what a fetch was told the bundle is before it was copied; the
 	// usage counts it until the copy is there.
 	Size int64 `json:"size,omitempty"`
+	// Incomplete is an upload whose files have not all arrived. It is filled
+	// again until they have -- a transfer that stopped part-way continues
+	// from the files already stored -- and nothing restores from it before.
+	Incomplete bool `json:"incomplete,omitempty"`
 }
 
 // RecordKey is where a prefix's record is.
@@ -186,15 +190,31 @@ func (im *Imports) Remove(ctx context.Context, prefix string) error {
 
 // size is what a prefix holds, in bytes.
 func (im *Imports) size(ctx context.Context, prefix string) (int64, error) {
-	objs, err := im.objects.list(ctx, strings.Trim(prefix, "/")+"/", true)
+	files, err := im.Stored(ctx, prefix)
 	if err != nil {
 		return 0, err
 	}
 	var n int64
-	for _, o := range objs {
-		n += o.Size
+	for _, size := range files {
+		n += size
 	}
 	return n, nil
+}
+
+// Stored is what a prefix holds: each file's size, by its name under the
+// prefix. An object is stored whole or not at all, so a file listed here is
+// one that arrived.
+func (im *Imports) Stored(ctx context.Context, prefix string) (map[string]int64, error) {
+	prefix = strings.Trim(prefix, "/") + "/"
+	objs, err := im.objects.list(ctx, prefix, true)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(objs))
+	for _, o := range objs {
+		out[strings.TrimPrefix(o.Key, prefix)] = o.Size
+	}
+	return out, nil
 }
 
 // records reads every record, by prefix.
@@ -224,13 +244,18 @@ func (im *Imports) records(ctx context.Context) (map[string]Record, map[string]t
 // recorded as its own, at what it holds or, for a fetch still copying, at
 // what the fetch was told it would hold.
 func (im *Imports) TenantUsage(ctx context.Context, tenant string) (int64, error) {
+	return im.tenantUsage(ctx, tenant, "")
+}
+
+// tenantUsage is TenantUsage without the prefix except.
+func (im *Imports) tenantUsage(ctx context.Context, tenant, except string) (int64, error) {
 	recs, _, err := im.records(ctx)
 	if err != nil {
 		return 0, err
 	}
 	var total int64
 	for prefix, rec := range recs {
-		if rec.Tenant != tenant {
+		if rec.Tenant != tenant || prefix == except {
 			continue
 		}
 		n, err := im.size(ctx, prefix)
@@ -246,7 +271,14 @@ func (im *Imports) TenantUsage(ctx context.Context, tenant string) (int64, error
 // MaxTenantUpload, or what is left of MaxTenantImports when that is less.
 // ErrImportLimit when nothing is left.
 func (im *Imports) TenantAllowance(ctx context.Context, tenant string) (int64, error) {
-	used, err := im.TenantUsage(ctx, tenant)
+	return im.TenantAllowanceFor(ctx, tenant, "")
+}
+
+// TenantAllowanceFor is TenantAllowance for the bundle at prefix, an upload
+// being filled: what it already holds is its own, not counted against it a
+// second time.
+func (im *Imports) TenantAllowanceFor(ctx context.Context, tenant, prefix string) (int64, error) {
+	used, err := im.tenantUsage(ctx, tenant, prefix)
 	if err != nil {
 		return 0, err
 	}

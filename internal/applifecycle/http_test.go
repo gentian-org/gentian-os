@@ -388,6 +388,8 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 		{"POST", "/v1/tenants/demo/actions/provision-app"},
 		{"POST", "/v1/bundles"},
 		{"POST", "/v1/bundles/inspect"},
+		{"POST", "/v1/bundles/uploads"},
+		{"GET", "/v1/bundles/20261029-070021-f585ab2b/files"},
 		{"POST", "/v1/actions/remove-catalogue-residue"},
 	}
 	for _, c := range directorOnly {

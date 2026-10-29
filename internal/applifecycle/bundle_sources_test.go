@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -315,5 +316,91 @@ func TestATenantsUploadIsBoundedByItsLimit(t *testing.T) {
 	}
 	if _, err := s.UploadBundle(ctx, bundle(60, 60), ""); err != nil {
 		t.Errorf("the cluster's administrator's upload was bounded: %v", err)
+	}
+}
+
+// cut is a body that ends in an error after n bytes: a transfer that stopped.
+type cut struct {
+	r io.Reader
+	n int
+}
+
+func (c *cut) Read(p []byte) (int, error) {
+	if c.n <= 0 {
+		return 0, errors.New("connection reset")
+	}
+	if len(p) > c.n {
+		p = p[:c.n]
+	}
+	n, err := c.r.Read(p)
+	c.n -= n
+	return n, err
+}
+
+// An upload started and filled in steps survives a transfer that stops
+// part-way: what arrived stays, the upload stays incomplete and nothing
+// restores from it, and sending the bundle again stores only what is
+// missing. Once complete, or for another tenant, it is not filled.
+func TestAnUploadThatStoppedIsContinued(t *testing.T) {
+	ctx := context.Background()
+	s3, secret := clusterStorage(t)
+	s, _ := sourcesService(t, secret)
+	bundle := func(fill byte) []byte {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for _, name := range []string{"manifest.json.age", "volumes/data.tar.gz.age"} {
+			_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: 4096})
+			_, _ = tw.Write(bytes.Repeat([]byte{fill}, 4096))
+		}
+		_ = tw.Close()
+		return buf.Bytes()
+	}
+
+	ref, err := s.StartUpload(ctx, "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first file and part of the second arrive.
+	first := bundle('a')
+	if _, err := s.FillUpload(ctx, &cut{r: bytes.NewReader(first), n: 512 + 4096 + 512 + 1000}, "corp", ref.Prefix); err == nil {
+		t.Fatal("a stopped transfer completed the upload")
+	}
+	files, complete, err := s.UploadedFiles(ctx, "corp", ref.Prefix)
+	if err != nil || complete || len(files) != 1 || files["manifest.json.age"] != 4096 {
+		t.Fatalf("stored after the stop: %v, complete %v, %v", files, complete, err)
+	}
+	if err := s.uploadComplete(ctx, ref); err == nil {
+		t.Error("an incomplete upload is restored from")
+	}
+
+	// Sent again: the file that arrived is not stored a second time.
+	if _, err := s.FillUpload(ctx, bytes.NewReader(bundle('b')), "corp", ref.Prefix); err != nil {
+		t.Fatal(err)
+	}
+	if got := s3.Get(bundlestore.ImportBucket, ref.Prefix+"/manifest.json.age"); !bytes.Equal(got, bytes.Repeat([]byte{'a'}, 4096)) {
+		t.Error("a file that had arrived was stored again")
+	}
+	if got := s3.Get(bundlestore.ImportBucket, ref.Prefix+"/volumes/data.tar.gz.age"); len(got) != 4096 {
+		t.Errorf("the missing file is %d bytes", len(got))
+	}
+	if err := s.uploadComplete(ctx, ref); err != nil {
+		t.Errorf("the complete upload is refused: %v", err)
+	}
+	if _, complete, err := s.UploadedFiles(ctx, "corp", ref.Prefix); err != nil || !complete {
+		t.Errorf("the complete upload is listed as complete %v, %v", complete, err)
+	}
+
+	if _, err := s.FillUpload(ctx, bytes.NewReader(first), "corp", ref.Prefix); !errors.Is(err, errNoUpload) {
+		t.Errorf("a complete upload was filled again: %v", err)
+	}
+	other, err := s.StartUpload(ctx, "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FillUpload(ctx, bytes.NewReader(first), "solo", other.Prefix); !errors.Is(err, errNoUpload) {
+		t.Errorf("another tenant filled corp's upload: %v", err)
+	}
+	if _, _, err := s.UploadedFiles(ctx, "", other.Prefix); !errors.Is(err, errNoUpload) {
+		t.Errorf("the cluster's route read a tenant's upload: %v", err)
 	}
 }

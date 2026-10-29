@@ -56,14 +56,19 @@ type importingOperator struct {
 	domain, domainRefused string
 	// uploaded is how many bytes the last upload carried.
 	uploaded int64
+	// asked are the paths, with their queries, the upload routes reached.
+	asked []string
 }
 
 const importedManifest = `{"schemaVersion":1,"tenant":"imported","export":"nightly","createdAt":"2026-10-01T03:00:00Z","tenantSpec":{"displayName":"Imported Ltd","apps":[{"profile":"element"}]},"apps":[]}`
 
-func (o *importingOperator) Get(_ context.Context, path string, _ url.Values) (int, []byte, error) {
+func (o *importingOperator) Get(_ context.Context, path string, q url.Values) (int, []byte, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	switch {
+	case strings.HasSuffix(path, "/files"):
+		o.asked = append(o.asked, "GET "+path+"?"+q.Encode())
+		return http.StatusOK, []byte(`{"files":{"manifest.json.age":4096}}`), nil
 	case strings.HasSuffix(path, "/apps/status"):
 		if o.apps != "" {
 			return http.StatusOK, []byte(o.apps), nil
@@ -101,6 +106,9 @@ func (o *importingOperator) Do(_ context.Context, path, _ string, body any) (int
 	defer o.mu.Unlock()
 	raw, _ := json.Marshal(body)
 	switch {
+	case strings.HasPrefix(path, "/v1/bundles/uploads"):
+		o.asked = append(o.asked, "POST "+path)
+		return http.StatusCreated, []byte(`{"bundle":{"bucket":"gentian-imports","prefix":"20261029-070021-f585ab2b"}}`), nil
 	case path == "/v1/bundles/inspect":
 		if !strings.Contains(string(raw), `"passphrase":"open sesame"`) {
 			return http.StatusBadRequest, []byte(`{"detail":"the manifest could not be opened with that key"}`), nil
@@ -129,9 +137,10 @@ func (o *importingOperator) Do(_ context.Context, path, _ string, body any) (int
 	return http.StatusNotFound, nil, nil
 }
 
-func (o *importingOperator) Upload(_ context.Context, _, _ string, body io.Reader) (int, []byte, error) {
+func (o *importingOperator) Upload(_ context.Context, path, _ string, body io.Reader) (int, []byte, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.asked = append(o.asked, "POST "+path)
 	o.uploads++
 	n, _ := io.Copy(io.Discard, body)
 	o.uploaded = n
@@ -834,5 +843,39 @@ func TestABundleUploadOutlastsTheDirectorsDeadlines(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusAccepted || op.uploaded != int64(size) {
 		t.Fatalf("upload = %d, the operator got %d of %d bytes in %s", resp.StatusCode, op.uploaded, size, time.Since(start).Round(time.Millisecond))
+	}
+}
+
+// An upload in steps reaches the operator as the same upload each time: the
+// prefix it was started under, and for a tenant's administrator the tenant,
+// which the route sets and the caller cannot.
+func TestAnUploadInStepsIsTheSameUploadEachTime(t *testing.T) {
+	op := &importingOperator{}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	prefix := "20261029-070021-f585ab2b"
+
+	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/bundles/uploads", alice, ""); code != http.StatusCreated {
+		t.Fatalf("start = %d %v", code, body)
+	}
+	if code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/bundles/"+prefix+"/files", alice, ""); code != http.StatusOK {
+		t.Fatalf("files = %d %v", code, body)
+	}
+	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/bundles?into="+prefix, alice, "tar"); code != http.StatusAccepted {
+		t.Fatalf("fill = %d %v", code, body)
+	}
+	want := []string{"POST /v1/bundles/uploads", "GET /v1/bundles/" + prefix + "/files?", "POST /v1/bundles?into=" + prefix}
+	if strings.Join(op.asked, "|") != strings.Join(want, "|") {
+		t.Errorf("the operator was asked %q, want %q", op.asked, want)
+	}
+
+	op.asked = nil
+	h.do(t, "POST", "/v1/tenants/demo/bundles/uploads", alice, "")
+	h.do(t, "GET", "/v1/tenants/demo/bundles/"+prefix+"/files?tenant=solo", alice, "")
+	h.do(t, "POST", "/v1/tenants/demo/bundles?into="+prefix+"&tenant=solo", alice, "tar")
+	want = []string{"POST /v1/bundles/uploads?tenant=demo", "GET /v1/bundles/" + prefix + "/files?tenant=demo",
+		"POST /v1/bundles?into=" + prefix + "&tenant=demo"}
+	if strings.Join(op.asked, "|") != strings.Join(want, "|") {
+		t.Errorf("the operator was asked %q, want %q", op.asked, want)
 	}
 }
