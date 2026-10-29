@@ -418,7 +418,7 @@ func TestAnAppMayNotTakeThePlatformsAddressNamesInAnyTenant(t *testing.T) {
 // The components the platform ships hold their own addresses in every zone
 // -- rendered from the chart, so that a label changed there and not in the
 // list holds every tenant's desktop in a test and not on a cluster -- and
-// none holds another's. A profile of the same name a catalogue brought is
+// none holds another's. A profile of the same name a catalog brought is
 // not the platform's.
 func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 	const kd = "k.example"
@@ -436,7 +436,7 @@ func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 			"desktop.enabled=true", "desktop.chart.version=0.1.0"),
 		"admin-console": renderShippedProfile(t, "componentprofile-admin-console.yaml",
 			"adminConsole.enabled=true", "adminConsole.chart.version=0.1.0"),
-		// From the cluster's own catalogue, as the installer places it.
+		// From the cluster's own catalog, as the installer places it.
 		"app-store": fromClusterCatalogue(shippedAppStoreProfile(t)),
 		"concierge": renderShippedProfile(t, "componentprofile-concierge.yaml",
 			"concierge.enabled=true", "concierge.chart.version=0.1.0"),
@@ -455,7 +455,7 @@ func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 			t.Fatalf("the chart's %s is named %s", name, profile.Name)
 		}
 		if name != "app-store" && !hostnames.PlatformShipped(profile) {
-			t.Errorf("the chart renders %s with a catalogue's annotations: %v", name, profile.Annotations)
+			t.Errorf("the chart renders %s with a catalog's annotations: %v", name, profile.Annotations)
 		}
 		// Every label it asks for is the one the list gives it.
 		for i := range profile.Spec.Expose {
@@ -471,14 +471,14 @@ func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
 			if refusal := reservedHostRefusal(componentFor(name, "tenant-x"), profile, zone, kd); refusal != "" {
 				t.Errorf("%s is refused its own address under %s: %s", name, zone.domain, refusal)
 			}
-			// The same profile from a catalogue is an app called that.
+			// The same profile from a catalog is an app called that.
 			if held[name] == "" {
 				continue
 			}
 			brought := profile.DeepCopy()
 			brought.Annotations = map[string]string{profilebundle.OriginAnnotation: "tenant/acme/ours"}
 			if reservedHostRefusal(componentFor(name, "tenant-x"), brought, zone, kd) == "" {
-				t.Errorf("a %s from a catalogue was admitted to %s under %s", name, held[name], zone.domain)
+				t.Errorf("a %s from a catalog was admitted to %s under %s", name, held[name], zone.domain)
 			}
 			// And it does not hold another's.
 			for other, label := range held {
@@ -759,7 +759,7 @@ func TestTheReconcilerHoldsATenantTheModeRefusesAndRemovesNothing(t *testing.T) 
 }
 
 // fromClusterCatalogue is a profile as the installer or the director
-// materialises it from a catalogue of the cluster: its origin and its bundle.
+// materializes it from a catalog of the cluster: its origin and its bundle.
 func fromClusterCatalogue(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ComponentProfile {
 	p = p.DeepCopy()
 	p.Annotations = map[string]string{

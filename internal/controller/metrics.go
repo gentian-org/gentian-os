@@ -22,7 +22,7 @@ var (
 		Help: "Total number of Tenant CRs managed by the orchestrator.",
 	})
 
-	// tenantAppsTotal tracks the total requested apps across all tenants (labelled by tenant).
+	// tenantAppsTotal tracks the total requested apps across all tenants (labeled by tenant).
 	tenantAppsTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gentianos_tenant_apps_total",
 		Help: "Total number of requested apps per tenant.",
@@ -35,7 +35,7 @@ var (
 		Buckets: prometheus.DefBuckets,
 	}, []string{"tenant"})
 
-	// reconcileErrors counts reconciliation errors, labelled by controller type.
+	// reconcileErrors counts reconciliation errors, labeled by controller type.
 	reconcileErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "gentianos_reconcile_errors_total",
 		Help: "Total number of reconcile errors by controller type.",

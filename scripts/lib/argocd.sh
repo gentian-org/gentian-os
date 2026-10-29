@@ -30,7 +30,7 @@ gentian_argocd_namespace() {
 # External Secrets writes the Secret repo-<name> that Argo CD reads. Two
 # repositories are read before that can happen:
 #
-#   gentian-os    B-01's Applications read it before OpenBao is initialised.
+#   gentian-os    B-01's Applications read it before OpenBao is initialized.
 #
 #   deployments   Its Repository claim is a file IN the deployments
 #                 repository (clusters/<id>/kernel/claims), delivered by the
@@ -38,7 +38,7 @@ gentian_argocd_namespace() {
 #                 Where it is private, the claim that would supply the
 #                 credential can only arrive once the credential is there: C-02
 #                 waited fifteen minutes for gentian-claims and failed. The
-#                 catalogue and the tenants ApplicationSets read the same
+#                 catalog and the tenants ApplicationSets read the same
 #                 repository and stood beside it.
 #
 # So for those two the installer hands Argo CD the credential it collected,
@@ -283,7 +283,7 @@ configure_argocd_oidc() {
     # Where Argo CD runs, and which realm signs the tokens it must accept.
     # Both were literals: the namespace made this unusable under any other
     # layout, and the realm silently disagreed with every other caller here,
-    # which honours KERNEL_REALM -- a cluster whose realm is not called kernel
+    # which honors KERNEL_REALM -- a cluster whose realm is not called kernel
     # got an issuer nothing had ever issued a token for.
     local ns="${GITOPS_NAMESPACE:-$(ns_kernel gitops)}"
     local realm="${KERNEL_REALM:-kernel}"

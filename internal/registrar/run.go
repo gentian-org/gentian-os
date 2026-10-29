@@ -125,7 +125,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	// key, as the operator writes them into a ConfigMap that is mounted
 	// here. Followed for as long as the process runs: a component is
 	// installed long after this starts, and one that stops declaring the
-	// requirement must stop being recognised without a restart.
+	// requirement must stop being recognized without a restart.
 	vouchingKeys := &VouchingKeys{}
 	go vouchingKeys.Follow(ctx, envOr("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log)
 

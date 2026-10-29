@@ -58,7 +58,7 @@ func adminSecrets() []adminSecret {
 // shellSecrets are what a pod that administers the object store with weed
 // shell reads beside the store, besides its administrator's Secret: the
 // client certificate cert-manager keeps and the signing keys External
-// Secrets materialises, each made by the template named.
+// Secrets materializes, each made by the template named.
 func shellSecrets() []adminSecret {
 	return []adminSecret{
 		{backup.ObjectStoreClientTLSSecret, s3Namespace, "kernel/services/infra-seaweedfs/manifests/templates/certificates.yaml",

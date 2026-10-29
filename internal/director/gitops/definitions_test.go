@@ -86,7 +86,7 @@ func TestEveryKindTheDirectorWritesIsChecked(t *testing.T) {
 		t.Fatalf("the scan no longer finds %v in this package's sources", missing)
 	}
 	// Two kinds are written without their name appearing: the Cluster claim
-	// is edited in place, and Branding is marshalled from its Go type.
+	// is edited in place, and Branding is marshaled from its Go type.
 	for _, kind := range []string{"Cluster", "Branding"} {
 		if _, ok := set.Kind(kind); !ok {
 			t.Errorf("no definition of %s is embedded", kind)

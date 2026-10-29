@@ -189,9 +189,9 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	return cfg, nil
 }
 
-// resolveOIDCPack puts the pack the profile's own catalogue holds under
+// resolveOIDCPack puts the pack the profile's own catalog holds under
 // packKey on cfg, where the app Composition looks for it (oidc.ResolvePack).
-// A profile two catalogues are labelled for is refused: which one the
+// A profile two catalogs are labeled for is refused: which one the
 // Composition reads is not defined, so neither writer can be told the client
 // is its own.
 func (r *TenantReconciler) resolveOIDCPack(ctx context.Context, cfg *oidcAppConfig, profileName, packKey string) error {

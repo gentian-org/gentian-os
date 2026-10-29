@@ -30,7 +30,7 @@ import (
 // The one capability is llm, the cluster serving models (spec.llm.enabled).
 // An entry naming another is left alone.
 //
-// Only the cluster's catalogues place: a tenant's own catalogue writing an
+// Only the cluster's catalogs place: a tenant's own catalogue writing an
 // app into every other tenant would be a way around every install check.
 
 const (
@@ -109,7 +109,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 
 	cluster, err := s.cfg.Repo.Catalogue(ctx)
 	if err != nil {
-		log.WarnContext(ctx, "the cluster's catalogues could not be read; no app is placed or removed", "error", err.Error())
+		log.WarnContext(ctx, "the cluster's catalogs could not be read; no app is placed or removed", "error", err.Error())
 		return 0, 0
 	}
 	type placedApp struct {
@@ -121,7 +121,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 		listing, err := s.cfg.Catalogue.Index(ctx, clusterSource(src).Source)
 		if err != nil {
 			// Unread is not "no longer offered": nothing it places is removed.
-			log.WarnContext(ctx, "a catalogue could not be read; what it places is left as it is",
+			log.WarnContext(ctx, "a catalog could not be read; what it places is left as it is",
 				"catalogue", src.Name, "error", err.Error())
 			continue
 		}

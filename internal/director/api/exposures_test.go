@@ -341,7 +341,7 @@ func TestTheTenantTheClusterNamesHoldsTheMainAddressUnderMulti(t *testing.T) {
 
 // A website on the main address is published only by an approver who was told
 // what a script there can do and said the site is one whose scripts the
-// organisation controls. Without that word the answer is the warning, naming
+// organization controls. Without that word the answer is the warning, naming
 // the field, and nothing is committed -- on a first publication and on a
 // review alike.
 func TestTheMainAddressNeedsTheApproversAcknowledgement(t *testing.T) {

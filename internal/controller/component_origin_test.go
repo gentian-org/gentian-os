@@ -19,7 +19,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// from is a materialised profile recorded as coming from a catalogue.
+// from is a materialised profile recorded as coming from a catalog.
 func from(t *testing.T, bundle, origin string) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
 	p := materialised(t, bundle)
@@ -27,10 +27,10 @@ func from(t *testing.T, bundle, origin string) *gentianov1alpha1.ComponentProfil
 	return p
 }
 
-// A profile says which catalogue it came from, and a tenant's own catalogue
+// A profile says which catalog it came from, and a tenant's own catalog
 // belongs to that tenant. The origin the director writes beside the bundle
 // does not disturb the check of the bundle itself: a pinned install from a
-// catalogue of the whole cluster, or from the tenant's own, rolls out.
+// catalog of the whole cluster, or from the tenant's own, rolls out.
 func TestAProfileOfTheClustersOrTheTenantsOwnCatalogueRollsOut(t *testing.T) {
 	for _, origin := range []string{"cluster/gentian", "tenant/" + acmeTenantFixture().Name + "/ours"} {
 		h := startDigestHarness(t, from(t, wikiBundle, origin), profilebundle.Digest([]byte(wikiBundle)))
@@ -44,7 +44,7 @@ func TestAProfileOfTheClustersOrTheTenantsOwnCatalogueRollsOut(t *testing.T) {
 	}
 }
 
-// A profile from another tenant's own catalogue is not rolled out, pinned or
+// A profile from another tenant's own catalog is not rolled out, pinned or
 // not: the object is visible to the whole cluster, so the director's refusal
 // is not the only one. Nothing is rendered, and the condition says why.
 func TestAProfileOfAnotherTenantsCatalogueRendersNothing(t *testing.T) {
@@ -55,7 +55,7 @@ func TestAProfileOfAnotherTenantsCatalogueRendersNothing(t *testing.T) {
 		if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonOtherTenant {
 			t.Fatalf("%s: condition = %+v, want %s", name, ready, profilebundle.ReasonOtherTenant)
 		}
-		if !strings.Contains(ready.Message, "another tenant's own catalogue") || !strings.Contains(ready.Message, "nothing is rolled out") {
+		if !strings.Contains(ready.Message, "another tenant's own catalog") || !strings.Contains(ready.Message, "nothing is rolled out") {
 			t.Fatalf("%s: the condition does not say why: %s", name, ready.Message)
 		}
 		if strings.Contains(ready.Message, "somebody-else") {
@@ -122,7 +122,7 @@ func TestAnAddonWithNoProfileOnTheClusterHoldsItsApp(t *testing.T) {
 	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != profilebundle.ReasonOtherTenant || !strings.Contains(ready.Message, "add-on wiki-search") {
 		t.Fatalf("with another tenant's add-on: condition = %+v", ready)
 	}
-	// From a catalogue of the cluster: rolled out.
+	// From a catalog of the cluster: rolled out.
 	addon.Annotations[profilebundle.OriginAnnotation] = "cluster/gentian"
 	if err := h.c.Update(context.Background(), addon); err != nil {
 		t.Fatal(err)

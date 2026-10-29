@@ -27,7 +27,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// Catalogues added by administrators.
+// Catalogs added by administrators.
 //
 // One web server plays every catalogue, each under its own path: the first
 // path segment is the catalogue, and what it serves is that catalogue's
@@ -270,7 +270,7 @@ func TestATenantAddsACatalogueOnlyWhenDelegated(t *testing.T) {
 	// The same again changes nothing.
 	tip := h.tip(t)
 	if code, out := h.do(t, "PUT", "/v1/tenants/demo/catalogues/ours", tom, urlBody(src.URL+"/ours")); code != http.StatusOK || out["status"] != "unchanged" || h.tip(t) != tip {
-		t.Fatalf("the same catalogue again: %d %v", code, out)
+		t.Fatalf("the same catalog again: %d %v", code, out)
 	}
 	// Delegation is per tenant: solo's administrator is still refused.
 	if code, _ := h.do(t, "PUT", "/v1/tenants/solo/catalogues/ours", h.token(t, "tenant-solo", "tina"), urlBody(src.URL+"/ours")); code != http.StatusForbidden {
@@ -440,7 +440,7 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 
 	code, out := h.do(t, "PUT", "/v1/tenants/demo/catalogues/gentian", tom, urlBody(src.URL+"/demo-own"))
 	if code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "whole cluster") {
-		t.Fatalf("a tenant took a cluster catalogue's name: %d %v", code, out)
+		t.Fatalf("a tenant took a cluster catalog's name: %d %v", code, out)
 	}
 	// The same name in two tenants, at two addresses.
 	if code, out := h.do(t, "PUT", "/v1/tenants/demo/catalogues/own", tom, urlBody(src.URL+"/demo-own")); code != http.StatusAccepted {
@@ -450,15 +450,15 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 		t.Fatalf("solo: %d %v", code, out)
 	}
 	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/catalogues/own", tom, urlBody(src.URL+"/other")); code != http.StatusConflict {
-		t.Fatalf("a second catalogue of the same name in one tenant: %d", code)
+		t.Fatalf("a second catalog of the same name in one tenant: %d", code)
 	}
 	// The cluster cannot take it now, and is told whose it is.
 	code, out = h.do(t, "PUT", clusterCatalogues+"/own", alice, urlBody(src.URL+"/other"))
 	if code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "demo, solo") {
-		t.Fatalf("the cluster took a tenant catalogue's name: %d %v", code, out)
+		t.Fatalf("the cluster took a tenant catalog's name: %d %v", code, out)
 	}
 	if code, _ := h.do(t, "PUT", clusterCatalogues+"/gentian", alice, urlBody(src.URL+"/other")); code != http.StatusConflict {
-		t.Fatalf("a second cluster catalogue of the same name: %d", code)
+		t.Fatalf("a second cluster catalog of the same name: %d", code)
 	}
 
 	// Each tenant's "own" is its own: the same coordinate prefix fetches
@@ -471,7 +471,7 @@ func TestACatalogueNameMeansOneCatalogueToATenant(t *testing.T) {
 	}
 	// What demo's serves is not in solo's, although both are called "own".
 	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/demo-app", tina, fmt.Sprintf(`{"coordinate":"own/demo-app","digest":%q}`, sha(demoApp))); code != http.StatusNotFound {
-		t.Fatalf("solo fetched from demo's catalogue through a shared name: %d", code)
+		t.Fatalf("solo fetched from demo's catalog through a shared name: %d", code)
 	}
 	for profile, origin := range map[string]string{"demo-app": "tenant/demo/own", "solo-app": "tenant/solo/own"} {
 		bundle := dt.RemoteFile(t, h.remote, dt.CataloguePath(gitops.BundleFile(profile)))
@@ -521,7 +521,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	code, out := install(tom, "demo", "own/element", theirs)
 	said := fmt.Sprint(out["error"])
 	if code != http.StatusConflict || !strings.Contains(said, "already taken") || !strings.Contains(said, "demo-element") {
-		t.Fatalf("a tenant's profile took a name the cluster's catalogue has: %d %v", code, out)
+		t.Fatalf("a tenant's profile took a name the cluster's catalog has: %d %v", code, out)
 	}
 	// A profile the platform itself ships, from either kind of catalogue.
 	code, out = install(tom, "demo", "own/desktop", desktop)
@@ -529,7 +529,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 		t.Fatalf("a tenant's profile took a platform component's name: %d %v", code, out)
 	}
 	if code, out = install(tina, "solo", "gentian/desktop", desktop); code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "platform ships") {
-		t.Fatalf("a catalogue's profile took a platform component's name: %d %v", code, out)
+		t.Fatalf("a catalog's profile took a platform component's name: %d %v", code, out)
 	}
 	// A profile that was on the cluster before origins were recorded.
 	// (wiki is in every fixture's catalogue directory, with no bundle.)
@@ -554,7 +554,7 @@ func TestAProfileNameTakenByAnotherOriginIsRefused(t *testing.T) {
 	// The cluster's catalogue: refused, saying it is the tenant's to rename.
 	code, out = install(tina, "solo", "gentian/notes-app", profileNamed("notes-app", "gentian"))
 	said = fmt.Sprint(out["error"])
-	if code != http.StatusConflict || !strings.Contains(said, "tenant's own catalogue") || !strings.Contains(said, "has to rename") || strings.Contains(said, "demo") {
+	if code != http.StatusConflict || !strings.Contains(said, "tenant's own catalog") || !strings.Contains(said, "has to rename") || strings.Contains(said, "demo") {
 		t.Fatalf("the cluster's profile took a tenant's name: %d %v", code, out)
 	}
 	if h.tip(t) != before {
@@ -735,7 +735,7 @@ func TestAnAddressThatReachesInsideIsRefusedOnEveryRoute(t *testing.T) {
 			"/v1/tenants/demo/catalogues/typo":        tom,
 		} {
 			code, out := h.do(t, "PUT", route, token, urlBody(address))
-			if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "not one a catalogue is fetched from") {
+			if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "not one a catalog is fetched from") {
 				t.Errorf("%s on %s: %d %v, want 422", address, route, code, out)
 			}
 		}
@@ -763,7 +763,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 	install := fmt.Sprintf(`{"coordinate":"partner/planner","digest":%q}`, sha(app))
 
 	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/planner", tom, install); code != http.StatusUnprocessableEntity {
-		t.Fatalf("before the catalogue exists: %d", code)
+		t.Fatalf("before the catalog exists: %d", code)
 	}
 	code, out := h.do(t, "PUT", clusterCatalogues+"/partner", alice, urlBody(src.URL+"/partner"))
 	if code != http.StatusAccepted || out["scope"] != "cluster" {
@@ -780,7 +780,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 		t.Fatalf("solo sees %v", out)
 	}
 	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/planner", tom, install); code != http.StatusAccepted {
-		t.Fatalf("after the catalogue was added: %d %v", code, out)
+		t.Fatalf("after the catalog was added: %d %v", code, out)
 	}
 	bundle := dt.RemoteFile(t, h.remote, dt.CataloguePath(gitops.BundleFile("planner")))
 	if !strings.Contains(bundle, profilebundle.OriginAnnotation+": cluster/partner") {
@@ -791,7 +791,7 @@ func TestACatalogueAddedIsThereForTheNextInstall(t *testing.T) {
 		t.Fatal("remove")
 	}
 	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/planner", tina, install); code != http.StatusUnprocessableEntity {
-		t.Fatalf("after the catalogue was removed: %d", code)
+		t.Fatalf("after the catalog was removed: %d", code)
 	}
 	if code, _ := h.do(t, "DELETE", clusterCatalogues+"/partner", alice, ""); code != http.StatusNotFound {
 		t.Fatal("removing what is not there")
@@ -818,7 +818,7 @@ func TestThePlatformTenantTakesNoCatalogues(t *testing.T) {
 	alice := h.token(t, "gentian", "alice")
 	before := h.tip(t)
 	if code, out := h.do(t, "PUT", clusterTenant("platform", "/catalogues/x"), alice, urlBody(src.URL+"/x")); code != http.StatusConflict {
-		t.Fatalf("a catalogue for the platform tenant: %d %v", code, out)
+		t.Fatalf("a catalog for the platform tenant: %d %v", code, out)
 	}
 	if code, out := h.do(t, "PUT", clusterTenant("platform", "/catalogue-delegation"), alice, ""); code != http.StatusConflict {
 		t.Fatalf("delegation for the platform tenant: %d %v", code, out)

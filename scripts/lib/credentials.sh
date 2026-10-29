@@ -28,7 +28,7 @@ GENTIAN_CREDENTIALS_LOADED=1
 
 GENTIAN_CATALOGUE_FILE="${GENTIAN_CATALOGUE_FILE:-${SCRIPT_DIR}/credentials.yaml}"
 
-# _cat_yq <filter> — read the catalogue, tolerant of either yq flavor.
+# _cat_yq <filter> — read the catalog, tolerant of either yq flavor.
 _cat_yq() {
     local out
     if out=$(yq eval "$1" "${GENTIAN_CATALOGUE_FILE}" 2>/dev/null) && [[ "${out}" != "null" ]]; then
@@ -48,7 +48,7 @@ _cat_yq() {
 # them, and restating that here would be one fact in two files — the drift that
 # put a Secret name in an issuer and a different one in an ExternalSecret.
 #
-# Only the ACTIVE provider is exposed to the prompt loop. The catalogue
+# Only the ACTIVE provider is exposed to the prompt loop. The catalog
 # describes the platform, so it carries all of them (see
 # scripts/gen/gen-credential-requirements.py); an installer that asked for all
 # of them would ask an operator on Route 53 for a Cloudflare token.
@@ -63,7 +63,7 @@ GENTIAN_PLATFORMS_FILE="${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms
 # that knowledge lives.
 #
 # It used to be one hard-coded hook for DNS. Then edgeIngress was added as a
-# second table, generated correctly into the on-cluster catalogue, and was
+# second table, generated correctly into the on-cluster catalog, and was
 # invisible to the installer — which reads credentials.yaml plus that one hook.
 # The operator was never prompted for the tunnel token, nothing was seeded, and
 # nothing failed: the generator passed, the tests passed, and the only symptom
@@ -92,7 +92,7 @@ _dns_provider() { printf '%s' "${DNS_PROVIDER:-cloudflare}"; }
 # _provider_requirement_names — the requirement each table contributes for THIS
 # cluster, one line each.
 #
-# Only the ACTIVE provider of each table. The catalogue describes the platform
+# Only the ACTIVE provider of each table. The catalog describes the platform
 # and carries every provider; an installer that offered all of them would ask
 # an operator on Route 53 for a Cloudflare token.
 _provider_requirement_names() {
@@ -188,7 +188,7 @@ catalogue_field_attr() {
 }
 
 # =============================================================================
-# Mapping the catalogue onto the environment
+# Mapping the catalog onto the environment
 #
 # The installer's existing variables are the interface the rest of the shell
 # still speaks. This table is the only place that mapping lives, and it shrinks
@@ -461,7 +461,7 @@ _edge_ingress_provider() {
 
 # _requirement_applies <req> — whether this cluster needs the credential at all.
 #
-# The catalogue describes the platform, so it can say a credential is optional
+# The catalog describes the platform, so it can say a credential is optional
 # but not whether this particular cluster uses the thing it unlocks. That answer
 # comes from the cluster's own configuration, and it belongs here rather than in
 # `optional:`, which would then mean two different things at once.
@@ -502,7 +502,7 @@ _requirement_applies() {
             ;;
         # A repository's credential is wanted exactly when that repository
         # authenticates. Which ones do is install.env's to say, repository by
-        # repository: it depends on where each one is hosted, so the catalogue
+        # repository: it depends on where each one is hosted, so the catalog
         # cannot mark it optional or required once for every cluster.
         deployments-repository|gentian-*-repository)
             [[ "$(_repo_credential_mode "$1")" != "none" ]]
@@ -645,7 +645,7 @@ _prompt_field() {
 
     var="$(_env_var_for "${req}" "${key}")"
     if [[ -z "${var}" ]]; then
-        # A field the catalogue declares and this mapping does not know. Skipping
+        # A field the catalog declares and this mapping does not know. Skipping
         # it silently is how a required credential goes uncollected: nothing
         # prompts, the noop validator reports OK, and the install fails much
         # later complaining that the variable is unset.
@@ -744,7 +744,7 @@ _prompt_field() {
 # collect_bootstrap_credentials — the whole of install-time credential entry.
 #
 # One pass over credentials.yaml, so what the installer asks for is decided by
-# the catalogue rather than by a prompt written per credential. Adding a
+# the catalog rather than by a prompt written per credential. Adding a
 # bootstrap credential is an entry in that file and nothing here.
 collect_bootstrap_credentials() {
     if [[ ! -f "${GENTIAN_CATALOGUE_FILE}" ]]; then
@@ -760,7 +760,7 @@ collect_bootstrap_credentials() {
     _load_credential_cache || return 1
 
     # Iterate over command substitution rather than `while read … done < <(…)`.
-    # That form redirects the loop body's stdin to the catalogue stream, so the
+    # That form redirects the loop body's stdin to the catalog stream, so the
     # `read` inside _prompt_field consumes the next requirement name instead of
     # the operator's answer — every prompt returns empty and the install fails
     # later complaining the variable is unset. Names and field keys never
@@ -798,7 +798,7 @@ collect_bootstrap_credentials() {
         fi
 
         # Successes are named, so a failure that is not leaves the operator
-        # matching an endpoint URL against the catalogue to find out which
+        # matching an endpoint URL against the catalog to find out which
         # credential to fix.
         error "  requirement: ${req} ($(catalogue_get "${req}" displayName 2>/dev/null))"
         error "  value from:  $(_requirement_source "${req}")"

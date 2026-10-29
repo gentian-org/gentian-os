@@ -22,7 +22,7 @@ import (
 //
 // This is the audit evidence the platform already had and never showed. Every
 // change to a tenant's declared state is a commit; the director authors it as
-// the person whose token authorised it and trailers it with the relation and
+// the person whose token authorized it and trailers it with the relation and
 // object that permitted the change, joined to the request id. So "who changed
 // this tenant's backup policy in March, and under what authority" is a git
 // question, answered without storing anything twice.
@@ -191,7 +191,7 @@ func parseChanges(out string) []Change {
 // The trailer reads "req=<id> user:<subject> <relation> <object> allowed". A
 // commit without one was not made through the platform, and that is reported
 // rather than guessed at: the alternative would be a screen that showed a
-// hand-pushed change as though something had authorised it.
+// hand-pushed change as though something had authorized it.
 func applyAuthzTrailer(change *Change, trailer string) {
 	trailer = strings.TrimSpace(trailer)
 	if trailer == "" {

@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
-// Catalogue label keys index ComponentProfile revisions by logical identity.
+// Catalog label keys index ComponentProfile revisions by logical identity.
 // The App Store controller ensures these labels are present on every profile.
 const (
 	LabelProfileName             = "gentianos.io/profile-name"
@@ -28,7 +28,7 @@ const (
 	LabelProfileTrustTier        = "gentianos.io/profile-trust-tier"
 )
 
-// Profile bundle annotations — generic catalogue semantics without CRD fields per app.
+// Profile bundle annotations — generic catalog semantics without CRD fields per app.
 // App-specific install parameters belong in extraValues or profile-scoped compositions.
 const (
 	AnnotationProfileDeploymentRole = "gentianos.io/deployment-role"
@@ -54,7 +54,7 @@ const (
 	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
 )
 
-// ProfileDeploymentRole describes how a catalogue entry is deployed relative to siblings.
+// ProfileDeploymentRole describes how a catalog entry is deployed relative to siblings.
 type ProfileDeploymentRole string
 
 const (
@@ -67,7 +67,7 @@ const (
 	ProfileDeploymentRoleAddon ProfileDeploymentRole = "addon"
 )
 
-// Default catalogue values applied when fields are omitted on legacy profiles.
+// Default catalog values applied when fields are omitted on legacy profiles.
 const (
 	DefaultCatalogueVersion = "1.0.0"
 )
@@ -75,10 +75,10 @@ const (
 // Edition identifies which edition of an app a profile packages, and with it
 // who stands behind the entry:
 //
-//	ce — community edition: open source, as published by the upstream organisation
+//	ce — community edition: open source, as published by the upstream organization
 //	me — maintained edition: the community edition's code, curated and
-//	     maintained by the catalogue's maintainer, who runs it itself
-//	ie — internal edition: somebody's own profile, in their own catalogue
+//	     maintained by the catalog's maintainer, who runs it itself
+//	ie — internal edition: somebody's own profile, in their own catalog
 //	pe — proprietary edition: proprietary, free of charge
 //	ee — enterprise edition: proprietary and paid for
 //
@@ -96,7 +96,7 @@ const (
 // entry comes from. ce, me and ie are entries a cluster can hold and install
 // on its own: ce and me because their code is public, ie because it is the
 // operator's own. pe and ee are somebody's proprietary product, offered
-// through the App Store, and a cluster browsing its own catalogue does not
+// through the App Store, and a cluster browsing its own catalog does not
 // list them (AD-14) -- there is nothing useful it could say about an entry
 // whose whole value is a relationship with a supplier.
 //
@@ -104,29 +104,29 @@ const (
 type Edition string
 
 const (
-	// EditionCE is the community edition as published by the upstream organisation.
+	// EditionCE is the community edition as published by the upstream organization.
 	EditionCE Edition = "ce"
 	// EditionME is the community edition's code, curated and maintained by
-	// the catalogue's maintainer, who runs it itself and so stands behind it.
+	// the catalog's maintainer, who runs it itself and so stands behind it.
 	EditionME Edition = "me"
 	// EditionIE is an internal edition: a profile its own operator wrote and
-	// publishes in their own catalogue source, for their own tenants. Nobody
+	// publishes in their own catalog source, for their own tenants. Nobody
 	// sells it and nobody else lists it, so nothing outside the cluster needs
 	// to be reachable for it to be installed -- which is exactly why the
-	// cluster's own catalogue view exists.
+	// cluster's own catalog view exists.
 	EditionIE Edition = "ie"
 	// EditionPE is the proprietary edition: a supplier's proprietary product,
 	// free of charge. spec.author names the supplier.
 	EditionPE Edition = "pe"
 	// EditionEE is the enterprise edition: proprietary and paid for, and
 	// maintained and supported by its supplier. spec.author names the
-	// supplier, which may be the upstream organisation or a third party
+	// supplier, which may be the upstream organization or a third party
 	// packaging it. Nothing in the platform gates it; its supply is
 	// controlled at the repository it is pulled from.
 	EditionEE Edition = "ee"
 )
 
-// LocalEditions are the editions a cluster lists from its own catalogue
+// LocalEditions are the editions a cluster lists from its own catalog
 // sources. See Edition.
 var LocalEditions = []Edition{EditionCE, EditionME, EditionIE}
 
@@ -135,7 +135,7 @@ func (e Edition) Local() bool {
 	return e == EditionCE || e == EditionME || e == EditionIE
 }
 
-// TrustTier describes platform certification / review level for a catalogue entry.
+// TrustTier describes platform certification / review level for a catalog entry.
 //
 // +kubebuilder:validation:Enum=platform;certified;experimental
 type TrustTier string
@@ -146,7 +146,7 @@ const (
 	TrustTierExperimental TrustTier = "experimental"
 )
 
-// ProfileIdentity uniquely identifies an immutable ComponentProfile catalogue revision
+// ProfileIdentity uniquely identifies an immutable ComponentProfile catalog revision
 // within the tuple (family, catalogueVersion, edition).
 type ProfileIdentity struct {
 	// Family is the stable logical application id (e.g. "demo-app").
@@ -156,7 +156,7 @@ type ProfileIdentity struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$`
 	Family string `json:"family"`
 
-	// CatalogueVersion is the semver of this catalogue entry.
+	// CatalogueVersion is the semver of this catalog entry.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
 	CatalogueVersion string `json:"catalogueVersion"`
@@ -174,7 +174,7 @@ type ProfileReference struct {
 	// +optional
 	Name string `json:"name,omitempty"`
 
-	// Identity selects a profile by catalogue tuple when Name is empty.
+	// Identity selects a profile by catalog tuple when Name is empty.
 	// +optional
 	Identity *ProfileIdentity `json:"identity,omitempty"`
 }

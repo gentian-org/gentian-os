@@ -259,7 +259,7 @@ func perimeterSafePaths(paths []string) (safe []string, all bool) {
 	return safe, all
 }
 
-// perimeterPublishedPattern is the expression a normalised path matches when
+// perimeterPublishedPattern is the expression a normalized path matches when
 // it is inside a declared prefix, by whole segments: /s publishes /s and
 // /s/x and not /sx, as the Gateway's own prefix match does.
 func perimeterPublishedPattern(prefix string) string {
@@ -291,11 +291,11 @@ func perimeterPublishedPattern(prefix string) string {
 //   - its method is not TRACE, TRACK or CONNECT (405);
 //   - its path, as the caller wrote it, has one reading: no empty segment,
 //     no dot segment plain or encoded, no encoded slash or backslash, no
-//     path parameter (400). The proxy decides on the normalised path and
+//     path parameter (400). The proxy decides on the normalized path and
 //     the application is sent the path as written, so a path the two could
 //     read differently is how a declared prefix is left and a denied path
 //     reached;
-//   - its normalised path is inside a declared prefix (404);
+//   - its normalized path is inside a declared prefix (404);
 //   - and is not a denied path, compared without regard to case (404);
 //   - its caller's address is within its rate and its concurrent requests
 //     (429);

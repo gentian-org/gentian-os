@@ -140,7 +140,7 @@ def build(directory: Path) -> tuple[list[dict], list[str]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("directory", type=Path, help="the catalogue source directory")
+    ap.add_argument("directory", type=Path, help="the catalog source directory")
     ap.add_argument("--catalogue", default="", help="the slug, recorded as a comment only")
     ap.add_argument("--check", action="store_true",
                     help="fail if index.yaml is missing or out of date, and write nothing")

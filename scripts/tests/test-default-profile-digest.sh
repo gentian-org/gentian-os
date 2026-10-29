@@ -3,18 +3,18 @@
 # scripts/tests/test-default-profile-digest.sh
 # =============================================================================
 # Step 0 places one profile before there is a director to fetch it: the
-# Operations Console, from the store's catalogue (or what
+# Operations Console, from the store's catalog (or what
 # GENTIAN_DEFAULT_PROFILES lists). It used to write whatever the address
 # served. It now writes a file only when it hashes to a digest somebody
-# stated -- the catalogue's index, or a pin the person installing gave -- and
+# stated -- the catalog's index, or a pin the person installing gave -- and
 # writes it the way the director writes an install (AD-14).
 #
-# Held here against a stand-in catalogue (curl is a stand-in that serves a
+# Held here against a stand-in catalog (curl is a stand-in that serves a
 # directory; no network):
 #
 #   - the index's digest matches: placed, with its bundle and origin recorded;
 #   - the bytes do not hash to it: the step stops, and nothing was written;
-#   - the catalogue cannot be reached: a warning, nothing written, and the
+#   - the catalog cannot be reached: a warning, nothing written, and the
 #     install goes on;
 #   - a pin (@sha256:...) is what is required, whatever the index says;
 #   - an index that does not list the entry: stops, unless pinned;
@@ -23,7 +23,7 @@
 #   - a local file or an http address is refused, with what to do instead;
 #   - a bundle with companions is written whole, and one that holds a kind no
 #     bundle may hold is refused;
-#   - --dry-run says what an install would do and asks no catalogue;
+#   - --dry-run says what an install would do and asks no catalog;
 #   - the digest and where it came from are in the signed commit.
 #
 # That what is written is byte for byte what the director writes is held by
@@ -45,8 +45,8 @@ GPGHOME="${SB}/g"
 trap 'gpgconf --homedir "${GPGHOME}" --kill all >/dev/null 2>&1; rm -rf "${SB}"' EXIT
 BIN="${SB}/bin"; mkdir -p "${BIN}" "${SB}/home"
 
-# curl, as far as the catalogue fetch uses it: https://cat.example.test/<path>
-# is ${CATALOGUE}/<path>. A file that is not there is a 404; a catalogue with
+# curl, as far as the catalog fetch uses it: https://cat.example.test/<path>
+# is ${CATALOGUE}/<path>. A file that is not there is a 404; a catalog with
 # a file named .down does not answer at all; one named .broken answers 503.
 # Every address asked is logged.
 cat > "${BIN}/curl" <<'STUB'
@@ -89,7 +89,7 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
 # profile, under builds/, named by the profile and twelve hex of its digest.
 build_of() { printf 'builds/%s-%s.yaml' "$1" "$(sha "$2" | cut -c1-12)"; }
 
-# new_world -- an empty deployments checkout and an empty catalogue.
+# new_world -- an empty deployments checkout and an empty catalog.
 new_world() {
     WORLD="$(mktemp -d "${SB}/w.XXXXXX")"
     CATALOGUE="${WORLD}/catalogue"; CHECKOUT="${WORLD}/deployments"; CURL_LOG="${WORLD}/curl.log"
@@ -135,7 +135,7 @@ else
 fi
 if carried "${DIR}/operations-console-ee.bundle.yaml" | cmp -s - "${CATALOGUE}/profiles/operations-console-ee.yaml" \
     && grep -qx '    gentianos.io/catalogue-origin: cluster/cat-example-test' "${DIR}/operations-console-ee.bundle.yaml"; then
-    ok "beside it the bundle: the same bytes, and the catalogue it came from as its origin"
+    ok "beside it the bundle: the same bytes, and the catalog it came from as its origin"
 else
     bad "beside it the bundle: the same bytes, and the catalogue it came from as its origin" "$(cat "${DIR}/operations-console-ee.bundle.yaml" 2>&1)"
 fi
@@ -171,13 +171,13 @@ else
     bad "run again: nothing changes, and the profile is not fetched a second time" "${out}"
 fi
 
-# --- the catalogue declared on the claim --------------------------------------
+# --- the catalog declared on the claim --------------------------------------
 new_world; publish operations-console-ee 1.0.0
 printf 'spec:\n  catalogue:\n    sources:\n      - name: gentian\n        url: https://elsewhere.example.test\n      - name: second\n        url: %s/\n' \
     "${BASE}" > "${CHECKOUT}/clusters/${CLUSTER}/kernel/claims/cluster.yaml"
 out="$(scaffold)"
 if grep -qx '    gentianos.io/catalogue-origin: cluster/second' "${DIR}/operations-console-ee.bundle.yaml" 2>/dev/null; then
-    ok "a catalogue the Cluster claim declares at that address gives the origin its name"
+    ok "a catalog the Cluster claim declares at that address gives the origin its name"
 else
     bad "a catalogue the Cluster claim declares at that address gives the origin its name" "${out}"
 fi
@@ -214,7 +214,7 @@ fi
 new_world; publish operations-console-ee 1.0.0; touch "${CATALOGUE}/.down"
 out="$(scaffold)"
 if [[ "${out}" == *"rc=0"* && "${out}" == *"cannot be reached"* && "${out}" == *"The install goes on without it"* ]] && nothing_written; then
-    ok "the catalogue does not answer: a warning, nothing written, and the install goes on"
+    ok "the catalog does not answer: a warning, nothing written, and the install goes on"
 else
     bad "the catalogue does not answer: a warning, nothing written, and the install goes on" "${out}"
 fi
@@ -246,7 +246,7 @@ fi
 : > "${CURL_LOG}"
 out="$(scaffold GENTIAN_DEFAULT_PROFILES="${URL}@sha256:abc")"
 if [[ "${out}" == *"rc=1"* && "${out}" == *"is not sha256:<64 hex digits>"* ]] && nothing_written && [[ ! -s "${CURL_LOG}" ]]; then
-    ok "a pin that is not a sha256 digest: stops before anything is asked of the catalogue"
+    ok "a pin that is not a sha256 digest: stops before anything is asked of the catalog"
 else
     bad "a pin that is not a sha256 digest: stops before anything is asked of the catalogue" "${out}"
 fi
@@ -261,40 +261,40 @@ else
 fi
 out="$(scaffold GENTIAN_DEFAULT_PROFILES="${URL}@sha256:$(sha "${CATALOGUE}/profiles/operations-console-ee.yaml")")"
 if [[ "${out}" == *"rc=0"* && -f "${DIR}/operations-console-ee.bundle.yaml" ]]; then
-    ok "the same catalogue with a pin: placed at the pin"
+    ok "the same catalog with a pin: placed at the pin"
 else
     bad "the same catalogue with a pin: placed at the pin" "${out}"
 fi
 new_world; profile operations-console-ee 1.0.0 > "${CATALOGUE}/profiles/operations-console-ee.yaml"   # no index.yaml at all
 out="$(scaffold)"
 if [[ "${out}" == *"rc=1"* && "${out}" == *"answered 404"* ]] && nothing_written; then
-    ok "a catalogue with no index: stops"
+    ok "a catalog with no index: stops"
 else
     bad "a catalogue with no index: stops" "${out}"
 fi
 new_world; publish operations-console-ee 1.0.0; rm "${CATALOGUE}/profiles/operations-console-ee.yaml"
 out="$(scaffold)"
 if [[ "${out}" == *"rc=1"* && "${out}" == *"does not serve the file"* ]] && nothing_written; then
-    ok "the index lists it and the catalogue does not serve it: stops"
+    ok "the index lists it and the catalog does not serve it: stops"
 else
     bad "the index lists it and the catalogue does not serve it: stops" "${out}"
 fi
 
 # --- an existing definition -----------------------------------------------------
-# An extra service this installer placed from the store's catalogue follows
+# An extra service this installer placed from the store's catalog follows
 # the catalogue: the build its index lists now replaces the one recorded.
 new_world; publish operations-console-ee 1.0.0
 scaffold >/dev/null
 OLD="sha256:$(sha "${DIR}/operations-console-ee.yaml")"
 OLD_BUILD="$(build_of operations-console-ee "${DIR}/operations-console-ee.yaml")"
-publish operations-console-ee 2.0.0   # the catalogue moves on
+publish operations-console-ee 2.0.0   # the catalog moves on
 NEW="sha256:$(sha "${CATALOGUE}/profiles/operations-console-ee.yaml")"
 out="$(scaffold)"
 if [[ "${out}" == *"rc=0"* ]] && cmp -s "${CATALOGUE}/profiles/operations-console-ee.yaml" "${DIR}/operations-console-ee.yaml" \
     && carried "${DIR}/operations-console-ee.bundle.yaml" | cmp -s - "${CATALOGUE}/profiles/operations-console-ee.yaml" \
     && grep -qxF -- "- $(build_of operations-console-ee "${DIR}/operations-console-ee.yaml")" "${DIR}/kustomization.yaml" \
     && grep -qxF -- "- ${OLD_BUILD}" "${DIR}/kustomization.yaml"; then
-    ok "an extra service placed from the store's catalogue follows it: the listed build replaces the recorded one, the old build stays"
+    ok "an extra service placed from the store's catalog follows it: the listed build replaces the recorded one, the old build stays"
 else
     bad "an extra service placed from the store's catalogue follows it: the listed build replaces the recorded one, the old build stays" "${out}"
 fi
@@ -312,7 +312,7 @@ scaffold >/dev/null
 sed 's|gentianos.io/catalogue-origin: .*|gentianos.io/catalogue-origin: cluster/in-house|' "${DIR}/operations-console-ee.bundle.yaml" > "${WORLD}/bundle.tmp"
 cat "${WORLD}/bundle.tmp" > "${DIR}/operations-console-ee.bundle.yaml"
 OLD="sha256:$(sha "${DIR}/operations-console-ee.yaml")"
-publish operations-console-ee 2.0.0   # the catalogue moves on
+publish operations-console-ee 2.0.0   # the catalog moves on
 NEW="sha256:$(sha "${CATALOGUE}/profiles/operations-console-ee.yaml")"
 before="$(tree)"; : > "${CURL_LOG}"
 out="$(scaffold)"
@@ -330,7 +330,7 @@ fi
 touch "${CATALOGUE}/.down"; : > "${CURL_LOG}"
 out="$(scaffold)"
 if [[ "${out}" == *"rc=0"* && "${out}" == *"stays as the cluster's definition has it"* && "$(tree)" == "${before}" ]]; then
-    ok "and with the catalogue unreachable it stays as it is"
+    ok "and with the catalog unreachable it stays as it is"
 else
     bad "and with the catalogue unreachable it stays as it is" "${out}"
 fi
@@ -359,7 +359,7 @@ if [[ "${out}" == *"rc=0"* && "${out}" == *"It replaces the copy an earlier inst
 else
     bad "an earlier installer's copy that is another build, with no record: replaced by the verified build, as it always was, and said" "${out}"
 fi
-# The same copy, and a catalogue whose file does not hash to its index.
+# The same copy, and a catalog whose file does not hash to its index.
 new_world; publish operations-console-ee 2.0.0
 mkdir -p "${DIR}"
 profile operations-console-ee 1.0.0 > "${DIR}/operations-console-ee.yaml"
@@ -401,14 +401,14 @@ fi
 publish operations-console-ee 2.0.0
 out="$(strict '_scaffold_default_profiles '"${CLUSTER}"'; echo "reached the end"')"
 if [[ "${out}" == *"follows the store's catalogue"* && "${out}" == *"reached the end"* ]]; then
-    ok "under set -euo pipefail: an extra service moves to the build the catalogue lists and the run goes on"
+    ok "under set -euo pipefail: an extra service moves to the build the catalog lists and the run goes on"
 else
     bad "under set -euo pipefail: an extra service moves to the build the catalogue lists and the run goes on" "${out}"
 fi
 touch "${CATALOGUE}/.down"
 out="$(strict '_scaffold_default_profiles '"${CLUSTER}"'; echo "reached the end"')"
 if [[ "${out}" == *"cannot be reached"* && "${out}" == *"reached the end"* ]]; then
-    ok "under set -euo pipefail: an unreachable catalogue is a warning and the run goes on"
+    ok "under set -euo pipefail: an unreachable catalog is a warning and the run goes on"
 else
     bad "under set -euo pipefail: an unreachable catalogue is a warning and the run goes on" "${out}"
 fi
@@ -419,7 +419,7 @@ else
     bad "under set -euo pipefail: the preview goes on" "${out}"
 fi
 
-# --- entries that are not a catalogue address -----------------------------------
+# --- entries that are not a catalog address -----------------------------------
 new_world; publish operations-console-ee 1.0.0
 profile operations-console-ee 1.0.0 > "${WORLD}/local.yaml"
 out="$(scaffold GENTIAN_DEFAULT_PROFILES="${WORLD}/local.yaml")"
@@ -516,7 +516,7 @@ before="$(tree)"
 out="$(run 'preview_default_profiles '"${CLUSTER}"'; echo "rc=$?"' GENTIAN_DRY_RUN=1)"
 if [[ "${out}" == *"rc=0"* && "${out}" == *"Would read ${BASE}/index.yaml and place operations-console-ee only if"*"hashes to the digest it lists"* \
       && "$(tree)" == "${before}" && ! -s "${CURL_LOG}" ]]; then
-    ok "--dry-run: says what an install would do, asks no catalogue and writes nothing"
+    ok "--dry-run: says what an install would do, asks no catalog and writes nothing"
 else
     bad "--dry-run: says what an install would do, asks no catalogue and writes nothing" "${out}"
 fi
@@ -575,7 +575,7 @@ CLAIM_OF() { printf '%s' "${CHECKOUT}/clusters/${CLUSTER}/kernel/claims/cluster.
 new_world; publish something-else 1.0.0
 out="$(scaffold)"
 if [[ "${out}" == *"rc=0"* && "${out}" == *"lists no app-store-pe; that extra service is not placed"* ]] && nothing_written; then
-    ok "the default list, at a catalogue that lists none of them: warned, nothing placed, the install goes on"
+    ok "the default list, at a catalog that lists none of them: warned, nothing placed, the install goes on"
 else
     bad "the default list, at a catalogue that lists none of them: warned, nothing placed, the install goes on" "${out}"
 fi
@@ -583,7 +583,7 @@ fi
 new_world; publish operations-console-ee 1.0.0
 out="$(scaffold GENTIAN_NO_EXTRA_SERVICES=1)"
 if [[ "${out}" == *"rc=0"* ]] && nothing_written && [[ ! -s "${CURL_LOG}" ]]; then
-    ok "--no-extra-services: nothing placed, the catalogue not asked"
+    ok "--no-extra-services: nothing placed, the catalog not asked"
 else
     bad "--no-extra-services: nothing placed, the catalogue not asked" "${out}"$'\n'"$(cat "${CURL_LOG}")"
 fi
@@ -614,7 +614,7 @@ else
 fi
 
 # A name the extra services no longer have: the profile an earlier run placed
-# under it from the store's catalogue leaves; one from anywhere else stays.
+# under it from the store's catalog leaves; one from anywhere else stays.
 new_world; publish operations-console-ee 1.0.0
 profile operations-console 0.9.0 > "${CATALOGUE}/profiles/operations-console.yaml"
 run 'mkdir -p "'"${DIR}"'"; gentian_materialise_profile "'"${DIR}"'" operations-console "'"${CATALOGUE}/profiles/operations-console.yaml"'" cluster/cat-example-test' >/dev/null
@@ -623,7 +623,7 @@ if [[ "${out}" == *"rc=0"* && "${out}" == *"Removed operations-console from the 
     && [[ ! -e "${DIR}/operations-console.yaml" && ! -e "${DIR}/operations-console.bundle.yaml" && -f "${DIR}/operations-console-ee.yaml" ]] \
     && ! grep -qx -- '- operations-console.yaml' "${DIR}/kustomization.yaml" \
     && ! grep -qx -- '- path: operations-console.bundle.yaml' "${DIR}/kustomization.yaml"; then
-    ok "the profile placed under the extra service's old name leaves the catalogue, and the new one is placed"
+    ok "the profile placed under the extra service's old name leaves the catalog, and the new one is placed"
 else
     bad "the profile placed under the extra service's old name leaves the catalogue, and the new one is placed" "${out}"$'\n'"$(cat "${DIR}/kustomization.yaml")"
 fi
@@ -632,7 +632,7 @@ profile operations-console 0.9.0 > "${CATALOGUE}/profiles/operations-console.yam
 run 'mkdir -p "'"${DIR}"'"; gentian_materialise_profile "'"${DIR}"'" operations-console "'"${CATALOGUE}/profiles/operations-console.yaml"'" cluster/in-house' >/dev/null
 out="$(scaffold)"
 if [[ "${out}" == *"rc=0"* && "${out}" != *"Removed operations-console"* && -f "${DIR}/operations-console.yaml" ]]; then
-    ok "one of that name from another catalogue stays"
+    ok "one of that name from another catalog stays"
 else
     bad "one of that name from another catalogue stays" "${out}"
 fi
@@ -642,7 +642,7 @@ fi
 new_world; publish operations-console-ee 1.0.0
 out="$(scaffold GENTIAN_NO_USAGE_STATISTICS=1)"
 if [[ "${out}" == *"rc=0"* ]] && nothing_written && [[ ! -s "${CURL_LOG}" ]]; then
-    ok "--no-usage-statistics: no extra service placed, the catalogue not asked"
+    ok "--no-usage-statistics: no extra service placed, the catalog not asked"
 else
     bad "--no-usage-statistics: no extra service placed, the catalogue not asked" "${out}"$'\n'"$(cat "${CURL_LOG}")"
 fi
@@ -678,7 +678,7 @@ else
 fi
 section="$(run '_claim_catalogue_section' GENTIAN_NO_EXTRA_SERVICES=1 GENTIAN_NO_USAGE_STATISTICS=0)"
 if [[ "${section}" == *$'\n    extraServices: false\n    sources:'* ]]; then
-    ok "a new claim's catalogue section records it"
+    ok "a new claim's catalog section records it"
 else
     bad "a new claim's catalogue section records it" "${section}"
 fi

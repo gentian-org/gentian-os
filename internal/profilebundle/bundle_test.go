@@ -156,13 +156,13 @@ func TestABundleBringsItsOwnCompanionsFromAClusterCatalogue(t *testing.T) {
 }
 
 // Every companion is an object of the whole cluster or of a namespace of the
-// platform. A tenant's own catalogue publishes profiles and nothing else, and
+// platform. A tenant's own catalog publishes profiles and nothing else, and
 // neither does a profile nobody recorded an origin for.
 func TestOnlyAClusterCatalogueBringsCompanions(t *testing.T) {
 	for _, companion := range []string{shopComposition, shopPacks, shopPage, shopRecord} {
 		for _, origin := range []string{TenantOrigin("acme", "own"), "", "somewhere/else/entirely/x"} {
 			_, err := Check([]byte(stream(shop, companion)), "shop", origin)
-			if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "only a catalogue of the whole cluster") {
+			if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "only a catalog of the whole cluster") {
 				t.Fatalf("from %q: %v", origin, err)
 			}
 		}

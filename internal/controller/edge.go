@@ -26,7 +26,7 @@ import "context"
 // meant a Route 53 cluster had no DNS writer at all.
 //
 // What is genuinely missing on a tunnel cluster is not a writer but a TARGET.
-// external-dns publishes what a Gateway resolves to, and a tunnelled Gateway
+// external-dns publishes what a Gateway resolves to, and a tunneled Gateway
 // has no address — traffic arrives through cloudflared, not through a
 // LoadBalancer. So the ingress declares what its hostnames must point at, the
 // operator stamps that on the kernel Gateway, and external-dns does the rest
@@ -56,7 +56,7 @@ type EdgeIngress interface {
 	//
 	// Returned rather than applied, because which annotations mean what is the
 	// ingress's knowledge and the operator has no business holding a table of
-	// them. It is also where provider-specific DNS behaviour belongs when an
+	// them. It is also where provider-specific DNS behavior belongs when an
 	// ingress requires it: a Cloudflare tunnel needs its records proxied,
 	// since cfargotunnel.com resolves to nothing a client could connect to,
 	// and that is a fact about the tunnel rather than about DNS.

@@ -120,7 +120,7 @@ func TestMailSPFRecordNamesTheSendingHostNotTheMX(t *testing.T) {
 	// "mx" would name the inbound load balancer, which never sends, so the
 	// record would fail by construction while looking plausible.
 	if strings.Contains(got, "mx") {
-		t.Fatalf("mailSPFRecord() = %q, must not authorise the MX as a sender", got)
+		t.Fatalf("mailSPFRecord() = %q, must not authorize the MX as a sender", got)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestMailPasswdFileKeysCoverEveryApp(t *testing.T) {
 }
 
 // Apps authenticate only after STARTTLS, and verify the certificate against the
-// name they dialled. The certificate is the public wildcard for the kernel
+// name they dialed. The certificate is the public wildcard for the kernel
 // domain, so the Service name — which no public CA can sign — fails the
 // handshake before AUTH is offered.
 func TestMailSharedPostfixHostIsCoveredByThePublicCertificate(t *testing.T) {

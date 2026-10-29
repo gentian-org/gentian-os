@@ -16,9 +16,9 @@ import (
 )
 
 // AliasHost is the second address of one published surface, directly under
-// the cluster's own domain, or "" where it has none that is honoured.
+// the cluster's own domain, or "" where it has none that is honored.
 //
-// The director refuses an alias that could not be honoured before it is
+// The director refuses an alias that could not be honored before it is
 // written, so this is the same rule asked again where the address is
 // published: what is in git may have been written by hand, or have become
 // wrong since -- a tenant created under the alias's name by another route.

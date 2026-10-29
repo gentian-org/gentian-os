@@ -161,7 +161,7 @@ func TestPVCBelongsToApp(t *testing.T) {
 }
 
 // A release is named after its app, with nothing generated in the name: that
-// is what lets a volume claim kept by an uninstall be recognised, and taken
+// is what lets a volume claim kept by an uninstall be recognized, and taken
 // over, by the next install. Which releases are an app's is exact when its
 // extensions are known, and only then.
 func TestAnAppsReleasesAreNamedAfterIt(t *testing.T) {
@@ -204,7 +204,7 @@ func TestAnAppsReleasesAreNamedAfterIt(t *testing.T) {
 
 // One rule says where a tenant's workloads are, and it is the Tenant's own.
 // Export, restore, purge and the retained-data read used to spell
-// "tenant-<name>" for themselves while provisioning honoured the override.
+// "tenant-<name>" for themselves while provisioning honored the override.
 func TestTheTenantNamespaceIsTheTenantsOwnRule(t *testing.T) {
 	plain := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	if got := TenantNamespace(plain); got != "tenant-demo" || got != plain.NamespaceName() {

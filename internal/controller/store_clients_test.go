@@ -299,7 +299,7 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 	}
 	// And a tenant namespace carries the label the rules admit.
 	if got := layout.TenantLabels("acme", false); got[layout.LabelTier] != "tenant" {
-		t.Errorf("a tenant namespace is labelled %v", got)
+		t.Errorf("a tenant namespace is labeled %v", got)
 	}
 }
 

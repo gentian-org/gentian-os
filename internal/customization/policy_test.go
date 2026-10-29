@@ -44,7 +44,7 @@ func TestSupportsRungCompanionAlwaysAvailable(t *testing.T) {
 }
 
 func TestSupportsRungDefaultsWhenUndeclared(t *testing.T) {
-	// An uncharacterised app may only be configured or repackaged.
+	// An uncharacterized app may only be configured or repackaged.
 	if !SupportsRung(nil, gentianov1alpha1.RungConfigure) {
 		t.Fatal("L0 must be available by default")
 	}
@@ -52,10 +52,10 @@ func TestSupportsRungDefaultsWhenUndeclared(t *testing.T) {
 		t.Fatal("L4 must be available by default")
 	}
 	if SupportsRung(nil, gentianov1alpha1.RungExtension) {
-		t.Fatal("L3 must not be inferred for an uncharacterised app")
+		t.Fatal("L3 must not be inferred for an uncharacterized app")
 	}
 	if SupportsRung(nil, gentianov1alpha1.RungPatch) {
-		t.Fatal("L5 must not be inferred for an uncharacterised app")
+		t.Fatal("L5 must not be inferred for an uncharacterized app")
 	}
 }
 

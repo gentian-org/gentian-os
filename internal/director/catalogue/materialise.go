@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package catalogue materialises a profile on reference (AD-3).
+// Package catalogue materializes a profile on reference (AD-3).
 //
 // The cluster holds no catalogue. Thirty-odd profiles do not sit in it
 // waiting for somebody to want one; a profile arrives when a tenant installs
@@ -27,7 +27,7 @@ SPDX-License-Identifier: MPL-2.0
 // install and cannot change what gets installed.
 //
 // The digest is not a license and is not signed. Whether a tenant may have an
-// app is not decided here at all: it is decided where the app's artefacts are
+// app is not decided here at all: it is decided where the app's artifacts are
 // pulled, by the credential the tenant holds for their repository.
 package catalogue
 
@@ -129,7 +129,7 @@ func (f *Fetcher) served(ctx context.Context, base, file string, limit int) ([]b
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		return nil, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
-			"declare the address the catalogue is served from", ref.Host)
+			"declare the address the catalog is served from", ref.Host)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
@@ -170,7 +170,7 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-// Profile is a materialised catalogue entry.
+// Profile is a materialized catalogue entry.
 type Profile struct {
 	// Name is the ComponentProfile's own metadata.name, read from the bundle
 	// rather than taken from the coordinate — and then checked against it.

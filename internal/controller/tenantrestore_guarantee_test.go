@@ -333,6 +333,6 @@ func TestTheCatalogueNamesThePlatformsAppClients(t *testing.T) {
 	}
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"gentian-xwiki", "urn:acme:sp"}) {
-		t.Errorf("the catalogue names %v", got)
+		t.Errorf("the catalog names %v", got)
 	}
 }

@@ -254,7 +254,7 @@ func TestACatalogueIsReadWithItsOwnersRepositoryOnly(t *testing.T) {
 	}
 	f, src := ociCatalogue(t, reg, registries, registryHost+"/acme/catalogue:1")
 	if _, err := f.Index(context.Background(), src); !errors.Is(err, catalogue.ErrRegistryRefused) {
-		t.Fatalf("demo's catalogue was read with a repository that is not demo's: %v", err)
+		t.Fatalf("demo's catalog was read with a repository that is not demo's: %v", err)
 	}
 	if n := len(reg.Requests()); n != 0 {
 		t.Fatalf("%d requests were made", n)

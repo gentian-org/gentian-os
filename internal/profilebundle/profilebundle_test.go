@@ -22,7 +22,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// wiki is a bundle as a catalogue source publishes one. It leaves out what
+// wiki is a bundle as a catalog source publishes one. It leaves out what
 // the schema defaults -- the database's engine and databasePerTenant, the
 // tile's object -- which is what a published profile does.
 const wiki = `# A comment, which is part of what was hashed and of nothing else.
@@ -111,7 +111,7 @@ func TestTheProfileTheBundleDescribesIsVerified(t *testing.T) {
 	if r := Verify(held(t, wiki), Digest([]byte(wiki))); r != nil {
 		t.Fatalf("%s: %s", r.Reason, r.Message)
 	}
-	// The digest is the catalogue's: sha256 over the published bytes.
+	// The digest is the catalog's: sha256 over the published bytes.
 	if d := Digest([]byte("abc")); d != "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Fatalf("Digest = %s", d)
 	}
@@ -176,7 +176,7 @@ func TestWhatSaysTheSameIsNotADifference(t *testing.T) {
 	}
 }
 
-// A bundle is read the way the cluster received it. The catalogue directory
+// A bundle is read the way the cluster received it. The catalog directory
 // is a kustomization, and kustomize hands a bare yes, on or y to the API
 // server as a string, an old-style octal as a number and a date as a
 // timestamp string; these are what `kustomize build` printed for this

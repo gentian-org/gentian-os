@@ -13,27 +13,27 @@ in `gentian-apps`. The field reference is the type
 
 ## 1. Model
 
-**`ComponentProfile`** is the catalogue unit: one profile, one name, one file
-in a catalogue.
+**`ComponentProfile`** is the catalog unit: one profile, one name, one file
+in a catalog.
 
 | Where | Field | Purpose |
 |---|---|---|
 | profile | `metadata.name` | The profile's name; the same app keeps it across builds |
-| profile | `spec.version` | Version of the catalogue entry, not of the upstream project |
+| profile | `spec.version` | Version of the catalog entry, not of the upstream project |
 | profile | `spec.trustTier` | Review level (`platform`, `certified`, `experimental`); required |
 | profile | `spec.package.chart.version` | The Helm chart pin, distinct from `spec.version` |
-| catalogue index | `edition` | `ce`, `pe`, `me` or `ee`; absent means `ce` |
-| catalogue index | `digest` | sha256 of the profile's bundle as served; what an install pins |
+| catalog index | `edition` | `ce`, `pe`, `me` or `ee`; absent means `ce` |
+| catalog index | `digest` | sha256 of the profile's bundle as served; what an install pins |
 
 A profile has no `family`, `catalogueVersion`, `edition` or `license` field.
 Descriptions, pictures, prices and license terms are a store's listing, outside
 the cluster ([store-contract.md](store-contract.md) §5).
 
 **Editions.** `ce` is the upstream community edition; `me` the community
-edition's code, curated and maintained by the catalogue's maintainer; `ie` an
+edition's code, curated and maintained by the catalog's maintainer; `ie` an
 internal edition, published by its own operator for their own tenants; `pe` a
 proprietary one, free of charge; `ee` a proprietary, paid one. The cluster
-gates none of them. It lists the `ce`, `me` and `ie` entries of its catalogues
+gates none of them. It lists the `ce`, `me` and `ie` entries of its catalogs
 to the command line; `pe` and `ee` entries are a store's to show. Whether something is paid for is decided where
 it is handed over: a private chart or image arrives only where the tenant holds
 a credential for its repository ([custom-catalogues.md §8](../custom-catalogues.md)).
@@ -61,23 +61,23 @@ reference is refused.
 ## 3. Defaults
 
 `spec.classes`, `spec.launch`, `spec.trustTier`, `spec.version` and
-`spec.package` are required and have no default. In a catalogue's index an
+`spec.package` are required and have no default. In a catalog's index an
 entry without `edition` is `ce`.
 
 ---
 
 ## 4. Repositories
 
-A profile reaches a cluster from a catalogue, at the digest an install names,
+A profile reaches a cluster from a catalog, at the digest an install names,
 and in no other way ([custom-catalogues.md §1](../custom-catalogues.md)).
-The default catalogue is built from `gentian-apps/profiles/`; anybody can
+The default catalog is built from `gentian-apps/profiles/`; anybody can
 publish another.
 
 ---
 
-## 5. Catalogue index
+## 5. Catalog index
 
-There is no catalogue object in the cluster. A catalogue's `index.yaml` lists
+There is no catalog object in the cluster. A catalog's `index.yaml` lists
 its entries (name, version, edition, digest, trust tier); the director fetches
 it when asked and answers `kubectl gentian apps list --available`
 ([custom-catalogues.md §2](../custom-catalogues.md)).

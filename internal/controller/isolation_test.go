@@ -342,7 +342,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 				}
 				// Completed cleanup Jobs may still exist briefly when purge ran before
 				// envtest status propagation; remove them so the assertion matches
-				// production TTL expiry behaviour.
+				// production TTL expiry behavior.
 				if job.Status.Succeeded > 0 && job.DeletionTimestamp == nil {
 					prop := metav1.DeletePropagationBackground
 					_ = testClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})

@@ -55,7 +55,7 @@ func TestThePerimeterApproverApprovesEgress(t *testing.T) {
 	if got["approver"] != "tom" {
 		t.Fatalf("approver = %v, want the caller", got["approver"])
 	}
-	// And the commit records the relation that actually authorised it, not
+	// And the commit records the relation that actually authorized it, not
 	// the can_view the route carries.
 	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
 	if !strings.Contains(trailer, "can_approve_privilege tenant:demo") {

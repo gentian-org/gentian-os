@@ -92,8 +92,8 @@ func start(t *testing.T) *harness {
 	return startWith(t, nil)
 }
 
-// startWithCatalogue is the harness with catalogues of the whole cluster, for
-// the installs that materialise a profile on reference (AD-3). They are
+// startWithCatalogue is the harness with catalogs of the whole cluster, for
+// the installs that materialize a profile on reference (AD-3). They are
 // written on the Cluster claim, which is where the director reads them from
 // when it needs them. The fetcher is given the test server's own client, so
 // it trusts that certificate and no other -- and connects to the test
@@ -134,7 +134,7 @@ func withFetcher(src *httptest.Server) func(*api.Config) {
 	}
 }
 
-// claimWith is the fixture Cluster claim naming catalogues of the cluster.
+// claimWith is the fixture Cluster claim naming catalogs of the cluster.
 func claimWith(sources ...gitops.CatalogueSource) string {
 	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
 		"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n"
@@ -748,7 +748,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	}
 	settings, _ := body["settings"].([]any)
 	if len(settings) == 0 {
-		t.Fatal("the catalogue is empty; a console has nothing to render")
+		t.Fatal("the catalog is empty; a console has nothing to render")
 	}
 	// Which platform this is travels with the settings: the version line an
 	// import measures a bundle against, so a console can say what a bundle

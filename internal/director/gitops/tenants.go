@@ -35,7 +35,7 @@ import (
 // the namespaces, the database and the desktop, and the tenant exists.
 //
 // Nothing in this file talks to the cluster. The director's whole job on the
-// write side is to turn an authorised request into a reviewable commit, and a
+// write side is to turn an authorized request into a reviewable commit, and a
 // tenant is the clearest case of that: the manifest a person would have
 // written by hand, written by the thing that checked they were allowed to.
 
@@ -73,7 +73,7 @@ func (g *GitOps) refuseInSingleTenancy(ctx context.Context, name string) error {
 // ErrPlatformTenant is an app or an add-on asked for in the platform tenant.
 //
 // The platform tenant holds the cluster's administrators and the platform's
-// own components, which are installed with the cluster. A catalogue app does
+// own components, which are installed with the cluster. A catalog app does
 // not belong there, and could not run there either: an app's composition
 // takes the tenant's name as its realm, and this tenant's realm is the
 // kernel's. That used to be how the install failed, some minutes after it was
@@ -159,7 +159,7 @@ type Tenant struct {
 	// removes it as soon as the cluster has taken that in.
 	Purging bool `json:"purging,omitempty"`
 	// CataloguesDelegated is spec.catalogue.delegated: the tenant's own
-	// administrators may add catalogues for the tenant. The cluster's
+	// administrators may add catalogs for the tenant. The cluster's
 	// administrator alone sets it; off unless set.
 	CataloguesDelegated bool `json:"cataloguesDelegated"`
 	// SignUp is spec.signUp.enabled: anybody may make an account in the
@@ -362,14 +362,14 @@ type NewTenant struct {
 	// alpha-2 code; empty names none.
 	Country string `json:"country,omitempty"`
 	// Catalogue is the switch a tenant is created with, named as the
-	// manifest names it: whether its own administrators may add catalogues
+	// manifest names it: whether its own administrators may add catalogs
 	// (catalogue.delegated). Left out, it is off. The route that creates a
 	// tenant is the cluster administrator's, as the route that changes it is.
 	Catalogue *NewTenantCatalogue `json:"catalogue,omitempty"`
 }
 
 // NewTenantCatalogue is the switch in spec.catalogue of a tenant being
-// created. Its catalogues are added afterwards, through the catalogue routes.
+// created. Its catalogs are added afterwards, through the catalog routes.
 type NewTenantCatalogue struct {
 	Delegated bool `json:"delegated"`
 }
@@ -554,7 +554,7 @@ func declaredTenants(dir string) ([]gentianov1alpha1.Tenant, error) {
 // mean two sources of truth about whether a tenant exists.
 //
 // What this does NOT do is decide whether the data goes. The manifest's
-// deletionPolicy governs that, the operator honours it, and a tenant created
+// deletionPolicy governs that, the operator honors it, and a tenant created
 // with Retain keeps its database and its bucket after this commit. Saying so
 // here because "retire" reads like it might mean "delete everything", and the
 // console has to be able to tell a person which it was.
@@ -668,7 +668,7 @@ func tenantPurgeRequested(text string) bool {
 
 // tenantManifest is the file a new tenant starts as.
 //
-// Written as text rather than marshalled from a struct so the comments survive
+// Written as text rather than marshaled from a struct so the comments survive
 // into the repository. Whoever reads this file next is reading a commit in a
 // review, and a manifest that explains its own defaults is worth more there
 // than one that is merely valid.

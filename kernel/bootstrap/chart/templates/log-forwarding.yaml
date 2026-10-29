@@ -113,7 +113,7 @@ spec:
               path: /etc/log-destination
           sources:
             # The forwarder's own output is not read: the chart labels its
-            # pods vector.dev/exclude, which this source honours. A sink error
+            # pods vector.dev/exclude, which this source honors. A sink error
             # would otherwise be logged, forwarded, fail, and be logged again.
             pods:
               type: kubernetes_logs

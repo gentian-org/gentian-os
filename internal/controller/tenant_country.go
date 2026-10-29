@@ -30,7 +30,7 @@ import (
 // are the Tenant's, not the Component's, so a change to them is carried to
 // the release from here.
 
-// countryChanged admits a Tenant update whose country or organisation differs.
+// countryChanged admits a Tenant update whose country or organization differs.
 func countryChanged() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(event.CreateEvent) bool { return false },

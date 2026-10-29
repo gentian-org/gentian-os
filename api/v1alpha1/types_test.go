@@ -118,7 +118,7 @@ func TestComponentProfile_DeepCopy(t *testing.T) {
 // constructed in Go, or one from a fixture, does not, and every reader has to
 // treat the empty string as crossplane.
 //
-// This replaces a test that set the field and then asserted the field equalled
+// This replaces a test that set the field and then asserted the field equaled
 // what it had just been set to, while its failure message claimed the default
 // was argocd. It asserted nothing and documented something untrue.
 func TestComponentProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {

@@ -8,7 +8,7 @@
 
 ## 1. Read this first
 
-- A **tenant** is one organisation's workspace. An **app** is something the
+- A **tenant** is one organization's workspace. An **app** is something the
   tenant installed. Both own data: databases, files, buckets, people, passwords.
 - Eight acts touch that data. Four make or bring back, four copy or take away.
   This page says what each act does with each kind of thing.
@@ -199,7 +199,7 @@ no stored secret, and says so.
 **Import = create + restore.** The director first makes sure the cluster
 has the definition of every app the bundle's tenant lists: already there at
 the same build, or fetched at that build from one of the cluster's
-catalogues. If one cannot be had, the import is refused, names it, and has
+catalogs. If one cannot be had, the import is refused, names it, and has
 changed nothing. The one exception is a platform component of an earlier
 release that this one no longer has (the per-tenant `app-store-me`): it is
 left out of the new tenant, its data is not restored, and the import's result
@@ -211,7 +211,7 @@ restore that says the tenant was made new for the bundle
 The new tenant takes its settings from the bundle and its *names* from its
 own name: its realm, its database prefix and its bucket prefix. Three
 settings are not the bundle's: the new tenant keeps its data when retired
-(`deletionPolicy: Retain`) whatever the old one said, it has no catalogues of
+(`deletionPolicy: Retain`) whatever the old one said, it has no catalogs of
 its own, and a namespace of another name that the old tenant was placed in
 is not carried. An import does not rename: the tenant is made under the name
 its bundle carries, and a request that names another is refused. It may be
@@ -319,7 +319,7 @@ tenant's own key is made by a person, on the command line or in the browser,
 and is on the cluster only if that person had the custodian keep a copy
 ([security.md §6.4](security.md)).
 
-The cluster signs a bundle's manifest and not its artefacts. The signature
+The cluster signs a bundle's manifest and not its artifacts. The signature
 decides whether granted rights come back, nothing else: a restore cannot
 tell who made the data it is given, and sets the secrets of the apps it
 restores to the values that bundle holds. Restore only a bundle whose origin
@@ -344,7 +344,7 @@ After an **import**, also:
       secrets, and the result says so; and an app whose definition on this
       cluster does not declare a secret the bundle holds does not get it,
       and the result names it.
-- [ ] Set again what each app may use (app grants) and each tenant catalogue.
+- [ ] Set again what each app may use (app grants) and each tenant catalog.
 - [ ] The cache did not come. Mailboxes came only if both clusters run their
       own mail server; the result says when they did not.
 - [ ] Grant again each access right the result names as not brought.
@@ -432,7 +432,7 @@ What the platform declares is never made from the bundle, here or not: a
 client or group marked `gentianos.io/managed-by: platform`, or, in a bundle
 taken before the mark, named as the platform names its own
 (`internal/keycloak` `PlatformClientPatterns` and `PlatformGroupPattern`,
-and each catalogue profile's client). The platform makes it; a copy from
+and each catalog profile's client). The platform makes it; a copy from
 the bundle would take the name its resource makes it by. A client the
 tenant made that is no longer there is made with a new secret, which its
 user reads in the realm, at the bundle's addresses with each host of the

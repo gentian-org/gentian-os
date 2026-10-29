@@ -6,7 +6,7 @@
 # that the primary OpenBao reads for its transit auto-unseal token.
 #
 # This script is fully idempotent:
-#   - If already initialised, init is skipped.
+#   - If already initialized, init is skipped.
 #   - If already unsealed, unseal is skipped.
 #   - Transit engine / key / policy are created only if absent.
 #   - k8s Secret is created only if absent.
@@ -122,7 +122,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
   # rather than prompting for a token the operator no longer has.
   #
   # This is what makes a re-run genuinely idempotent, as the header claims: the
-  # previous behaviour was to stop and ask, which fails outright in CI.
+  # previous behavior was to stop and ask, which fails outright in CI.
   if kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" >/dev/null 2>&1; then
     EXISTING_APP_TOKEN=$(kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" \
       -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
@@ -178,7 +178,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
   fi
 
 else
-  # ── Fresh initialisation ─────────────────────────────────────────────────
+  # ── Fresh initialization ─────────────────────────────────────────────────
   info "Initializing openbao-transit (1-of-1 key shares)..."
   INIT_RESP=$(curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/init" \
     -H "Content-Type: application/json" \
@@ -202,7 +202,7 @@ else
   # copy from here on; the cluster's own recovery kit (--export-recovery-kit)
   # captures the same key as TRANSIT_UNSEAL_KEY for a break-glass rebuild.
   echo ""
-  info "openbao-transit initialised. Unseal key and root token are in"
+  info "openbao-transit initialized. Unseal key and root token are in"
   info "  ${TRANSIT_INIT_FILE} (mode 600) — nowhere else, and briefly."
 
   # Unseal

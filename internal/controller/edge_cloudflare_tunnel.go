@@ -97,7 +97,7 @@ func NewCloudflareTunnelIngress(token, zoneID, tunnelCNAME, accountID string) *C
 
 // DNSAnnotations implements EdgeIngress.
 //
-// external-dns publishes what a Gateway resolves to, and a tunnelled Gateway
+// external-dns publishes what a Gateway resolves to, and a tunneled Gateway
 // has no address — so the target is supplied here instead. Proxied is not a
 // preference: cfargotunnel.com resolves to nothing a client could connect to,
 // so an unproxied record would be a name that answers and then refuses every

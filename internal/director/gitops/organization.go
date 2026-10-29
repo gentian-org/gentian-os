@@ -36,7 +36,7 @@ import (
 // and languages, which keep their own calls; a component whose profile names
 // organizationKey is told all of them.
 
-// ErrInvalidOrganization is an organisation the manifest could not hold.
+// ErrInvalidOrganization is an organization the manifest could not hold.
 var ErrInvalidOrganization = errors.New("invalid organization")
 
 var (
@@ -55,7 +55,7 @@ type Organization struct {
 	Missing []string `json:"missing"`
 }
 
-// parseTenantOrganization reads the display name, country and organisation
+// parseTenantOrganization reads the display name, country and organization
 // from a tenant manifest's text.
 func parseTenantOrganization(text string) (gentianov1alpha1.TenantSpec, error) {
 	var doc struct {
@@ -184,7 +184,7 @@ func NormaliseOrganization(org gentianov1alpha1.TenantOrganization) (gentianov1a
 }
 
 // CountryCurrency is the currency a country uses, or "" when it is not
-// known: what an organisation that names no currency is given.
+// known: what an organization that names no currency is given.
 func CountryCurrency(country string) string {
 	region, err := language.ParseRegion(country)
 	if err != nil {
@@ -197,7 +197,7 @@ func CountryCurrency(country string) string {
 	return unit.String()
 }
 
-// SetTenantOrganization commits a tenant's display name and organisation.
+// SetTenantOrganization commits a tenant's display name and organization.
 // An empty display name leaves it as it is; it is required. A currency left
 // empty is the one of the tenant's country, where it has one.
 func (g *GitOps) SetTenantOrganization(ctx context.Context, tenant, displayName string, org gentianov1alpha1.TenantOrganization, meta Meta) (Result, error) {
@@ -270,7 +270,7 @@ func setTenantOrganization(text, displayName string, org gentianov1alpha1.Tenant
 	return out, nil
 }
 
-// sameOrganization says a manifest's organisation, nil when it has none, is
+// sameOrganization says a manifest's organization, nil when it has none, is
 // the one wanted; an empty one is none.
 func sameOrganization(have *gentianov1alpha1.TenantOrganization, want gentianov1alpha1.TenantOrganization) bool {
 	if have == nil {

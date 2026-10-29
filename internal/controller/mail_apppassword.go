@@ -44,7 +44,7 @@ import (
 // therefore gets a credential per client application — the pattern Google and
 // Fastmail use — rather than one credential that opens every mailbox.
 //
-// Two artefacts per tenant, deliberately on opposite sides of the boundary:
+// Two artifacts per tenant, deliberately on opposite sides of the boundary:
 //
 //	the hashes, in Dovecot's namespace, for Dovecot to verify against;
 //	the plaintexts, in the TENANT namespace, for that tenant's mail client.
@@ -158,7 +158,7 @@ func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token s
 		"grant_type": {"password"},
 	}
 	// NewRequestWithContext, not http.PostForm: PostForm takes no context, so
-	// this call could not be cancelled when the reconcile was.
+	// this call could not be canceled when the reconcile was.
 	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		base+"/realms/master/protocol/openid-connect/token", strings.NewReader(form.Encode()))
 	if err != nil {

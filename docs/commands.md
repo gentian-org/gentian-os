@@ -80,7 +80,7 @@ kubectl get tenant demo -w
 
 One thing about a tenant is the cluster's administrator's alone to decide,
 and it is off unless switched on: whether the tenant's own administrators may
-add catalogues to install from. It is stated when the tenant is created or
+add catalogs to install from. It is stated when the tenant is created or
 changed afterwards, and `tenants list` and `tenants show` say what holds. Who
 approves what the tenant publishes to the internet and its egress is a role
 holder on the Cluster claim (`perimeterApprover`, see *Cluster roles held by
@@ -143,7 +143,7 @@ kubectl gentian tenants partners customers add acme --issuer https://id.acme.exa
 kubectl gentian tenants partners customers remove acme
 ```
 
-The catalogue switch is a line in the tenant's manifest in git
+The catalog switch is a line in the tenant's manifest in git
 (`spec.catalogue.delegated`), committed by the director as you
 (`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/catalogue-delegation`,
 `can_configure` on the cluster). A tenant's own administrator cannot set it.
@@ -275,7 +275,7 @@ platform tenant can be neither retired nor purged.
 ## 5. Tenant App Store
 
 Tenant admins install apps from the **App Store app** or the CLI. On a
-cluster with no store the CLI is the only way: the cluster shows no catalogue
+cluster with no store the CLI is the only way: the cluster shows no catalog
 of its own.
 
 ### The App Store app
@@ -302,9 +302,9 @@ kubectl gentian apps install xwiki-ce --tenant demo   # the build the catalogue 
 kubectl gentian apps uninstall xwiki-ce --tenant demo
 ```
 
-### Catalogues
+### Catalogs
 
-A catalogue is an https address apps are installed from, or, for profiles that
+A catalog is an https address apps are installed from, or, for profiles that
 must not be public, an OCI artifact read with the credential of a declared
 repository. A directory of the cluster's own deployments repository is still
 read, and deprecated. The cluster's administrator adds one for every tenant or
@@ -342,27 +342,27 @@ With `--tenant`, `add` and `remove` are done as the cluster's administrator
 when the person is one, and otherwise as the tenant's administrator: that is
 refused unless the tenant is delegated, and removes only what the tenant
 added. Without `--tenant`, `add` and `remove` change the Cluster claim
-(`spec.catalogue.sources`), which is also where a catalogue for the whole
+(`spec.catalogue.sources`), which is also where a catalog for the whole
 cluster can be written before the install, as a `name` and a `url`, or a
 `name` and an `oci` (`repository`, `artifact`). An address
 must be a public https one; anything else is refused. An `--oci` artifact is
 `<registry host>/<repository>:<tag>` or `@sha256:<digest>`, on a public
 registry, inside the address of the `--repository` named, which is declared for
 the tenant with `--tenant` and for the cluster without
-([custom-catalogues.md §4.4](custom-catalogues.md)). A catalogue is never a
+([custom-catalogues.md §4.4](custom-catalogues.md)). A catalog is never a
 directory of the deployments repository, which holds the cluster's state only;
 `--path` is refused.
 [custom-catalogues.md](custom-catalogues.md) says how to build and publish a
-catalogue.
+catalog.
 
 `rename` is the cluster administrator's, with `--tenant` as without, and is one
 commit to everything that carries the name: the source entry, the `catalogue:`
 of every app entry and add-on pin installed from it (every tenant's, for a
-catalogue of the cluster), and the origin of every profile materialised from
+catalog of the cluster), and the origin of every profile materialized from
 it. No build moves, since no digest changes; the next install from the new
 name is the same profile again. Refused when the new name is taken — by the
-cluster, by that tenant, or for a catalogue of the cluster by any tenant — and
-when the old one is not a catalogue of that scope. Removing a catalogue and
+cluster, by that tenant, or for a catalog of the cluster by any tenant — and
+when the old one is not a catalog of that scope. Removing a catalog and
 adding it under another name is not the same thing: the profiles' origin would
 keep the old name, and an install from the new one would be refused as another
 origin's.
@@ -402,7 +402,7 @@ Deleted the OIDCPackCatalog xwiki-ce-oidc.
 client is configured. The list is for whoever may audit the cluster; removing
 is for whoever may configure it. `--yes` takes the place of typing the name,
 and `--namespace` names the namespace of a ConfigMap or a customization
-record, which is the catalogue's and no other. An unused profile is removed
+record, which is the catalog's and no other. An unused profile is removed
 from the deployments repository first and deleted from the cluster once Argo
 CD has synced that; [custom-catalogues.md](custom-catalogues.md) §6 has the
 classes and the rules.
@@ -421,7 +421,7 @@ kubectl gentian --help
 
 ### Private registries
 
-A catalogue is public; the charts and images it names need not be. A tenant
+A catalog is public; the charts and images it names need not be. A tenant
 declares the registry they are in, and the token is set afterwards in the
 Admin Console of the tenant, under Credentials, as the name the command
 prints. A chart whose address lies inside the declared one is pulled with it.
@@ -452,7 +452,7 @@ kubectl gentian apps update-mode xwiki-ce --tenant demo --mode tenant # who move
 ```
 
 **The command line installs a pinned build.** An app is installed from one
-of the catalogues the tenant sees — the cluster's and the tenant's own
+of the catalogs the tenant sees — the cluster's and the tenant's own
 (`kubectl gentian catalogues list --tenant demo`) — and `install` sends the
 director the entry's coordinate and digest. Nothing is on a cluster ahead of
 an install: the director fetches that one profile, checks it against the
@@ -481,8 +481,8 @@ with none. The listing is the director's reading of each source's index, the
 | Several do | `--from <source>` says which; without it nothing is installed |
 | None does | nothing is installed, and the sources are listed. With both `--from` and `--digest` an entry the listing does not show can still be asked for |
 | `--digest` | the build to install instead of the one the listing states. The director fetches the bundle from the source and installs nothing unless it hashes to the digest sent |
-| The tenant has no catalogue | nothing can be installed by command; the cluster's administrator adds one (`kubectl gentian catalogues add`) |
-| The name is taken by a profile from another catalogue | nothing is installed, and the refusal says who has to rename ([custom-catalogues.md](custom-catalogues.md) §7) |
+| The tenant has no catalog | nothing can be installed by command; the cluster's administrator adds one (`kubectl gentian catalogues add`) |
+| The name is taken by a profile from another catalog | nothing is installed, and the refusal says who has to rename ([custom-catalogues.md](custom-catalogues.md) §7) |
 | An entry of the profile would answer on a name the platform keeps | nothing is installed, and the refusal lists the names. In every tenant: `desktop`, `admin`, `store`, `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`, `account`, `accounts`. For the user tenant of a single-tenancy cluster also `argocd`, `corp`, `headlamp`, `imap`, `llm`, `mail`, `mail-egress`, `www` |
 
 The director verifies the bundle against the digest before it commits, and
@@ -525,7 +525,7 @@ What every act does with every kind of data is one table in
 
 A purge is refused, with nothing destroyed, when the app's profile is not on
 the cluster — what the app owns cannot be determined without it; installing
-the app again from a catalogue source puts the profile back — and when the
+the app again from a catalog source puts the profile back — and when the
 vault, the identity provider or the database it will need does not answer.
 
 A release that is already out of the tenant and only waits for its provider
@@ -754,7 +754,7 @@ the address stops answering once the cluster has taken it in.
 
 ## 6a. Resource Plans and Usage
 
-A tenant's resource ceiling is chosen from a priced catalogue of `ResourcePlan`
+A tenant's resource ceiling is chosen from a priced catalog of `ResourcePlan`
 objects, never typed as a quantity — see
 [design/resource-plans.md](design/resource-plans.md). The commands below read
 the operator's answers — the same ones the Admin Console's **Resources** screen
@@ -763,7 +763,7 @@ choose) are enforced once. Choosing a plan is not a command here: it is a commit
 as the person who asked, from the console or from its API with that person's
 token.
 
-List the catalogue, or what one tenant may pick:
+List the catalog, or what one tenant may pick:
 
 ```bash
 kubectl gentian resources plans --tenant corp
@@ -1074,11 +1074,11 @@ On `networkMode: tunnel`, `Gateway.status.conditions[Programmed]` may be
 and traffic reaches Envoy via Cloudflare tunnel. Check `TunnelIngressReady` on
 the Tenant and external curl to the public hostname.
 
-### OIDC pack catalogue
+### OIDC pack catalog
 
 An app whose sign-in client is configured from an OIDC pack depends on the
 cluster-scoped `OIDCPackCatalog` its profile bundle brings (a bundle from a
-catalogue added for the whole cluster; one added for a single tenant brings
+catalog added for the whole cluster; one added for a single tenant brings
 profiles alone). Check that the pack is on the cluster before debugging pack
 Jobs or missing client scopes:
 
@@ -1272,7 +1272,7 @@ names the bucket and prefix left behind.
 
 **Retiring a tenant keeps its bundles; deleting it destroys them, unless it
 was told to keep them.** These resources live in the tenant's namespace, so a
-teardown removes them. The operator recognises a teardown and does not delete
+teardown removes them. The operator recognizes a teardown and does not delete
 a bundle because its `TenantExport` went. What happens to the bundles is then
 the deletion policy's to say: with `Retain` the backup bucket stays; with
 `Delete` the bucket is destroyed with the tenant's other stores, unless the
@@ -1306,7 +1306,7 @@ export RCLONE_CONFIG_GENTIAN_SECRET_ACCESS_KEY="$(kubectl get secret s3-admin -n
 
 ### Reading a bundle
 
-The bundle is a prefix in the tenant's backup bucket. Every artefact is
+The bundle is a prefix in the tenant's backup bucket. Every artifact is
 encrypted; `bundle-info.json` is deliberately not, and names the command that
 opens the rest:
 
@@ -1321,7 +1321,7 @@ age -d manifest.json.age > manifest.json
 
 `manifest.json` lists what was captured per app, the chart versions at capture
 time, and the pause window each app saw. It is what a restore goes by. Since
-format 2 (`schemaVersion: 2`) each app's `stores` has one entry per artefact
+format 2 (`schemaVersion: 2`) each app's `stores` has one entry per artifact
 with its `kind`, the `name` of what it was captured from and its `path` in the
 bundle, and the app carries its `digest`, `databaseEngine` and `releases`; a
 format 1 manifest names apps and kinds only and still restores
@@ -1331,7 +1331,7 @@ tenant's `mailboxes` where the cluster runs its own mail server, and
 `rights`: the entries of the rights store that follow from nothing else. A
 format 2 bundle still restores. Format 4 (`schemaVersion: 4`) adds, among an
 app's `stores`, an entry of `kind: secrets` at `secrets/<app>.json`: the
-app's own secrets, encrypted like every artefact. A format 3 bundle has none
+app's own secrets, encrypted like every artifact. A format 3 bundle has none
 and still restores. Format 4 is what an export writes now.
 
 #### When the bundle is on external storage
@@ -1514,7 +1514,7 @@ What happens: the file is uploaded to the cluster's own storage; the director
 opens the manifest with the key and refuses a name the cluster already has.
 It then makes sure of the definition of every app the bundle's tenant lists:
 on the cluster already at the build the bundle records, or fetched at that
-build from one of the cluster's catalogues and committed. If one cannot be
+build from one of the cluster's catalogs and committed. If one cannot be
 had, the import is refused with `422`, names each, and has changed nothing.
 A platform component of an earlier release that this one no longer has
 (`app-store-me`) is left out instead: the command prints it as skipped, with
@@ -1772,7 +1772,7 @@ works unattended — a passphrase has nobody to type it at 03:00.
 but never succeeds looks healthy by every other measure, and that is precisely
 the failure a backup regime cannot afford.
 
-Two behaviours worth knowing:
+Two behaviors worth knowing:
 
 - A new schedule does **not** fire immediately. Creating a backup the moment
   someone writes YAML would pause a tenant's apps as a side effect.
@@ -1851,7 +1851,7 @@ before still bring back the rights granted in their tenants
 ([security.md §6.4](design/security.md)).
 
 Storing the kit in the cluster it protects defeats it. It belongs wherever the
-organisation keeps break-glass material, beside the backup identity.
+organization keeps break-glass material, beside the backup identity.
 
 **If a drill wedges:** an app stuck in `.status.quiesced` is offline. The
 operator resumes anything it finds paused on the next reconcile, including

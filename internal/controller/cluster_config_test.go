@@ -65,7 +65,7 @@ func TestClusterLLMEnabledConfigMapOverridesEnv(t *testing.T) {
 
 // Without the ConfigMap (first boot, before the Cluster composition has
 // produced it) or without the key (a ConfigMap predating it), the env keeps
-// the old behaviour.
+// the old behavior.
 func TestClusterLLMEnabledFallsBackToEnv(t *testing.T) {
 	ctx := context.Background()
 

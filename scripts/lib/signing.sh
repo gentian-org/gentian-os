@@ -174,7 +174,7 @@ gentian_ensure_signing_key() {
     fi
     # Never without the kernel domain either. The key's address would be the
     # placeholder one, and the next run -- which does know the domain -- would
-    # not recognise it as this cluster's.
+    # not recognize it as this cluster's.
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         error "The ${role} signing key cannot be generated before the kernel domain is known." >&2
         return 1

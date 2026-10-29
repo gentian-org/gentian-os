@@ -114,7 +114,7 @@ spec:
                       workspace's backups — the same keys the nightly schedule authenticates
                       with — so a one-off backup to a different bucket on the same provider
                       needs nobody to retype a secret. Nothing is copied: those keys are
-                      already materialised beside the capture Jobs.
+                      already materialized beside the capture Jobs.
 
                       transient is for keys that exist for this export only. They are supplied
                       in a Secret, staged beside the Jobs, and removed when the export ends.
@@ -236,12 +236,12 @@ spec:
                   properties:
                     artefacts:
                       description: |-
-                        Artefacts lists each artefact captured for this app, or planned to be
+                        Artefacts lists each artifact captured for this app, or planned to be
                         restored for it: what the bundle's manifest says the bundle holds. An
                         export writes them into the manifest; a restore reads them from it.
                       items:
                         description: |-
-                          BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+                          BundleArtefact is one artifact of a bundle: a database dump, a bucket's
                           archive, a volume's archive.
                         properties:
                           claim:
@@ -296,12 +296,12 @@ spec:
                             type: string
                           name:
                             description: |-
-                              Name is what the artefact was captured from: the database, bucket or
+                              Name is what the artifact was captured from: the database, bucket or
                               volume claim, by its name in the tenant the bundle was taken of; for
                               secrets, the app.
                             type: string
                           path:
-                            description: Path is the artefact's place in the bundle.
+                            description: Path is the artifact's place in the bundle.
                             type: string
                           release:
                             description: Release is the Helm release a captured volume

@@ -316,7 +316,7 @@ gantt
 ## Caveats
 
 - **LiteLLM auth licensing is the crux:** virtual keys are free, but JWT/OIDC / SSO (>5 users) / SCIM / `enforce_rbac` are paid. Upgrading Envoy Gateway v1.2.5 to Envoy AI Gateway v1.0 and enforcing auth via ext_authz → OpenFGA avoids this constraint entirely with no new ingress component.
-- **Time-slicing has no memory isolation** — a misconfigured pod can OOM its neighbours. Prefer MIG on A100/H100 instances.
+- **Time-slicing has no memory isolation** — a misconfigured pod can OOM its neighbors. Prefer MIG on A100/H100 instances.
 - **Ollama does not scale under concurrency** — keep it for dev/CPU/low-traffic only.
 - **OpenFGA integration is DIY** — there is no turnkey LiteLLM+OpenFGA product; you build the Check call into the Envoy ext_authz filter via `openfga/openfga-envoy`.
 - **Benchmark numbers** vary widely by hardware, quantization, context length, and concurrency; validate on your own workload before committing.

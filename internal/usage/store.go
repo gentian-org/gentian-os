@@ -39,7 +39,7 @@ type Sample struct {
 	// none. Stored per sample rather than only on change, so a query over an
 	// interval never has to look outside it to know what was being paid for.
 	Plan string `json:"plan,omitempty"`
-	// ProductSku is the plan's SKU at the time of sampling. Denormalised
+	// ProductSku is the plan's SKU at the time of sampling. Denormalized
 	// deliberately: a plan's SKU can be re-pointed, and an invoice for March
 	// must not change because of an edit made in June.
 	ProductSku string `json:"productSku,omitempty"`

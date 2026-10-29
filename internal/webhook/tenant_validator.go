@@ -183,7 +183,7 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		err := v.Client.Get(ctx, types.NamespacedName{Name: app.Profile}, profile)
 		if k8serrors.IsNotFound(err) {
 			return fmt.Errorf(
-				"tenant %q: ComponentProfile %q not found; install the app catalogue first",
+				"tenant %q: ComponentProfile %q not found; install the app catalog first",
 				tenant.Name, app.Profile,
 			)
 		}

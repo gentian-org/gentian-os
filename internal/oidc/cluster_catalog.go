@@ -9,7 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // Package oidc resolves OIDC client packs from cluster-scoped OIDCPackCatalog CRs.
-// App-specific mapper templates live in the catalogue repositories, not as
+// App-specific mapper templates live in the catalog repositories, not as
 // hardcoded constants in the operator.
 package oidc
 
@@ -30,14 +30,14 @@ import (
 var ErrCatalogAmbiguous = errors.New("more than one OIDCPackCatalog carries the profile's label")
 
 // ResolvePack returns the OIDC pack for clientID from the OIDCPackCatalog
-// labelled with profileName (gentianos.io/profile-name), the catalogue the
+// labeled with profileName (gentianos.io/profile-name), the catalog the
 // profile's bundle brings.
 //
-// The rule is the app Composition's: it reads that one catalogue, and
-// composes the client itself where the catalogue holds no pack for it. Looked
-// up anywhere else, a pack in some other catalogue would make the client a
+// The rule is the app Composition's: it reads that one catalog, and
+// composes the client itself where the catalog holds no pack for it. Looked
+// up anywhere else, a pack in some other catalog would make the client a
 // pack Job's as well as the Composition's. An extension's client is looked up
-// in its parent profile's catalogue, where the Composition looks for it.
+// in its parent profile's catalog, where the Composition looks for it.
 func ResolvePack(ctx context.Context, c client.Reader, profileName, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
 	if clientID == "" || profileName == "" {
 		return Pack{}, nil, false, nil
@@ -59,7 +59,7 @@ func ResolvePack(ctx context.Context, c client.Reader, profileName, clientID str
 			names = append(names, list.Items[i].Name)
 		}
 		sort.Strings(names)
-		return Pack{}, nil, false, fmt.Errorf("%w: profile %s, catalogues %v", ErrCatalogAmbiguous, profileName, names)
+		return Pack{}, nil, false, fmt.Errorf("%w: profile %s, catalogs %v", ErrCatalogAmbiguous, profileName, names)
 	}
 	catalog := &list.Items[0]
 	packSpec, ok := catalog.Spec.Packs[clientID]

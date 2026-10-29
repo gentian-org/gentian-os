@@ -23,13 +23,13 @@ import (
 )
 
 // A bundle source: S3 storage outside the cluster that bundles are read from
-// (BundleSource). Its keys are named, stored and materialised the way a
+// (BundleSource). Its keys are named, stored and materialized the way a
 // backup destination's are: a CredentialRequirement derived from the name, a
 // path under the kernel's subtree of the vault, and a Secret beside the
 // object store, where the Jobs that read it run.
 
 // SourceCredentialName is the CredentialRequirement carrying a source's keys,
-// and the Secret ESO materialises them into beside the object store. Derived
+// and the Secret ESO materializes them into beside the object store. Derived
 // from the source's name, never configured, for the reason
 // DestinationCredentialName gives.
 func SourceCredentialName(source string) string { return "bundle-source-" + source }
@@ -97,7 +97,7 @@ type FetchParams struct {
 
 // BundleFetchJob copies a bundle from storage outside the cluster into the
 // import bucket of the cluster's own, object by object, as it is: nothing is
-// opened, the artefacts stay ciphertext and keep their checksums, which a
+// opened, the artifacts stay ciphertext and keep their checksums, which a
 // restore verifies.
 //
 // One container with two remotes, the source's keys under SOURCE_* and the

@@ -34,7 +34,7 @@ _v5_current() {
 # A composite whose update policy is automatic picks "the highest number",
 # and with a tie that is whichever the list returns first: it moved between
 # the two on every reconcile, each move a write to its own spec that fired
-# its own watch, until its watch circuit opened. The checksum travelling in
+# its own watch, until its watch circuit opened. The checksum traveling in
 # the manifest makes an apply one state and so one revision.
 _v5_apply_composition() {
     local file="$1" annotated

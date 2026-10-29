@@ -166,7 +166,7 @@ func TestEncryptionRemovesThePlaintext(t *testing.T) {
 		t.Errorf("plaintext is not removed:\n%s", script)
 	}
 	// And the step must fail loudly if it produced nothing, rather than let an
-	// empty artefact upload as a successful backup.
+	// empty artifact upload as a successful backup.
 	if !strings.Contains(script, "encryption produced no output") {
 		t.Errorf("no empty-output guard:\n%s", script)
 	}

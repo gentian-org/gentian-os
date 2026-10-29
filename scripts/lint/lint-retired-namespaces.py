@@ -82,7 +82,7 @@ PATTERNS = [
 # Not read at all.
 SKIPPED_PREFIXES = (
     "docs/",
-    # Catalogue profiles as another repository published them, kept to test
+    # Catalog profiles as another repository published them, kept to test
     # the bundle reader against real input.
     "internal/profilebundle/testdata/",
 )

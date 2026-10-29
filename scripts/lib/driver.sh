@@ -195,7 +195,7 @@ step_selected() {
 
     # Phase is a grouping, deliberately NOT part of the ordering key. A step
     # moves between phases by editing one header line; its number and its
-    # neighbours' numbers do not change. Encoding the phase into the number
+    # neighbors' numbers do not change. Encoding the phase into the number
     # would make every re-grouping a renumbering — the problem the numbering
     # gaps and letter suffixes exist to avoid.
     if [[ -n "${GENTIAN_PHASE}" ]]; then
@@ -349,7 +349,7 @@ run_step_forward() {
                 return 0 ;;
             "${CHECK_UNDEFINED}")
                 # Not applicable to this cluster — the feature is off, or there
-                # is no install-time artefact. Skipped for the same reason a
+                # is no install-time artifact. Skipped for the same reason a
                 # satisfied step is, and named differently so the log does not
                 # claim it verified something.
                 echo "     check: undefined (nothing to do here)  →  skip"
@@ -435,7 +435,7 @@ run_step_reverse() {
     #
     # Running it regardless is free: every destroy() here is built from
     # --ignore-not-found deletes, which is what made skipping look like a safe
-    # optimisation in the first place.
+    # optimization in the first place.
     if _has_verb check; then
         local verdict=0
         _step_verdict || verdict=$?
@@ -570,7 +570,7 @@ drive_status() {
     echo ""
 
     # A step table answers "what has run". These answer "and what is still
-    # lying around because of it" — the kit E-03 wrote is the one artefact of
+    # lying around because of it" — the kit E-03 wrote is the one artifact of
     # an install that is dangerous to leave where it landed, and --status is
     # where an operator looks to find out whether anything is outstanding.
     report_recovery_kit_left_behind
@@ -645,7 +645,7 @@ validate_steps() {
         fi
         # A step with nothing persistent to test for says so in its header:
         #
-        #   # check: none — prewarming leaves no artefact to test for
+        #   # check: none — prewarming leaves no artifact to test for
         #
         # All three steps that lack a check() already explained themselves in a
         # prose comment, and were warned about on every single run anyway. A

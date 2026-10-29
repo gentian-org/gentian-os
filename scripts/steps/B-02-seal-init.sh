@@ -2,7 +2,7 @@
 # step: B-02-seal-init
 # phase: secrets
 # requires: B-01-bootstrap-apps
-# provides: initialised transit seal in the seal namespace, its unseal key as a Secret there, and the transit token the vault reads from the secrets namespace
+# provides: initialized transit seal in the seal namespace, its unseal key as a Secret there, and the transit token the vault reads from the secrets namespace
 # mutates: transit OpenBao data; Secrets openbao-transit-unseal (seal namespace), openbao-transit-token (seal and secrets namespaces); ~/.gentian/openbao-transit-init.json
 
 # The seal and the vault are two namespaces on purpose: the seal's unseal key

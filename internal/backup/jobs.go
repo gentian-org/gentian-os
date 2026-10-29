@@ -69,7 +69,7 @@ type JobParams struct {
 	// Role overrides the database role a restore hands ownership to. Empty
 	// derives it from Tenant and App, which is right for an app: its database,
 	// its role and its label are all the same name. The portal shell is the
-	// exception -- it is labelled with the tenant-wide component so its
+	// exception -- it is labeled with the tenant-wide component so its
 	// progress aggregates there, while its database and role are named for the
 	// shell. Deriving the role from the label restored into a role that has
 	// never existed.
@@ -356,7 +356,7 @@ echo "archived the databases that are %[2]s's besides itself"`, workDir, databas
 // spec.backup.volumes.excludePaths and are the app author's statement about
 // which bytes are derived; they are applied as tar patterns, so a pattern that
 // matched a config directory would silently drop the key an app's data is
-// encrypted with — which is why the catalogue rejects such patterns rather
+// encrypted with — which is why the catalog rejects such patterns rather
 // than trusting this layer to notice.
 func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1.Job {
 	artefact := VolumeArtefact(claim)
@@ -394,7 +394,7 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // S3ArchiveJob captures one app bucket into the bundle.
 //
 // It copies the bucket to disk and archives it rather than mirroring object to
-// object. Mirroring was the obvious shape and the wrong one: bundle artefacts
+// object. Mirroring was the obvious shape and the wrong one: bundle artifacts
 // are encrypted individually, and a mirrored bucket would have landed as
 // plaintext objects — leaving the largest part of most tenants' data readable
 // by anyone who could list the bundle, in a bundle whose whole premise is that

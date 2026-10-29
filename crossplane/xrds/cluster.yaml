@@ -77,7 +77,7 @@ spec:
                 identity:
                   type: object
                   # The object itself defaults, not just its fields. A nested default
-                  # only materialises when its parent is present, so without this the
+                  # only materializes when its parent is present, so without this the
                   # kernelRealm default below is unreachable on any cluster whose claim
                   # does not mention identity — which is every one of them. spec.oidc
                   # shows the same shape: its realm has defaulted to "kernel" since it

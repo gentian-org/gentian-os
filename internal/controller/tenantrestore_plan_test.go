@@ -84,9 +84,9 @@ func wikiManifest() *backup.Manifest {
 	}
 }
 
-// The bundle says what is restored and where each artefact is; the tenant
+// The bundle says what is restored and where each artifact is; the tenant
 // says where each goes. A bundle taken where the tenant's prefixes were
-// others keeps its own artefact names and lands in the tenant's stores here.
+// others keeps its own artifact names and lands in the tenant's stores here.
 func TestARestoreGoesByTheBundlesManifest(t *testing.T) {
 	// The tenant has wiki, notes, and drive -- which the bundle does not hold.
 	tenant := planTenant("demo", "wiki", "notes", "drive")

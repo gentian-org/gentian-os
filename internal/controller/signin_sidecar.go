@@ -50,7 +50,7 @@ import (
 // A small program stands beside the app, on the app's own host. It is a SAML
 // service provider towards the tenant's realm: it sends the browser there,
 // checks the signed answer, and then runs the app's handler -- code from the
-// app's catalogue entry that makes a session in this app for the person the
+// app's catalog entry that makes a session in this app for the person the
 // answer names. The person was signed in at the platform already, so the
 // realm answers without asking, and no password exists for the app at all.
 //
@@ -219,7 +219,7 @@ func declaredSignInSidecar(profile *gentianov1alpha1.ComponentProfile) *gentiano
 // "" when it brings none.
 //
 // Read from the bundle the profile carries, not from the ConfigMap the
-// catalogue applied: those are the bytes the install's digest was taken over,
+// catalog applied: those are the bytes the install's digest was taken over,
 // and the component reconciler has compared the cluster with them before this
 // is reached. The sidecar is given this source and told this digest, and
 // loads no file that does not match it.
@@ -285,9 +285,9 @@ func signInExposure(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.
 // A handler is handed what the declaration names -- the app's database login,
 // its signing key -- so the rules are about which code that may be:
 //
-//   - Only from a catalogue of the whole cluster. A tenant's own catalogue
+//   - Only from a catalog of the whole cluster. A tenant's own catalog
 //     publishes profiles alone, so it has no handler to bring; and a profile
-//     of such a catalogue that declares a sidecar is refused outright rather
+//     of such a catalog that declares a sidecar is refused outright rather
 //     than installed with no way in.
 //   - Only for an install pinned to a digest, whose bundle brings the
 //     handler. The component reconciler has by then compared the profile and
@@ -308,7 +308,7 @@ func (r *ComponentReconciler) signInSidecarFor(
 	}
 	origin, err := profilebundle.ParseOrigin(profile.Annotations[profilebundle.OriginAnnotation])
 	if err != nil || origin.Source == "" || origin.Tenant != "" {
-		return refuse("a sign-in handler is handed the app's own secrets, so it is run only from a catalogue of the whole cluster, and this profile is not from one")
+		return refuse("a sign-in handler is handed the app's own secrets, so it is run only from a catalog of the whole cluster, and this profile is not from one")
 	}
 	if comp.Spec.ProfileRef.Digest == "" {
 		return refuse("the install is not pinned to a digest, so nothing says which handler was reviewed; install it with its digest")

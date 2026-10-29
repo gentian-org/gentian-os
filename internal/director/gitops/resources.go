@@ -32,8 +32,8 @@ import (
 
 // Plan is what a tenant is moved onto.
 //
-// Handed in by the API from the operator's catalogue rather than read here:
-// the catalogue is cluster state, and the director reads git and the
+// Handed in by the API from the operator's catalog rather than read here:
+// the catalog is cluster state, and the director reads git and the
 // authorization graph, not the cluster.
 type Plan struct {
 	Name string

@@ -203,7 +203,7 @@ func TestTheOperatorsAnswerIsPassedThrough(t *testing.T) {
 
 // Whether a caller chooses a plan for themselves is the store's answer and
 // never the request's: the tenant's administrator is shown the self-service
-// catalogue, whoever may configure the cluster is shown all of it.
+// catalog, whoever may configure the cluster is shown all of it.
 func TestSelfServiceIsTheStoresAnswer(t *testing.T) {
 	op := &fakeOperator{}
 	s, _ := stateServer(op,

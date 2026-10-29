@@ -33,8 +33,8 @@ MPL-2.0, like the rest of the repository; see
 | The store calls the cluster | never. It holds no credential for a cluster, a cluster exposes no endpoint to it, and nothing in the API needs it to |
 | A page of the store's inside the cluster's interface | never. The store's content arrives as data and is rendered by the cluster's own app. No frame, no script, no message passed between a store page and the cluster |
 | What the store can state | what an app is, and which build an entry is: its coordinate and the content digest of its profile bundle |
-| What the store can hand over | a credential for the repository an app's artefacts are pulled from, which that repository checks |
-| What the store can never supply | an artefact. Profile bundles come from a catalogue the cluster or the tenant declares (§9), by digest; charts and images from where the bundle says |
+| What the store can hand over | a credential for the repository an app's artifacts are pulled from, which that repository checks |
+| What the store can never supply | an artifact. Profile bundles come from a catalog the cluster or the tenant declares (§9), by digest; charts and images from where the bundle says |
 | What the store can never decide | whether a person may install. The cluster holds no key of the store's and verifies no statement from it |
 
 The cluster asks and the store answers. The store may describe and may hand
@@ -46,11 +46,11 @@ decide for a tenant.
 The cluster does no license gating. There is no statement by which a store
 tells a cluster that a tenant may have an app, no key of a store's pinned on
 a cluster, and no relation in the authorization model for a tenant's right to
-a catalogue entry.
+a catalog entry.
 
 This is a decision, not an omission. Whether a tenant has paid for something
 is the business of whoever sells it, and it is enforced where the thing sold
-is handed over: at the repository the app's artefacts are pulled from. The
+is handed over: at the repository the app's artifacts are pulled from. The
 store mints a credential for that repository when a tenant acquires an app;
 the repository checks it on every pull. A tenant that holds the credential
 gets the app; a tenant that does not installs something that pulls nothing.
@@ -70,7 +70,7 @@ it, §6.4), and sets its user name and password at the custodian. From that
 the platform makes one Secret,
 `repository-<name>-pull`, in that tenant's app namespace and in no other. The
 namespace is selected by an exact match on the tenant the director recorded
-from the route the caller was authorised on, not by anything a declaration
+from the route the caller was authorized on, not by anything a declaration
 can carry.
 
 | The chart's address | What happens |
@@ -135,19 +135,19 @@ realm is taken to be the tenant's name on this path, as it is for
 
 | Field | Rule |
 |---|---|
-| `coordinate` | `<catalogue>/<app>`, optional. The catalogue must be one the tenant sees (§9): a source of the whole cluster, or a catalogue of this tenant's own. The profile bundle is fetched from it and committed before the install. A coordinate in any other catalogue is refused. The app named must be the `{profile}` in the path |
+| `coordinate` | `<catalogue>/<app>`, optional. The catalog must be one the tenant sees (§9): a source of the whole cluster, or a catalog of this tenant's own. The profile bundle is fetched from it and committed before the install. A coordinate in any other catalog is refused. The app named must be the `{profile}` in the path |
 | `digest` | travels with a `coordinate`, and only with one: required beside it, refused without it. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
 | `defaultGrant` | optional boolean. `true` installs for everyone and needs `can_grant` as well; `false` states that access is given per person and removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
 
-**An install comes from a catalogue source the cluster declares,** for all
+**An install comes from a catalog source the cluster declares,** for all
 its tenants or for this one (§9). A pin is
 recorded only for a bundle the director fetched from such a source and saw
 hash to the digest, so the two fields travel together or not at all:
 
 | The request carries | What happens |
 |---|---|
-| `coordinate` and `digest`, the catalogue a declared source | the bundle is fetched, checked, committed, and the install pinned to it |
-| `coordinate` in a catalogue the cluster declares no source for | refused with `422`, naming the catalogue and the sources there are. Nothing is fetched or written |
+| `coordinate` and `digest`, the catalog a declared source | the bundle is fetched, checked, committed, and the install pinned to it |
+| `coordinate` in a catalog the cluster declares no source for | refused with `422`, naming the catalog and the sources there are. Nothing is fetched or written |
 | `digest` and no `coordinate` | refused with `422`: there is nowhere to fetch the bytes it is the digest of |
 | `coordinate` and no `digest` | refused with `400` |
 | neither | nothing is fetched and nothing pinned. It installs a profile the cluster already holds, and on an installed app it states `defaultGrant` and leaves the pin as it is |
@@ -160,7 +160,7 @@ hash to the digest, so the two fields travel together or not at all:
 | `400` | the digest is not a sha256 digest, a coordinate comes with none, the coordinate is not `<catalogue>/<app>`, or it names another app |
 | `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
 | `404` | the source does not serve this entry |
-| `422` | the coordinate's catalogue is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Or the bundle holds what a bundle may not: a kind that is not a companion, an object that is not this profile's, or any companion when the catalogue is a tenant's own. Nothing was installed |
+| `422` | the coordinate's catalog is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Or the bundle holds what a bundle may not: a kind that is not a companion, an object that is not this profile's, or any companion when the catalog is a tenant's own. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
 
 **Add-ons.** An add-on is a profile of its own, activated inside an app the
@@ -174,7 +174,7 @@ PUT /v1/tenants/{t}/apps/{profile}/addons
 under the same question, `can_install_app`. Each entry is a name, or the
 build to install the add-on at; the add-on an object names is the second half
 of its coordinate. A pinned add-on is installed like a pinned app and under
-the same rule: its catalogue must be a declared source, its bundle is fetched
+the same rule: its catalog must be a declared source, its bundle is fetched
 from there, checked against the digest and committed beside the profile, and
 the pin is written on the app's entry. Every bundle of a request is fetched
 and checked before the first is committed, so a list one of whose builds
@@ -200,19 +200,19 @@ of what runs. Names inside an app that carries no digest are set as before.
 ## 4. The digest
 
 The digest pins the build. It is the sha256 of the profile bundle -- the one
-file a catalogue publishes for an entry, holding the profile and, after it,
+file a catalog publishes for an entry, holding the profile and, after it,
 the few other objects the app needs on a cluster, its companions
 ([custom-catalogues.md](../custom-catalogues.md) §2) -- and it travels with
 the request: a store's confirmation carries it (§6.4), and so does a
-catalogue source's own index (§9). The digest pins the profile and its
+catalog source's own index (§9). The digest pins the profile and its
 companions; it does not pin the chart or the images the profile names.
 One bundle is one digest: there is none for a profile apart from its
-companions. Companions are taken from a catalogue of the whole cluster only;
-a bundle from a tenant's own catalogue that holds one is refused (§3).
+companions. Companions are taken from a catalog of the whole cluster only;
+a bundle from a tenant's own catalog that holds one is refused (§3).
 
 It is not signed and it is not a permission. What it does:
 
-* **It makes the source untrusted.** The bytes come from the catalogue source,
+* **It makes the source untrusted.** The bytes come from the catalog source,
   which may be any web server. If they do not hash to the digest requested the
   install is refused and nothing is written, so a compromised source can fail
   an install and cannot change what is installed.
@@ -229,7 +229,7 @@ It is not signed and it is not a permission. What it does:
   The name is what the app is across every build of it — its group, its object
   in the authorization store and its route are spelled from the name — and the
   digest says which build. The operator carries it onto the app's Component
-  (`spec.profileRef.digest`). The commit that materialised the bundle names
+  (`spec.profileRef.digest`). The commit that materialized the bundle names
   the digest as well.
 * **It is checked again at rollout.** The director's check is on the bytes it
   fetched, before the commit. What reaches the cluster is not those bytes:
@@ -330,7 +330,7 @@ for the person (§6.1).
 
 | Operation | Token | Answers |
 |---|---|---|
-| `GET /v1/meta` | open | The store's name, the API version, the store's realm as a partner (`partner.issuer`) and its registration page (`registrationUrl`). Also the origins images and checkout pages may be on, the catalogue sources its entries come from (1.5), and the version of its terms in force (`termsVersion`, 1.12) |
+| `GET /v1/meta` | open | The store's name, the API version, the store's realm as a partner (`partner.issuer`) and its registration page (`registrationUrl`). Also the origins images and checkout pages may be on, the catalog sources its entries come from (1.5), and the version of its terms in force (`termsVersion`, 1.12) |
 | `GET /v1/categories` | open | The categories apps are filed under |
 | `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price, how many add-ons; a maturity score and an installation count (1.6) |
 | `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons each with its icon, edition and list price, links (a tutorial video among them, 1.6), license, the customization grade and rungs its profile declares (1.6); and the partners that offer support for it, narrowed to a country when asked |
@@ -366,7 +366,7 @@ What follows from the open half:
 
 * **A refusal applies to the signed-in calls only.** A store that does not
   serve a tenant (§6.2) answers `tenant-refused` on the `/v1/acquisitions`
-  operations. The catalogue stays readable — to that tenant, and to somebody
+  operations. The catalog stays readable — to that tenant, and to somebody
   who never signs in. A person learns at sign-in whether the store serves
   their tenant, not before.
 * **Prices on open reads are list prices**, the same for everybody. What a
@@ -379,13 +379,13 @@ What follows from the open half:
   and `Retry-After` on a `429`. An address is a cluster, not a person: all
   of a cluster's tenants reach the store from one outbound address.
 * **The open half is open to anyone**, not only to clusters. A store cannot
-  tell the two apart, and the catalogue is not a secret.
+  tell the two apart, and the catalog is not a secret.
 
 Common to all operations: answers in the language asked for
 (`Accept-Language` in, `Content-Language` out, falling back within a language
 and then to the store's default); lists paged by cursor; errors as
 `application/problem+json` with a stable `code`. All of it is in the
-artefact.
+artifact.
 
 **What the store receives.**
 
@@ -412,9 +412,9 @@ cluster whose usage statistics report is off (§6.2), on one that names no
 store, and on one installed without the store's extra services.
 
 **Where it is, and when.** The operator chart does not ship it: it is a
-profile in the store's own catalogue (`app-store-pe` at
+profile in the store's own catalog (`app-store-pe` at
 `catalogue.aluvian.io`), one of the store's *extra services* that the
-installer's step 0 places in the cluster's catalogue unless
+installer's step 0 places in the cluster's catalog unless
 `--no-extra-services` leaves them out. The profile says
 `defaultWhereStoreOffered`, and the operator places a Component of it on
 every tenant except the platform tenant, where nobody installs apps, for as
@@ -448,7 +448,7 @@ store names its issuer and the origins of its pictures in its own metadata,
 and a network policy matches addresses, not names; which hosts are asked is
 the app's to restrict. It applies only while a store is offered.
 
-It **shows the catalogue immediately**, with no store account: the catalogue
+It **shows the catalog immediately**, with no store account: the catalog
 reads are open (§5), and the app makes them anonymously. It acts for the
 person at the store only when they acquire something or open what the
 tenant has acquired.
@@ -527,7 +527,7 @@ is answered `403 registration-required` with the registration page for an
 app that is not free. This is the one call on which the store takes an
 assertion without a link (AD-17).
 
-**Who acts for a tenant at the store.** A tenant is an organisation in the
+**Who acts for a tenant at the store.** A tenant is an organization in the
 store's records, and an account is a person; the two are separate things.
 The first account that registers for a tenant holds it and manages it. A
 store with the feature `tenant-access` serves any other account linked for
@@ -556,11 +556,11 @@ the next call, which is then answered `401` again.
 The store depends on the cluster's usage statistics report
 ([operations.md §6.2](operations.md)). A cluster that does not report has no
 App Store app: the usher says so and no tile is shown. That is a condition
-on the app existing on a cluster, and it is unchanged by the catalogue being
+on the app existing on a cluster, and it is unchanged by the catalog being
 open: the cluster decides it from its own setting, without asking the store.
 
 A store's judgement of a tenant, by contrast, comes only with a signed-in
-call. Until then the app shows the catalogue and no notice.
+call. Until then the app shows the catalog and no notice.
 
 Before the call the person wanted, the app asks `GET /v1/tenant`. The store
 matches the assertion's issuer against the tenants in the reports it has
@@ -569,7 +569,7 @@ received.
 | The store answers | The app |
 |---|---|
 | `served: true` | proceeds, and shows every notice it is given |
-| `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers no acquiring. The catalogue stays readable |
+| `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers no acquiring. The catalog stays readable |
 | a notice `free-license-limit` — the cluster has no subscription | shows it: the text states the terms in the store's own words |
 
 **Nothing on the cluster is blocked by any of this.** A refusal means the
@@ -580,7 +580,7 @@ can still be installed by command (§9).
 
 The store's content is data. The app renders text as text. Two fields — an
 app's description and a version's release notes — are a restricted Markdown
-subset defined in the artefact; everything else is plain. No HTML from a
+subset defined in the artifact; everything else is plain. No HTML from a
 store is interpreted, no script from a store runs, and no page of a store is
 framed. Images are loaded by address from the origins the store's
 `GET /v1/meta` names and from nowhere else. Links, report documents, a
@@ -732,7 +732,7 @@ token:
    recorded is shown as such on the step; a grant that ran out is shown as
    waiting again (`expiredAt`). One the approver **declined** — `POST
    /v1/tenants/{t}/apps/{p}/actions/decline-privilege` `{privilege,
-   reason}`, authorised as the approval of that kind is, recorded on the
+   reason}`, authorized as the approval of that kind is, recorded on the
    Component by the operator and still pending — is shown as
    "Declined by `declinedBy` on `declinedAt`: `declineReason`" with
    **Request again**, which is the request above made anew and clears the
@@ -769,7 +769,7 @@ Nothing a store says is signed, and the cluster holds no key of a store's.
 **Store content is data** (§6.3). The rule is what stops a store's words
 from being instructions to the person's browser on the cluster's origin.
 
-**The digest is what pins a build**, and the catalogue source — not the
+**The digest is what pins a build**, and the catalog source — not the
 store — is what serves it (§4).
 
 What follows is what a store that has been compromised, or is hostile, can
@@ -795,14 +795,14 @@ not from what the App Store app is expected to do.
 **It cannot:**
 
 * **Change which bytes are installed.** The director fetches the bundle from
-  the catalogue source declared on the cluster's side under the name of the
-  coordinate's catalogue (§9), at `profiles/<app>.yaml`. A source is addressed by name, not by
+  the catalog source declared on the cluster's side under the name of the
+  coordinate's catalog (§9), at `profiles/<app>.yaml`. A source is addressed by name, not by
   digest: it serves one build of an entry. A digest the store invents
   therefore does not select another build — it matches what the source
   serves, or the install is refused with `502` and nothing is written. The
   same holds for the digest of an older build the source no longer serves.
 * **Install something from a place of its choosing.** A coordinate in a
-  catalogue the tenant sees no source for is refused by the director
+  catalog the tenant sees no source for is refused by the director
   (§3), and so is a digest with no coordinate. No digest is recorded that
   the director did not check against bytes it fetched from a declared
   source.
@@ -827,7 +827,7 @@ not from what the App Store app is expected to do.
 
 **The real bound on a lying store** is therefore this. It can bring an
 administrator to install an entry they did not mean — but only an entry that
-a catalogue source named on the cluster's side (by the platform
+a catalog source named on the cluster's side (by the platform
 administrator, or by the tenant's own where that was delegated, §9) serves
 right now, at
 the build that source serves, by a person who holds `can_install_app`, in a
@@ -840,13 +840,13 @@ approval (AD-5).
 **Where the bound stops.** Three things it does not cover, each already a
 property of the design rather than of this contract:
 
-* **A store names catalogue sources at install time** (§9): the installer
+* **A store names catalog sources at install time** (§9): the installer
   adds what `GET /v1/meta` lists, under names the cluster has not used. A
   store can thereby make a cluster able to install from an address of its
   choosing. What stands is that the source is a commit on the claim the
   administrator can read and remove, and that every bundle is still held to
   the digest of the install.
-* **A store and a catalogue source run by the same party** are one trust,
+* **A store and a catalog source run by the same party** are one trust,
   not two. The digest protects against a source that is compromised alone
   and a store that is compromised alone. A party that controls both can
   publish a bundle and name its digest. What stands then is what stands for
@@ -880,7 +880,7 @@ usher      GET /v1/tenants/{t}/apps/retained         which uninstalled apps stil
 usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it
 ```
 
-Reads are authorised by `can_view`, never by the write relation.
+Reads are authorized by `can_view`, never by the write relation.
 
 `/apps` answers from git: what the tenant is meant to have. `/apps/status` is
 the operator's answer, relayed by the usher: each app is `installing`, `ready` or
@@ -906,7 +906,7 @@ is made; `expiredAt` is when a grant for it ran out, for a request that was
 approved once and waits again. `declinedBy`, `declinedAt` and
 `declineReason` are the approver's no (`POST
 /v1/tenants/{t}/apps/{p}/actions/decline-privilege` `{privilege, reason}`,
-the reason at least ten characters, authorised exactly as the approval of
+the reason at least ten characters, authorized exactly as the approval of
 that kind is): the privilege is still pending and the app still waits, but
 whoever asked is told why. A new request clears the decline, and so does an
 approval made after it. An add-on that runs as a Component of its own is
@@ -994,7 +994,7 @@ It is refused with `409`, having destroyed nothing:
 - when the app's ComponentProfile is not on the cluster. Which stores an app
   has is declared by its profile and by nothing else, so without it what the
   app owns cannot be determined, and a purge does not guess. A profile is
-  placed on the cluster when the app is installed from a catalogue source
+  placed on the cluster when the app is installed from a catalog source
   that serves it (§3): installing the app again, in any tenant, puts it back,
   and the purge can then be asked for. The retained list shows such an app
   with `profileAvailable: false`.
@@ -1074,12 +1074,12 @@ sources, takes the digest that listing states unless `--digest` names
 another, and sends `{coordinate, digest, defaultGrant}` like every other
 caller. When several sources serve the name it asks for `--from`; on a
 cluster that declares no source it installs nothing.
-The cluster renders no catalogue of its own in any interface. A second,
+The cluster renders no catalog of its own in any interface. A second,
 barer shop beside the one that is maintained would be worse at everything a
 shop is for, and an install action in an administrative screen is one more
 place that logic would live.
 
-A **catalogue source** remains what it was: an https address serving
+A **catalog source** remains what it was: an https address serving
 profile bundles, which the director fetches from. Those of the whole cluster
 are named on the Cluster claim:
 
@@ -1109,26 +1109,26 @@ coordinate names it, and the digest pins the build.
 A source publishes `profiles/<name>.yaml` for each entry and `index.yaml`
 beside them: name, version, edition, trust tier, digest, and nothing else.
 The director fetches a bundle from the source named by a coordinate's
-catalogue and checks it against the digest (§4). It still answers a source's
+catalog and checks it against the digest (§4). It still answers a source's
 index — `GET /v1/tenants/{t}/catalogues` and
 `GET /v1/tenants/{t}/catalogues/{source}/entries`, under `can_view`, `ce`,
 `me` and `ie` entries only — so that the digest of an entry can be looked up without
 a store; no screen lists it.
 
 **The default source.** A new claim names one source, `gentian`: the public
-catalogue of the platform's apps repository. Which of its two the installer
+catalog of the platform's apps repository. Which of its two the installer
 writes follows from the ref the cluster is installed from: a release tag or
-`main` gets the released catalogue
+`main` gets the released catalog
 (`https://gentian-org.github.io/gentian-apps`), any other branch the one
 under development (`…/gentian-apps/develop`), and a ref that cannot be read
 the released one. `GENTIAN_CATALOGUE_URL` names another address whatever the
 ref. The reason is written above the address in the claim. A claim that
 exists is not rewritten.
 
-**The store's catalogues.** A store may list in `GET /v1/meta` the
-catalogue sources its entries come from (`catalogues`, 1.5). On every run,
+**The store's catalogs.** A store may list in `GET /v1/meta` the
+catalog sources its entries come from (`catalogues`, 1.5). On every run,
 the installer of a cluster whose claim names a store reads that list and
-adds each catalogue the claim has no source of that name for to
+adds each catalog the claim has no source of that name for to
 `catalogue.sources`, marked `addedBy: store`, in the commit step 0 makes. So
 an app bought at the store installs without a `kubectl gentian catalogues
 add` first. It adds and does nothing else:
@@ -1136,37 +1136,37 @@ add` first. It adds and does nothing else:
 * a source the claim has is never changed or removed. A name the claim
   holds at another address is left as it is, and the installer warns with
   both addresses;
-* a name a tenant uses for a catalogue of its own is not added, as the
+* a name a tenant uses for a catalog of its own is not added, as the
   director would refuse it;
 * only an https address is added;
 * a store that cannot be reached, or lists no `catalogues`, is a warning,
   and the install goes on;
-* a catalogue the store stops listing stays on the claim, until the
+* a catalog the store stops listing stays on the claim, until the
   administrator removes it (`kubectl gentian catalogues remove`). One the
   store still lists is added again by the next run.
 
-This makes the cluster take the store's word for where a catalogue is, at
+This makes the cluster take the store's word for where a catalog is, at
 install time: the store chooses which addresses the cluster may fetch
 profiles from. A bundle fetched from one is still held to the digest of the
 install, which the store also names, so the bound of §7 is the bound for a
-store and a catalogue source run by the same party.
+store and a catalog source run by the same party.
 
-**Catalogues exist at two levels.**
+**Catalogs exist at two levels.**
 
 | | Where it is declared | Who adds it | Who installs from it |
 |---|---|---|---|
-| A catalogue of the whole cluster | `catalogue.sources` on the Cluster claim | whoever may configure the cluster | every tenant |
-| A tenant's own catalogue | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`), for an address or an OCI artifact | that tenant only |
+| A catalog of the whole cluster | `catalogue.sources` on the Cluster claim | whoever may configure the cluster | every tenant |
+| A tenant's own catalog | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`), for an address or an OCI artifact | that tenant only |
 
-Both are written by the director's catalogue routes
+Both are written by the director's catalog routes
 (`kubectl gentian catalogues`), are outside the store, and are documented
-with the catalogue format ([custom-catalogues.md](../custom-catalogues.md)).
-A profile materialised from a tenant's catalogue records where it came from
-and is installable in that tenant only; such a catalogue brings no
+with the catalog format ([custom-catalogues.md](../custom-catalogues.md)).
+A profile materialized from a tenant's catalog records where it came from
+and is installable in that tenant only; such a catalog brings no
 companions (§4).
 
 There is no tuple for a source: the install route asks whether the person
-may install apps in the tenant, and resolves the coordinate's catalogue among
+may install apps in the tenant, and resolves the coordinate's catalog among
 those the tenant sees (§3).
 
 **Nothing copies profiles into a cluster ahead of an install.** The
@@ -1176,21 +1176,21 @@ profile reaches a cluster when it is installed, with one exception.
 
 **The installer's default profile: the one exception, at a digest.** At
 install, before there is a director, the installer places the Operations
-Console's profile in the cluster's catalogue directory (AD-14, decided
+Console's profile in the cluster's catalog directory (AD-14, decided
 2026-10-09). The address is
 `https://catalogue.aluvian.io/profiles/operations-console-ee.yaml` by default;
 `GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name others, each
-the https address of a profile in a catalogue. The installer reads that
-catalogue's `index.yaml`, takes the digest listed for the entry — or the
+the https address of a profile in a catalog. The installer reads that
+catalog's `index.yaml`, takes the digest listed for the entry — or the
 digest the person installing pinned with `@sha256:<digest>`, which the index
 does not override — downloads the file, and writes nothing unless the bytes
 hash to it. Bytes that do not, an entry the index does not list when nothing
 is pinned, and a file that holds what a bundle may not all stop the install;
-a catalogue that cannot be reached is a warning, and
+a catalog that cannot be reached is a warning, and
 `--disable-api-extensions` places none. What is written is what the director
 writes for an install of the same bundle, byte for byte: the file as served,
-and its bundle and the catalogue's origin on the profile, so the director
-reads it as a materialised profile with an origin and a digest. The digest
+and its bundle and the catalog's origin on the profile, so the director
+reads it as a materialized profile with an origin and a digest. The digest
 and who stated it are in the signed commit. A definition that already holds
 another build is kept and reported.
 
@@ -1202,7 +1202,7 @@ it -- the profile is what the bundle says, the bundle holds only what a
 bundle may, and every companion is there as the bundle says -- and holds the
 Component with the same reasons when it is not. A default whose profile the
 platform's chart ships carries no bundle and no origin, and is not asked; one
-that states a catalogue origin and carries no bundle is held
+that states a catalog origin and carries no bundle is held
 (`DigestUnverifiable`).
 
 Two things it is not. It is not a pin: an install's digest is stated on the
@@ -1225,7 +1225,7 @@ answers — what an app is, and what it costs — go unanswered.
 |---|---|
 | The store cannot be reached, or answers `5xx` | The App Store app says so. It offers nothing that needs the store. Nothing is retried in the background |
 | The store answers `401` on a signed-in call | The app signs the person in to the store again. Browsing is not interrupted: it needs no token |
-| The store refuses the tenant | The app shows the reason (§6.2) and offers no acquiring; the catalogue stays readable |
+| The store refuses the tenant | The app shows the reason (§6.2) and offers no acquiring; the catalog stays readable |
 | The store answers something that is not the format | The app treats it as unreachable. A confirmation that does not validate is not acted on in part |
 | A step on the cluster fails after a confirmation — the declaration, the credential, the install | The app shows the director's or the custodian's answer and stops. The acquisition is still the tenant's; the steps can be repeated, and each is safe to repeat |
 
@@ -1255,6 +1255,6 @@ the *repository*, for pulls, with the credential the tenant holds.
 * **No writing of reviews** in this version of the API.
 * **How a store first associates the administrator's account with a
   tenant**, what it asks of an account before it confirms an app, and how
-  it prices, are the store's own. That a tenant is an organisation, that
+  it prices, are the store's own. That a tenant is an organization, that
   the first account to register holds it, and that only an account that
   manages it acquires for it, is in the contract (§6.1).

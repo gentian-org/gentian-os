@@ -19,11 +19,11 @@ import (
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
 
-// A catalogue is never kept in the cluster's deployments repository, which
+// A catalog is never kept in the cluster's deployments repository, which
 // holds the cluster's state only. The people are the fixture's: alice
 // administers the cluster, tom administers demo.
 
-// inRepository is a catalogue's files below dir, as an address would serve
+// inRepository is a catalog's files below dir, as an address would serve
 // them: its profiles, and an index that lists each at the digest of its bytes.
 func inRepository(dir string, profiles map[string]string) map[string]string {
 	files := map[string]string{}
@@ -37,7 +37,7 @@ func inRepository(dir string, profiles map[string]string) map[string]string {
 }
 
 // A request that names a directory of the deployments repository (path) in
-// place of an address or an artifact is refused on every route a catalogue
+// place of an address or an artifact is refused on every route a catalog
 // is added on, saying why, and nothing is committed.
 func TestNoCatalogueIsAddedAsADirectoryOfTheDeploymentsRepository(t *testing.T) {
 	h := startSeeded(t, nil, func(remote string) {
@@ -65,7 +65,7 @@ func TestNoCatalogueIsAddedAsADirectoryOfTheDeploymentsRepository(t *testing.T) 
 }
 
 // A claim or a tenant's manifest somebody edited by hand to name a directory
-// of the deployments repository declares no catalogue there, even where the
+// of the deployments repository declares no catalog there, even where the
 // directory holds one; what else it declares is read as before.
 func TestAClaimOrManifestNamingADirectoryDeclaresNoCatalogue(t *testing.T) {
 	h := startSeeded(t, nil, func(remote string) {

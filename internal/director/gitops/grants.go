@@ -251,7 +251,7 @@ func (g *GitOps) platformSecurityDoc(ctx context.Context) (platformSecurityDoc, 
 // SetPlatformSecurity writes the cluster's waiver allowlist and commits it.
 //
 // An allowlist and not a request: a profile asks for a waiver in its own
-// catalogue entry, and this says which of those asks the cluster permits. The
+// catalog entry, and this says which of those asks the cluster permits. The
 // operator intersects the two, and with the grant on the install, so a waiver
 // here for a profile that asks for nothing permits nothing, and is harmless
 // rather than dangerous.

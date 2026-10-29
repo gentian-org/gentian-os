@@ -27,7 +27,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// Catalogues kept as OCI artifacts, read with the credential of a
+// Catalogs kept as OCI artifacts, read with the credential of a
 // repository the catalogue's owner declared. One registry plays every
 // registry host (directortest.Registry); the vault is a map, and records
 // every path it is asked for.
@@ -250,7 +250,7 @@ func TestAnArtifactIsReadWithItsRepositoryOnEveryPull(t *testing.T) {
 }
 
 // An import obtains the builds its bundle records from the cluster's
-// catalogues of every kind: from one kept as an artifact as from one at an
+// catalogs of every kind: from one kept as an artifact as from one at an
 // address, with the same fetcher, read with the cluster's repository and no
 // other.
 func TestAnImportMaterialisesAProfileFromAnArtifactOfTheCluster(t *testing.T) {

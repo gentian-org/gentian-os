@@ -27,11 +27,11 @@ import (
 //
 // It is deliberately **not deployable**. Nothing reconciles a ResourcePlan and
 // it owns no namespace, workload or quota of its own: it exists so that a
-// tenant's ceiling is chosen from a catalogue rather than typed. Selecting one
+// tenant's ceiling is chosen from a catalog rather than typed. Selecting one
 // writes its quantities into that tenant's `spec.quotas` — see
 // docs/design/resource-plans.md.
 //
-// Why a catalogue at all, when Tenant.spec.quotas already accepts any quantity:
+// Why a catalog at all, when Tenant.spec.quotas already accepts any quantity:
 // a quota that can be any number can be any number that was never sold. The
 // plan is the unit the platform prices, meters and invoices, so the write path
 // accepts a plan name and nothing else, and every tenant's ceiling is at all
@@ -101,7 +101,7 @@ type ResourcePlanSpec struct {
 	ProductSku string `json:"productSku,omitempty"`
 
 	// Default marks the plan a tenant is assumed to be on when its quotas match
-	// no plan in the catalogue and none has been selected. At most one plan
+	// no plan in the catalog and none has been selected. At most one plan
 	// should set it; when several do, the lowest tier wins, because assuming a
 	// tenant is on a bigger plan than they chose is the expensive mistake.
 	// +optional
@@ -118,7 +118,7 @@ type ResourcePlanSpec struct {
 // ResourcePlanStatus reports observed plan state.
 type ResourcePlanStatus struct {
 	// TenantCount is the number of tenants whose quotas currently match this
-	// plan. Maintained for the console's catalogue view; it is derived, and
+	// plan. Maintained for the console's catalog view; it is derived, and
 	// nothing reads it to make a decision.
 	// +optional
 	TenantCount int32 `json:"tenantCount,omitempty"`
@@ -147,7 +147,7 @@ const (
 	// Set by the cluster operator, or by whatever commerce integration a
 	// deployment runs — the platform reads it and does not care which. Absent
 	// means uncapped, matching how an unreachable commerce backend leaves the
-	// App Store's catalogue usable rather than blocking it.
+	// App Store's catalog usable rather than blocking it.
 	MaxResourceTierAnnotation = "gentianos.io/max-resource-tier"
 
 	// ResourcePlanAnnotation records the plan a tenant was last set to.

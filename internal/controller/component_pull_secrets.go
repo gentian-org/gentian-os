@@ -40,7 +40,7 @@ import (
 // component's own namespace.
 //
 // Whose repository one is is read from the Repository's spec.tenant, which
-// the director writes from the route the caller was authorised on, and is
+// the director writes from the route the caller was authorized on, and is
 // compared with the Tenant the component's namespace belongs to. It is the
 // same field the Composition scopes the Secret by, so the two cannot
 // disagree about where a credential may go.

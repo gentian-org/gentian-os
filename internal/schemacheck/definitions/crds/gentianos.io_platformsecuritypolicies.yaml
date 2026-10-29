@@ -59,7 +59,7 @@ spec:
                 items:
                   description: |-
                     AllowedClusterRole permits one of the platform's cluster roles for one
-                    catalogue profile on this cluster.
+                    catalog profile on this cluster.
                   properties:
                     profile:
                       description: Profile is the ComponentProfile metadata.name that
@@ -83,7 +83,7 @@ spec:
                   A profile's requests outside this list are denied at deploy time.
                 items:
                   description: AllowedMacWaiver is a cluster-admin approved MAC waiver
-                    for a catalogue profile.
+                    for a catalog profile.
                   properties:
                     policy:
                       description: Policy is the Kyverno ClusterPolicy name.

@@ -312,7 +312,7 @@ type TenantReconciler struct {
 	// MAIL_RECIPIENT_POLICY.
 	//
 	// Anything other than observe or strict leaves the catch-all in place, so an
-	// unset or misspelled value keeps today's behaviour rather than rejecting
+	// unset or misspelled value keeps today's behavior rather than rejecting
 	// mail on the strength of a typo.
 	MailRecipientPolicy string
 	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
@@ -395,7 +395,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// mapToTenant maps any labelled object back to a reconcile request for the owning Tenant.
+	// mapToTenant maps any labeled object back to a reconcile request for the owning Tenant.
 	mapToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
 		tenantName := obj.GetLabels()[tenantLabel]
 		if tenantName == "" {
@@ -721,7 +721,7 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 // reason a live tenant stops being cleaned up.
 //
 // Answers false when no uncached reader is configured, which keeps the
-// behaviour of a reconciler built without one unchanged.
+// behavior of a reconciler built without one unchanged.
 func (r *TenantReconciler) tenantGoneFromAPI(ctx context.Context, name types.NamespacedName) bool {
 	if r.APIReader == nil {
 		return false

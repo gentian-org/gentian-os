@@ -15,7 +15,7 @@
 # the value it had before. Without it you get a working cluster with entirely
 # different credentials, which is a migration rather than a restore.
 #
-# It does NOT restore OpenBao. A fresh OpenBao initialises itself and issues new
+# It does NOT restore OpenBao. A fresh OpenBao initializes itself and issues new
 # unseal material; the keys carried here belong to the OLD instance and are
 # useful for exactly one thing — unsealing a restored Raft snapshot. Restoring
 # that snapshot is a separate operation this does not perform.
@@ -196,7 +196,7 @@ _kit_recipient() {
 # Under kernel/, so the cluster-admin policy already reads it and no new grant
 # is needed for the person who would be restoring. eso-read denies this exact
 # path — see the Cluster composition — so nothing that goes through External
-# Secrets can read it: a key ESO could materialise into a Secret would be
+# Secrets can read it: a key ESO could materialize into a Secret would be
 # readable by anything able to write an ExternalSecret. The operator's own
 # policy, operator-write, covers gentian-os/* and so reads it as well.
 _KIT_BACKUP_ESCROW_PATH="gentian-os/kernel/backup/identity"
@@ -513,7 +513,7 @@ export_recovery_kit() {
         error ""
         error "  The export tries an OIDC sign-in as cluster-admin when it has no token,"
         error "  so reaching this means that did not complete either — no browser, the"
-        error "  sign-in was cancelled, or OpenBao is unreachable from here."
+        error "  sign-in was canceled, or OpenBao is unreachable from here."
         error ""
         error "  Supply a token directly:"
         error "    export BAO_ADDR=https://localhost:8200   # localhost is in the cert SANs"
@@ -761,7 +761,7 @@ load_recovery_kit() {
     info "Derived credentials will reproduce their original values."
     if [[ -n "${OPENBAO_ROOT_TOKEN:-}" ]]; then
         info "The kit carries OpenBao unseal material for the PREVIOUS instance. A fresh"
-        info "install initialises its own; those keys matter only if you are also"
+        info "install initializes its own; those keys matter only if you are also"
         info "restoring a Raft snapshot, which this does not do."
     fi
 }

@@ -147,13 +147,13 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 		}
 	}
 
-	// A platform that does not know a kind of artefact does not restore the
+	// A platform that does not know a kind of artifact does not restore the
 	// app without it: it refuses the app and says why. That is what a
 	// reader of format 2 from before this kind does with mariadbOwned.
 	manifest.Apps[0].Stores[1].Kind = "somethingNewer"
 	if _, err = planRestore(manifest, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, nil)); err == nil ||
-		!strings.Contains(err.Error(), `shop has an artefact of kind "somethingNewer" in the bundle, which this platform does not know how to restore`) {
-		t.Errorf("an unknown kind of artefact was not refused: %v", err)
+		!strings.Contains(err.Error(), `shop has an artifact of kind "somethingNewer" in the bundle, which this platform does not know how to restore`) {
+		t.Errorf("an unknown kind of artifact was not refused: %v", err)
 	}
 
 	// Purge and the deletion of the tenant: one Job, one script.

@@ -28,8 +28,8 @@ import (
 // A tenant's manifest is edited as text, so that the comments in it and
 // everything nobody asked to change survive. These are the manifests there
 // are: the director's own, with its comments and an empty or a filled apps
-// list; an import's, marshalled, with its lists at the key's own indentation;
-// and ones that already carry a catalogue section in either form.
+// list; an import's, marshaled, with its lists at the key's own indentation;
+// and ones that already carry a catalog section in either form.
 
 const directorWritten = `# Tenant demo, brought on through the director.
 apiVersion: gentianos.io/v1alpha1
@@ -109,7 +109,7 @@ func mustParse(t *testing.T, text string) map[string]any {
 	return doc
 }
 
-// withoutCatalogue is a manifest's spec with the catalogue section taken
+// withoutCatalogue is a manifest's spec with the catalog section taken
 // out, as YAML: what an edit must leave exactly as it was.
 func withoutCatalogue(t *testing.T, text string) string {
 	t.Helper()
@@ -129,16 +129,16 @@ func TestATenantsCatalogueSectionIsWrittenIntoEveryManifestThereIs(t *testing.T)
 		{Name: "ours", URL: "https://demo.gitlab.io/catalogue", AddedBy: "tenant"},
 	}}
 	for name, manifest := range map[string]string{
-		"the director's own":            directorWritten,
-		"with apps":                     withApps,
-		"an import":                     imported,
-		"an import with a catalogue":    importedWithCatalogue,
-		"no trailing newline":           noTrailingNewline,
-		"an empty catalogue":            strings.Replace(directorWritten, "  apps: []\n", "  catalogue: {}\n  apps: []\n", 1),
-		"a catalogue in the middle":     strings.Replace(directorWritten, "  deletionPolicy: Retain\n", "  catalogue:\n    delegated: false\n  deletionPolicy: Retain\n", 1),
-		"a catalogue with a flow list":  strings.Replace(directorWritten, "  apps: []\n", "  catalogue:\n    sources: []\n  apps: []\n", 1),
-		"a catalogue on one line":       strings.Replace(directorWritten, "  apps: []\n", "  catalogue: {delegated: true, sources: []}\n  apps: []\n", 1),
-		"a catalogue followed by notes": strings.Replace(directorWritten, "  apps: []\n", "  catalogue:\n    delegated: true\n\n  # after\n  apps: []\n", 1),
+		"the director's own":          directorWritten,
+		"with apps":                   withApps,
+		"an import":                   imported,
+		"an import with a catalog":    importedWithCatalogue,
+		"no trailing newline":         noTrailingNewline,
+		"an empty catalog":            strings.Replace(directorWritten, "  apps: []\n", "  catalogue: {}\n  apps: []\n", 1),
+		"a catalog in the middle":     strings.Replace(directorWritten, "  deletionPolicy: Retain\n", "  catalogue:\n    delegated: false\n  deletionPolicy: Retain\n", 1),
+		"a catalog with a flow list":  strings.Replace(directorWritten, "  apps: []\n", "  catalogue:\n    sources: []\n  apps: []\n", 1),
+		"a catalog on one line":       strings.Replace(directorWritten, "  apps: []\n", "  catalogue: {delegated: true, sources: []}\n  apps: []\n", 1),
+		"a catalog followed by notes": strings.Replace(directorWritten, "  apps: []\n", "  catalogue:\n    delegated: true\n\n  # after\n  apps: []\n", 1),
 	} {
 		out, err := setTenantCatalogue(manifest, want)
 		if err != nil {
@@ -174,7 +174,7 @@ func TestATenantsCatalogueSectionIsWrittenIntoEveryManifestThereIs(t *testing.T)
 	}
 }
 
-// A manifest with no catalogue section reads as no sources and not
+// A manifest with no catalog section reads as no sources and not
 // delegated, and stays byte for byte as it is when nothing is to be said.
 func TestAManifestWithoutTheSectionIsNotDelegatedAndIsLeftAlone(t *testing.T) {
 	for _, manifest := range []string{directorWritten, withApps, imported, noTrailingNewline} {
@@ -272,7 +272,7 @@ spec:
 		t.Fatalf("with none left (%v):\n%s", err, none)
 	}
 
-	// A claim that says nothing about catalogues, one that says `{}`, and
+	// A claim that says nothing about catalogs, one that says `{}`, and
 	// one that carries the section only as a comment: each gets the list.
 	for name, bare := range map[string]string{
 		"nothing":    "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c\nspec:\n  kernelDomain: k.example\n",
@@ -404,8 +404,8 @@ func TestWhichOriginMayTakeAName(t *testing.T) {
 }
 
 // A reserved address name is held by a profile the platform ships, and by
-// nothing a catalogue can bring: every owner on the list is a name the
-// director refuses to materialise from any catalogue.
+// nothing a catalog can bring: every owner on the list is a name the
+// director refuses to materialize from any catalog.
 func TestEveryHolderOfAReservedAddressIsAPlatformProfile(t *testing.T) {
 	holders := 0
 	for _, r := range hostnames.PlatformLabels() {
@@ -414,7 +414,7 @@ func TestEveryHolderOfAReservedAddressIsAPlatformProfile(t *testing.T) {
 		}
 		holders++
 		if !PlatformProfile(r.Owner) {
-			t.Errorf("%s is held by %s, which is not a profile the platform ships: a catalogue could publish it", r.Label, r.Owner)
+			t.Errorf("%s is held by %s, which is not a profile the platform ships: a catalog could publish it", r.Label, r.Owner)
 		}
 		for _, origin := range []string{"cluster/main", "tenant/acme/ours"} {
 			var taken *ErrProfileNameTaken
@@ -429,7 +429,7 @@ func TestEveryHolderOfAReservedAddressIsAPlatformProfile(t *testing.T) {
 }
 
 // What is read of a declared source is one address. A directory of the
-// deployments repository is not a catalogue source: an entry that names one
+// deployments repository is not a catalog source: an entry that names one
 // in place of an address is not read, whoever the manifest says added it.
 func TestADirectoryIsNotASource(t *testing.T) {
 	manifest := strings.Replace(directorWritten, "  apps: []\n", `  catalogue:

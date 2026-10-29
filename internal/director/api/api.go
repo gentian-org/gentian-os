@@ -14,7 +14,7 @@ SPDX-License-Identifier: MPL-2.0
 // Every route follows the same four steps and none may skip one: establish who
 // is calling from a verified token, name the relation the route requires, ask
 // OpenFGA, and only then touch git. A route is registered together with its
-// relation, so a handler that forgot to authorise is not something this
+// relation, so a handler that forgot to authorize is not something this
 // package can express.
 package api
 
@@ -188,7 +188,7 @@ type Config struct {
 	Viewer authz.Viewer
 	Repo   Repository
 	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
-	// catalogue's index when one is listed. Which catalogues there are is
+	// catalogue's index when one is listed. Which catalogs there are is
 	// not its to know: they are read from git when they are needed, per
 	// tenant (catalogues.go). Nil is a director that fetches nothing, which
 	// refuses every install from a catalogue and every catalogue added.
@@ -206,7 +206,7 @@ type Config struct {
 	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
 	// CommissionKeys are the components that may commission partners,
-	// as the operator lists them (partners.go). Nil recognises none.
+	// as the operator lists them (partners.go). Nil recognizes none.
 	CommissionKeys *CommissionKeys
 }
 
@@ -478,7 +478,7 @@ func (s *Server) routes() {
 	// structure. This service reads the graph to decide a call and writes git;
 	// it writes no tuples, and its token cannot.
 
-	// Reads are authorised by can_view, never by the write relation: whoever
+	// Reads are authorized by can_view, never by the write relation: whoever
 	// may see a tenant may see what it has installed, whether or not they may
 	// change it.
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
@@ -486,7 +486,7 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/updates", "can_view", tenantObject, s.updatesForTenant)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
-	// The catalogues a tenant sees (AD-14): the cluster's and its own.
+	// The catalogs a tenant sees (AD-14): the cluster's and its own.
 	// can_view, like every other read of a tenant: whoever may see a tenant
 	// may see what it could install.
 	s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
@@ -587,7 +587,7 @@ func (s *Server) routes() {
 		// to what is public, only where it answers.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias", "can_configure", s.clusterObject, s.setExposureAlias)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/exposures/{inst}/{name}/alias", "can_configure", s.clusterObject, s.clearExposureAlias)
-		// Where software may enter the cluster: its catalogues. Reading is
+		// Where software may enter the cluster: its catalogs. Reading is
 		// can_audit, like the settings; every change is can_configure -- a
 		// catalogue for every tenant, a catalogue for one tenant, and
 		// whether a tenant's own administrators may add theirs. The last is
@@ -1056,7 +1056,7 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 
 type installRequest struct {
 	// Coordinate is <catalogue>/<app>: which catalogue the profile comes
-	// from. It is what materialising fetches, and its catalogue must be a
+	// from. It is what materializing fetches, and its catalogue must be a
 	// source the cluster declares; without it the install is of a profile
 	// the cluster already has, and carries no digest.
 	Coordinate string `json:"coordinate,omitempty"`
@@ -1082,7 +1082,7 @@ type installRequest struct {
 // The question asked is the route's own: may this person install apps in
 // this tenant (can_install_app). Nothing here decides whether the tenant is
 // licensed for the app. That is not the platform's to gate: whether the app
-// arrives is decided where its artefacts are pulled, by whether the tenant
+// arrives is decided where its artifacts are pulled, by whether the tenant
 // holds a credential for the repository they come from.
 //
 // An install for everyone asks a second one. It gives people access to the
@@ -1213,7 +1213,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 		if res.Changed {
-			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
+			s.cfg.Log.InfoContext(ctx, "materialized a catalog entry",
 				"request_id", reqID(ctx), "coordinate", body.Coordinate, "origin", source.origin(tenant), "commit", res.Commit)
 		}
 	} else {
@@ -1372,27 +1372,27 @@ func (s *Server) pinOrigin(
 	}
 	if !known || s.cfg.Catalogue == nil {
 		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
-			"%q is not a catalogue this tenant installs from, so nothing can be fetched from it or verified; "+
+			"%q is not a catalog this tenant installs from, so nothing can be fetched from it or verified; "+
 				"nothing was installed. %s", catalogueName, s.declaredSources(ctx, tenant)))
 		return nil, "", false
 	}
 	if digest == "" {
 		s.fail(w, r, http.StatusBadRequest,
-			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
+			"installing from a catalog source needs the entry's digest: sha256:<hex>")
 		return nil, "", false
 	}
 	return &found, name, true
 }
 
-// declaredSources says which catalogues a tenant sees, for a refusal that
+// declaredSources says which catalogs a tenant sees, for a refusal that
 // has to tell the caller what it could have asked for.
 func (s *Server) declaredSources(ctx context.Context, tenant string) string {
 	if s.cfg.Catalogue == nil {
-		return "This director fetches from no catalogue."
+		return "This director fetches from no catalog."
 	}
 	sources, _, err := s.visibleSources(ctx, tenant)
 	if err != nil || len(sources) == 0 {
-		return "This tenant has no catalogue to install from."
+		return "This tenant has no catalog to install from."
 	}
 	names := make([]string, 0, len(sources))
 	for _, src := range sources {
@@ -1422,20 +1422,20 @@ func (s *Server) fetchEntry(
 		// Said plainly and logged, because this is the one failure here that
 		// is not a mistake: the source served something other than the build
 		// that was asked for.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the build requested",
+		s.cfg.Log.ErrorContext(ctx, "a catalog source served a bundle that is not the build requested",
 			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key)
 		s.fail(w, r, http.StatusBadGateway,
-			"the catalogue source served a bundle for "+coordinate+" that is not this entry; nothing was installed")
+			"the catalog source served a bundle for "+coordinate+" that is not this entry; nothing was installed")
 		return nil, false
 	case errors.Is(err, catalogue.ErrNotFound):
-		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve "+coordinate)
+		s.fail(w, r, http.StatusNotFound, "the catalog source does not serve "+coordinate)
 		return nil, false
 	case errors.Is(err, catalogue.ErrAddressRefused):
 		// The address was a public one when the catalogue was added and is
 		// not one now. Logged with what it was, answered without.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue's address is no longer one that is fetched from",
+		s.cfg.Log.ErrorContext(ctx, "a catalog's address is no longer one that is fetched from",
 			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
+		s.fail(w, r, http.StatusBadGateway, "the address of catalog "+source.Name+
 			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
 		return nil, false
 	case errors.Is(err, profilebundle.ErrRefused):
@@ -1444,13 +1444,13 @@ func (s *Server) fetchEntry(
 		// profile's, a companion from a tenant's own catalogue. Said with
 		// what was found, because whoever publishes the catalogue has to
 		// change it; logged, because it is also what an attempt looks like.
-		s.cfg.Log.WarnContext(ctx, "a catalogue entry was refused for what its bundle holds",
+		s.cfg.Log.WarnContext(ctx, "a catalog entry was refused for what its bundle holds",
 			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key, "error", err.Error())
-		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+coordinate+
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalog entry "+coordinate+
 			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
 		return nil, false
 	case err != nil:
-		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the catalog entry could not be read: "+err.Error())
 		return nil, false
 	}
 	return profile, true
@@ -1519,14 +1519,14 @@ func (s *Server) commitEntry(
 		// pinned install against the bundle, and one it cannot be given
 		// would be held at rollout for good.
 		s.fail(w, r, http.StatusUnprocessableEntity,
-			"the catalogue entry "+profile.Name+" is too large to be installed at a digest; nothing was installed")
+			"the catalog entry "+profile.Name+" is too large to be installed at a digest; nothing was installed")
 		return gitops.Result{}, false
 	case errors.Is(err, gitops.ErrProfileStatesOrigin):
-		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalog entry "+profile.Name+
 			" carries an annotation only the platform writes (its bundle or its origin); nothing was installed")
 		return gitops.Result{}, false
 	case errors.Is(err, profilebundle.ErrRefused):
-		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalog entry "+profile.Name+
 			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
 		return gitops.Result{}, false
 	case errors.As(err, &taken):
@@ -1555,7 +1555,7 @@ func refusedFor(err error) string {
 // It names no other tenant: whose the other profile is, is in the log.
 func nameTakenMessage(taken *gitops.ErrProfileNameTaken, tenant string, source visibleSource) string {
 	name := taken.Name
-	suggestion := fmt.Sprintf("publish it as %s-%s in the catalogue %s and install that", tenant, name, source.Name)
+	suggestion := fmt.Sprintf("publish it as %s-%s in the catalog %s and install that", tenant, name, source.Name)
 	switch {
 	case taken.Platform:
 		if source.scope == scopeTenant {
@@ -1563,13 +1563,13 @@ func nameTakenMessage(taken *gitops.ErrProfileNameTaken, tenant string, source v
 				"one object for the whole cluster. Nothing was installed; %s", name, suggestion)
 		}
 		return fmt.Sprintf("the name %s is taken on this cluster by a component the platform ships. Nothing was installed; "+
-			"the catalogue %s has to publish its entry under another name", name, source.Name)
+			"the catalog %s has to publish its entry under another name", name, source.Name)
 	case source.scope == scopeTenant:
-		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from another catalogue, and a profile "+
+		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from another catalog, and a profile "+
 			"is one object for the whole cluster. Nothing was installed; %s", name, suggestion)
 	default:
-		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from a tenant's own catalogue, so "+
-			"the entry of the cluster's catalogue %s cannot be installed under it. Nothing was installed. The tenant that "+
+		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from a tenant's own catalog, so "+
+			"the entry of the cluster's catalog %s cannot be installed under it. Nothing was installed. The tenant that "+
 			"published it has to rename its profile (<tenant>-%s) and install that instead; the cluster's administrator "+
 			"can see whose it is", name, source.Name, name)
 	}
@@ -1820,7 +1820,7 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 				return
 			}
 			if res.Changed {
-				s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
+				s.cfg.Log.InfoContext(ctx, "materialized a catalog entry",
 					"request_id", reqID(ctx), "coordinate", pinned[i].Coordinate, "commit", res.Commit)
 			}
 		}
@@ -2074,7 +2074,7 @@ func (s *Server) writeExposureAlias(w http.ResponseWriter, r *http.Request, c ca
 
 // retireTenant stops git describing a tenant, which is what removes it.
 //
-// Whether its data goes with it is the manifest's deletionPolicy, honoured by
+// Whether its data goes with it is the manifest's deletionPolicy, honored by
 // the operator, not something decided here.
 func (s *Server) retireTenant(w http.ResponseWriter, r *http.Request, c call) {
 	tenant := r.PathValue("t")

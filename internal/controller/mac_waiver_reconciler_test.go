@@ -295,7 +295,7 @@ func macWaiverConditionHasReason(tenant *gentianov1alpha1.Tenant, reason string)
 
 // The allowlist alone waives nothing. It says what the cluster may ever
 // waive; whether this tenant's install gets it is the grant's to say, and
-// without one the namespace is not labelled and the tenant says why.
+// without one the namespace is not labeled and the tenant says why.
 func TestEnsureMacWaivers_allowlistWithoutGrantWaivesNothing(t *testing.T) {
 	t.Parallel()
 	expired := waiverGrant("app-a", "run-as-root")

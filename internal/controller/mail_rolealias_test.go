@@ -167,7 +167,7 @@ func TestDomainRecipients(t *testing.T) {
 		}
 	})
 
-	t.Run("case is normalised so one address is one line", func(t *testing.T) {
+	t.Run("case is normalized so one address is one line", func(t *testing.T) {
 		t.Parallel()
 		lines, _ := domainRecipients("finnor.example", []string{
 			"Sibylle@Finnor.Example",

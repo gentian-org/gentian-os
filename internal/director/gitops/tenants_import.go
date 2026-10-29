@@ -99,7 +99,7 @@ type ImportedTenant struct {
 //   - deletionPolicy is Retain: a tenant that was exported while a purge was
 //     under way must not arrive with its purge; and spec.deletion is dropped
 //     with it.
-//   - spec.catalogue is dropped: a bundle does not bring its own catalogues
+//   - spec.catalogue is dropped: a bundle does not bring its own catalogs
 //     or its own delegation.
 //
 // A custom domain the import keeps (Pending.CustomDomain) is declared in the
@@ -138,10 +138,10 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		declared.Isolation = backup.RuleIsolation(name, mode)
 		declared.DeletionPolicy = gentianov1alpha1.DeletionPolicyRetain
 		declared.Deletion = nil
-		// Nor are its catalogues. Which addresses a tenant installs from, and
+		// Nor are its catalogs. Which addresses a tenant installs from, and
 		// whether its own administrators may add more, were decided by the
 		// administrator of the cluster the bundle came from; on this one they
-		// are decided here, through the catalogue routes, after the import.
+		// are decided here, through the catalog routes, after the import.
 		declared.Catalogue = nil
 		// Nor whether anybody may sign up. That a realm elsewhere took
 		// registrations says nothing about this cluster's: a tenant is made

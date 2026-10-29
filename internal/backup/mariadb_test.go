@@ -321,7 +321,7 @@ func TestMariaDBExportRestoreAndPurgeAgreeOnWhichDatabasesAreAnApps(t *testing.T
 		}
 	}
 	if got := MariaDBOwnedArtefact("demo_crm"); got != "mariadb/demo_crm.owned.tar.gz" {
-		t.Errorf("artefact = %q", got)
+		t.Errorf("artifact = %q", got)
 	}
 
 	// Restore: under the name of the database restored into, replaced, and

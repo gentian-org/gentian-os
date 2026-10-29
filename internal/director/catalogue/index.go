@@ -33,7 +33,7 @@ import (
 // and a cluster that reproduced them would be a second-rate copy of a screen
 // somebody else keeps current. What the cluster can answer for itself is the
 // narrow question a person asks when the store is not the answer: what is in
-// my catalogues, at which version, and may this tenant install it.
+// my catalogs, at which version, and may this tenant install it.
 //
 // So this is the fallback, and it is meant to look like one.
 
@@ -115,7 +115,7 @@ type Listing struct {
 // cluster lists for itself.
 func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 	if f == nil {
-		return Listing{}, fmt.Errorf("%w: this director fetches from no catalogue", ErrNotFound)
+		return Listing{}, fmt.Errorf("%w: this director fetches from no catalog", ErrNotFound)
 	}
 	// By the catalogue and by where it is read from: a catalogue removed and
 	// added again at another address, or as another artifact, is another

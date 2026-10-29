@@ -39,7 +39,7 @@ mailStorageSize: 5Gi
 #
 # The name must therefore be a public one: clients connect to
 # imap.<kernelDomain>, not to dovecot-<env>.<ns>.svc.cluster.local, because the
-# certificate is checked against what the client dialled.
+# certificate is checked against what the client dialed.
 #
 # Empty disables TLS entirely and keeps plaintext IMAP on 143.
 tls:

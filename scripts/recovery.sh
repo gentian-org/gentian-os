@@ -289,7 +289,7 @@ rclone_remote() {
   brew install rclone   /   apt install rclone   /   https://rclone.org/install/" || return 1
     local ak="" sk="" kn
     # Beside the object store: where a destination's credential is
-    # materialised, and where the capture Jobs read it.
+    # materialized, and where the capture Jobs read it.
     kn="$(ns_system s3)" || return 1
 
     # An empty endpoint means the platform's own object store, whose address is a

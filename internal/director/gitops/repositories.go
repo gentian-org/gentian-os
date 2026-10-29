@@ -130,7 +130,7 @@ func CheckRepositoryDeclaration(name string, d *RepositoryDeclaration) error {
 		// reads -- and somebody who declared one would wait for apps that
 		// never appear.
 		return fmt.Errorf("a git repository with role apps is no longer declared: profiles are not copied " +
-			"from a git repository any more. To offer your own apps, add a catalogue " +
+			"from a git repository any more. To offer your own apps, add a catalog " +
 			"(kubectl gentian catalogues add <name> <https address>); to let apps pull their chart and " +
 			"images from a private registry, declare it with type oci")
 	}
@@ -540,7 +540,7 @@ func (g *GitOps) RegistryRepository(ctx context.Context, owner, name string) (ca
 	}
 	spec, _ := found[0].doc["spec"].(map[string]any)
 	if kind, _ := spec["type"].(string); kind != "oci" {
-		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: %s is a repository of type %q; a catalogue is read from a registry (type oci)",
+		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: %s is a repository of type %q; a catalog is read from a registry (type oci)",
 			ErrRepositoryNotRegistry, name, kind)
 	}
 	out := catalogue.DeclaredRegistry{URL: found[0].url()}

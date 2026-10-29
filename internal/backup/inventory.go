@@ -33,7 +33,7 @@ import (
 
 // TenantNamespace returns the namespace a tenant's workloads run in.
 //
-// There is one rule and it is the Tenant's own (NamespaceName), which honours
+// There is one rule and it is the Tenant's own (NamespaceName), which honors
 // spec.isolation.namespace. Provisioning has always read it; export, restore,
 // purge and the read of what uninstalled apps hold used to spell
 // "tenant-<name>" for themselves, and would have looked in an empty namespace
@@ -129,7 +129,7 @@ func NamesTaken(candidate *gentianov1alpha1.Tenant, others []gentianov1alpha1.Te
 }
 
 // DatabaseName returns the relational database provisioned for a tenant + app.
-// Honours spec.isolation.databasePrefix, defaulting to "{tenant}_", and
+// Honors spec.isolation.databasePrefix, defaulting to "{tenant}_", and
 // replaces hyphens because they are not legal in an unquoted SQL identifier.
 func DatabaseName(tenant *gentianov1alpha1.Tenant, app string) string {
 	return NamesOf(tenant).DatabasePrefix + strings.ReplaceAll(app, "-", "_")
@@ -154,7 +154,7 @@ func MariaDBUser(tenantName, app string) string {
 }
 
 // S3Bucket returns the object-storage bucket provisioned for a tenant + app.
-// Honours spec.isolation.s3Prefix, defaulting to "{tenant}-".
+// Honors spec.isolation.s3Prefix, defaulting to "{tenant}-".
 func S3Bucket(tenant *gentianov1alpha1.Tenant, app string) string {
 	return NamesOf(tenant).BucketPrefix + s3Safe(app)
 }
@@ -183,7 +183,7 @@ func CNPGDatabaseCR(tenantName, app string) string {
 
 // DesktopStore is the name the desktop's database, role and vault record are
 // kept under for a tenant. It is shaped like an app's name and is not one: no
-// catalogue entry is called this and nothing installs or uninstalls it, so a
+// catalog entry is called this and nothing installs or uninstalls it, so a
 // tenant always holds these stores and never "retains" them.
 const DesktopStore = "shell"
 
@@ -260,7 +260,7 @@ func s3Safe(value string) string {
 
 // Stores is the set of kernel-backed stores one app owns. It is derived purely
 // from the profile's declared kernelRequirements — never from the app's name —
-// so a new catalogue entry is captured correctly without touching this repo.
+// so a new catalog entry is captured correctly without touching this repo.
 type Stores struct {
 	// Database is the engine backing this app, or "" when it needs none.
 	Database gentianov1alpha1.DatabaseEngine
@@ -408,7 +408,7 @@ func OwnsRelease(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 // So a claim that names a release is the app's only if the release is: the
 // app's own, one of its declared extensions', or the one a chart delivered
 // without the app Composition is installed as. Those names are exact
-// (AppRelease and its neighbours), which is also how a claim an uninstall
+// (AppRelease and its neighbors), which is also how a claim an uninstall
 // kept is known to be this app's: it still carries its release. When the
 // profile is gone the extensions are not known, and any release shaped like
 // one of the app's counts -- unless it is the release of an app the tenant

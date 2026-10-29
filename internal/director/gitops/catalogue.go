@@ -30,7 +30,7 @@ import (
 
 // A profile in the cluster, because a tenant asked for it (AD-3).
 //
-// The cluster holds no catalogue. A ComponentProfile is written here when a
+// The cluster holds no catalog. A ComponentProfile is written here when a
 // tenant installs the entry it describes, at the digest the install asked
 // for, and it stays because the tenant still has it installed.
 //
@@ -61,7 +61,7 @@ const CatalogueDir = "catalogue"
 // pinned install against.
 func BundleFile(name string) string { return name + ".bundle.yaml" }
 
-// BuildsDir is the subdirectory of the catalogue directory that holds one
+// BuildsDir is the subdirectory of the catalog directory that holds one
 // ProfileBuild per build any tenant installed: the bundle at its digest,
 // kept for every tenant that runs it after the profile moved on.
 const BuildsDir = "builds"
@@ -103,7 +103,7 @@ func (e *ErrProfileNameTaken) Error() string {
 // platformProfiles are the ComponentProfiles the platform's own chart ships
 // (charts/gentian-os/templates/componentprofile-*.yaml). They are not in the
 // deployments repository, so nothing read from it shows the name as taken;
-// a catalogue entry of the same name would have Argo CD and Helm each
+// a catalog entry of the same name would have Argo CD and Helm each
 // applying their own profile over the other's. A test holds this list to the
 // chart.
 var platformProfiles = map[string]bool{"admin-console": true, "concierge": true, "desktop": true}
@@ -124,12 +124,12 @@ var retiredPlatformProfiles = map[string]string{
 func RetiredPlatformProfile(name string) string { return retiredPlatformProfiles[name] }
 
 // MaterialisedProfile is what the deployments repository says about one
-// profile of the cluster's catalogue directory.
+// profile of the cluster's catalog directory.
 type MaterialisedProfile struct {
 	// Present says the directory holds a profile of this name: one the
 	// director materialised or the installer scaffolded.
 	Present bool
-	// Origin is the catalogue it was materialised from, as its bundle
+	// Origin is the catalog it was materialised from, as its bundle
 	// records it (profilebundle.OriginAnnotation); empty when none is
 	// recorded.
 	Origin string
@@ -139,7 +139,7 @@ type MaterialisedProfile struct {
 	Digest string
 }
 
-// ProfileOnCluster answers whether the cluster's catalogue directory holds a
+// ProfileOnCluster answers whether the cluster's catalog directory holds a
 // profile, and where it came from.
 //
 // "On the cluster" is answered from git, like everything else this service
@@ -157,12 +157,12 @@ func (g *GitOps) ProfileOnCluster(ctx context.Context, name string) (Materialise
 	return g.materialised(name)
 }
 
-// ErrProfileUnreadable is a profile in the cluster's catalogue directory
+// ErrProfileUnreadable is a profile in the cluster's catalog directory
 // that does not read as a ComponentProfile, so that nothing can be said of
 // what installing it would do.
 var ErrProfileUnreadable = errors.New("catalogue: the profile on this cluster cannot be read")
 
-// ProfileDefinition reads a profile of the cluster's catalogue directory as
+// ProfileDefinition reads a profile of the cluster's catalog directory as
 // the cluster holds it: the document, with what its bundle patch puts on it
 // (where it came from, and the bundle itself). Nil when the directory holds
 // no profile of this name.
@@ -218,7 +218,7 @@ func (g *GitOps) ProfileDefinition(ctx context.Context, name string) (*gentianov
 	return profile, nil
 }
 
-// StoredBuild is one build the catalogue directory keeps: the bundle the
+// StoredBuild is one build the catalog directory keeps: the bundle the
 // director wrote under builds/ when a tenant installed it, and the origin it
 // came from. For an install of a build the source no longer serves -- a
 // tenant moved back to what it ran -- which needs no fetch.
@@ -227,7 +227,7 @@ type StoredBuild struct {
 	Origin string
 }
 
-// BuildOnCluster reads the build of a profile at a digest from the catalogue
+// BuildOnCluster reads the build of a profile at a digest from the catalog
 // directory. ok is false when the directory holds no such build.
 func (g *GitOps) BuildOnCluster(ctx context.Context, name, digest string) (StoredBuild, bool, error) {
 	if !ValidName(name) || !digestPattern.MatchString(digest) {
@@ -297,12 +297,12 @@ func (g *GitOps) materialised(name string) (MaterialisedProfile, error) {
 
 // nameTaken applies the rule for a name that is already a profile's.
 //
-// The same origin again is the same catalogue publishing its own entry: a
-// reinstall, or a new build. Otherwise a tenant's catalogue never takes a
-// name somebody else has, and nobody takes a name a tenant's catalogue has --
+// The same origin again is the same catalog publishing its own entry: a
+// reinstall, or a new build. Otherwise a tenant's catalog never takes a
+// name somebody else has, and nobody takes a name a tenant's catalog has --
 // in both directions, because the profile is one object for the whole
 // cluster and a tenant's is installable only in that tenant. Between two
-// catalogues of the whole cluster the later build replaces the earlier, as it
+// catalogs of the whole cluster the later build replaces the earlier, as it
 // always has: an install pinned to the earlier one is then held by the
 // operator, which says so.
 func nameTaken(name, origin string, have MaterialisedProfile) error {
@@ -323,7 +323,7 @@ func nameTaken(name, origin string, have MaterialisedProfile) error {
 	return nil
 }
 
-// MaterialiseProfile writes one profile's bundle into the cluster's catalogue
+// MaterialiseProfile writes one profile's bundle into the cluster's catalog
 // directory, with its carrier, if both are not already there byte for byte.
 //
 // body is what the source served and what the digest was taken over: the
@@ -341,7 +341,7 @@ func nameTaken(name, origin string, have MaterialisedProfile) error {
 // (internal/profilebundle). The patch is derived from body and from nothing
 // else, and the operator does not take its word for anything.
 //
-// origin is the catalogue the bytes were fetched from
+// origin is the catalog the bytes were fetched from
 // (profilebundle.ClusterOrigin or TenantOrigin), written on the profile by
 // the same patch. A name another origin holds is refused with
 // ErrProfileNameTaken (see nameTaken), and nothing is written.
@@ -439,7 +439,7 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 	// The digest is in the message because it is the thing that was checked,
 	// and a reviewer asking "is this the build that was asked for" should
 	// not have to hash the file to find out.
-	msg := fmt.Sprintf("feat(catalogue): materialise %s at %s", name, shortDigest(digest))
+	msg := fmt.Sprintf("feat(catalog): materialize %s at %s", name, shortDigest(digest))
 	if err := g.commitPaths(ctx, rels, msg, meta); err != nil {
 		return Result{}, err
 	}
@@ -461,7 +461,7 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 // is committed that is not a bundle this origin may bring, whoever calls.
 // renderBuild is the ProfileBuild of one build: the bundle's bytes, its
 // digest and where it came from, for a tenant that runs this build after the
-// profile moved on. Fixed text rather than a marshalled object, because the
+// profile moved on. Fixed text rather than a marshaled object, because the
 // installer writes the same file for the profile it places and the two have
 // to agree byte for byte (scripts/lib/catalogue.sh, gentian_materialise_profile).
 func renderBuild(name, digest string, body []byte, origin string) ([]byte, error) {
@@ -513,7 +513,7 @@ func renderBundle(name string, body []byte, origin string) ([]byte, error) {
 		return nil, fmt.Errorf("catalogue: %s states no apiVersion", name)
 	}
 	// Whose a profile is, is recorded by the director from where it fetched
-	// it. A profile that arrives saying so itself is a catalogue claiming to
+	// it. A profile that arrives saying so itself is a catalog claiming to
 	// be another one.
 	for _, key := range []string{profilebundle.OriginAnnotation, profilebundle.Annotation} {
 		if _, stated := head.Metadata.Annotations[key]; stated {
@@ -551,7 +551,7 @@ func shortDigest(digest string) string {
 
 // ── Taking a profile out again ──────────────────────────────────────────────
 
-// ErrProfileInUse is a profile that is not removed from the catalogue
+// ErrProfileInUse is a profile that is not removed from the catalog
 // directory because something still depends on it.
 type ErrProfileInUse struct {
 	// Name is the profile.
@@ -564,7 +564,7 @@ func (e *ErrProfileInUse) Error() string {
 	return fmt.Sprintf("catalogue: profile %s is in use: %s", e.Name, e.Why)
 }
 
-// CatalogueDeclares answers which profile's bundle in the cluster's catalogue
+// CatalogueDeclares answers which profile's bundle in the cluster's catalog
 // directory declares an object of this kind and name; "" when none does.
 //
 // It is asked before an object is deleted from the cluster as something no
@@ -608,7 +608,7 @@ func (g *GitOps) CatalogueDeclares(ctx context.Context, kind, name string) (stri
 	return "", nil
 }
 
-// RetireProfile removes a profile from the cluster's catalogue directory: its
+// RetireProfile removes a profile from the cluster's catalog directory: its
 // bundle file, the carrier beside it and both entries in the kustomization,
 // as one commit.
 //
@@ -687,7 +687,7 @@ func (g *GitOps) RetireProfile(ctx context.Context, name string, meta Meta) (Res
 			}
 			rels = append(rels, rel)
 		}
-		err = g.commitPaths(ctx, rels, fmt.Sprintf("feat(catalogue): remove unused profile %s", name), meta)
+		err = g.commitPaths(ctx, rels, fmt.Sprintf("feat(catalog): remove unused profile %s", name), meta)
 		if err == nil {
 			return g.landed(ctx, "removed")
 		}

@@ -36,7 +36,7 @@ import (
 
 // EnableSigning imports a private key and makes every later commit use it.
 //
-// The key arrives as an armoured OpenPGP block, from the Secret External
+// The key arrives as an armored OpenPGP block, from the Secret External
 // Secrets projects out of the vault. It is imported into a keyring of this
 // process's own under dir, never the image's default: two directors on one
 // node would otherwise share a keyring, and a keyring inside the container

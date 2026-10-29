@@ -27,12 +27,12 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// Renaming a catalogue in place.
+// Renaming a catalog in place.
 //
-// A catalogue's name is carried by three things at once: the source entry
+// A catalog's name is carried by three things at once: the source entry
 // (spec.catalogue.sources[].name on the tenant's manifest or the Cluster
 // claim), the catalogue: of every app entry and add-on pin installed from
-// it, and the origin of every profile materialised from it -- on the
+// it, and the origin of every profile materialized from it -- on the
 // bundle beside the profile (profilebundle.OriginAnnotation) and on each
 // build under builds/. Removing the source and adding it under another name
 // leaves the origins at the old name, so the next install from the new one
@@ -46,24 +46,24 @@ import (
 // and whether its bundle may hold companions, and both answers are the same
 // under the new name.
 
-// RenameCatalogueSource renames the catalogue old to new: one of tenant's
+// RenameCatalogueSource renames the catalog old to new: one of tenant's
 // own with a tenant, one of the whole cluster's with tenant "". The source
 // entry, every app entry and add-on pin of the tenant -- of every tenant,
-// for a catalogue of the cluster -- that names it, and the origin of every
-// materialised profile, bundle and build that came from it are rewritten
+// for a catalog of the cluster -- that names it, and the origin of every
+// materialized profile, bundle and build that came from it are rewritten
 // in one commit.
 //
-// Refused when old is not a catalogue of that scope (ErrCatalogueNotFound),
+// Refused when old is not a catalog of that scope (ErrCatalogueNotFound),
 // when new is one already -- of the same scope, of the cluster for a
 // tenant's, of any tenant for the cluster's -- (ErrCatalogueNameTaken), and
 // when a name is not a name (ErrInvalidName). The same name again is
 // "unchanged".
 func (g *GitOps) RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta Meta) (Result, error) {
 	if !ValidName(old) {
-		return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, old)
+		return Result{}, fmt.Errorf("%w: catalog %q", ErrInvalidName, old)
 	}
 	if !ValidName(new) {
-		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
+		return Result{}, fmt.Errorf("%w: a catalog's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
 	if tenant != "" && !ValidName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
@@ -72,7 +72,7 @@ func (g *GitOps) RenameCatalogueSource(ctx context.Context, tenant, old, new str
 	if tenant != "" {
 		scope = tenant
 	}
-	msg := fmt.Sprintf("feat(%s): rename catalogue %s to %s (via %s)", scope, old, new, meta.actor())
+	msg := fmt.Sprintf("feat(%s): rename catalog %s to %s (via %s)", scope, old, new, meta.actor())
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for started, attempt := time.Now(), 1; ; attempt++ {
@@ -128,7 +128,7 @@ func (g *GitOps) renameSource(ctx context.Context, tenant, old, new string) ([]s
 			case old:
 				at = i
 			case new:
-				return nil, fmt.Errorf("%w: %s is already a catalogue of this cluster, at %s",
+				return nil, fmt.Errorf("%w: %s is already a catalog of this cluster, at %s",
 					ErrCatalogueNameTaken, new, src.where())
 			}
 		}
@@ -139,7 +139,7 @@ func (g *GitOps) renameSource(ctx context.Context, tenant, old, new string) ([]s
 			return nil, nil
 		}
 		// As adding one is refused: to a tenant that has the name, it would
-		// mean two catalogues.
+		// mean two catalogs.
 		manifests, err := g.manifestsOfTenants(cluster)
 		if err != nil {
 			return nil, err
@@ -158,7 +158,7 @@ func (g *GitOps) renameSource(ctx context.Context, tenant, old, new string) ([]s
 		}
 		if len(holders) > 0 {
 			sort.Strings(holders)
-			return nil, fmt.Errorf("%w: %s is a catalogue of tenant %s; remove it there or choose another name",
+			return nil, fmt.Errorf("%w: %s is a catalog of tenant %s; remove it there or choose another name",
 				ErrCatalogueNameTaken, new, strings.Join(holders, ", "))
 		}
 		sources[at].Name = new
@@ -196,7 +196,7 @@ func (g *GitOps) renameSource(ctx context.Context, tenant, old, new string) ([]s
 			case old:
 				at = i
 			case new:
-				return nil, fmt.Errorf("%w: %s is already a catalogue of this tenant", ErrCatalogueNameTaken, new)
+				return nil, fmt.Errorf("%w: %s is already a catalog of this tenant", ErrCatalogueNameTaken, new)
 			}
 		}
 		if at < 0 {
@@ -211,7 +211,7 @@ func (g *GitOps) renameSource(ctx context.Context, tenant, old, new string) ([]s
 		}
 		for _, src := range claim {
 			if src.Name == new {
-				return nil, fmt.Errorf("%w: %s is a catalogue of the whole cluster, which this tenant already sees; choose another name",
+				return nil, fmt.Errorf("%w: %s is a catalog of the whole cluster, which this tenant already sees; choose another name",
 					ErrCatalogueNameTaken, new)
 			}
 		}
@@ -299,7 +299,7 @@ func (g *GitOps) claimSourcesLocked(cluster string) ([]CatalogueSource, error) {
 }
 
 // catalogueLine is the one scalar key of an app entry or an add-on pin
-// that names a catalogue.
+// that names a catalog.
 var catalogueLine = regexp.MustCompile(`^(\s+)catalogue:\s*([^\s#]+)(\s*(?:#.*)?)$`)
 
 // renameAppCatalogues rewrites catalogue: old to new on every app entry and
@@ -372,7 +372,7 @@ func renameAppCatalogues(text, old, new string) (string, int, error) {
 
 // listEnd is blockEnd for a key at indent whose value is a list, counting
 // a list written at the key's own indentation -- as the director writes a
-// pin, and a marshalled manifest writes every list -- as the key's.
+// pin, and a marshaled manifest writes every list -- as the key's.
 func listEnd(lines []string, from, indent int) int {
 	for i := from; i < len(lines); i++ {
 		t := strings.TrimSpace(lines[i])
@@ -386,7 +386,7 @@ func listEnd(lines []string, from, indent int) int {
 	return len(lines)
 }
 
-// renameOrigins puts, into files, every file of the catalogue directory
+// renameOrigins puts, into files, every file of the catalog directory
 // whose origin is from, with the origin to: the bundle patch beside each
 // profile, and each build under builds/. The bytes the digest was taken
 // over are not among them. Each file is read back and held to the one

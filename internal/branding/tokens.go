@@ -165,9 +165,9 @@ func render(typ string, value any) (string, error) {
 	return "", fmt.Errorf("$type %q is not rendered", typ)
 }
 
-// renderColor accepts the 2025.10 colour object -- colorSpace, components,
+// renderColor accepts the 2025.10 color object -- colorSpace, components,
 // alpha, and the optional hex fallback -- and, for documents written before
-// it, a plain CSS colour string.
+// it, a plain CSS color string.
 func renderColor(value any) (string, error) {
 	switch v := value.(type) {
 	case string:
@@ -183,7 +183,7 @@ func renderColor(value any) (string, error) {
 		space, _ := v["colorSpace"].(string)
 		raw, ok := v["components"].([]any)
 		if !ok || len(raw) != 3 {
-			return "", fmt.Errorf("a colour has three components")
+			return "", fmt.Errorf("a color has three components")
 		}
 		comps := make([]float64, 3)
 		for i, c := range raw {
@@ -194,7 +194,7 @@ func renderColor(value any) (string, error) {
 					comps[i] = math.NaN()
 					continue
 				}
-				return "", fmt.Errorf("a colour component is a number")
+				return "", fmt.Errorf("a color component is a number")
 			}
 			comps[i] = f
 		}
@@ -216,9 +216,9 @@ func renderColor(value any) (string, error) {
 		case "display-p3", "a98-rgb", "prophoto-rgb", "rec2020", "srgb-linear", "xyz-d50", "xyz-d65":
 			return fmt.Sprintf("color(%s %s %s %s%s)", space, num(comps[0]), num(comps[1]), num(comps[2]), a), nil
 		}
-		return "", fmt.Errorf("colour space %q is not rendered", space)
+		return "", fmt.Errorf("color space %q is not rendered", space)
 	}
-	return "", fmt.Errorf("a colour is a colour object or a CSS colour")
+	return "", fmt.Errorf("a color is a color object or a CSS color")
 }
 
 func renderMeasure(value any) (string, error) {

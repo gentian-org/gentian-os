@@ -97,7 +97,7 @@ type updateReport struct {
 	// WindowOpen is whether the platform would move latest-mode apps now.
 	WindowOpen bool          `json:"windowOpen"`
 	Entries    []updateEntry `json:"entries"`
-	// Unread names catalogues whose index could not be read; entries from
+	// Unread names catalogs whose index could not be read; entries from
 	// them say nothing about a newer build.
 	Unread []string `json:"unread,omitempty"`
 	// Partial says the cluster's side could not be read, and why.
@@ -589,7 +589,7 @@ func (s *Server) materialise(ctx context.Context, c call, what, tenant, profile,
 		return visibleSource{}, err.Error(), err
 	}
 	if !known {
-		return visibleSource{}, "the tenant no longer sees catalogue " + catalogueName, fmt.Errorf("unknown catalogue")
+		return visibleSource{}, "the tenant no longer sees catalog " + catalogueName, fmt.Errorf("unknown catalog")
 	}
 	fetched, ok := s.fetchOrStored(rec, req, source, tenant, profile, digest)
 	if !ok {

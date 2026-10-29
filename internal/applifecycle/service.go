@@ -55,7 +55,7 @@ type Service struct {
 	actualSource usage.ActualSource
 	// appLocks serializes lifecycle operations per (tenant, profile) — see lockApp.
 	appLocks sync.Map
-	// residueMu lets one removal of catalogue residue run at a time: each
+	// residueMu lets one removal of catalog residue run at a time: each
 	// works the list out and then deletes on it.
 	residueMu sync.Mutex
 	// refreshMu guards when Argo CD was last asked to read the deployments
@@ -253,8 +253,8 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 	// The group's name carries the tenant's; the realm it is in is the
 	// tenant's own, which need not be called the same.
 	tenantName, realm := tenant.Name, keycloak.RealmName(tenant)
-	// ComponentProfile: AD-4 leaves one catalogue kind, and this asked for
-	// the other one long after the catalogue stopped shipping it, so every
+	// ComponentProfile: AD-4 leaves one catalog kind, and this asked for
+	// the other one long after the catalog stopped shipping it, so every
 	// call failed with a NotFound and no app group ever got its attributes.
 	// Unstructured because all it wants is one annotation.
 	profile := &unstructured.Unstructured{}

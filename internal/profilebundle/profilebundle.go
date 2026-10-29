@@ -11,7 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 // Package profilebundle is how the operator knows that the ComponentProfile
 // it is about to roll out is the build an install was pinned to.
 //
-// An install from a catalogue source is pinned to a digest: the sha256 of the
+// An install from a catalog source is pinned to a digest: the sha256 of the
 // entry's file exactly as the source published it -- the profile and, after
 // it, whatever travels with it (bundle.go). The director checks the
 // bytes it fetched against that digest before it commits anything. What then
@@ -106,7 +106,7 @@ func Encode(bundle []byte) string {
 	return base64.StdEncoding.EncodeToString(bundle)
 }
 
-// Digest is the digest of a bundle, by the definition the catalogue's index
+// Digest is the digest of a bundle, by the definition the catalog's index
 // uses: "sha256:" and the hex of the sha256 of the published file's bytes.
 func Digest(bundle []byte) string {
 	sum := sha256.Sum256(bundle)

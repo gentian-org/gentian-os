@@ -146,7 +146,7 @@ trustedNetworks: "127.0.0.0/8"
 # templates/configmap.yaml for what each setting does and how to tell when it is
 # safe to turn on.
 #
-# Off by default, not because on is wrong but because not every catalogue app
+# Off by default, not because on is wrong but because not every catalog app
 # authenticates yet. At the time this was written: Nextcloud and Docmost send
 # credentials but STARTTLS to the in-cluster Service name, which the public
 # certificate does not cover; Nextcloud Mail's per-user provisioning sends none;

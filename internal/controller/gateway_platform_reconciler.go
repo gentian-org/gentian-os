@@ -43,7 +43,7 @@ import (
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gateways/status;httproutes;httproutes/status,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get;list;watch;create;update;patch
 //
-// ReferenceGrants authorise cross-namespace HTTPRoute -> Service references
+// ReferenceGrants authorize cross-namespace HTTPRoute -> Service references
 // (e.g. the kernel Gateway routing to Argo CD). gateway_reference_grant.go
 // creates them and tenant_edge_tls.go deletes them on teardown. A missing grant
 // does not crash the operator — it just never converges, failing every pass

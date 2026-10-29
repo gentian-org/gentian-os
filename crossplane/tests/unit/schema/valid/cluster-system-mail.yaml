@@ -2,7 +2,7 @@
 #
 # This was an INVALID fixture: there was no step that deployed Postfix or
 # Dovecot, so the opt-in was refused at admission rather than accepted and
-# silently unhonoured. The Cluster claim composes system-mail and system-mail-dmz now
+# silently unhonored. The Cluster claim composes system-mail and system-mail-dmz now
 # and the appsets deploy both, so the refusal is gone and this is the fixture
 # that proves it -- a rule removed without a case moving with it is a rule
 # nobody notices came back.

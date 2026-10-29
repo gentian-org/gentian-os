@@ -181,7 +181,7 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 		t.Fatalf("a refused purge removed something:\n%s", got)
 	}
 
-	// --- restore: the Job's unpack and synchronise containers.
+	// --- restore: the Job's unpack and synchronize containers.
 	restore := MailboxRestoreJob(p, d, MailboxesArtefact, "claim", "demo.example")
 	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", containerByName(restore, "unpack-mailboxes").Args[0])
 	out = m.mustRun(DovecotImage, "1000:1000", "/bin/bash", containerByName(restore, "mailbox-restore").Args[0], "DOMAIN=demo.example")

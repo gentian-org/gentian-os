@@ -59,7 +59,7 @@ func brandName(ctx context.Context, c client.Reader) string {
 // set.
 //
 // A brand whose tokens cannot be rendered leaves the published files as they
-// were and says why on its status: a typo in a colour must not take every
+// were and says why on its status: a typo in a color must not take every
 // page's styling away.
 type BrandingReconciler struct {
 	// Definitions holds this reconciler while the cluster's resource

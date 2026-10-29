@@ -29,7 +29,7 @@ import (
 // Only mode: custom with credentialSource: transient needs this. Everything
 // else — the policy's own destination, and a custom endpoint authenticating
 // with the workspace's managed credential — is reached through a
-// CredentialRequirement that ESO already materialises into the kernel
+// CredentialRequirement that ESO already materializes into the kernel
 // namespace. These keys belong to one export and are used once.
 //
 // The copy's name is derived from the export, never from the requester's

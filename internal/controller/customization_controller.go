@@ -64,7 +64,7 @@ type CustomizationReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// Now is injectable so review-date behaviour is testable.
+	// Now is injectable so review-date behavior is testable.
 	Now func() time.Time
 }
 

@@ -275,7 +275,7 @@ func TestScalarsAreQuotedOnlyWhenTheyMustBe(t *testing.T) {
 
 // A setting the console offers must be a path the claim can carry, and the
 // default it shows must be the one the schema applies. Both come from the
-// Cluster XRD; this asserts the catalogue agrees with it, so a setting that
+// Cluster XRD; this asserts the catalog agrees with it, so a setting that
 // would commit cleanly and change nothing fails here rather than in a
 // cluster.
 func TestEverySettingsDefaultComesFromTheSchema(t *testing.T) {
@@ -298,7 +298,7 @@ func TestEverySettingsDefaultComesFromTheSchema(t *testing.T) {
 	} {
 		got, ok := byPath[path]
 		if !ok {
-			t.Errorf("%s is not in the catalogue", path)
+			t.Errorf("%s is not in the catalog", path)
 			continue
 		}
 		if got.Default != want {
@@ -308,6 +308,6 @@ func TestEverySettingsDefaultComesFromTheSchema(t *testing.T) {
 	// A setting the schema gives no default keeps none: unset is a real
 	// answer and must not be dressed up as a value.
 	if d := byPath["mail.host"].Default; d != "" {
-		t.Errorf("mail.host has no default in the schema, catalogue says %q", d)
+		t.Errorf("mail.host has no default in the schema, catalog says %q", d)
 	}
 }

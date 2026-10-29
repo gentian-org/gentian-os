@@ -104,7 +104,7 @@ func TestExportDestinationNetworkPolicyIsTheDestinationAlone(t *testing.T) {
 			t.Errorf("%s: port %d, want %d", c.endpoint, got, c.port)
 		}
 		if np.Labels[meta.NetPolicyTypeLabel] != meta.NetPolicyExportDestination {
-			t.Errorf("%s: labelled %v", c.endpoint, np.Labels)
+			t.Errorf("%s: labeled %v", c.endpoint, np.Labels)
 		}
 	}
 	if np, err := ExportDestinationNetworkPolicy("demo", "tenant-demo", "p", "run", "nightly", ""); np != nil || err != nil {

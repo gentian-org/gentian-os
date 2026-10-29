@@ -44,7 +44,7 @@ import (
 // A source the claim names is offered to every tenant of the cluster. It is
 // what the cluster offers, not a license: an install is asked of the person
 // (can_install_app), and whether the app then arrives is decided where its
-// artefacts are pulled.
+// artifacts are pulled.
 type CatalogueSource struct {
 	// Name is the catalogue's slug: the first half of a coordinate, so
 	// "main/nextcloud-base-ce" is served by the source named main.
@@ -131,10 +131,10 @@ type CatalogueSettings struct {
 	//
 	// Here rather than compiled in, because which store a cluster belongs to
 	// is a fact about that cluster, and because a cluster with no store at
-	// all is a supported thing: it says nothing and its own catalogues are
+	// all is a supported thing: it says nothing and its own catalogs are
 	// all there is.
 	StoreURL string `json:"storeUrl,omitempty"`
-	// Sources are the catalogues this cluster may fetch from.
+	// Sources are the catalogs this cluster may fetch from.
 	Sources []CatalogueSource `json:"sources,omitempty"`
 }
 
@@ -184,7 +184,7 @@ func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error
 	return c.Sources, nil
 }
 
-// A tenant's own catalogues, and who may add them.
+// A tenant's own catalogs, and who may add them.
 //
 // On the tenant's manifest, for the reason the cluster's are on the claim: a
 // catalogue is where software enters, and adding one is a commit with an
@@ -193,7 +193,7 @@ func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error
 // -- and the last two are the cluster administrator's alone to set. They are
 // written by the methods below and by nothing else: no other write to a
 // tenant's manifest touches spec.catalogue, and which of these methods a
-// caller reaches is decided by the route it was authorised on.
+// caller reaches is decided by the route it was authorized on.
 
 // TenantCatalogueSource is one catalogue only a tenant sees.
 type TenantCatalogueSource struct {
@@ -211,7 +211,7 @@ type TenantCatalogueSource struct {
 // TenantCatalogue is a tenant's spec.catalogue.
 type TenantCatalogue struct {
 	// Delegated says the tenant's own administrators may add and remove
-	// catalogues for this tenant.
+	// catalogs for this tenant.
 	Delegated bool                    `json:"delegated"`
 	Sources   []TenantCatalogueSource `json:"sources"`
 }
@@ -220,19 +220,19 @@ type TenantCatalogue struct {
 var (
 	// ErrCatalogueNameTaken is a name that already means another catalogue
 	// to the tenants that would see this one.
-	ErrCatalogueNameTaken = errors.New("the catalogue name is taken")
+	ErrCatalogueNameTaken = errors.New("the catalog name is taken")
 	// ErrCatalogueNotFound is a catalogue that is not there to remove, or
 	// not the caller's to remove.
-	ErrCatalogueNotFound = errors.New("no such catalogue")
+	ErrCatalogueNotFound = errors.New("no such catalog")
 	// ErrCatalogueNotDelegated is a tenant whose own administrators may not
-	// add catalogues.
-	ErrCatalogueNotDelegated = errors.New("adding catalogues is not delegated to this tenant")
+	// add catalogs.
+	ErrCatalogueNotDelegated = errors.New("adding catalogs is not delegated to this tenant")
 	// ErrCatalogueNotTenants is a catalogue the cluster's administrator
 	// added, which the tenant's may not remove.
-	ErrCatalogueNotTenants = errors.New("the catalogue was added by the cluster's administrator")
+	ErrCatalogueNotTenants = errors.New("the catalog was added by the cluster's administrator")
 	// ErrCatalogueFlowForm is a catalogue section written in a form the
 	// line editor cannot change.
-	ErrCatalogueFlowForm = errors.New("the catalogue section is written on one line; write it as a block to change it here")
+	ErrCatalogueFlowForm = errors.New("the catalog section is written on one line; write it as a block to change it here")
 )
 
 // parseTenantCatalogue reads spec.catalogue from a tenant manifest's text,
@@ -267,7 +267,7 @@ func parseTenantCatalogue(text string) (TenantCatalogue, error) {
 	return out, nil
 }
 
-// TenantCatalogue reads one tenant's own catalogues and its delegation.
+// TenantCatalogue reads one tenant's own catalogs and its delegation.
 func (g *GitOps) TenantCatalogue(ctx context.Context, tenant string) (TenantCatalogue, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -310,10 +310,10 @@ func (g *GitOps) TenantCatalogues(ctx context.Context) (map[string]TenantCatalog
 // keeps the manifest a manifest.
 func checkCatalogueSource(name, address string) error {
 	if !ValidName(name) {
-		return fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
+		return fmt.Errorf("%w: a catalog's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
 	if !strings.HasPrefix(address, "https://") || strings.ContainsAny(address, " \t\r\n#\"'") {
-		return fmt.Errorf("%w: a catalogue's address is an https URL", ErrInvalidName)
+		return fmt.Errorf("%w: a catalog's address is an https URL", ErrInvalidName)
 	}
 	return nil
 }
@@ -335,7 +335,7 @@ func (g *GitOps) AddClusterCatalogueSource(ctx context.Context, name, address st
 // on every pull.
 func (g *GitOps) AddClusterCatalogueOCI(ctx context.Context, name string, oci CatalogueOCI, meta Meta) (Result, error) {
 	if !ValidName(name) {
-		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
+		return Result{}, fmt.Errorf("%w: a catalog's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
 	if err := CheckCatalogueOCI(oci); err != nil {
 		return Result{}, err
@@ -359,10 +359,10 @@ func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, met
 	}
 	if len(holders) > 0 {
 		sort.Strings(holders)
-		return Result{}, fmt.Errorf("%w: %s is a catalogue of tenant %s; remove it there or choose another name",
+		return Result{}, fmt.Errorf("%w: %s is a catalog of tenant %s; remove it there or choose another name",
 			ErrCatalogueNameTaken, name, strings.Join(holders, ", "))
 	}
-	msg := fmt.Sprintf("feat(cluster): add catalogue %s for every tenant (via %s)", name, meta.actor())
+	msg := fmt.Sprintf("feat(cluster): add catalog %s for every tenant (via %s)", name, meta.actor())
 	return g.applyClaim(ctx, msg, meta, func(text string) (string, string, bool, error) {
 		have, err := claimCatalogueSources(text)
 		if err != nil {
@@ -375,7 +375,7 @@ func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, met
 			if sameSource(src, want) {
 				return text, "unchanged", false, nil
 			}
-			return text, "", false, fmt.Errorf("%w: %s is already a catalogue of this cluster, at %s; remove it first to change its address",
+			return text, "", false, fmt.Errorf("%w: %s is already a catalog of this cluster, at %s; remove it first to change its address",
 				ErrCatalogueNameTaken, name, src.where())
 		}
 		have = append(have, want)
@@ -393,9 +393,9 @@ func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, met
 // source.
 func (g *GitOps) RemoveClusterCatalogueSource(ctx context.Context, name string, meta Meta) (Result, error) {
 	if !ValidName(name) {
-		return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, name)
+		return Result{}, fmt.Errorf("%w: catalog %q", ErrInvalidName, name)
 	}
-	msg := fmt.Sprintf("feat(cluster): remove catalogue %s (via %s)", name, meta.actor())
+	msg := fmt.Sprintf("feat(cluster): remove catalog %s (via %s)", name, meta.actor())
 	return g.applyClaim(ctx, msg, meta, func(text string) (string, string, bool, error) {
 		have, err := claimCatalogueSources(text)
 		if err != nil {
@@ -489,11 +489,11 @@ func plainURL(address string) string {
 	return address
 }
 
-// TenantCatalogueActor is who a change to a tenant's catalogues is made by:
-// the role the caller was authorised in, never something the caller states.
+// TenantCatalogueActor is who a change to a tenant's catalogs is made by:
+// the role the caller was authorized in, never something the caller states.
 type TenantCatalogueActor string
 
-// The two roles that change a tenant's catalogues.
+// The two roles that change a tenant's catalogs.
 const (
 	ByCluster TenantCatalogueActor = gentianov1alpha1.CatalogueAddedByCluster
 	ByTenant  TenantCatalogueActor = gentianov1alpha1.CatalogueAddedByTenant
@@ -502,7 +502,7 @@ const (
 // AddTenantCatalogueSource names a catalogue only one tenant sees, on that
 // tenant's manifest.
 //
-// by is the role the caller was authorised in. A tenant's administrator may
+// by is the role the caller was authorized in. A tenant's administrator may
 // add one only where the cluster's administrator delegated that, which is
 // read from the same text the entry is written into, so the two cannot
 // disagree. The name must not be a catalogue of the whole cluster or another
@@ -518,13 +518,13 @@ func (g *GitOps) AddTenantCatalogueSource(
 
 // AddTenantCatalogueOCI names a catalogue only one tenant sees that is kept
 // as an OCI artifact, read with the credential of a repository declared for
-// that tenant. by is the role the caller was authorised in, as for an
+// that tenant. by is the role the caller was authorized in, as for an
 // address: a tenant's administrator adds one where that is delegated.
 func (g *GitOps) AddTenantCatalogueOCI(
 	ctx context.Context, tenant, name string, oci CatalogueOCI, by TenantCatalogueActor, meta Meta,
 ) (Result, error) {
 	if !ValidName(name) {
-		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
+		return Result{}, fmt.Errorf("%w: a catalog's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
 	if err := CheckCatalogueOCI(oci); err != nil {
 		return Result{}, err
@@ -540,11 +540,11 @@ func (g *GitOps) addTenantSource(ctx context.Context, tenant string, want Tenant
 	}
 	for _, src := range cluster.Sources {
 		if src.Name == name {
-			return Result{}, fmt.Errorf("%w: %s is a catalogue of the whole cluster, which this tenant already sees; choose another name",
+			return Result{}, fmt.Errorf("%w: %s is a catalog of the whole cluster, which this tenant already sees; choose another name",
 				ErrCatalogueNameTaken, name)
 		}
 	}
-	msg := fmt.Sprintf("feat(%s): add catalogue %s (via %s)", tenant, name, meta.actor())
+	msg := fmt.Sprintf("feat(%s): add catalog %s (via %s)", tenant, name, meta.actor())
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		have, err := parseTenantCatalogue(text)
 		if err != nil {
@@ -560,7 +560,7 @@ func (g *GitOps) addTenantSource(ctx context.Context, tenant string, want Tenant
 			if src == want {
 				return text, "unchanged", false, nil
 			}
-			return text, "", false, fmt.Errorf("%w: %s is already a catalogue of this tenant; remove it first to change it",
+			return text, "", false, fmt.Errorf("%w: %s is already a catalog of this tenant; remove it first to change it",
 				ErrCatalogueNameTaken, name)
 		}
 		have.Sources = append(have.Sources, want)
@@ -572,16 +572,16 @@ func (g *GitOps) addTenantSource(ctx context.Context, tenant string, want Tenant
 	})
 }
 
-// RemoveTenantCatalogueSource takes one of a tenant's catalogues away. A
+// RemoveTenantCatalogueSource takes one of a tenant's catalogs away. A
 // tenant's administrator removes only what the tenant added, and only while
 // that is delegated; what the cluster's administrator added is not theirs.
 func (g *GitOps) RemoveTenantCatalogueSource(
 	ctx context.Context, tenant, name string, by TenantCatalogueActor, meta Meta,
 ) (Result, error) {
 	if !ValidName(name) {
-		return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, name)
+		return Result{}, fmt.Errorf("%w: catalog %q", ErrInvalidName, name)
 	}
-	msg := fmt.Sprintf("feat(%s): remove catalogue %s (via %s)", tenant, name, meta.actor())
+	msg := fmt.Sprintf("feat(%s): remove catalog %s (via %s)", tenant, name, meta.actor())
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		have, err := parseTenantCatalogue(text)
 		if err != nil {
@@ -615,13 +615,13 @@ func (g *GitOps) RemoveTenantCatalogueSource(
 }
 
 // SetTenantCatalogueDelegation turns on or off whether a tenant's own
-// administrators may add catalogues. Turning it off removes nothing: what
+// administrators may add catalogs. Turning it off removes nothing: what
 // they added stays, visible to the tenant and removable by the cluster's
 // administrator.
 func (g *GitOps) SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta Meta) (Result, error) {
-	verb := "delegate adding catalogues to"
+	verb := "delegate adding catalogs to"
 	if !delegated {
-		verb = "stop delegating catalogues to"
+		verb = "stop delegating catalogs to"
 	}
 	msg := fmt.Sprintf("feat(%s): %s the tenant's administrators (via %s)", tenant, verb, meta.actor())
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
@@ -686,7 +686,7 @@ func setTenantCatalogue(text string, c TenantCatalogue) (string, error) {
 //
 // The block is found by indentation, two spaces a level, which is how the
 // claim and a tenant's manifest are written -- by the installer, by the
-// director, and by a marshalled import alike. Comments and blank lines after
+// director, and by a marshaled import alike. Comments and blank lines after
 // the block's last line of content are not part of it and stay.
 func setSpecBlock(text string, path []string, block []string) (string, error) {
 	lines := strings.Split(text, "\n")
@@ -712,7 +712,7 @@ func setSpecBlock(text string, path []string, block []string) (string, error) {
 		return last
 	}
 	// childrenEnd is blockEnd for a key at indent, counting a list written
-	// at the key's own indentation -- which is how a marshalled manifest
+	// at the key's own indentation -- which is how a marshaled manifest
 	// writes one -- as the key's.
 	childrenEnd := func(from, indent int) int {
 		for i := from; i < len(lines); i++ {

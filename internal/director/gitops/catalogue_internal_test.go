@@ -15,8 +15,8 @@ import (
 	"testing"
 )
 
-// Step 0 scaffolds the catalogue's kustomization with an empty list so the
-// directory exists before anything is materialised; the first entry has to
+// Step 0 scaffolds the catalog's kustomization with an empty list so the
+// directory exists before anything is materialized; the first entry has to
 // turn that into a block list, not add a second resources key.
 func TestTheFirstEntryFillsAnEmptyResourceList(t *testing.T) {
 	out, changed := ensureResourceListed("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n", "operations-console.yaml")
@@ -31,7 +31,7 @@ func TestTheFirstEntryFillsAnEmptyResourceList(t *testing.T) {
 // The bundle is a kustomize patch, and kustomize finds a patch's target by
 // everything the patch states about it. A profile that states a namespace --
 // the kind has none, and a document may still say one -- is only found by a
-// patch that states the same; otherwise the whole catalogue directory stops
+// patch that states the same; otherwise the whole catalog directory stops
 // building, for every entry in it.
 func TestTheBundleNamesItsProfileAsTheProfileNamesItself(t *testing.T) {
 	plain, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  labels:\n    gentianos.io/profile-name: element\n"), "cluster/main")

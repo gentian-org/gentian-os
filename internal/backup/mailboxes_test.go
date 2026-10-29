@@ -118,7 +118,7 @@ func TestTheMailboxJobs(t *testing.T) {
 		}
 	}
 
-	// A copy goes by the mail server's own synchronisation, never by an
+	// A copy goes by the mail server's own synchronization, never by an
 	// archive of a mailbox that is being written to, and is counted before it
 	// is believed.
 	copyScript := containerByName(backupJob, "mailbox-backup").Args[0]
@@ -136,7 +136,7 @@ func TestTheMailboxJobs(t *testing.T) {
 		t.Error("the restore does not put the archived mailboxes back below the archive")
 	}
 	if strings.Contains(copyScript, "tar ") {
-		t.Error("the backup archives the live mailboxes instead of synchronising them")
+		t.Error("the backup archives the live mailboxes instead of synchronizing them")
 	}
 	if upload := backupJob.Spec.Template.Spec.Containers[0].Args[0]; !strings.Contains(upload, MailboxesArtefact+EncryptedSuffix) {
 		t.Errorf("the backup does not upload to %s", MailboxesArtefact)
@@ -187,6 +187,6 @@ func TestAMailDomainIsADirectoryName(t *testing.T) {
 		}
 	}
 	if !IsPlatformStore(mailStore) {
-		t.Error("the name the mailbox Jobs are labelled with can be taken for an app's")
+		t.Error("the name the mailbox Jobs are labeled with can be taken for an app's")
 	}
 }

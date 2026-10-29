@@ -55,9 +55,9 @@ func newOIDCProfile(name string) *gentianov1alpha1.ComponentProfile {
 	}
 }
 
-// createOIDCProfile creates newOIDCProfile(name) and the pack catalogue its
-// bundle would bring: the test catalogue's packs under the profile's label,
-// the one catalogue its pack is looked up in.
+// createOIDCProfile creates newOIDCProfile(name) and the pack catalog its
+// bundle would bring: the test catalog's packs under the profile's label,
+// the one catalog its pack is looked up in.
 func createOIDCProfile(t *testing.T, name string) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
 	ctx := context.Background()
@@ -324,14 +324,14 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 }
 
 // TestIdentity_CrossplaneOwnsClientWithoutPack asserts the other half of the
-// ownership split: a catalogue profile with no OIDC pack gets its Keycloak
+// ownership split: a catalog profile with no OIDC pack gets its Keycloak
 // Client from the app Composition (a provider-keycloak Client MR — see
 // crossplane/compositions/app-default.yaml), and the operator creates NO client
 // Job for it.
 //
 // Every other test here uses a profile WITH a pack, which is the configuration
 // the operator still owns. Before this, they all carried deploymentMethod:
-// argocd — a value no catalogue profile has ever set — and that value was the
+// argocd — a value no catalog profile has ever set — and that value was the
 // only reason they saw client Jobs at all. The suite therefore proved the
 // operator creates client Jobs for a shape of profile that does not exist,
 // and proved nothing about the shape that does.
@@ -340,7 +340,7 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 	profile := newOIDCProfile("oidc-nopack")
 	profile.Services().Identity.OIDC.OIDCPackRef = ""
 	// The clientID must not match a pack either — ResolvePack falls back to it
-	// when oidcPackRef is empty. No catalogue carries this profile's label.
+	// when oidcPackRef is empty. No catalog carries this profile's label.
 	profile.Services().Identity.OIDC.ClientID = "oidc-nopack"
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)

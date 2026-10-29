@@ -95,7 +95,7 @@ var ErrArtifactRefused = errors.New("catalogue: the artifact is refused")
 // ErrRegistryRefused is a repository a catalogue cannot be read with: not
 // declared for whoever the catalogue belongs to, not a registry, or not the
 // registry the artifact is in.
-var ErrRegistryRefused = errors.New("catalogue: the repository is not one this catalogue can be read with")
+var ErrRegistryRefused = errors.New("catalogue: the repository is not one this catalog can be read with")
 
 // OCISource is where a catalogue kept as an OCI artifact is pulled from, and
 // with whose credential.
@@ -207,7 +207,7 @@ func ParseOCIReference(raw string) (OCIReference, error) {
 	}
 	if h, port, found := strings.Cut(host, ":"); found {
 		if port != "443" {
-			return refuse("its registry is named with port " + port + "; a catalogue is pulled on the https port, 443")
+			return refuse("its registry is named with port " + port + "; a catalog is pulled on the https port, 443")
 		}
 		host = h
 	}
@@ -280,7 +280,7 @@ type ociTree struct {
 	files  map[string][]byte
 }
 
-// ociCache holds pulled catalogues for as long as an index is kept: a listing
+// ociCache holds pulled catalogs for as long as an index is kept: a listing
 // and the install that follows it read one pull.
 type ociCache struct {
 	ociMu sync.Mutex
@@ -334,7 +334,7 @@ func (f *Fetcher) pull(ctx context.Context, src *OCISource) (ociTree, error) {
 		return ociTree{}, err
 	}
 	if f.Registries == nil {
-		return ociTree{}, fmt.Errorf("%w: this director reads no repository for a catalogue", ErrRegistryRefused)
+		return ociTree{}, fmt.Errorf("%w: this director reads no repository for a catalog", ErrRegistryRefused)
 	}
 	reg, err := f.Registries.Registry(ctx, src.Owner, src.Repository)
 	if err != nil {
@@ -411,13 +411,13 @@ func checkManifest(raw []byte, contentType string) (ociDescriptor, error) {
 	}
 	served, _, _ := mime.ParseMediaType(contentType)
 	if m.SchemaVersion != 2 || (m.MediaType != ociManifestType && (m.MediaType != "" || served != ociManifestType)) {
-		return refuse("it is not an OCI image manifest (an image index, or another kind of manifest, is not a catalogue)")
+		return refuse("it is not an OCI image manifest (an image index, or another kind of manifest, is not a catalog)")
 	}
 	if m.ArtifactType != OCIArtifactType && (m.ArtifactType != "" || m.Config.MediaType != OCIArtifactType) {
 		return refuse("its artifact type is not " + OCIArtifactType)
 	}
 	if len(m.Layers) != 1 {
-		return refuse(fmt.Sprintf("it has %d layers; a catalogue is one", len(m.Layers)))
+		return refuse(fmt.Sprintf("it has %d layers; a catalog is one", len(m.Layers)))
 	}
 	layer := m.Layers[0]
 	if layer.MediaType != OCILayerType {
@@ -427,7 +427,7 @@ func checkManifest(raw []byte, contentType string) (ociDescriptor, error) {
 		return refuse("its layer's digest is not sha256:<64 lower-case hex characters>")
 	}
 	if layer.Size <= 0 || layer.Size > maxLayer {
-		return refuse(fmt.Sprintf("its layer is %d bytes; a catalogue is at most %d", layer.Size, maxLayer))
+		return refuse(fmt.Sprintf("its layer is %d bytes; a catalog is at most %d", layer.Size, maxLayer))
 	}
 	return layer, nil
 }
@@ -438,7 +438,7 @@ func checkManifest(raw []byte, contentType string) (ociDescriptor, error) {
 // What it may not hold refuses the whole artifact rather than being skipped:
 // a link of any kind, a device, a path that is absolute, climbs out with
 // "..", or is written twice. A catalogue that holds one was not built by the
-// tools that build catalogues, and what else it holds is then not known.
+// tools that build catalogs, and what else it holds is then not known.
 func untarCatalogue(blob []byte) (map[string][]byte, error) {
 	refuse := func(why string) (map[string][]byte, error) {
 		return nil, fmt.Errorf("%w: %s", ErrArtifactRefused, why)
@@ -483,14 +483,14 @@ func untarCatalogue(blob []byte) (map[string][]byte, error) {
 			continue
 		case tar.TypeReg, tar.TypeRegA: //nolint:staticcheck // TypeRegA is what older tools write for a file
 		default:
-			return refuse(fmt.Sprintf("%s is not a plain file or directory (a link, a device or a pipe is not part of a catalogue)", hdr.Name))
+			return refuse(fmt.Sprintf("%s is not a plain file or directory (a link, a device or a pipe is not part of a catalog)", hdr.Name))
 		}
 		if name == "" || seen[name] || seen[name+"/"] {
 			return refuse(fmt.Sprintf("%s is written twice, or is not a file's name", hdr.Name))
 		}
 		seen[name] = true
 		if hdr.Size > maxBundle {
-			return refuse(fmt.Sprintf("%s is %d bytes; a file of a catalogue is at most %d", name, hdr.Size, maxBundle))
+			return refuse(fmt.Sprintf("%s is %d bytes; a file of a catalog is at most %d", name, hdr.Size, maxBundle))
 		}
 		body, err := io.ReadAll(io.LimitReader(tr, maxBundle+1))
 		if err != nil {
@@ -532,7 +532,7 @@ func catalogueEntryName(raw string) (string, error) {
 	}
 	for _, part := range strings.Split(name, "/") {
 		if part == ".." {
-			return refuse("climbs out of the catalogue")
+			return refuse("climbs out of the catalog")
 		}
 		if part == "" || part == "." {
 			return refuse("is not a plain path")
@@ -687,7 +687,7 @@ func (s *registrySession) authenticate(ctx context.Context, challenge string) er
 		return nil
 	case "bearer":
 	default:
-		return fmt.Errorf("catalogue: %s refused the request, and asks for no authentication a catalogue is read with", host)
+		return fmt.Errorf("catalogue: %s refused the request, and asks for no authentication a catalog is read with", host)
 	}
 	if s.reg.Token != "" {
 		// The token was presented and refused. It is not a login, so it is

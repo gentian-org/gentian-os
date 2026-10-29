@@ -279,7 +279,7 @@ func run(log *slog.Logger) error {
 			envOr("DIRECTOR_BAO_TOKEN_FILE", "/var/run/secrets/gentian/openbao/token"))
 		registries.Read = vault.Get
 	} else {
-		log.Info("no vault address (DIRECTOR_BAO_ADDR): a catalogue kept as an OCI artifact is read only from a repository without a credential")
+		log.Info("no vault address (DIRECTOR_BAO_ADDR): a catalog kept as an OCI artifact is read only from a repository without a credential")
 	}
 	entries.Registries = registries
 	var storeURL string
@@ -291,11 +291,11 @@ func run(log *slog.Logger) error {
 		// Not fatal. A director that cannot read the claim still serves
 		// every call, and reads the claim again when a catalogue is asked
 		// for; refusing to start would take the console down with it.
-		log.Warn("the Cluster claim could not be read at start; its catalogues are read again when they are needed",
+		log.Warn("the Cluster claim could not be read at start; its catalogs are read again when they are needed",
 			"error", err)
 	}
 	for _, src := range catalogues.Sources {
-		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL,
+		log.Info("catalog of the cluster", "catalogue", src.Name, "url", src.URL,
 			"artifact", src.OCI.Artifact, "repository", src.OCI.Repository)
 	}
 	if storeURL == "" {

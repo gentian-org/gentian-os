@@ -38,7 +38,7 @@ func withLiteLLM(t *testing.T, h http.Handler) {
 }
 
 // LiteLLM has shipped /team/list as both a bare array and an object wrapping
-// one. Getting this wrong is silent: an unrecognised envelope reads as "no
+// one. Getting this wrong is silent: an unrecognized envelope reads as "no
 // teams", and /team/new then fails on every reconcile for a tenant that already
 // has a team.
 func TestLiteLLMTeamExistsAcceptsBothEnvelopes(t *testing.T) {
@@ -84,7 +84,7 @@ func TestLiteLLMTeamExistsRejectsUnknownEnvelope(t *testing.T) {
 	}))
 
 	if _, err := litellmTeamExists(context.Background(), "sk-master", "acme"); err == nil {
-		t.Fatal("expected an error for an unrecognised /team/list response")
+		t.Fatal("expected an error for an unrecognized /team/list response")
 	}
 }
 

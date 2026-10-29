@@ -257,7 +257,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 		if got.Endpoint != "https://sos-ch-gva-2.exo.io" || got.Bucket != "one-off" {
 			t.Errorf("endpoint/bucket not taken from the export: %+v", got)
 		}
-		// The whole point of managed: the Secret ESO already materialised is
+		// The whole point of managed: the Secret ESO already materialized is
 		// used where it stands. A staged copy here would be a second copy of a
 		// live credential for no gain.
 		if got.CredentialSecret != policy.CredentialSecret {

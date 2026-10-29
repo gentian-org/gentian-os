@@ -88,7 +88,7 @@ func engineReleaseObject(name, namespace string, ready bool) *unstructured.Unstr
 	return rel
 }
 
-// The operator writes the set from the components it finds, labelled for
+// The operator writes the set from the components it finds, labeled for
 // the composition, and a component that declares an engine waits until the
 // engine's Release is Ready.
 func TestTheEngineSetFollowsTheComponentsAndTheyWaitForTheEngine(t *testing.T) {

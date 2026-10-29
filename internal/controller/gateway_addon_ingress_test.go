@@ -129,7 +129,7 @@ func TestCollectTenantIngressIntentsIgnoresAddonPrimaryIngress(t *testing.T) {
 	}
 	for _, in := range intents {
 		if in.ingress.SubDomain == "hijack" {
-			t.Fatalf("addon Spec.Ingress was honoured as %q; addons get no primary host", in.appProfile)
+			t.Fatalf("addon Spec.Ingress was honored as %q; addons get no primary host", in.appProfile)
 		}
 	}
 }

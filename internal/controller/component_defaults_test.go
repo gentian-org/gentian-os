@@ -199,7 +199,7 @@ func defaultNames(t *testing.T, c client.Client, tenant *gentianov1alpha1.Tenant
 // The placement is declarative: a Component the operator placed that the
 // profiles no longer give the tenant is taken away -- a platform-only
 // component left in a user tenant by an earlier placement, one whose profile
-// left the catalogue, one whose declaration was withdrawn. Nothing else could
+// left the catalog, one whose declaration was withdrawn. Nothing else could
 // remove it: it is in no tenant's manifest. What a tenant installed, and a
 // Component without the label, stay.
 func TestADefaultTheTenantIsNoLongerGivenIsRemoved(t *testing.T) {
@@ -276,9 +276,9 @@ func TestAProfileThatNeedsUsageStatisticsFollowsTheReport(t *testing.T) {
 	}
 }
 
-// A default profile materialised from a catalogue that has left the catalogue
-// directory -- its catalogue renamed it, and the installer took the old name
-// out -- is still an object, because the catalogue's Application never
+// A default profile materialized from a catalog that has left the catalog
+// directory -- its catalog renamed it, and the installer took the old name
+// out -- is still an object, because the catalog's Application never
 // prunes, and still declares itself a default. It is placed no more, and the
 // Components placed of it are removed: the Application marking it as
 // requiring pruning is what says it left. Until it says so, or where it
@@ -330,7 +330,7 @@ func TestADefaultProfileThatLeftTheCatalogueIsPlacedNoMore(t *testing.T) {
 		t.Fatalf("after the old name left the catalogue: components = %q, want operations-console-ee only", got)
 	}
 
-	// No catalogue Application to ask: nothing is known to be gone, and the
+	// No catalog Application to ask: nothing is known to be gone, and the
 	// declaration is followed as before.
 	bare := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), old.DeepCopy()).Build()
 	rb := &TenantReconciler{Client: bare, Scheme: scheme}
@@ -342,7 +342,7 @@ func TestADefaultProfileThatLeftTheCatalogueIsPlacedNoMore(t *testing.T) {
 	}
 }
 
-// The catalogue's Application wakes the tenants only when the profiles it
+// The catalog's Application wakes the tenants only when the profiles it
 // reports as gone change, not on each of its status writes.
 func TestTheCatalogueApplicationWakesTenantsOnlyWhenAProfileLeaves(t *testing.T) {
 	p := catalogueProfilesGoneChanged()
@@ -360,7 +360,7 @@ func TestTheCatalogueApplicationWakesTenantsOnlyWhenAProfileLeaves(t *testing.T)
 		t.Fatal("a status write that changes no profile woke the tenants")
 	}
 	if !p.Update(event.UpdateEvent{ObjectOld: app("gentian-catalogue-prod", false, "1"), ObjectNew: app("gentian-catalogue-prod", true, "2")}) {
-		t.Fatal("a profile leaving the catalogue did not wake the tenants")
+		t.Fatal("a profile leaving the catalog did not wake the tenants")
 	}
 	if p.Update(event.UpdateEvent{ObjectOld: app("tenant-acme", false, "1"), ObjectNew: app("tenant-acme", true, "2")}) {
 		t.Fatal("another Application woke the tenants")

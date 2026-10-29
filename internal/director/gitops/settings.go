@@ -167,7 +167,7 @@ func lookupPath(node any, path []string) (string, bool) {
 }
 
 // joinItems is a list setting as the API carries it: its items joined with
-// commas. A list of anything but strings is not a value this catalogue knows.
+// commas. A list of anything but strings is not a value this catalog knows.
 func joinItems(items []any) (string, bool) {
 	out := make([]string, 0, len(items))
 	for _, it := range items {

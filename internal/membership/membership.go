@@ -87,7 +87,7 @@ type Projector struct {
 	store Store
 	scope Scope
 	log   *slog.Logger
-	// mu serialises applications. Each is a read, a comparison and a write;
+	// mu serializes applications. Each is a read, a comparison and a write;
 	// two for one user interleaved would each undo part of the other.
 	mu sync.Mutex
 }

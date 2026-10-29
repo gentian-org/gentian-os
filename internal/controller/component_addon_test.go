@@ -28,7 +28,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
-// nextcloudBase is a component that owns a host, as the catalogue converts one.
+// nextcloudBase is a component that owns a host, as the catalog converts one.
 func nextcloudBaseProfile() *gentianov1alpha1.ComponentProfile {
 	p := profileFixture("nextcloud-base-ce", false, gentianov1alpha1.ComponentClassApp)
 	p.Spec.Launch = gentianov1alpha1.ComponentLaunchNone
@@ -252,7 +252,7 @@ func TestAnAPIEntryIsReadyWithoutRunningAnything(t *testing.T) {
 
 // The tile an addon declares appears, on its BASE's host.
 //
-// This is the whole point of the addon path. Twenty catalogue profiles carry
+// This is the whole point of the addon path. Twenty catalog profiles carry
 // exactly one user-visible thing — a tile deep-linking into the app they
 // activate inside — and until the projection followed backend.component to the
 // base's route, every one of them had a tile declared and no hostname to build

@@ -1,4 +1,4 @@
-# ESO has resolved the path and reports Ready, so the consumer artefacts unlock.
+# ESO has resolved the path and reports Ready, so the consumer artifacts unlock.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:

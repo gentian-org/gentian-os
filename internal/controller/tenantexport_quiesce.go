@@ -140,7 +140,7 @@ const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
 // that is still running, and a command-mode quiesce never recreates the pod --
 // maintenance mode goes on and off around it. What survives is everything the
 // old pod had already read: its caches in Redis and APCu, and every ConfigMap
-// mounted with subPath, which Kubernetes materialises once at pod start and
+// mounted with subPath, which Kubernetes materializes once at pod start and
 // never updates again.
 //
 // That last one is not theoretical. Nextcloud's session configuration is one
@@ -364,7 +364,7 @@ func workloadOfApp(meta metav1.ObjectMeta, template corev1.PodTemplateSpec, appN
 // It reuses the same label conventions the volume matcher does, minus the
 // bare-name substring fallback: scaling the wrong workload takes an unrelated
 // app offline, so this errs toward missing a workload rather than pausing a
-// neighbour's.
+// neighbor's.
 func workloadBelongsToApp(labels map[string]string, objectName, appName string) bool {
 	if labels["gentianos.io/app"] == appName {
 		return true

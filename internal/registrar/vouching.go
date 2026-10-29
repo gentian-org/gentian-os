@@ -44,7 +44,7 @@ import (
 // callers who may read it or take it away.
 //
 // It is the one registration besides guarded, and exists because one of the
-// three is not a person. A bearer that is a component's key is recognised
+// three is not a person. A bearer that is a component's key is recognized
 // before anything tries to read it as a token, and is then held to its own
 // tenant and its own profile (admitComponent). Every other caller goes the
 // way of every other route: a verified token and a question to the store.

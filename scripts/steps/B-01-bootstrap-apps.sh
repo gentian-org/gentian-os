@@ -3,7 +3,7 @@
 # phase: secrets
 # requires: A-06-argocd
 # provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace; the monitoring Application exactly where the claim's monitoring.enabled is true; the log-forwarding Application exactly where it names a logForwarding destination
-# mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signalling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
+# mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signaling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp monitoring logForwarding
 
 # The chart takes the namespace layout as a value and resolves every
@@ -13,7 +13,7 @@
 
 # Synced says git and cluster agree; Healthy says the workload came up. Most
 # Applications here must be both. The vault and its seal cannot be Healthy
-# until they are initialised, which is the next steps' work, so for them B-01
+# until they are initialized, which is the next steps' work, so for them B-01
 # asks only Synced and their init steps ask Healthy. external-dns is declared
 # here but not waited on: it needs a DNS credential that arrives with the
 # secrets steps, and Argo CD brings it up once that lands. Rendering it with
@@ -70,7 +70,7 @@ _v5_apps_healthy() { echo "reloader cnpg kyverno headlamp"; }
 _v5_apps_synced()  { echo "openbao openbao-transit"; }
 # Created here, waited for later. kernel-postgres's role passwords are
 # ExternalSecrets on the ClusterSecretStore the Cluster claim composes (C-01),
-# reading a vault B-03 initialises -- so on a fresh cluster neither exists yet,
+# reading a vault B-03 initializes -- so on a fresh cluster neither exists yet,
 # Argo CD stops the sync at that wave, and the database itself is never
 # applied. Waiting for it to be Healthy here could only time out. Nothing in
 # this phase needs Postgres (OpenBao keeps its own storage); its first readers
@@ -355,7 +355,7 @@ check() {
 apply() {
     banner "Kernel bootstrap Applications"
     # The seal's pod injects its unseal key from this Secret and cannot start
-    # without it; the key does not exist until B-02 initialises the seal. A
+    # without it; the key does not exist until B-02 initializes the seal. A
     # placeholder lets the pod start, and B-02 replaces it.
     if ! kubectl get secret openbao-transit-unseal -n "$(ns_kernel seal)" >/dev/null 2>&1; then
         kubectl create secret generic openbao-transit-unseal -n "$(ns_kernel seal)" \

@@ -245,7 +245,7 @@ type TenantRestoreStatus struct {
 	Source *RestoreSource `json:"source,omitempty"`
 
 	// NameDerivation says where the restore took the names of what it
-	// restores from. "manifest": the bundle's manifest names each artefact
+	// restores from. "manifest": the bundle's manifest names each artifact
 	// and what it was captured from (format 2 and later). "derived": the
 	// manifest is of format 1, which names apps and kinds only, so the
 	// database, bucket and claim names were derived from the tenant the

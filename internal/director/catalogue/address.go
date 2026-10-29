@@ -129,13 +129,13 @@ func CheckAddress(raw string) error {
 		return refuse("only https addresses are fetched from")
 	}
 	if u.User != nil {
-		return refuse("it carries a user name or password; a catalogue is public, and no credential is sent to one")
+		return refuse("it carries a user name or password; a catalog is public, and no credential is sent to one")
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
 		return refuse("it has a query or a fragment; an address is https://<host>/<path>")
 	}
 	if port := u.Port(); port != "" && port != "443" {
-		return refuse("it names port " + port + "; a catalogue is served on the https port, 443")
+		return refuse("it names port " + port + "; a catalog is served on the https port, 443")
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	if host == "" {
@@ -232,7 +232,7 @@ func guardedClient() *http.Client {
 		Control:   guardedDial,
 	}
 	transport := &http.Transport{
-		// No proxy, whatever the environment says. A proxy would be dialled
+		// No proxy, whatever the environment says. A proxy would be dialed
 		// instead of the catalogue, at an address nobody checked, and would
 		// then resolve the catalogue's name itself.
 		Proxy:                 nil,

@@ -146,7 +146,7 @@ func TestScheduleFiresWhenDue(t *testing.T) {
 		t.Fatalf("created %d export(s), want 1", len(exports))
 	}
 	if exports[0].Labels[scheduleLabel] != "nightly" {
-		t.Errorf("export not labelled with its schedule: %v", exports[0].Labels)
+		t.Errorf("export not labeled with its schedule: %v", exports[0].Labels)
 	}
 	if out.Status.LastExportName != exports[0].Name {
 		t.Errorf("lastExportName = %q, want %q", out.Status.LastExportName, exports[0].Name)

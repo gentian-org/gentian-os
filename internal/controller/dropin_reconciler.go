@@ -46,7 +46,7 @@ const (
 // ordering the app applies them in.
 var dropInFileNamePattern = regexp.MustCompile(`^9[0-9]-[a-zA-Z0-9._-]+$`)
 
-// ensureTenantDropIns materialises tenant-authored L1 drop-in content into
+// ensureTenantDropIns materializes tenant-authored L1 drop-in content into
 // ConfigMaps in the tenant namespace, one per (profile, drop-in) pair.
 //
 // This is rung L1 at tenant scope (see docs/app-customization.md §2.2.1): the
@@ -57,7 +57,7 @@ var dropInFileNamePattern = regexp.MustCompile(`^9[0-9]-[a-zA-Z0-9._-]+$`)
 //
 // Nothing mounts it. The operator writes validated content into a predictably
 // named ConfigMap and stops there: no composition and no chart of the
-// catalogue mounts that ConfigMap into the app, so a tenant's drop-in has no
+// catalog mounts that ConfigMap into the app, so a tenant's drop-in has no
 // effect on the app yet.
 func (r *TenantReconciler) ensureTenantDropIns(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	desired, err := r.buildTenantDropIns(ctx, tenant)

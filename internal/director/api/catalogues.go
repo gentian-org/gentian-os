@@ -24,7 +24,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// What a cluster can say about its own catalogues, and what it deliberately
+// What a cluster can say about its own catalogs, and what it deliberately
 // cannot (AD-14).
 //
 // The App Store is the route. It knows what an app is for, what it costs, who
@@ -45,7 +45,7 @@ import (
 // offered to every tenant; whether an install is allowed is the person's
 // can_install_app and nothing else.
 //
-// Which catalogues there are is read when it is asked, from git, and it
+// Which catalogs there are is read when it is asked, from git, and it
 // depends on who is asking for which tenant. A catalogue exists in one of
 // three ways:
 //
@@ -154,11 +154,11 @@ func (v visibleSource) origin(tenant string) string {
 }
 
 // visibleSources reads what a tenant may install from: the cluster's
-// catalogues and its own, in that order, and whether its administrators may
+// catalogs and its own, in that order, and whether its administrators may
 // add more. Read from git every time it is asked, so a catalogue added a
 // moment ago is there and one removed is gone.
 //
-// A name is one catalogue. The routes that add catalogues keep a tenant's
+// A name is one catalogue. The routes that add catalogs keep a tenant's
 // names apart from the cluster's; should the two files ever disagree, the
 // name is left out here and so refused everywhere, rather than meaning one
 // catalogue when it was pinned and another when it is fetched.
@@ -203,9 +203,9 @@ func (s *Server) visibleSources(ctx context.Context, tenant string) ([]visibleSo
 	return out, own.Delegated, nil
 }
 
-// clusterSource is one of the cluster's catalogues as it is fetched from:
+// clusterSource is one of the cluster's catalogs as it is fetched from:
 // an address or an artifact, read with a repository of the cluster's. Every
-// reader of the cluster's catalogues builds its source here, so none of them
+// reader of the cluster's catalogs builds its source here, so none of them
 // knows fewer kinds of catalogue than the others.
 func clusterSource(src gitops.CatalogueSource) visibleSource {
 	return visibleSource{
@@ -217,7 +217,7 @@ func clusterSource(src gitops.CatalogueSource) visibleSource {
 	}
 }
 
-// clusterAddedBy is who added one of the cluster's catalogues, as the lists
+// clusterAddedBy is who added one of the cluster's catalogs, as the lists
 // say it.
 func clusterAddedBy(src gitops.CatalogueSource) string {
 	if src.AddedBy == gitops.SourceAddedByStore {
@@ -262,7 +262,7 @@ func (s *Server) listCatalogues(w http.ResponseWriter, r *http.Request, _ call) 
 }
 
 // listClusterCatalogues answers everything the cluster declares: its own
-// catalogues, and for every tenant the ones only it sees and whether its
+// catalogs, and for every tenant the ones only it sees and whether its
 // administrators may add them.
 func (s *Server) listClusterCatalogues(w http.ResponseWriter, r *http.Request, _ call) {
 	ctx := r.Context()
@@ -312,28 +312,28 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	if !known || s.cfg.Catalogue == nil {
-		s.fail(w, r, http.StatusNotFound, "this cluster has no catalogue by that name")
+		s.fail(w, r, http.StatusNotFound, "this cluster has no catalog by that name")
 		return
 	}
 	listing, err := s.cfg.Catalogue.Index(r.Context(), src.Source)
 	switch {
 	case errors.Is(err, catalogue.ErrNotFound):
-		s.fail(w, r, http.StatusNotFound, "this cluster has no catalogue by that name")
+		s.fail(w, r, http.StatusNotFound, "this cluster has no catalog by that name")
 		return
 	case errors.Is(err, catalogue.ErrRegistryRefused), errors.Is(err, catalogue.ErrArtifactRefused):
 		// An artifact that is not a catalogue, or a repository it can no
 		// longer be read with. The owner has to act, so the reason is said.
-		s.cfg.Log.WarnContext(r.Context(), "a catalogue artifact could not be read",
+		s.cfg.Log.WarnContext(r.Context(), "a catalog artifact could not be read",
 			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the catalogue "+src.Name+" could not be read: "+err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the catalog "+src.Name+" could not be read: "+err.Error())
 		return
 	case err != nil:
 		// The source is somebody else's web server and it is allowed to be
 		// down. Said as a gateway error rather than a server error, because
 		// nothing here is broken.
-		s.cfg.Log.WarnContext(r.Context(), "a catalogue source's index could not be read",
+		s.cfg.Log.WarnContext(r.Context(), "a catalog source's index could not be read",
 			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err)
-		s.fail(w, r, http.StatusBadGateway, "the catalogue source could not be read")
+		s.fail(w, r, http.StatusBadGateway, "the catalog source could not be read")
 		return
 	}
 	entries := make([]entryOut, 0, len(listing.Entries))
@@ -360,7 +360,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 	})
 }
 
-// Adding and removing catalogues.
+// Adding and removing catalogs.
 //
 // Every one of these is a commit: to the Cluster claim for a catalogue of
 // the whole cluster, to the tenant's manifest for one of a tenant. Who made
@@ -402,7 +402,7 @@ func (s *Server) vetted(w http.ResponseWriter, r *http.Request, owner string) (c
 		return catalogueRequest{}, false
 	}
 	if s.cfg.Catalogue == nil || s.cfg.Catalogue.Vet == nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "this director fetches from no catalogue, so none can be added")
+		s.fail(w, r, http.StatusServiceUnavailable, "this director fetches from no catalog, so none can be added")
 		return catalogueRequest{}, false
 	}
 	if body.OCI != nil {
@@ -419,7 +419,7 @@ func (s *Server) vetted(w http.ResponseWriter, r *http.Request, owner string) (c
 func (s *Server) vettedOCI(w http.ResponseWriter, r *http.Request, oci gitops.CatalogueOCI, owner string) (catalogueRequest, bool) {
 	name := r.PathValue("s")
 	if s.cfg.Catalogue.Registries == nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "this director reads no repository credential, so no catalogue kept as an OCI artifact can be added")
+		s.fail(w, r, http.StatusServiceUnavailable, "this director reads no repository credential, so no catalog kept as an OCI artifact can be added")
 		return catalogueRequest{}, false
 	}
 	if err := gitops.CheckCatalogueOCI(oci); err != nil {
@@ -522,7 +522,7 @@ func (s *Server) removeTenantCatalogue(w http.ResponseWriter, r *http.Request, c
 //
 // A catalogue's name is in three places: its source entry, the catalogue:
 // of every app entry and add-on pin installed from it, and the origin of
-// every profile materialised from it. Removing it and adding it under
+// every profile materialized from it. Removing it and adding it under
 // another name leaves the last two at the old name, and the next install
 // from the new one is refused as another origin's. So a rename is one
 // commit to all three (gitops.RenameCatalogueSource), by the cluster's
@@ -572,7 +572,7 @@ func (s *Server) renameCatalogue(w http.ResponseWriter, r *http.Request, c call,
 }
 
 // delegateCatalogues and undelegateCatalogues are the switch: whether a
-// tenant's own administrators may add catalogues. The cluster
+// tenant's own administrators may add catalogs. The cluster
 // administrator's alone, which is why there is no such route under
 // /v1/tenants.
 func (s *Server) delegateCatalogues(w http.ResponseWriter, r *http.Request, c call) {
@@ -623,27 +623,27 @@ func (s *Server) catalogueWritten(w http.ResponseWriter, r *http.Request, res gi
 func (s *Server) catalogueError(w http.ResponseWriter, r *http.Request, name string, err error) {
 	switch {
 	case errors.Is(err, catalogue.ErrAddressRefused):
-		s.fail(w, r, http.StatusUnprocessableEntity, "this address is not one a catalogue is fetched from: "+
+		s.fail(w, r, http.StatusUnprocessableEntity, "this address is not one a catalog is fetched from: "+
 			strings.TrimPrefix(err.Error(), catalogue.ErrAddressRefused.Error()+": ")+
-			". A catalogue is a public https address; nothing was added")
+			". A catalog is a public https address; nothing was added")
 	case errors.Is(err, catalogue.ErrArtifactRefused):
-		s.fail(w, r, http.StatusUnprocessableEntity, "this artifact is not one a catalogue is pulled from: "+
+		s.fail(w, r, http.StatusUnprocessableEntity, "this artifact is not one a catalog is pulled from: "+
 			strings.TrimPrefix(err.Error(), catalogue.ErrArtifactRefused.Error()+": ")+
-			". A catalogue artifact is <registry host>/<repository>:<tag> or @sha256:<digest>; nothing was added")
+			". A catalog artifact is <registry host>/<repository>:<tag> or @sha256:<digest>; nothing was added")
 	case errors.Is(err, gitops.ErrRepositoryNotFound):
 		// Said as "no such repository" whoever else may have the name: that a
 		// name is another tenant's, or the cluster's, is not this caller's to
 		// learn.
-		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue names a repository that is not declared for "+ownerOf(r)+
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalog names a repository that is not declared for "+ownerOf(r)+
 			"; declare it first (kubectl gentian repositories declare <name> --url oci://<registry>/<path>"+tenantFlag(r)+"). Nothing was added")
 	case errors.Is(err, gitops.ErrRepositoryNotRegistry), errors.Is(err, catalogue.ErrRegistryRefused):
-		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue cannot be read with this repository: "+firstLine(err)+". Nothing was added")
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalog cannot be read with this repository: "+firstLine(err)+". Nothing was added")
 	case errors.Is(err, gitops.ErrCatalogueNameTaken):
 		s.fail(w, r, http.StatusConflict, strings.TrimPrefix(firstLine(err), gitops.ErrCatalogueNameTaken.Error()+": "))
 	case errors.Is(err, gitops.ErrCatalogueNotFound):
 		s.fail(w, r, http.StatusNotFound, "no such catalogue: "+name)
 	case errors.Is(err, gitops.ErrCatalogueNotDelegated):
-		s.fail(w, r, http.StatusForbidden, "adding and removing catalogues is not delegated to this tenant's administrators; "+
+		s.fail(w, r, http.StatusForbidden, "adding and removing catalogs is not delegated to this tenant's administrators; "+
 			"the cluster's administrator adds one for the tenant, or delegates it "+
 			"(kubectl gentian tenants delegate-catalogues <tenant> on)")
 	case errors.Is(err, gitops.ErrCatalogueNotTenants):

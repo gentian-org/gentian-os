@@ -86,7 +86,7 @@ apply() {
     fi
 
     # The keyring: one ConfigMap entry per key, named by its long id, holding
-    # the armoured public half. Patched rather than applied -- the ConfigMap
+    # the armored public half. Patched rather than applied -- the ConfigMap
     # belongs to Argo CD's install manifest.
     for role in director break-glass; do
         asc="${dir}/signing/${role}.asc"

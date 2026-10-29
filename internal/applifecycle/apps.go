@@ -61,7 +61,7 @@ const (
 
 // AppState is one installed app as the cluster has it.
 type AppState struct {
-	// Profile is the catalogue entry; Name is the Component made from it.
+	// Profile is the catalog entry; Name is the Component made from it.
 	Profile string `json:"profile"`
 	Name    string `json:"name"`
 	// Origin is who put the component in the tenant: "default" for one the
@@ -504,7 +504,7 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 		}
 		return nil, fmt.Errorf("%w: the ComponentProfile %s is not on this cluster, and what the app owns in %s "+
 			"cannot be determined without it. Nothing was destroyed. A profile is placed on the cluster when the app "+
-			"is installed from a catalogue source that serves it: make %s available again that way -- installing it "+
+			"is installed from a catalog source that serves it: make %s available again that way -- installing it "+
 			"in a tenant puts its profile back -- then uninstall it here if it was installed here, and purge",
 			ErrProfileMissing, profile, tenantName, profile)
 	}
@@ -568,7 +568,7 @@ func (r remnants) beingUninstalled() bool {
 // uninstalled after that; for a while the app has no Component and running
 // pods. Helm's own record of a release -- a Secret in the release's namespace
 // -- is there until `helm uninstall` has finished, and the release names are
-// the app's own (backup.AppRelease and its neighbours), so that record is
+// the app's own (backup.AppRelease and its neighbors), so that record is
 // what says whether the workloads are gone.
 func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile) (remnants, error) {
 	ns := tenantNamespace(tenant)

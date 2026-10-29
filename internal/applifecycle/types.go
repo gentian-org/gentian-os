@@ -39,7 +39,7 @@ type Options struct {
 	// purge says so rather than claim it destroyed.
 	Authorization AuthorizationStores
 	// LiveReader reads the API server itself rather than the manager's
-	// cache. The catalogue's residue is listed and removed on what it
+	// cache. The catalog's residue is listed and removed on what it
 	// answers, because what is deleted there is decided on the answer. Nil
 	// reads through the service's client.
 	LiveReader client.Reader

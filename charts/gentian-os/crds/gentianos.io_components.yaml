@@ -93,7 +93,7 @@ spec:
                   properties:
                     catalogue:
                       description: |-
-                        Catalogue is the catalogue the pinned build was fetched from: the first
+                        Catalogue is the catalog the pinned build was fetched from: the first
                         half of its coordinate, <catalogue>/<name>.
                       maxLength: 63
                       pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
@@ -354,7 +354,7 @@ spec:
                 - privilege
                 x-kubernetes-list-type: map
               profileRef:
-                description: ProfileRef names the catalogue entry this is an instance
+                description: ProfileRef names the catalog entry this is an instance
                   of.
                 properties:
                   digest:

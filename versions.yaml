@@ -17,7 +17,7 @@
 #   $(shell bash scripts/lib/versions.sh crossplane cli)
 #
 # Version strings are stored EXACTLY as the upstream publishes them. Some
-# projects prefix chart versions with "v" and some do not; normalising that here
+# projects prefix chart versions with "v" and some do not; normalizing that here
 # would mean translating it back at every call site, and getting one case wrong
 # produces a "chart not found" that reads like a network fault. Where a project
 # publishes a chart and a CLI under different schemes, both are listed.

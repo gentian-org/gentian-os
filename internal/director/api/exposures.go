@@ -64,13 +64,13 @@ type publishExposureRequest struct {
 	Apex bool `json:"apex,omitempty"`
 	// AcknowledgeMainAddressRule is the approver saying they were told what
 	// a script on the main address can do to people's sign-in, and that the
-	// site is one whose scripts their organisation controls. Required with
+	// site is one whose scripts their organization controls. Required with
 	// apex, on a first publication and on every review; refused without
 	// (mainAddressWarning). It means nothing on any other surface.
 	AcknowledgeMainAddressRule bool `json:"acknowledgeMainAddressRule,omitempty"`
 	// Kind is the kind of entry the approver was shown and means to
 	// approve, as the read gave it. Optional. Where it is sent and the
-	// app's catalogue entry now declares another kind -- the profile
+	// app's catalog entry now declares another kind -- the profile
 	// changed between the look and the yes -- the approval is refused,
 	// so nobody approves a credential passed on having been shown a plain
 	// public address. What is recorded is always what the entry declares.
@@ -163,7 +163,7 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	// What the approver was shown has to be what is approved.
 	if shown := strings.TrimSpace(body.Kind); shown != "" && normalKind(shown) != normalKind(kind) {
 		s.fail(w, r, http.StatusConflict, fmt.Sprintf(
-			"the request approves entry %s of %s as %q, and the app's catalogue entry declares %q (%s). "+
+			"the request approves entry %s of %s as %q, and the app's catalog entry declares %q (%s). "+
 				"Read the tenant's requests again and approve what is shown there. Nothing was changed",
 			exposure, install, shown, normalKind(kind), kindLabels[normalKind(kind)]))
 		return
@@ -288,7 +288,7 @@ const mainAddressRule = "Any script that runs in a page on the main address can 
 	"It can stop people from signing in until they clear their cookies, " +
 	"and it can sign a person in to an account its author chose, without the person noticing, so that what they do there ends up in that account. " +
 	"The platform cannot check what a website loads. " +
-	"The rule: publish here only a site whose scripts your organisation itself controls -- " +
+	"The rule: publish here only a site whose scripts your organization itself controls -- " +
 	"no third-party scripts (analytics, embeds, widgets, anything loaded from another host) and no pages uploaded by users."
 
 // mainAddressWarning is the answer to apex: true without the acknowledgement:

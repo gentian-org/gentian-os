@@ -29,7 +29,7 @@ func recorded(t *testing.T, profile *gentianov1alpha1.ComponentProfile, objects 
 	return refusal
 }
 
-// A profile placed from a catalogue records its build as the bundle beside
+// A profile placed from a catalog records its build as the bundle beside
 // it. One that is what the bundle says passes with no digest named anywhere
 // else, and the digest answered for it is the bundle's.
 func TestAProfileThatIsItsRecordedBuildIsVerified(t *testing.T) {
@@ -69,7 +69,7 @@ func TestACompanionOfARecordedBuildIsHeldToIt(t *testing.T) {
 
 // No record at all is a profile that came from no catalogue: the platform's
 // chart ships it, and there is nothing to hold it to. A profile that says it
-// came from a catalogue and shows no build is another matter, and so is a
+// came from a catalog and shows no build is another matter, and so is a
 // bundle that cannot be read.
 func TestWhatHasNoRecordIsNotAskedAndAHalfRecordIsRefused(t *testing.T) {
 	shipped := held(t, wiki)

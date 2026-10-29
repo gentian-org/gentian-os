@@ -230,12 +230,12 @@ func TestTheFlowsAClusterNeeds(t *testing.T) {
 		{"the registrar calls Keycloak's administration", at("kernel-control", chart("registrar")), at("kernel-authentication", keycloakPod), 8080},
 		{"the director reads Keycloak's keys", at("kernel-control", chart("director")), at("kernel-authentication", keycloakPod), 8080},
 		{"provider-keycloak configures realms", at("kernel-provisioning", map[string]string{"pkg.crossplane.io/provider": "provider-keycloak"}), at("kernel-authentication", keycloakPod), 8080},
-		{"a realm Job, unlabelled, calls Keycloak", at("kernel-authentication", map[string]string{"job-name": "realm-acme"}), at("kernel-authentication", keycloakPod), 8080},
+		{"a realm Job, unlabeled, calls Keycloak", at("kernel-authentication", map[string]string{"job-name": "realm-acme"}), at("kernel-authentication", keycloakPod), 8080},
 		{"the sign-in sidecar reads the SAML descriptor", at("tenant-acme", map[string]string{"gentianos.io/sign-in-sidecar": "wiki"}), at("kernel-authentication", keycloakPod), 8080},
 		{"Dovecot asks whether a token is good", at("system-mail", map[string]string{"app.kubernetes.io/name": "dovecot"}), at("kernel-authentication", keycloakPod), 8080},
 		{"the operator reads the vault", at("kernel-control", chart("operator")), at("kernel-secrets", openbaoPod), 8200},
 		{"the custodian writes the vault", at("kernel-control", chart("custodian")), at("kernel-secrets", openbaoPod), 8200},
-		// For the credential of a repository a catalogue artifact is pulled
+		// For the credential of a repository a catalog artifact is pulled
 		// with, which its role at the vault is limited to.
 		{"the director reads a repository credential", at("kernel-control", chart("director")), at("kernel-secrets", openbaoPod), 8200},
 		{"provider-vault configures the vault", at("kernel-provisioning", map[string]string{"pkg.crossplane.io/provider": "provider-vault"}), at("kernel-secrets", openbaoPod), 8200},
@@ -373,7 +373,7 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"charts/gentian-os/templates/usher.yaml":      {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-control", 8082}},
 	// The registrar's database: kernel-postgres, by its own policy.
 	"charts/gentian-os/templates/externalsecret-registrar-database.yaml": {{"kernel-data", 5432}},
-	// Addresses handed on to compositions, not dialled from here.
+	// Addresses handed on to compositions, not dialed from here.
 	"charts/gentian-os/templates/kernel-services-configmap.yaml": {},
 	// The webhook's certificate names, not a client.
 	"charts/gentian-os/templates/webhook-cert-manager.yaml": {},
@@ -385,7 +385,7 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	// that run beside kernel-postgres as the database's owner.
 	"internal/backup/desktop.go": {{"kernel-data", 5432}},
 	// A name a component's statements carry as their issuer, in a tenant's
-	// namespace: never dialled, by this program or any other.
+	// namespace: never dialed, by this program or any other.
 	"internal/controller/vouching.go": {},
 	// The tenants' MariaDB, in a system namespace.
 	"internal/controller/tenantrestore_retained.go": {},
@@ -417,7 +417,7 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/signin_sidecar.go": {{"kernel-authentication", 8080}},
 	// The tenants' stores, in the system namespaces.
 	"internal/controller/tenant_data_plane_manifests.go": {},
-	// Recognises an in-cluster address; dials none.
+	// Recognizes an in-cluster address; dials none.
 	"internal/custodian/http.go":             {},
 	"internal/director/catalogue/address.go": {},
 	// The model gateway, in a system namespace.

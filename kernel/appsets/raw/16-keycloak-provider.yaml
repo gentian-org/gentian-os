@@ -2,7 +2,7 @@
 # Keycloak provider-keycloak bootstrap: admin credentials + ProviderConfig.
 #
 # Required for tenant app OIDC Client MRs created by app-default (realm per tenant).
-# The full Keycloak client catalogue in keycloak-config/manifests/<env>/ remains
+# The full Keycloak client catalog in keycloak-config/manifests/<env>/ remains
 # Keycloak provider ConfigMap — applied when enabled.
 #
 # Wave 16: after Keycloak (09-identity) and before tenant app reconciliation.

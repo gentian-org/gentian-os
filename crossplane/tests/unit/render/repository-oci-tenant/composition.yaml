@@ -55,8 +55,8 @@ spec:
                     type: Value
                     value: cluster-config
 
-    # ── Emit the credential declaration and every consumer-shaped artefact ────
-    # One OpenBao path per repository, one rotation point, N artefacts kept in
+    # ── Emit the credential declaration and every consumer-shaped artifact ────
+    # One OpenBao path per repository, one rotation point, N artifacts kept in
     # lockstep. Adding a repository is one claim and no new Composition.
     #
     # The CredentialRequirement is emitted here rather than hand-written so it

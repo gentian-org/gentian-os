@@ -80,7 +80,7 @@ func ParseCommissionKeys(raw []byte) ([]CommissionKey, error) {
 }
 
 // CommissionKeys is the list the director currently holds. The zero value,
-// and nil, hold none: no component is recognised by its key.
+// and nil, hold none: no component is recognized by its key.
 type CommissionKeys struct {
 	keys atomic.Pointer[[]CommissionKey]
 }
@@ -124,7 +124,7 @@ func (v *CommissionKeys) Follow(ctx context.Context, path string, every time.Dur
 			if present {
 				v.Set(nil)
 				present, last = false, time.Time{}
-				log.Info("the commission keys are gone; no component is recognised by its key", "path", path)
+				log.Info("the commission keys are gone; no component is recognized by its key", "path", path)
 			}
 			return
 		}

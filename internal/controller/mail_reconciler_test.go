@@ -525,7 +525,7 @@ func TestDovecotDeployed(t *testing.T) {
 		// while skipping a present one fails IMAP visibly and is fixed by
 		// setting the value. Of the two, prefer the loud one.
 		{"", false},
-		// Anything unrecognised is not the system stack. A typo must not
+		// Anything unrecognized is not the system stack. A typo must not
 		// provision -- and neither must "kernel", the value this was called
 		// before the rename: a claim that still says it means nothing now,
 		// and meaning "external" is the safe reading of nothing.
@@ -729,7 +729,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	})
 }
 
-// The opt-in a cluster cannot honour.
+// The opt-in a cluster cannot honor.
 //
 // selfhosted means "register in the shared kernel Postfix and Dovecot". A
 // cluster relaying through a provider has neither, and v5 has no step that
@@ -777,7 +777,7 @@ func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
 	}
 }
 
-// The other half: a cluster that DOES run kernel mail must still honour it.
+// The other half: a cluster that DOES run kernel mail must still honor it.
 // A rule that refuses the function rather than the layout would be a
 // regression dressed as a fix.
 func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {

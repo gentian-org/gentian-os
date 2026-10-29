@@ -207,7 +207,7 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 		// Without a cluster id there is no object to hold a kernel console's
 		// relations on, so every kernel tile would be unanswerable. Say so
 		// rather than project a catalogue nobody can be checked against.
-		logger.Info("no cluster id is configured, so no tile catalogue is projected",
+		logger.Info("no cluster id is configured, so no tile catalog is projected",
 			"setting", "GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 		return ctrl.Result{RequeueAfter: tileProjectionRequeue}, nil
 	}
@@ -249,7 +249,7 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 	if err := r.projectZoneHosts(ctx); err != nil {
 		return ctrl.Result{}, fmt.Errorf("project the zone hosts: %w", err)
 	}
-	logger.V(1).Info("tile catalogue projected",
+	logger.V(1).Info("tile catalog projected",
 		"cluster", r.Cluster, "kernel", len(kernel), "components", len(apps))
 	return ctrl.Result{RequeueAfter: tileProjectionRequeue}, nil
 }

@@ -199,7 +199,7 @@ func TestAnUnreachableStoreShowsNothing(t *testing.T) {
 	}
 }
 
-// A catalogue that is not there is a failure, not an empty desktop: nothing on
+// A catalog that is not there is a failure, not an empty desktop: nothing on
 // the page would look like a person who holds nothing.
 func TestAMissingCatalogueIsAFailure(t *testing.T) {
 	store := &fakeStore{held: map[string]bool{"user:ada can_enter tenant:acme": true}}
@@ -224,7 +224,7 @@ func TestNothingButReadsIsRouted(t *testing.T) {
 	}
 }
 
-// catalogueWith writes a catalogue file with the operator's verdict on the App
+// catalogueWith writes a catalog file with the operator's verdict on the App
 // Store beside one tile for the people who may install apps.
 func catalogueWith(t *testing.T, offer *tilecatalogue.AppStore) string {
 	t.Helper()

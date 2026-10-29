@@ -11,12 +11,12 @@
 #
 # That is the whole reason this exists. Every occurrence is individually
 # harmless: an example in a doc comment, a fixture domain in a table test, a
-# cluster named in a "seen in practice" note. None changes behaviour. What they
+# cluster named in a "seen in practice" note. None changes behavior. What they
 # do is make the repository read as if one cluster were the only cluster, and
 # they accumulate precisely because each one looks too small to argue about.
 #
 # Reported, not fatal, for the same reason lint-claim-defaults is: there are
-# some today, each needs a judgement about whether to generalise the example or
+# some today, each needs a judgement about whether to generalize the example or
 # delete the sentence, and a check that failed the build on arrival would just
 # be switched off. The contract is the one that worked for lint-portability
 # until it reached zero: THE NUMBER MUST ONLY GO DOWN.

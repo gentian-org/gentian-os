@@ -275,7 +275,7 @@ func (s *Service) SourceBundles(ctx context.Context, tenantName, name string) ([
 	}
 	out := []SourceBundle{}
 	seen := 0
-	// Cancelled on the way out: a listing left at its limit stops there.
+	// Canceled on the way out: a listing left at its limit stops there.
 	listCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for obj := range mc.ListObjects(listCtx, base.Bucket, minio.ListObjectsOptions{Prefix: top}) {

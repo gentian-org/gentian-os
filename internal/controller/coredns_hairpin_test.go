@@ -186,7 +186,7 @@ func TestPatchHairpinCorefile_ReportsUnplaceableCorefile(t *testing.T) {
 }
 
 // A host inside the markers that nothing wants any more is removed: the
-// block used to keep every line it did not recognise, so a cluster carried
+// block used to keep every line it did not recognize, so a cluster carried
 // the hostnames of every domain it had ever been installed under, each
 // pinned to an address that might since belong to something else.
 func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {

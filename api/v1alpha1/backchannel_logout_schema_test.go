@@ -104,12 +104,12 @@ func TestBackchannelLogoutIsAPathOnTheProfilesOwnEntry(t *testing.T) {
 	}
 }
 
-// The catalogue's own profiles, as gentian-apps publishes them
+// The catalog's own profiles, as gentian-apps publishes them
 // (internal/profilebundle/testdata/bundles), are admitted by the definition:
 // none still carries the withdrawn address, and the ones that say where they
-// are told of a sign-out say it in a way the rules above accept. A catalogue
+// are told of a sign-out say it in a way the rules above accept. A catalog
 // and a definition that disagreed here would leave a cluster unable to take
-// the catalogue's next version of an app.
+// the catalog's next version of an app.
 func TestTheCataloguesProfilesDeclareSignOutAsTheDefinitionAdmits(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
 	files, err := filepath.Glob(filepath.Join("..", "..", "internal", "profilebundle", "testdata", "bundles", "*.yaml"))

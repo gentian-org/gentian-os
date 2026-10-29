@@ -209,12 +209,12 @@ func TestABundleArrivesWithItsCompanionsAtTheDigestOfTheWholeFile(t *testing.T) 
 	own := source(t, body)
 	own.src.Key = profilebundle.TenantOrigin("acme", "own")
 	if _, err := own.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body)); !errors.Is(err, profilebundle.ErrRefused) ||
-		!strings.Contains(err.Error(), "only a catalogue of the whole cluster") {
-		t.Fatalf("a tenant's own catalogue brought a companion: %v", err)
+		!strings.Contains(err.Error(), "only a catalog of the whole cluster") {
+		t.Fatalf("a tenant's own catalog brought a companion: %v", err)
 	}
 	alone := source(t, nextcloudProfile)
 	alone.src.Key = profilebundle.TenantOrigin("acme", "own")
 	if _, err := alone.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(nextcloudProfile)); err != nil {
-		t.Fatalf("a tenant's own catalogue could not bring a profile: %v", err)
+		t.Fatalf("a tenant's own catalog could not bring a profile: %v", err)
 	}
 }

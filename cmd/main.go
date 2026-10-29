@@ -958,7 +958,7 @@ func withoutVault() bool {
 //
 // There is no DNS half. external-dns writes this cluster's records -- every
 // provider in kernel/platforms.yaml, from the HTTPRoutes this operator writes
-// and from DNSEndpoint CRs for hostnames a tunnelled Gateway cannot supply an
+// and from DNSEndpoint CRs for hostnames a tunneled Gateway cannot supply an
 // address for. What an ingress contributes is the TARGET those records point
 // at. See internal/controller/edge.go.
 //

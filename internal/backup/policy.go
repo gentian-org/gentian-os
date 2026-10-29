@@ -21,7 +21,7 @@ import (
 const (
 	// DestinationAccessKeyField and DestinationSecretKeyField are the field
 	// names at the credential's vault path, and the keys of the Secret ESO
-	// materialises from it.
+	// materializes from it.
 	DestinationAccessKeyField = "accessKey"
 	DestinationSecretKeyField = "secretKey" //nolint:gosec // Field name, not a credential.
 
@@ -68,7 +68,7 @@ func DestinationVaultPath(scope, tenant string) string {
 	return "gentian-os/kernel/backup/destination"
 }
 
-// DestinationSecretName is the Secret ESO materialises for capture Jobs.
+// DestinationSecretName is the Secret ESO materializes for capture Jobs.
 func DestinationSecretName(scope, tenant string) string {
 	return "backup-destination-" + scopeTag(scope, tenant)
 }
@@ -97,7 +97,7 @@ type Effective struct {
 	AddressingStyle gentianov1alpha1.S3AddressingStyle
 
 	// CredentialName is the CredentialRequirement the destination's keys come
-	// from, and CredentialSecret the Secret ESO materialises from it. Both are
+	// from, and CredentialSecret the Secret ESO materializes from it. Both are
 	// empty for the platform's own storage, which needs no requirement.
 	CredentialName   string
 	CredentialSecret string
@@ -157,7 +157,7 @@ func ApplyExportDestination(
 			eff.CredentialSecret = ExportCredentialSecretName(tenant.Name, exportName)
 		}
 		// credentialSource: managed keeps whatever the policy resolved, which
-		// is the workspace's own destination credential — already materialised
+		// is the workspace's own destination credential — already materialized
 		// beside the capture Jobs by ESO. Only the endpoint moves; nothing is
 		// copied, and no keys pass through a spec to get here.
 		eff.Overridden = true

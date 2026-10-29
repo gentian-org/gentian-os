@@ -176,10 +176,10 @@ func TestQuiesceLeavesOtherAppsRunning(t *testing.T) {
 	}
 
 	if got := *getDeployment(t, r.Client, "openproject").Spec.Replicas; got != 5 {
-		t.Errorf("neighbour was scaled to %d", got)
+		t.Errorf("neighbor was scaled to %d", got)
 	}
 	if _, memoed := getDeployment(t, r.Client, "openproject").Annotations[replicaMemoAnnotation]; memoed {
-		t.Error("neighbour was memoed, so a later resume would rescale it")
+		t.Error("neighbor was memoed, so a later resume would rescale it")
 	}
 }
 
@@ -555,7 +555,7 @@ func (f *fakeExecer) Exec(_ context.Context, _, _, _ string, argv []string) (str
 // forbiddenReader is the API server refusing a request the ServiceAccount has
 // no rule for. The cached client does not do this — it starts an informer that
 // cannot sync and blocks the caller instead — which is exactly why appVolumes
-// reads uncached and why this double models the uncached behaviour.
+// reads uncached and why this double models the uncached behavior.
 type forbiddenReader struct{ client.Reader }
 
 func (forbiddenReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
@@ -1447,7 +1447,7 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 //
 // The pod that was running through a command-mode quiesce holds two things a
 // restore invalidates and cannot reach: its caches, and every ConfigMap mounted
-// with subPath, which Kubernetes materialises once at pod start and never
+// with subPath, which Kubernetes materializes once at pod start and never
 // refreshes. A Nextcloud pod carrying an empty copy of its session config could
 // not write a session at all — logins failed at the OIDC callback with 403 —
 // and no restore could clear it, because nothing restarted the pod.

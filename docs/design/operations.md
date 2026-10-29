@@ -44,9 +44,9 @@ manifest, waits for the operator to provision it, and restores the data into
 it ([commands.md](../commands.md) §12a). Credentials are not carried; the
 target provisions its own.
 
-### 3.1 Node Flavour Migration
+### 3.1 Node Flavor Migration
 
-Replacing a cluster's worker nodes with a different flavour — sizing from usable
+Replacing a cluster's worker nodes with a different flavor — sizing from usable
 rather than purchased memory, the drain order the kernel singletons require, and the
 CNPG and RWO cases that need manual steps — is covered in
 [node-pool-migration.md](../node-pool-migration.md).
@@ -100,7 +100,7 @@ kubectl get applications -n kernel-gitops
 A tenant's apps are observed through the **`Component`**, its **`App` claim**
 and the **helm `Release`** in `tenant-{name}`. Argo CD Applications cover the
 kernel's services, the claims and the deployments repository's tenant and
-catalogue directories, not each tenant app install.
+catalog directories, not each tenant app install.
 
 ## 6. Metrics
 
@@ -195,7 +195,7 @@ one hour. No failure stops anything else.
   the app it would be listed under is not in the report and no entry is made
   up for it.
 - `coordinate` is `null` for an entry whose install did not record its
-  catalogue (`spec.apps[].catalogue`, `addonPins[].catalogue`), and a count
+  catalog (`spec.apps[].catalogue`, `addonPins[].catalogue`), and a count
   that could not be had is `null` rather than a smaller number.
 - Apps are sorted by `digest`, and an app's add-ons by `digest` and then by
   name, so a cluster whose state has not changed says the same thing again.
@@ -300,9 +300,9 @@ tags it may take.
 
 ### 7.3 Tenant Impact
 
-Tenants are not parameterised by kernel version — when the kernel
+Tenants are not parameterized by kernel version — when the kernel
 is updated, all tenants use the new kernel. This is the
-intended behaviour: cluster admins manage kernel versions, tenant
+intended behavior: cluster admins manage kernel versions, tenant
 admins do not.
 
 ### 7.4 Upgrades and definitions
@@ -396,7 +396,7 @@ letting Argo CD roll the operator and the bouncer. In that order:
 - **The vault's Argo CD Applications** (`openbao`, `openbao-transit`) deploy
   with `prune: false` and `finalizers: []`, so Argo CD never deletes them when
   their manifests are temporarily missing from git. The Applications of the
-  claims and of the catalogue directory also sync without pruning.
+  claims and of the catalog directory also sync without pruning.
 - **OpenBao paths** managed by Crossplane use
   `managementPolicies: [Observe, Create]` — never overwrite live
   credentials. See [security.md](security.md).
@@ -487,7 +487,7 @@ In provisioning order.
 
 | Kind | Made by | Detail |
 | --- | --- | --- |
-| Provisioning records | every provisioning Job, and the operator's labelled Secrets, from the first step on | Jobs, their pods and labelled Secrets; found by the tenant's and the app's labels. A teardown's own Jobs are records too, which is why they go last. |
+| Provisioning records | every provisioning Job, and the operator's labeled Secrets, from the first step on | Jobs, their pods and labeled Secrets; found by the tenant's and the app's labels. A teardown's own Jobs are records too, which is why they go last. |
 | Stored credentials | the tenant reconciler's seeder before each store; the app Composition for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
 | Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
 | Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own, and with it the app's client if one is left: the identity Job makes the client before the App claim, so an install that never reached the claim leaves one its uninstall does not remove. |
@@ -498,7 +498,7 @@ In provisioning order.
 | Sign-in client | the app Composition, or the identity Job | With its client role, its default-scope assignments and the group's mapping to the role. Keycloak removes what is part of the client with it. |
 | Workloads | the Helm release the app Composition or the component reconciler writes | The manifest records the chart version, the digest and the releases; a restore checks the installed build against them (§9.4). A Release or Object a gone composite left composed (an install cut short leaves one on an unfinished create, which its provider never deletes) is unblocked and deleted by the uninstall's tenant reconcile and by a purge, which waits for it; an install creates no App claim beside one (`internal/composed`). |
 | Files | the app's chart, as volume claims of its release | An archive per claim that is the app's (`AppVolumes`), unpacked onto the claim of the same name. At a tenant's deletion they go with the namespace. |
-| Materialised profile | committed by the director under `clusters/<cluster>/catalogue/` at the digest the install named, applied by Argo CD | Kept by every act: a purge of the app reads it to know what the app owns. |
+| Materialized profile | committed by the director under `clusters/<cluster>/catalogue/` at the digest the install named, applied by Argo CD | Kept by every act: a purge of the app reads it to know what the app owns. |
 | Bundle companions | applied with the profile, from the same file | The Composition, OIDC pack catalog, ConfigMaps and customization records a profile's bundle brings. Kept by every act. |
 
 So the teardown order is: files, workloads, sign-in client, model key, cache,
@@ -644,7 +644,7 @@ whose message says what differs and is
 repeated in `status.notes`. A bundle of a newer line is refused, as a newer
 format is, by the restore and by the import's inspection alike.
 
-Each artefact is fetched from the path the manifest gives and loaded into the
+Each artifact is fetched from the path the manifest gives and loaded into the
 store of that kind the installed app has, by the inventory's names — which
 differ from the bundle's wherever the tenant's database or bucket prefix
 (`spec.isolation`) here is not the one it had where the bundle was taken.
@@ -653,7 +653,7 @@ naming both ends: tenant, domain, the cluster's own (kernel) domain, platform
 version, cluster, the app's chart
 versions, each store's name in the bundle and here -- the databases an app
 made itself too, which the restore's Job reports in its termination message
-and the restore keeps on the artefact (`databases`) -- and the app's database
+and the restore keeps on the artifact (`databases`) -- and the app's database
 login ([custom-catalogues.md §4.1](../custom-catalogues.md)). They carry no secret;
 each app's profile rewrites what its app cached, reading credentials the
 platform made new from the app's own Secrets. An app paused by scaling down
@@ -681,9 +681,9 @@ each pass, so an operator restart or a failing component does not keep a
 route held; `status.heldBack` is emptied when the restore ends.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
-artefact) carries `schemaVersion`. Format 1 named each app and the kinds
+artifact) carries `schemaVersion`. Format 1 named each app and the kinds
 captured, nothing else. **Format 2**, written since the restore went by the
-manifest, adds per app one `stores` entry per artefact — `kind` (`postgres`,
+manifest, adds per app one `stores` entry per artifact — `kind` (`postgres`,
 `postgresOwned`, `mariadb`, `mariadbOwned`, `s3`, `volume`), `name` (what it was captured
 from), `path` (where in the bundle), and for a volume the Helm `release` it
 recorded — and the app's `digest`, `databaseEngine` and `releases`; the
@@ -719,10 +719,10 @@ base64) is the cluster's signature over `gentian-os bundle manifest v1\n`
 followed by the decrypted manifest without its final newline; a bundle
 without it is unsigned, and a reader that ignores it reads the bundle as
 before. A manifest of a
-format newer than the platform reads is refused. A `postgresOwned` artefact is
+format newer than the platform reads is refused. A `postgresOwned` artifact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`
-artefact is a tar.gz holding `INDEX`, the mailboxes one per line by the part
+artifact is a tar.gz holding `INDEX`, the mailboxes one per line by the part
 of the address before the @, and `<line number from 0>/`, each one's mail as a
 Maildir++ tree written by `doveadm backup`: every folder and message with its
 flags, UID and GUID.
@@ -744,7 +744,7 @@ storage class.
 (`mail.serviceMode: system`) a tenant's mailboxes are the directories below
 its mail domain's on the server's volume. They are copied by `doveadm
 backup`, in the mail server's own image, beside the volume and on the node
-the server holds it on: the server's own synchronisation takes the server's
+the server holds it on: the server's own synchronization takes the server's
 locks, where an archive of a Maildir that is being written to can miss a
 message that is moving between `new/` and `cur/`. A restore runs `doveadm
 sync` one way, from the bundle into the mailbox: what the bundle holds and the
@@ -755,10 +755,10 @@ and `status.notIncluded` says so. On a cluster without a mail server there is
 no unit and nothing is said.
 
 The archived mailboxes of removed people ([mail.md §5c](mail.md)) are in the
-same artefact, under `archived/` with an `INDEX` of their own, copied the
+same artifact, under `archived/` with an `INDEX` of their own, copied the
 same way from `/var/mail/.archive/<domain>/`. The manifest names them
 (`archivedMailboxes`: archive, address, when, by whom, size). A restore
-synchronises each into `/var/mail/.archive/<target domain>/<archive>` and
+synchronizes each into `/var/mail/.archive/<target domain>/<archive>` and
 writes a `MailboxRemoval` for it that says it was restored, so that it is
 listed and can be deleted; the operator runs no Job for such a record. A
 tenant's deletion removes `/var/mail/.archive/<domain>` with the domain's
@@ -877,7 +877,7 @@ The gaps that matter to a person running the platform are in
   created for one is refused.
 - **MariaDB databases an app creates for itself** are the app's by their name
   (§9.3). `mariadbOwned` was added to format 2 without a new format number: a
-  platform from before it refuses an app whose bundle holds one ("an artefact
+  platform from before it refuses an app whose bundle holds one ("an artifact
   of kind … which this platform does not know how to restore") and restores
   nothing of that app. Each database is dumped at one instant of its own; an
   export is consistent across an app's databases only because the app is

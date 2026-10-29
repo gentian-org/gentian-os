@@ -32,7 +32,7 @@ import (
 // Operations Console, at step 0 (AD-14). It does so in shell
 // (scripts/lib/catalogue.sh), and what it writes has to be what the director
 // writes for an install of the same bundle -- or the cluster would hold two
-// kinds of materialised profile, and the director's next install of the same
+// kinds of materialized profile, and the director's next install of the same
 // entry would rewrite files nobody changed.
 //
 // These hold the two to each other, byte for byte, on the bundles
@@ -87,7 +87,7 @@ func builtBundles(t *testing.T) map[string][]byte {
 	return out
 }
 
-// kustomizations a catalogue directory may start with: as step 0 scaffolds
+// kustomizations a catalog directory may start with: as step 0 scaffolds
 // it, with entries of another profile, and one somebody added to by hand.
 var startingKustomizations = map[string]string{
 	"as scaffolded": emptyKustomization,

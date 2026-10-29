@@ -27,7 +27,7 @@ import (
 // The plan event is written from what landed: the annotations Argo CD synced
 // from the director's commit, compared with what the status says was last
 // recorded. These tests drive recordResourcePlan with a store that is a
-// slice, and a catalogue of one plan with a SKU.
+// slice, and a catalog of one plan with a SKU.
 
 type recordedPlans struct {
 	events []usage.PlanEvent
@@ -136,7 +136,7 @@ func TestTheStoresLastEventStandsInForAMissingStatus(t *testing.T) {
 }
 
 // A store that is not there yet leaves the status alone, so the change is
-// recorded by a later reconcile rather than lost; a plan the catalogue does
+// recorded by a later reconcile rather than lost; a plan the catalog does
 // not know is recorded without a SKU rather than not at all.
 func TestAnUnavailableStoreDefersAndAnUnknownPlanStillCounts(t *testing.T) {
 	r := planReconciler(t, nil)

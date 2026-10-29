@@ -1,4 +1,4 @@
-# The bootstrap Applications are parameterised on these values. Namespaces are
+# The bootstrap Applications are parameterized on these values. Namespaces are
 # not among them: every destination is resolved from kernel/namespaces.yaml,
 # which the installer copies in as `namespaces` (see B-01), so an Application
 # cannot name a namespace the layout does not have.

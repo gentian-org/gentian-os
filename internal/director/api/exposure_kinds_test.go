@@ -213,7 +213,7 @@ func TestAnApprovalOfAnotherKindThanTheEntryDeclaresIsRefused(t *testing.T) {
 	} {
 		code, body := h.do(t, "PUT", path, tom, `{"kind":"`+shown+`"}`)
 		msg, _ := body["error"].(string)
-		if code != http.StatusConflict || !strings.Contains(msg, "Nothing was changed") || !strings.Contains(msg, "catalogue entry declares") {
+		if code != http.StatusConflict || !strings.Contains(msg, "Nothing was changed") || !strings.Contains(msg, "catalog entry declares") {
 			t.Errorf("%s approved as %s: %d %v", path, shown, code, body)
 		}
 	}
@@ -243,7 +243,7 @@ func TestOnlyThePerimeterApproverApprovesEitherKind(t *testing.T) {
 	}
 }
 
-// An approval covers the kind it was given for. When the app's catalogue
+// An approval covers the kind it was given for. When the app's catalog
 // entry comes to ask for something else, the entry is a request again, with
 // the earlier approval beside it and the reason said.
 func TestAnApprovalDoesNotCoverWhatTheEntryAsksForLater(t *testing.T) {

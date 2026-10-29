@@ -547,7 +547,7 @@ func (w *realmWorld) partialImports() []string {
 // provider-keycloak resource makes it, and could not once a copy from the
 // bundle stood under its name. It is known by the platform's mark, or, in a
 // bundle taken before the mark, by its name: a pattern of the platform's
-// own names, or an app's clientId the catalogue names. Its roles are left
+// own names, or an app's clientId the catalog names. Its roles are left
 // out with it, as Keycloak refuses an import that names a client's roles
 // and not the client; and a group's role at it is said, not granted.
 func TestARealmImportNeverPutsTheBundlesClientsOverTheRealms(t *testing.T) {

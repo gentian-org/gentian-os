@@ -247,8 +247,8 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	catalogue, err := s.catalogue()
 	if err != nil {
-		s.cfg.Log.ErrorContext(ctx, "the tile catalogue cannot be read", "path", s.cfg.TilesPath, "error", err.Error())
-		fail(w, http.StatusServiceUnavailable, "the tile catalogue cannot be read")
+		s.cfg.Log.ErrorContext(ctx, "the tile catalog cannot be read", "path", s.cfg.TilesPath, "error", err.Error())
+		fail(w, http.StatusServiceUnavailable, "the tile catalog cannot be read")
 		return
 	}
 	out := []tileOut{}

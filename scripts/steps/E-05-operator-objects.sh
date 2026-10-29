@@ -2,19 +2,19 @@
 # step: E-05-operator-objects
 # phase: handover
 # requires: E-04-user-tenant
-# provides: the catalogue and every declared tenant synced by Argo CD -- each of its apps syncing gentianos.io objects Synced -- and each declared tenant a Tenant on the cluster
+# provides: the catalog and every declared tenant synced by Argo CD -- each of its apps syncing gentianos.io objects Synced -- and each declared tenant a Tenant on the cluster
 # mutates: Argo CD sync requests for those Applications whose last sync failed
 
 # The last step: tenants, and every other object of the operator's kinds, are
 # verified at the end of an install, not trusted to have arrived.
 #
-# The catalogue (gentian-catalogue) and the tenants (gentian-tenants) are
+# The catalog (gentian-catalogue) and the tenants (gentian-tenants) are
 # ApplicationSets of C-02, and the CRDs of what they sync -- ComponentProfile,
 # Tenant -- arrive with the operator chart at D-01. On a fresh install their
 # first syncs fail with `<Kind>.gentianos.io "" not found`, spend their ten
 # retries and are not tried again: automated sync does not repeat a revision
 # it failed. A tenant declared in git before the install was never created,
-# and no catalogue profile reached the cluster, while the install reported
+# and no catalog profile reached the cluster, while the install reported
 # success. D-01 asks for them again once the CRDs exist; this step asks again
 # for whatever still failed, and holds the install to the result.
 #
@@ -58,7 +58,7 @@ _e05_leftovers() {
 # _e05_done <ns> <app> — Synced, and for a tenant's Application, the Tenant there.
 #
 # Synced also when the last sync succeeded and all that still differs is what
-# Argo CD marks as requiring pruning: the catalogue never prunes, so an object
+# Argo CD marks as requiring pruning: the catalog never prunes, so an object
 # a profile stopped bringing stays, and the Application stays OutOfSync for as
 # long as it does. Waiting would not end that; apply names those objects.
 _e05_done() {

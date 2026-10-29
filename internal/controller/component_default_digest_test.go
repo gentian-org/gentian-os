@@ -38,7 +38,7 @@ func (h *digestHarness) placed() *digestHarness {
 }
 
 // consoleProfile is a default profile as the installer places it: the
-// document, its bytes beside it, and the catalogue they were fetched from.
+// document, its bytes beside it, and the catalog they were fetched from.
 func consoleProfile(t *testing.T) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
 	p := materialised(t, wikiBundle)
@@ -143,7 +143,7 @@ func TestADefaultComponentWaitsForItsBundlesCompanions(t *testing.T) {
 	}
 }
 
-// A profile that says it came from a catalogue and shows no build is held:
+// A profile that says it came from a catalog and shows no build is held:
 // taking the bundle away is not the way round the check.
 func TestADefaultComponentWhoseProfileLostItsBundleIsHeld(t *testing.T) {
 	profile := consoleProfile(t)

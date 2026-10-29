@@ -121,7 +121,7 @@ func TestATenantIsShownTheLeftoversOfAnAppItHas(t *testing.T) {
 
 // The read answers only for a profile the tenant has. Anything else is not
 // found, whether or not the cluster has it: the read is no way to learn what
-// is in the cluster's catalogue or what another tenant installed.
+// is in the cluster's catalog or what another tenant installed.
 func TestTheReadAnswersOnlyForAnAppTheTenantHas(t *testing.T) {
 	w := appResidueWorld(t, "multi")
 	for _, c := range []struct{ tenant, profile string }{
@@ -301,7 +301,7 @@ func TestATenantsRemovalRefusesEverythingButItsAppsLeftovers(t *testing.T) {
 			t.Errorf("%s %s is refused without saying %q: %v", c.kind, c.name, c.says, err)
 		}
 		// Why the cluster would not remove it can name another profile.
-		if errors.Is(err, ErrNotResidue) && strings.Contains(err.Error(), "bundle now materialised") {
+		if errors.Is(err, ErrNotResidue) && strings.Contains(err.Error(), "bundle now materialized") {
 			t.Errorf("%s %s: the refusal says whose it is: %v", c.kind, c.name, err)
 		}
 	}

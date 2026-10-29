@@ -18,7 +18,7 @@ import (
 )
 
 // A build a tenant ran is kept on the cluster, so a tenant can be moved back
-// to it after the catalogue has moved on and no longer serves it. A build the
+// to it after the catalog has moved on and no longer serves it. A build the
 // cluster never had is still fetched, and refused when the source does not
 // serve it.
 func TestABuildTheClusterKeepsIsInstalledWithoutTheSourceServingIt(t *testing.T) {
@@ -38,7 +38,7 @@ func TestABuildTheClusterKeepsIsInstalledWithoutTheSourceServingIt(t *testing.T)
 	if code, out := install(one); code != http.StatusAccepted {
 		t.Fatalf("install of build one = %d %v", code, out)
 	}
-	// The catalogue moves on: it serves two and not one any more.
+	// The catalog moves on: it serves two and not one any more.
 	content["gentian"]["notes"] = two
 	if code, out := install(two); code != http.StatusAccepted || out["status"] != "updated" {
 		t.Fatalf("move to build two = %d %v", code, out)

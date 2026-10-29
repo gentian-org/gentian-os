@@ -45,9 +45,9 @@ steps within it. Five phases, in this order:
 |---|---|---|---|
 | **A** | `control-plane` | A-01 … A-09 | Namespaces, cert-manager, External Secrets, Crossplane, Envoy Gateway, Argo CD, metrics-server, pre-pulled images, cluster issuers |
 | **B** | `secrets` | B-01 … B-10 | The kernel bootstrap Applications, the transit seal and OpenBao, Crossplane providers and definitions, the seeded credentials, the deployment signing keys |
-| **C** | `platform` | C-01 … C-05 | The Cluster claim, the ApplicationSets, the wildcard certificate, the credential catalogue, the repository hand-off |
+| **C** | `platform` | C-01 … C-05 | The Cluster claim, the ApplicationSets, the wildcard certificate, the credential catalog, the repository hand-off |
 | **D** | `applications` | D-01 … D-05 | The operator and the director, the kernel hostnames resolving, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
-| **E** | `handover` | E-01 … E-05 | The recovery kit, then revoking the installer's own credential; on a single-tenancy cluster, the user tenant after that; last, the catalogue and every tenant declared in git synced (`E-05`), which before the platform admin's first sign-in stays outstanding |
+| **E** | `handover` | E-01 … E-05 | The recovery kit, then revoking the installer's own credential; on a single-tenancy cluster, the user tenant after that; last, the catalog and every tenant declared in git synced (`E-05`), which before the platform admin's first sign-in stays outstanding |
 
 `./install.sh --explain` prints every step with what it provides and what it
 mutates, straight from the step files, so it cannot drift from what runs.
@@ -216,21 +216,21 @@ them quietly gives you the earlier cluster instead of the one you mean:
    `GENTIAN_DEFAULT_PROFILES=…` (or `GENTIAN_STORE_CATALOGUE_URL=…`) is used
    in place of the default too, an empty value included. An entry that is a
    local file — the form earlier installs used — is now refused and **stops
-   step 0**, and so does one whose catalogue lists no digest for it; one whose
-   catalogue cannot be reached is a warning, and the cluster then comes
+   step 0**, and so does one whose catalog lists no digest for it; one whose
+   catalog cannot be reached is a warning, and the cluster then comes
    without the profile. Delete the line; unset, step 0 places the Operations
    Console from `https://catalogue.aluvian.io`, only if the file hashes to the
-   digest that catalogue's index lists
+   digest that catalog's index lists
    ([install-reference.md §4](docs/install-reference.md)).
 4. **The cluster's definition in the deployments repository.** If
    `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
-   nothing: the domain, the tenancy mode, the catalogue and the store are the
+   nothing: the domain, the tenancy mode, the catalog and the store are the
    ones in `kernel/claims/cluster.yaml`, and every tenant directory under
    `tenants/` comes back with the cluster. Read the claim before you start.
    To change a setting, edit it in your deployments checkout and let
    `./install.sh` commit it (never commit there yourself once the signing
    keys exist). In particular, a claim written by an earlier installer may
-   name a store and a catalogue that never served anything; the installer
+   name a store and a catalog that never served anything; the installer
    warns about both, and the App Store stays empty until they read as a new
    claim's do:
 
@@ -276,7 +276,7 @@ Make every commit of your own now. Once a cluster is installed from the
 repository, Argo CD syncs it only while its newest commit is signed by one of
 that cluster's keys
 ([below](#a-commit-to-the-deployments-repository-is-not-synced)). The
-repository holds the cluster's state only: a catalogue of your own profiles
+repository holds the cluster's state only: a catalog of your own profiles
 is never kept in it (step 8).
 
 ## 2. Write `install.env`
@@ -393,7 +393,7 @@ default:
 
 | Question | A test cluster: tunnel, a mail relay, several tenants | A production cluster: its own address and mail, one tenant |
 |---|---|---|
-| Kernel domain | a domain in your Cloudflare zone | the organisation's domain |
+| Kernel domain | a domain in your Cloudflare zone | the organization's domain |
 | `networkMode` | `tunnel` | `static-ip`, then `nodeIp` |
 | `certificates.issuerMode`, `dnsProvider` | `acme-dns01`, `cloudflare` | `acme-dns01`, and the provider that hosts the zone |
 | `mail.serviceMode` | not asked: `external`. Then `mail.host`, the relay | `system`, then `mail.egressHost` |
@@ -444,7 +444,7 @@ Step 0 done, the install collects the credentials from step 3 and works through
 phases A to E, reporting each step before acting. Re-running it is safe: every
 step checks whether its work is already done and skips if so, and step 0 asks
 nothing on a re-run — the settings are read back from the claim. Expect it to
-take a while in B, where OpenBao is deployed and initialised, and in C and D,
+take a while in B, where OpenBao is deployed and initialized, and in C and D,
 where Argo CD pulls and syncs the platform's own applications.
 
 It ends in one of two ways:
@@ -459,7 +459,7 @@ the call stack. Nothing after a failure runs, so the install never reports
 success over a broken step. Fix the cause and run `./install.sh` again.
 
 Nothing secret is printed, and there is nothing to copy down: OpenBao's
-initialisation material goes to mode-600 files under `~/.gentian`, and the
+initialization material goes to mode-600 files under `~/.gentian`, and the
 installer removes them once their contents are safe elsewhere.
 
 Near the end, `E-02-recovery-kit` writes this cluster's **recovery kit** as
@@ -632,7 +632,7 @@ that is the thing to look at before creating a tenant:
    kubectl gentian tenants list       # the platform tenant, and no error
    kubectl gentian catalogues list    # gentian, for every tenant, at an address that answers
    ```
-6. The catalogue is published. Take the address from the line above:
+6. The catalog is published. Take the address from the line above:
 
    ```bash
    curl -sI <address>/index.yaml | head -1     # HTTP/2 200
@@ -740,7 +740,7 @@ on the Cluster claim (`spec.catalogue.storeUrl`,
 `https://store-service.aluvian.io` by default) for the list, with no account,
 and installs through the director as the person signed in.
 
-The App Store app comes from the store's catalogue (`catalogue.aluvian.io`),
+The App Store app comes from the store's catalog (`catalogue.aluvian.io`),
 with the Aluvian Center beside it and the Operations Console in the
 platform tenant: step 0 places the three profiles, the *extra services*,
 unless `./install.sh --no-extra-services` (recorded on the claim as
@@ -752,10 +752,10 @@ have (`store.<a domain a cluster is installed under>`). Tenants created later
 get it too. The platform tenant never has it. The install says which it is, on a line beginning
 `App Store app:` in step `D-03`.
 
-**The store's catalogues are added for you.** An app bought in the App Store
-is installed from the catalogue its entry names, and the director refuses a
-catalogue the cluster has no source for. So on every run step 0 reads the
-store's `GET /v1/meta` and adds each catalogue it lists that the claim has no
+**The store's catalogs are added for you.** An app bought in the App Store
+is installed from the catalog its entry names, and the director refuses a
+catalog the cluster has no source for. So on every run step 0 reads the
+store's `GET /v1/meta` and adds each catalog it lists that the claim has no
 source of that name for, to `spec.catalogue.sources` with `addedBy: store`.
 It never changes or removes a source: a name you have at another address is
 kept and warned about, and one the store stops listing stays until you remove
@@ -769,7 +769,7 @@ order:
 1. *Is the app placed?* `kubectl get component -A | grep app-store` shows
    one for the tenant. If it does not, first `kubectl get componentprofile
    app-store-pe`: none means step 0 did not place it (`--no-extra-services`, or
-   the catalogue's index did not list it yet; step 0 says which). Otherwise:
+   the catalog's index did not list it yet; step 0 says which). Otherwise:
 
    ```bash
    kubectl get configmap gentian-tiles -n kernel-control -o jsonpath='{.data.tiles\.yaml}' | grep -A2 '^appStore:'
@@ -817,12 +817,12 @@ kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the ca
 kubectl gentian apps list --tenant acme                       # what the tenant has
 ```
 
-`install` takes the entry from a catalogue the tenant sees and pins it to the
-digest that catalogue lists; see [docs/commands.md](docs/commands.md) §6 for
-`--from` and `--digest`. A new cluster has one catalogue, `gentian`, for every
+`install` takes the entry from a catalog the tenant sees and pins it to the
+digest that catalog lists; see [docs/commands.md](docs/commands.md) §6 for
+`--from` and `--digest`. A new cluster has one catalog, `gentian`, for every
 tenant: the released one when the cluster is installed from a release, the
 development one (`…/gentian-apps/develop`) when it is installed from a branch
-([docs/custom-catalogues.md](docs/custom-catalogues.md) §3). To offer your own apps, publish a catalogue and add it for the cluster
+([docs/custom-catalogues.md](docs/custom-catalogues.md) §3). To offer your own apps, publish a catalog and add it for the cluster
 or for one tenant:
 
 ```bash
@@ -831,14 +831,14 @@ kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue       
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant acme   # for acme only
 ```
 
-A catalogue whose profiles must not be public is an OCI artifact instead,
+A catalog whose profiles must not be public is an OCI artifact instead,
 read with the credential of a repository declared for its owner (step 8):
 
 ```bash
 kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogue:1 --repository acme --tenant acme
 ```
 
-A catalogue for the whole cluster can also be declared before the install,
+A catalog for the whole cluster can also be declared before the install,
 as one more entry under `spec.catalogue.sources` in `claims/cluster.yaml`
 (a `name`, and an https `url` or an `oci` artifact with its `repository`).
 
@@ -869,7 +869,7 @@ and the cluster has none.
 ## 8. A cluster that runs your own services from a private repository
 
 Everything above holds unchanged when the deployments repository is private
-and the cluster's first apps are your organisation's own services. What
+and the cluster's first apps are your organization's own services. What
 differs is listed here, in the order you meet it.
 
 1. **Point the install at the private repository.** In `install.env`:
@@ -905,7 +905,7 @@ differs is listed here, in the order you meet it.
    every tenant until the platform admin has signed in, Argo CD gives up on
    it after about a quarter of an hour, and the director refuses to create a
    tenant whose directory is already there.
-3. **Make your profiles a catalogue.** A catalogue is `index.yaml` and
+3. **Make your profiles a catalog.** A catalog is `index.yaml` and
    `profiles/<name>.yaml`, as
    [docs/custom-catalogues.md](docs/custom-catalogues.md) §4 describes, with
    the index generated by `scripts/tools/build-catalogue-index.py`. A cluster
@@ -926,7 +926,7 @@ differs is listed here, in the order you meet it.
      curl -sI https://<catalogue address>/index.yaml | head -1                 # 200
      curl -sI https://<catalogue address>/profiles/<profile>.yaml | head -1    # 200
      ```
-4. **Add the catalogue for that tenant only**, so no other tenant sees it,
+4. **Add the catalog for that tenant only**, so no other tenant sees it,
    signed in as the platform admin:
 
    ```bash
@@ -935,9 +935,9 @@ differs is listed here, in the order you meet it.
    kubectl gentian apps list --tenant <tenant> --available
    ```
 
-   A catalogue added for one tenant brings profiles alone. A profile that
+   A catalog added for one tenant brings profiles alone. A profile that
    needs a Composition, an OIDC pack or a sign-in handler of its own has to
-   come from a catalogue added for the whole cluster (leave `--tenant` out).
+   come from a catalog added for the whole cluster (leave `--tenant` out).
 5. **Let the tenant pull your private charts and images.** Declare the
    registry for the tenant and set its password, once: **Credentials** →
    *Add a repository* in the tenant's admin console
@@ -1175,7 +1175,7 @@ every type: Crossplane does not take one away.
 If a fresh install stops in `B-05` naming a type that did not appear, or a
 composite waits on a kind the API server does not know, set
 `CROSSPLANE_ACTIVATE_ALL=true` in `install.env` and run the installer again:
-that is the old behaviour, every type installed. The list, and how to add a
+that is the old behavior, every type installed. The list, and how to add a
 type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
 
 ### Running one step, or stopping early
