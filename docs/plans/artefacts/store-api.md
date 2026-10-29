@@ -27,6 +27,15 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-29** (1.14, additive: a 1.13 client is answered as before)
+
+1. **`organization` on `POST /v1/acquisitions`**, with the feature
+   `tenant-organization`: who the tenant is, as its Tenant Settings say
+   (display and legal name, country, address, tax id, contact). A store
+   may make the person's organization from it where they have none, and
+   hold an unclaimed tenant to it; nothing about the tenant's people. The
+   App Store app sends it only to a store that lists the feature.
+
 **2026-10-25** (1.13, additive: a 1.12 client is answered as before)
 
 1. **`POST /v1/acquisitions/free`**, with the feature `free-acquisition`: a
@@ -364,7 +373,7 @@ present. A type written `string \| null` is present and may be `null`.
 | `GET /v1/tenant/access` | signed in | Who manages the tenant; for the holder, everybody else who does or asks to |
 | `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired; filter `status` |
-| `POST /v1/acquisitions` | signed in | Acquire an app: `201` decided, `202` waiting (checkout, approval, confirmation), `200` already acquired |
+| `POST /v1/acquisitions` | signed in | Acquire an app: `201` decided, `202` waiting (checkout, approval, confirmation), `200` already acquired. May say who the tenant is (`organization`, 1.14) |
 | `POST /v1/acquisitions/free` | assertion, no account (1.13) | Acquire an app whose price model is `free` without registering; answers as `POST /v1/acquisitions` |
 | `GET /v1/acquisitions/{id}` | signed in | One acquisition; once confirmed, its confirmation with the repository credential |
 | `POST /v1/acquisitions/{id}/credential` | signed in | Replaces the repository credentials now; answers the confirmation with the new ones |

@@ -340,7 +340,7 @@ for the person (§6.1).
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant the assertion's issuer is; if not, the reason; notices to show (§6.2); and the account's role for the tenant |
 | `GET /v1/tenant/access`, `POST …/{subject}/approve` and `…/decline` | signed in | Who manages the tenant; the account that holds it lets another manage it, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired |
-| `POST /v1/acquisitions` | signed in, managing the tenant | Acquire an app. `201` with a confirmation; or `202` while it waits for a checkout at the store, for an approval, or for the store's own confirmation; or `200` with the acquisition the tenant already has |
+| `POST /v1/acquisitions` | signed in, managing the tenant | Acquire an app. `201` with a confirmation; or `202` while it waits for a checkout at the store, for an approval, or for the store's own confirmation; or `200` with the acquisition the tenant already has. With the feature `tenant-organization` (1.14) the request may say who the tenant is, from its Tenant Settings, for a store that makes the person's organization from it |
 | `POST /v1/acquisitions/free` | assertion, no account (1.13) | Acquire an app whose price model is `free` without registering (§6.1, *Free apps*). Answers as `POST /v1/acquisitions` |
 | `GET /v1/acquisitions/{id}` | signed in | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation. Its repository credential is in it only for an account that manages the tenant |
 | `POST /v1/acquisitions/{id}/credential` | signed in, managing the tenant | Replaces the repository credentials now (rotation) and answers the confirmation with the new ones |

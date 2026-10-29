@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.13"
+  version: "1.14"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -2127,6 +2127,9 @@ components:
             `free-acquisition` (1.13): a tenant takes an app whose price
             model is `free` without registering
             (`POST /v1/acquisitions/free`).
+            `tenant-organization` (1.14): an acquisition may say who the
+            tenant is (`organization` of `AcquisitionRequest`); a client
+            sends it only to a store that lists this.
           items:
             type: string
         catalogues:
@@ -3088,6 +3091,34 @@ components:
             tenant's administrator chose, or the tenant's users when it is
             for everybody. A priced app's checkout is for that many seats,
             at the price per seat. Absent: the store decides, as before.
+        organization:
+          $ref: "#/components/schemas/TenantOrganization"
+    TenantOrganization:
+      type: object
+      additionalProperties: false
+      description: |
+        Added in 1.14, with the feature `tenant-organization`. Who the tenant
+        is, as its administrators set it under Tenant Settings: what the
+        store makes the person's organization from where they have none, and
+        an unclaimed tenant becomes that organization's. Nothing about the
+        tenant's people. Every field optional; absent, the store makes no
+        organization of its own accord.
+      properties:
+        displayName: {type: string, maxLength: 200, description: What the tenant's people call it.}
+        legalName: {type: string, maxLength: 200, description: The name the organisation is registered under.}
+        country: {type: string, pattern: "^[A-Z]{2}$"}
+        website: {type: string, maxLength: 200}
+        email: {type: string, maxLength: 200}
+        phone: {type: string, maxLength: 40}
+        taxId: {type: string, maxLength: 40, description: The VAT number.}
+        address:
+          type: object
+          additionalProperties: false
+          properties:
+            street: {type: string, maxLength: 200}
+            postalCode: {type: string, maxLength: 20}
+            city: {type: string, maxLength: 100}
+            region: {type: string, maxLength: 100}
     FreeAcquisitionRequest:
       type: object
       description: Added in 1.13. The body of `POST /v1/acquisitions/free`.
