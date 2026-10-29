@@ -1,0 +1,1057 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: platform
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: eso-secret-store, job-keycloak-gentian-groups-platform,
+      keycloak-edge-exchange-client, and 18 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-client-secret
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-exchange-client-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-exchange-realm: kernel
+        name: edge-kernel-exchange
+        namespace: kernel-edge
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: edge-kernel-exchange
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: edge-kernel-exchange
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+                gentianos.io/edge-exchange-realm: kernel
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-password
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-exchange-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-exchange-realm: kernel
+        name: edge-kernel-exchange
+        namespace: kernel-edge
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - client-secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-zone-client-secret
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-client-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-zone: kernel
+        name: edge-kernel-oidc
+        namespace: kernel-edge
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: edge-kernel-oidc
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: edge-kernel-oidc
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+                gentianos.io/edge-zone: kernel
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-zone-password
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-zone: kernel
+        name: edge-kernel-oidc
+        namespace: kernel-edge
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - client-secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: eso-secret-store
+  labels:
+    crossplane.io/composite: platform
+  name: platform-secret-store
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ClusterSecretStore
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: platform
+        name: openbao-tenant-platform
+      spec:
+        conditions:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tenant: platform
+              gentianos.io/tier: tenant
+        provider:
+          vault:
+            auth:
+              kubernetes:
+                mountPath: kubernetes
+                role: eso-tenant-platform
+                serviceAccountRef:
+                  name: external-secrets
+                  namespace: kernel-secrets
+            caProvider:
+              key: ca.crt
+              name: openbao-tls
+              namespace: kernel-secrets
+              type: Secret
+            path: secret
+            server: https://openbao.kernel-secrets.svc.cluster.local:8200
+            version: v2
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-gentian-groups-platform
+  labels:
+    crossplane.io/composite: platform
+  name: platform-job-keycloak-gentian-groups-platform
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        labels:
+          gentianos.io/tenant: platform
+        name: keycloak-gentian-groups-platform
+        namespace: kernel-authentication
+      spec:
+        template:
+          spec:
+            containers:
+            - image: ghcr.io/gentian-org/gentian-app-init:develop
+              name: provision
+            restartPolicy: Never
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-client
+    crossplane.io/external-name: gentian-edge-exchange
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-exchange-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: gentian-edge-exchange
+    clientSecretSecretRef:
+      key: client-secret
+      name: edge-kernel-exchange
+      namespace: kernel-edge
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Gentian edge (token exchange)
+    realmId: kernel
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+    standardTokenExchangeEnabled: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-default-scopes
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-exchange-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-edge-exchange-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-client
+    crossplane.io/external-name: gentian-edge-kernel
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: gentian-edge-kernel
+    clientSecretSecretRef:
+      key: client-secret
+      name: edge-kernel-oidc
+      namespace: kernel-edge
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Gentian edge (kernel zone)
+    realmId: kernel
+    rootUrl: https://platform.platform.example.test
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validPostLogoutRedirectUris:
+    - https://platform.platform.example.test/
+    - https://admin.platform.platform.example.test/
+    - https://wiki.platform.platform.example.test/
+    - https://argocd.platform.example.test/
+    - https://headlamp.platform.example.test/
+    - https://monitoring.platform.example.test/
+    - https://id.platform.example.test/
+    - https://llm.platform.example.test/
+    validRedirectUris:
+    - https://platform.platform.example.test/oauth2/callback
+    - https://platform.platform.example.test/
+    - https://admin.platform.platform.example.test/oauth2/callback
+    - https://admin.platform.platform.example.test/
+    - https://wiki.platform.platform.example.test/oauth2/callback
+    - https://wiki.platform.platform.example.test/
+    - https://argocd.platform.example.test/oauth2/callback
+    - https://argocd.platform.example.test/
+    - https://headlamp.platform.example.test/oauth2/callback
+    - https://headlamp.platform.example.test/
+    - https://monitoring.platform.example.test/oauth2/callback
+    - https://monitoring.platform.example.test/
+    - https://id.platform.example.test/oauth2/callback
+    - https://id.platform.example.test/
+    - https://llm.platform.example.test/oauth2/callback
+    - https://llm.platform.example.test/
+    webOrigins: []
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-default-scopes
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-edge-zone-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - acr
+    - basic
+    - email
+    - profile
+    - roles
+    - web-origins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-director-audience
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-director-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-edge-zone-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: gentian-director
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: director-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-exchange-audience
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-exchange-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-edge-zone-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: gentian-edge-exchange
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: exchange-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-admins
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianPartnerRole: tenant-admin
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:platform:admins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-app-admins
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-app-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:platform:app-admins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-members
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-members
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:platform:members
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-platform-admins
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-platform-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attributes:
+      gentianPartnerRole: cluster-admin
+      gentianos.io/managed-by: platform
+    name: gentian:tenant:platform:platform-admins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-enter-acme-client
+    crossplane.io/external-name: broker-to-acme
+  labels:
+    crossplane.io/composite: platform
+  name: platform-hub-enter-acme-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientAuthenticatorType: client-jwt
+    clientId: broker-to-acme
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+      jwks.url: https://id.platform.example.test/auth/realms/acme/protocol/openid-connect/certs
+      token.endpoint.auth.signing.alg: RS256
+      use.jwks.url: "true"
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Enter acme
+    realmId: kernel
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validRedirectUris:
+    - https://id.platform.example.test/auth/realms/acme/broker/kernel/endpoint
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
+kind: GroupMembershipProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-hub-enter-acme-groups-mapper
+  labels:
+    crossplane.io/composite: platform
+  name: platform-hub-enter-acme-groups-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    addToAccessToken: true
+    addToIdToken: true
+    addToUserinfo: true
+    claimName: groups
+    clientIdRef:
+      name: platform-hub-enter-acme-client
+      policy:
+        resolve: Always
+    fullPath: false
+    name: groups
+    realmId: kernel
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-default-scopes-herald
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-herald-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-vouching-herald-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-idp-herald
+    crossplane.io/external-name: vouch-herald
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-herald-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    addReadTokenRoleOnCreate: false
+    alias: vouch-herald
+    authenticateByDefault: false
+    authorizationUrl: https://vouch-herald.tenant-platform.svc
+    backchannelSupported: false
+    clientIdSecretRef:
+      key: client_id
+      name: platform-vouching-issuer-credential
+      namespace: kernel-authentication
+    clientSecretSecretRef:
+      key: client_secret
+      name: platform-vouching-issuer-credential
+      namespace: kernel-authentication
+    disableUserInfo: true
+    displayName: Vouching (herald)
+    enabled: true
+    extraConfig:
+      jwtAuthorizationGrantEnabled: "true"
+    hideOnLoginPage: true
+    issuer: https://vouch-herald.tenant-platform.svc
+    jwksUrl: http://herald.tenant-platform.svc.cluster.local:8080/.well-known/jwks.json
+    linkOnly: true
+    providerId: jwt-authorization-grant
+    realm: kernel
+    storeToken: false
+    syncMode: IMPORT
+    tokenUrl: https://vouch-herald.tenant-platform.svc
+    trustEmail: false
+    validateSignature: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-issuer-credential
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-issuer-credential
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: platform-vouching-issuer-credential
+        namespace: kernel-authentication
+      stringData:
+        client_id: not-used
+        client_secret: not-used
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: limitrange
+  labels:
+    crossplane.io/composite: platform
+  name: platform-limitrange
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: LimitRange
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: platform
+        name: tenant-limits
+        namespace: tenant-platform
+      spec:
+        limits:
+        - default:
+            cpu: 500m
+            memory: 512Mi
+          defaultRequest:
+            cpu: 100m
+            memory: 128Mi
+          max:
+            cpu: "4"
+            memory: 8Gi
+          type: Container
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace
+  labels:
+    crossplane.io/composite: platform
+  name: platform-namespace
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/managed-by: crossplane
+          gentianos.io/tenant: platform
+          gentianos.io/tier: tenant
+        name: tenant-platform
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: resourcequota
+  labels:
+    crossplane.io/composite: platform
+  name: platform-resourcequota
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: platform
+        name: tenant-quota
+        namespace: tenant-platform
+      spec:
+        hard:
+          limits.cpu: "16"
+          limits.memory: 32Gi
+          requests.cpu: "4"
+          requests.memory: 16Gi
+          requests.storage: 50Gi
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-eso
+  labels:
+    crossplane.io/composite: platform
+  name: platform-eso-role
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - external-secrets
+    boundServiceAccountNamespaces:
+    - kernel-secrets
+    roleName: eso-tenant-platform
+    tokenPolicies:
+    - eso-tenant-platform
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy
+  labels:
+    crossplane.io/composite: platform
+  name: platform-tenant-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    name: tenant-platform
+    policy: |
+      path "secret/data/gentian-os/tenants/platform/*" {
+        capabilities = ["create", "read", "update", "delete", "list"]
+      }
+      path "secret/metadata/gentian-os/tenants/platform/*" {
+        capabilities = ["list", "delete"]
+      }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-eso
+  labels:
+    crossplane.io/composite: platform
+  name: platform-eso-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    name: eso-tenant-platform
+    policy: |
+      path "secret/data/gentian-os/tenants/platform/apps/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/platform/repositories/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/platform/contracts/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/platform/backup/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/platform/backup/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/data/gentian-os/kernel/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/*" {
+        capabilities = ["deny"]
+      }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-herald
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-herald-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-herald
+        namespace: tenant-platform
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes

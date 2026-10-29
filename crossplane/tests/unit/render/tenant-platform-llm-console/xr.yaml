@@ -1,0 +1,50 @@
+# Tenant/platform with the model gateway's console switched on
+# (llm.console.enabled in the cluster config). The same platform tenant as
+# tenant-platform; what differs is that the zone's client admits
+# llm.<kernel> as a callback beside the other kernel consoles, so the
+# console's sign-in finishes instead of Keycloak refusing the redirect_uri.
+#
+# Tenant/platform: the platform is a tenant whose realm is the kernel realm
+# (AD-10). What this must render is a tenant shell — namespace, limits,
+# quota, its entitlement groups in the KERNEL realm — and what it must not
+# render is any realm state or realm bridge: no Realm, no broker client, no
+# IdP, no flow, no mapper. The kernel realm is adopted, never composed.
+#
+# What it does render in that realm is what belongs to the tenant and its
+# components there: the zone's clients, and for a component that vouches for
+# people (see required-resources/zone-hosts.yaml) the identity provider entry
+# that makes that component an issuer. That one is not the broker to another
+# realm the sentence above rules out.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: platform
+  annotations:
+    crossplane.io/external-name: platform
+spec:
+  displayName: Platform
+  adminEmail: admin@platform.platform.example.test
+  kernelDomain: platform.example.test
+  isolation:
+    keycloakRealm: kernel
+    databasePrefix: platform_
+    s3Prefix: platform-
+  deletionPolicy: Retain
+  # The tenants the platform's administrators may enter, as the operator
+  # projects them: one, and a second whose name is not a label, which
+  # composes nothing.
+  kernelEnter:
+    - tenant: acme
+      realm: acme
+    - tenant: Not_A_Label
+      realm: x
+  apps: []
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  compositeDeletePolicy: Background
+  resourceRefs: []
