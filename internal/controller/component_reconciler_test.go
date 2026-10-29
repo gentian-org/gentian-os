@@ -595,6 +595,37 @@ func TestAReleaseNamesTheWaiverTheClusterDoesNotAllow(t *testing.T) {
 	}
 }
 
+// A release waiting on a credential a person supplies names it and where it
+// is set, and no longer says the wait ends by itself; a profile that asks
+// for none is passed on as it is.
+func TestAReleaseNamesTheCredentialItWaitsFor(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(s)
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{Supplied: []gentianov1alpha1.SuppliedSecret{
+		{Name: "metering", DisplayName: "Usage reporting", Fields: []gentianov1alpha1.SuppliedField{{Key: "key", ValuePath: "metering.key"}}},
+	}}
+	comp := &gentianov1alpha1.Component{}
+	comp.Name = "fellwort-ee"
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "test"
+	msg := "Synced: create failed: Secret \"fellwort-ee-sensitive-values\" not found" + secretsOutlook
+	r := &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build()}
+
+	got := r.withCredentialHint(context.Background(), comp, tenant, profile, msg)
+	for _, want := range []string{"Usage reporting (metering)", "Credentials in the tenant's Admin Console", "fellwort-ee-sensitive-values"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the hint lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "resolves itself") {
+		t.Fatalf("a wait for a person says it ends by itself: %q", got)
+	}
+	if got := r.withCredentialHint(context.Background(), comp, tenant, &gentianov1alpha1.ComponentProfile{}, msg); got != msg {
+		t.Fatalf("a profile asking for nothing: %q", got)
+	}
+}
+
 // A profile naming organizationKey is told who the tenant is as one object,
 // every field present and complete only once the required ones are given;
 // timeZoneKey is told the zone alone, and nothing while there is none.
