@@ -177,7 +177,11 @@ kubectl gentian tenants partners customers remove acme     # ends it
   authorization grant on. A first arrival is linked to an account that
   exists here (`link`), made (`create`), or a member of an organization of
   the realm with the domain given (`organization`). It maps no group and
-  trusts no address; groups are still given by hand (step 3).
+  trusts no address; groups are still given by hand (step 3). With
+  `create`, the arrival is first asked what this realm's profile requires
+  and the partner did not give, the e-mail address above all: the person
+  tells this realm, the partner's realm never does; an address that has an
+  account here already links the arrival to it, after a sign-in to it.
 - **Bounds.** The Cluster claim's `spec.partners.allowedIssuers` lists the
   issuers a tenant may name (`*` matches any run of characters); the
   director refuses and the operator leaves out any other.

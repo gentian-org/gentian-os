@@ -2452,14 +2452,21 @@ spec:
             {{- end }}
             {{- /* A partner that accepts with accounts: create (a registration
                  through the partner's realm) makes the account at the first
-                 arrival through it: gentian-create-account below,
-                 idp-create-user-if-unique, with no page of the provider's.
-                 The partner gives a pairwise subject and no address, so the
-                 account is named by that subject; what this realm's own
-                 profile rules require more is asked by the realm. One that a
-                 person proves is theirs is linked as gentian-link-existing
-                 links it: they sign in to it once, with its second factor.
-                 Nothing is linked by address. */}}
+                 arrival through it: gentian-create-account below. The
+                 partner gives a pairwise subject and no address, and the
+                 realm's profile requires an address of every account (a
+                 realm with sign-up even names accounts by it), so the
+                 arrival is first asked what the profile requires and the
+                 provider did not give (idp-review-profile, on missing
+                 attributes only): the person tells this realm their
+                 address, the partner's realm never does. Without that page
+                 Keycloak resets the flow for the missing name and the
+                 brokered context is lost ("Not found serialized context").
+                 Then idp-create-user-if-unique makes the account; one whose
+                 address has an account already is linked as
+                 gentian-link-existing links it: they sign in to it once,
+                 with its second factor. Nothing is linked by address
+                 alone. */}}
             {{- $createAccounts := false }}
             {{- range $b := (dig "partners" list $spec) }}
             {{- if eq (dig "accept" "accounts" "" $b) "create" }}{{- $createAccounts = true }}{{- end }}
@@ -2479,6 +2486,41 @@ spec:
                 alias: gentian-create-account
                 description: First sign-in through a provider makes the account, or links an existing one
                 providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-review
+              name: {{ $tenant }}-create-account-review
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-create-account
+                authenticator: idp-review-profile
+                requirement: REQUIRED
+                priority: 5
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: ExecutionConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-create-account-review-config
+              name: {{ $tenant }}-create-account-review-config
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                executionIdRef:
+                  name: {{ $tenant }}-create-account-review
+                alias: gentian-create-account-review
+                config:
+                  update.profile.on.first.login: missing
               providerConfigRef:
                 name: keycloak
             ---
