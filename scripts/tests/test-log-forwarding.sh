@@ -3,16 +3,20 @@
 # scripts/tests/test-log-forwarding.sh
 # =============================================================================
 # The log forwarder (docs/design/audit-events.md §4) and the alert rules on
-# what it counts. Held here, from the bootstrap chart as B-01 renders it:
+# what it counts. The forwarder is the Cluster Composition's; this reads it
+# from the render fixtures, which make test-unit-render holds to the
+# Composition:
 #
-#   - no destination on the claim renders no forwarder, no credential and no
-#     audit rules; a destination renders all three;
+#   - a claim with no destination composes no forwarder and no credential;
+#     one with a destination composes both, restarted when the token changes;
 #   - streams names which sinks exist;
+#   - the chart version the Composition writes out is versions.yaml's pin;
 #   - with Docker, Vector's own test runner holds the transforms to it: an
 #     audit line keeps its fields and routes to the audit stream; a credential
 #     -- an Authorization field, a bearer, a JWT, a code in a query -- does
 #     not leave the node; a text line routes to the operations stream;
-#   - with Docker, promtool accepts the rules.
+#   - with Docker, promtool accepts the audit rules the bootstrap chart's
+#     monitoring carries.
 #
 # Without Docker the last two are skipped and said to be; in CI the images
 # are pulled.
@@ -34,41 +38,48 @@ for tool in helm python3; do
 done
 SB="$(mktemp -d "${TMPDIR:-/tmp}/glf.XXXXXX")"
 trap 'rm -rf "${SB}"' EXIT
-{ echo "namespaces:"; sed 's/^/  /' kernel/namespaces.yaml; } > "${SB}/ns.yaml"
+FIXTURES=crossplane/tests/unit/render
 
-# render <values-file|-> [--set-string ...] — the bootstrap chart as JSON lines,
-# one object per line.
-render() {
-    local values="$1"; shift
-    local args=(-f "${SB}/ns.yaml" -f kernel/platforms.yaml --set-string kernelDomain=k.example
-        --set-string "versions.logForwarding.chart=$(sed -n '/^logForwarding:/,/^$/s/^  chart: "\(.*\)"/\1/p' versions.yaml)"
-        --set-string versions.logForwarding.repo=https://helm.vector.dev)
-    [[ "${values}" != "-" ]] && args+=(-f "${values}")
-    helm template b kernel/bootstrap/chart "${args[@]}" "$@" 2>&1 | python3 -c '
+# objects <expected.yaml> — what a render fixture composes, as JSON lines, one
+# per object: the manifest of a provider-kubernetes Object, else the object.
+objects() {
+    python3 -c '
 import sys, json, yaml
-for d in yaml.safe_load_all(sys.stdin):
-    if d: print(json.dumps(d))'
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if not d: continue
+    m = d.get("spec", {}).get("forProvider", {}).get("manifest") if d.get("kind") == "Object" else None
+    print(json.dumps(m or d))' "$1"
 }
 has() { grep -q "\"kind\": \"$1\".*\"name\": \"$2\"" <<<"$3" || grep -q "\"name\": \"$2\".*\"kind\": \"$1\"" <<<"$3"; }
 
-off="$(render - --set-string monitoring.enabled=true)"
+off="$(objects "${FIXTURES}/cluster-bootstrap/expected.yaml")"
 check "no destination: no forwarder" '! has Application log-forwarding "${off}"'
 check "no destination: no credential" '! has ExternalSecret log-destination "${off}"'
-check "no destination: no audit rules" '! grep -q gentian-audit <<<"${off}"'
 
-printf 'logForwarding:\n  endpoint: "https://evidence.example.org/ingest?a=1,2"\n' > "${SB}/on.yaml"
-on="$(render "${SB}/on.yaml" --set-string monitoring.enabled=true)"
+on="$(objects "${FIXTURES}/cluster-log-forwarding/expected.yaml")"
 check "a destination: the forwarder" 'has Application log-forwarding "${on}"'
 check "a destination: its credential" 'has ExternalSecret log-destination "${on}"'
-check "a destination with monitoring: the audit rules" 'grep -q gentian-audit <<<"${on}"'
 check "the endpoint keeps its comma" 'grep -q "ingest?a=1,2" <<<"${on}"'
-
-printf 'logForwarding:\n  endpoint: "https://e.example.org/i"\n  streams: [audit]\n' > "${SB}/audit.yaml"
-only="$(render "${SB}/audit.yaml")"
 check "streams [audit]: an audit sink and no operations sink" \
-    'grep -q destination_audit <<<"${only}" && ! grep -q destination_operations <<<"${only}"'
+    'grep -q destination_audit <<<"${on}" && ! grep -q destination_operations <<<"${on}"'
+check "a new token restarts the forwarder" \
+    'grep -q "\"secret.reloader.stakater.com/reload\": \"log-destination\"" <<<"${on}"'
 
-printf '%s\n' "${on}" > "${SB}/on.json"
+pin="$(sed -n '/^logForwarding:/,/^$/s/^  chart: "\(.*\)"/\1/p' versions.yaml)"
+repo="$(sed -n '/^logForwarding:/,/^$/s/^  repo: \(.*\)/\1/p' versions.yaml)"
+check "the Composition's chart is versions.yaml's pin (${pin})" \
+    'grep -q "targetRevision: \"${pin}\"" crossplane/compositions/cluster-default.yaml && grep -q "repoURL: ${repo}\$" crossplane/compositions/cluster-default.yaml'
+
+# The audit rules ride on the monitoring Application of the bootstrap chart.
+{ echo "namespaces:"; sed 's/^/  /' kernel/namespaces.yaml; } > "${SB}/ns.yaml"
+monitoring="$(helm template b kernel/bootstrap/chart -f "${SB}/ns.yaml" -f kernel/platforms.yaml \
+    --set-string kernelDomain=k.example --set-string monitoring.enabled=true 2>&1 | python3 -c '
+import sys, json, yaml
+for d in yaml.safe_load_all(sys.stdin):
+    if d: print(json.dumps(d))')"
+check "monitoring: the audit rules" 'grep -q gentian-audit <<<"${monitoring}"'
+
+printf '%s\n%s\n' "${on}" "${monitoring}" > "${SB}/on.json"
 python3 - "${SB}" <<'PY'
 import json, sys, yaml
 sb = sys.argv[1]
@@ -108,7 +119,7 @@ docker_image() {
     docker image inspect "${image}" >/dev/null 2>&1 && return 0
     [[ -n "${CI:-}" ]] && docker pull -q "${image}" >/dev/null 2>&1
 }
-vector_image="timberio/vector:$(helm show chart vector/vector --version "$(sed -n '/^logForwarding:/,/^$/s/^  chart: "\(.*\)"/\1/p' versions.yaml)" 2>/dev/null | awk '/^appVersion:/{print $2}')"
+vector_image="timberio/vector:$(helm show chart vector/vector --version "${pin}" 2>/dev/null | awk '/^appVersion:/{print $2}')"
 if [[ "${vector_image}" != "timberio/vector:" ]] && docker_image "${vector_image}"; then
     mkdir -p "${SB}/secret" && printf x > "${SB}/secret/token"
     out="$(docker run --rm -v "${SB}/vector.yaml:/etc/vector/vector.yaml:ro" -v "${SB}/secret:/etc/log-destination:ro" \
