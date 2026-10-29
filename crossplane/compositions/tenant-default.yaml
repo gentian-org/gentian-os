@@ -2981,6 +2981,44 @@ spec:
                   gentianos.io/managed-by: platform
               providerConfigRef:
                 name: keycloak
+            {{- if $a.accept }}
+            {{- /* The token the JWT authorization grant issues on a partner
+                 assertion is the app's to use as the person: the app hands
+                 it on to its own backends, which take a token of the
+                 person's own sign-in to the app -- audience the app's
+                 client. So that token names the app too, as that sign-in's
+                 would; the client has no scope beyond basic and full scope
+                 off, so nothing else gives it an audience. Seen on the
+                 Aluvian cluster: the website granted on a Center assertion
+                 and the commerce service refused the token it was handed,
+                 "not for this service (aud, azp)". */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-partner-app-{{ $p }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-app-{{ $p }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-partner-app-{{ $p }}-client
+                  policy:
+                    resolve: Always
+                name: app-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.client.audience: {{ $p }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientDefaultScopes

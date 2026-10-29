@@ -804,8 +804,8 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
-	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, kernelConsoles{llm: true}, "c1", true, true, kernelFrontDoor{})
+	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp, kernelRouteLiteLLM} {
 		var spec *kernelHTTPRouteSpec
 		for i := range specs {
 			if specs[i].name == name {

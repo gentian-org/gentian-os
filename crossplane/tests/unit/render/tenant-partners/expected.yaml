@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-create-account-create,
-      keycloak-create-account-exec-auth-otp-form, and 80 more'
+      keycloak-create-account-exec-auth-otp-form, and 81 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -2284,6 +2284,41 @@ spec:
     optionalScopes:
     - partner-aluvian
     - partner-abc
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-app-shop-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-app-shop-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-partner-app-shop-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.client.audience: shop
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: app-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
     realmId: render-fixture
   providerConfigRef:
     name: keycloak

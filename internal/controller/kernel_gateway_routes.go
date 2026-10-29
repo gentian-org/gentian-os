@@ -623,7 +623,8 @@ func kernelHTTPRouteSpecs(
 				// the edge on v5, so this route pointed at a litellm-proxy that
 				// was never there -- and a route whose backend does not resolve
 				// answers 503 on a host that looks configured.
-				kernelBackendRulePrefixNS(litellmProxyServiceName, llmNamespace, litellmProxyPort, "/"),
+				kernelBackendRulePrefixNS(litellmProxyServiceName, llmNamespace, litellmProxyPort, "/",
+					kernelConsoleFrameFilters(kernelDomain)...),
 			},
 			// Behind the kernel session, and for whoever may configure the
 			// cluster, like every other kernel console. It had no question
