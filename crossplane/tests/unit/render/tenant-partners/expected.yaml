@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-create-account-create,
-      keycloak-create-account-exec-auth-otp-form, and 78 more'
+      keycloak-create-account-exec-auth-otp-form, and 80 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -484,6 +484,59 @@ spec:
     priority: 10
     realmId: render-fixture
     requirement: REQUIRED
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-create-account-review
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-create-account-review
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    authenticator: idp-review-profile
+    parentFlowAlias: gentian-create-account
+    priority: 5
+    realmId: render-fixture
+    requirement: REQUIRED
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: ExecutionConfig
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-create-account-review-config
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-create-account-review-config
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    alias: gentian-create-account-review
+    config:
+      update.profile.on.first.login: missing
+    executionIdRef:
+      name: render-fixture-create-account-review
+    realmId: render-fixture
   providerConfigRef:
     name: keycloak
 ---

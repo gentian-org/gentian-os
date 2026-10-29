@@ -63,6 +63,7 @@ spec:
     - organizations.organization.keycloak.crossplane.io
     - flows.authenticationflow.keycloak.crossplane.io
     - executions.authenticationflow.keycloak.crossplane.io
+    - executionconfigs.authenticationflow.keycloak.crossplane.io
     # A tenant people sign up to composes a registration flow of its own: a
     # form subflow, and a binding of the realm to the flow once it exists.
     - subflows.authenticationflow.keycloak.crossplane.io
