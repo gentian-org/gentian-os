@@ -1596,3 +1596,81 @@ what the components it already runs could do with little extra code.
   - `[ ]` Residency: a Cluster claim field shown to tenants and in the exports.
   - `[ ]` A control catalog (`docs/compliance/controls.md`): one row per control objective, with its principle, mechanism and evidence query.
   - `[ ]` One request id from the Gateway through the director, the bouncer, the console and Keycloak's events, so the exports join on it. *(The director, the registrar and the bouncer carry `x-request-id` today; Keycloak's events do not.)*
+
+## 6. Cleanup
+
+Defects, duplication and stale code found by a code audit on 2026-10-29 in
+gentian-os, gentian-ui, gentian-apps, gentian-sidecars and gentian-pieces, one
+line each. Tick an item when its fix has merged, and name the PR beside it.
+
+### 6.1 Bugs That Break Behavior Now (**)
+* **Target Domain**: Correctness
+* **Backlog Items**:
+  - `[ ]` gentian-os: the Keycloak event-listener image tag is the raw git ref (`v0.4.2`, or the moving `develop`), while CI publishes `0.4.2`; substitute the resolved image tag (`kernel/appsets/raw/09-identity.yaml`, `kernel/appsets/templates/appsets.yaml`).
+  - `[ ]` gentian-os: concurrent updates of the Cloudflare tunnel configuration lose routes (GET, change one rule, PUT, no lock, two client instances); the `accountID` cache is unsynchronized and the HTTP client has no timeout (`edge_cloudflare_tunnel.go`).
+  - `[ ]` gentian-os: most GitOps writers answer 500 when a push loses a race; only a few retry `errPushRejected`, and `repoError` does not map it. One retrying commit helper, or at least 409 with `Retry-After`.
+  - `[ ]` gentian-os: the director accepts tenant names of 63 characters, but `tenant-<name>` must fit in 63 and the usher allows 52; one `TenantName` validator for director, registrar and usher.
+  - `[ ]` gentian-os: a `Patch` of the Tenant for MAC waivers and app-privilege fingerprints decodes the stored status back and drops the conditions the same reconcile set earlier.
+  - `[ ]` gentian-os: `deleteRetiredJobs` deletes without a propagation policy, orphaning pods, and runs on every reconcile; `retireDirectorRealmSecret` follows the same pattern.
+  - `[ ]` gentian-os: the purge confirmation's `trap … EXIT` replaces the port-forward cleanup trap (`teardown.sh`, `portforward.sh`).
+  - `[ ]` gentian-os: `GENTIAN_PURGE_CONFIRM=<cluster>` skips the single-instance purge lock (`install.sh`).
+  - `[ ]` gentian-os: CI publishes images for commits that failed checks: `publish.needs` lacks `generate` and `crossplane-unit`, and the `keycloak-listener` and `storage-tools` jobs push and sign straight from their build step.
+  - `[ ]` gentian-os: the infra charts are always pulled from upstream `develop`, whatever the cluster's branch or repository, which breaks release, fork and air-gapped installs (`cluster-default.yaml`, `charts/infra/packages/index.yaml`).
+  - `[ ]` gentian-os operator: Customization `observedGeneration` stops advancing when the verdict is unchanged; PlatformSecurityPolicy drops its status-write error; `Result{RequeueAfter}` is returned together with an error, which controller-runtime ignores.
+  - `[ ]` gentian-os director: `quoteScalar` leaves `True`, `FALSE`, `Null`, `0x10` and `.inf` bare; commits made with a commission key get the author email `@users.gentian.invalid`; the custodian answers 404 for any catalog failure; the import-status GET starts a watcher and finished entries are never dropped; the in-process locks assume one director replica although `director.replicas` is configurable.
+  - `[ ]` gentian-ui desktop: tenant notifications are never visible, because visibility is read from a `groups` claim the token does not carry, and dismissing one answers 403; decide visibility from the director's relations.
+  - `[ ]` gentian-ui desktop: the frontend calls the removed `POST /auth/session-started` and `POST /api/v1/auth/logout`, so the backchannel logout it believes it performs never happens; delete both calls.
+  - `[ ]` gentian-ui desktop: `WindowBody`'s embeddability check has no cleanup guard, so a late result opens a popup outside a user gesture; its fallback text is hard-coded English.
+  - `[ ]` gentian-ui desktop: the JWKS and the director relations are fetched on every request, with no cache and no `raise_for_status`; `auth.clientId` is declared twice in the chart values.
+  - `[ ]` gentian-ui: the admin console ignores the tenant language (`GENTIAN_DEFAULT_LANGUAGE`, and `OPENFGA_*`, are set and never read); the chart NetworkPolicies of both apps allow only DNS and the gateway and would cut off the backends if enabled.
+  - `[ ]` gentian-apps: the CI path filters skip real changes (`charts/paperless-ngx/**` is not in the push `paths`, `contracts/**` is in neither list).
+  - `[ ]` gentian-apps: the vendored platform contract 0.5 lacks `valueMapping.platform.organizationKey`, `timeZoneKey` and `objectLock`, and the validator cannot notice (no `additionalProperties: false`, unknown kinds skipped, CEL rules stripped).
+  - `[ ]` gentian-apps: element-ce's resource limits are never applied: the profile sets top-level `resources:`, the chart reads `synapse.resources`.
+  - `[ ]` gentian-apps: two of the three checks in `validate-secret-refs.py` can never fail (they read AppProfile-era fields); Dependabot does not watch paperless-ngx-mcp.
+
+### 6.2 Duplication (**)
+* **Target Domain**: Maintainability
+* **Context**: The copies are what keeps a fix from reaching every place it applies.
+* **Backlog Items**:
+  - `[ ]` One app runtime instead of copies in the desktop, the admin console and `gentian-apps/apps/_template` (`auth.py`, `oidc.ts`, `AuthProvider`, `RequireAuth`, `director.py`, `origin_check.py`, `dropins.py`, `extensions.py`, `registry.ts`, `tenant.py`, `brand.ts`, `i18n.ts`, `logging_middleware.py`): a Python package, an npm package and a library chart published from gentian-ui.
+  - `[ ]` gentian-os: three OpenFGA HTTP clients (`director/authz`, `arbiter`, `authz`); one client package, the arbiter wraps it.
+  - `[ ]` gentian-os: the authenticate-and-authorize pipeline is copied five times (director, registrar, usher); a shared package, and the usher passes the request id instead of `""`.
+  - `[ ]` gentian-os: the key-hash table and its ConfigMap reload loop are copied three times (commission keys, vouching keys, bouncer); one generic table.
+  - `[ ]` gentian-os: nine hand-rolled condition setters that treat `lastTransitionTime` differently (the PSP reconciler resets it every 5 minutes and wakes its own watch); use `apimeta.SetStatusCondition`.
+  - `[ ]` gentian-os: about 20 ensure-Secret/ConfigMap blocks with their own drift rules, 13 copies of the Job helpers and "delete with Background propagation", and duplicate tenant lookups (`tenantConditionTrue`, `tenantHasConditionTrue`, `tenantOf`); one `ensureObject` helper and one `jobs.go`.
+  - `[ ]` gentian-os: version pins outside `versions.yaml` (OpenBao, Kyverno, external-dns, Reloader, CNPG in the bootstrap chart templates; `XP_VERSION` in CI).
+  - `[ ]` gentian-os: the render fixtures hold 61 full copies of the Compositions (153k lines), and the fixture lint silently skips a fixture whose Composition is gone; reference the Composition by name and fail on an unknown one.
+  - `[ ]` gentian-os: `publish-infra-charts.sh` does not package the patched OpenFGA chart; mariadb vendors `common` twice; `init-openbao-transit.sh` copies the `common.sh` logging helpers.
+  - `[ ]` gentian-apps: the odoo-base-ce and element-ce Compositions are forks of app-default (837 of 1236 and 400 of 687 lines shared); move the app-specific steps into profile fields or one extra step on app-default.
+  - `[ ]` gentian-apps: chart discovery is duplicated in `validate-chart-refs.py` and `validate-image-tags.py`, and the profile-loading loop is copied in six scripts.
+  - `[ ]` gentian-apps: the git-sync block is copy-pasted four times, and the odoo chart hard-codes its image twice; one `gitSync.image` value.
+  - `[ ]` gentian-ui: the desktop and admin-console CI workflows have drifted (the desktop runs no ruff and no frontend tests, the admin console has no `v*` tag trigger, neither pushes its chart on a tag); one reusable workflow.
+
+### 6.3 Dead Code (*)
+* **Target Domain**: Maintainability
+* **Backlog Items**:
+  - `[ ]` gentian-ui desktop: `core/authz.py`, `core/openfga_client.py`, the tracked `scratch_*.py` files, `lib/postLogin.ts`, `windows/IframeContent.tsx`, the settings-template routes and client, unused Settings fields and `gentian_groups` helpers.
+  - `[ ]` gentian-ui admin console: about 18 functions in `api/admin.ts` whose backend routes are gone, and the unused `cors_*`, `oidc_client_secret`, `tenant_namespace`, `get_dropin_config` and `redact_sensitive`.
+  - `[ ]` gentian-ui: routes nothing seems to call (desktop `PUT`/`DELETE /tenant-tiles/{app}`, admin console `/cluster/me` and `/session/me`); check for callers first.
+  - `[ ]` gentian-os: the `internal/authz` model-v0 stack (`bridge.go`, `openfga_client.go`, `model_embed.go`, `data/model-v0.json`, `EnsureRealm`).
+  - `[ ]` gentian-os: `RoutingMode` always returns gateway; remove the field, `ROUTING_MODE`, both helpers and the guards.
+  - `[ ]` gentian-os: CRD fields nothing reads or writes: IntegrationBinding `Auth.Method`, `Status.SecretRef`, `LastRotation`, `ObservedGeneration`; ResourcePlan `TenantCount`, `ObservedAt`; AppGrant `TupleCount`; OIDCPackCatalog `PackCount`; Customization `ResolvedNamespace`; Component `SharedInstance`.
+  - `[ ]` gentian-os operator: `resumeApp` is called only from tests, the ProfileBuild conflict branch can never run, the AppGrant finalizer guards nothing, unparam reports unused parameters and results, and the registrar Secret is labeled `managed-by: gentian-operator` instead of `gentian-os`.
+  - `[ ]` gentian-os director: `ClusterBackupPolicy` and `HasCommit` are dead; move the test-only exports into test files.
+  - `[ ]` gentian-os build: kubeconform is installed but never run; the macOS portability job is `continue-on-error` although it passes; the Make targets have an e2e alias, a `test-unit-functions` that would swallow failures, and `validate-steps` running twice; the chart value `watchNamespaces` is never read.
+  - `[ ]` gentian-os: comments to correct: misplaced Makefile and e2e comments, Composition comments that describe v4 or features "not built yet", the CI comment on argocd-image-updater `allow-tags`, the director comment that says no route bypasses `guarded`.
+  - `[ ]` gentian-os: `trap … RETURN` inside functions leaks to the caller (`common.sh`, B-06); harmless today.
+  - `[ ]` gentian-apps: the git-modules sidecar chart and image are unused but still built and pushed as `:latest`; remove them with their CI jobs, the Dependabot entry and the doc rows. Remove the `AppProfile` skeleton (`appprofile.yaml.tmpl`) and the docs that point to it.
+  - `[ ]` gentian-apps: DB and OIDC valueMappings the mathesar and odoo charts never read (they may only feed the Secret; check first).
+
+### 6.4 Retired Things and Naming (*)
+* **Target Domain**: Maintainability
+* **Backlog Items**:
+  - `[ ]` The retired gentian-app-template repository is still called canonical in gentian-apps (`README.md`, `AGENTS.md`, `docs/custom-app-guide.md`, `apps/_template/customization/README.md`, `MANUAL-INSTALL.md`, `bootstrap-gentian-template.sh`) and gentian-ui (`apps/desktop/README.md`); point them at `gentian-apps/apps/_template`.
+  - `[ ]` READMEs that describe what is gone: gentian-sidecars (`AppProfile.spec.sidecars`, dead paths, the git-modules template); gentian-apps v05 docs (`README.md`, `AGENTS.md`, `releasing.md`).
+  - `[ ]` gentian-pieces: `pieces/` holds hollow stubs, and there is no README.
+  - `[ ]` gentian-os: the `_remove_retired_suze_claim` shim in `bootstrap.sh`, once every deployments repository is migrated.
+  - `[ ]` gentian-ui: "Suze" in `apps/desktop/chart/values-production.yaml.example`.
+  - `[ ]` gentian-os: retired charts still shipped (the Bitnami postgresql chart, `postgresql-2.1.2.tgz`, `seaweedfs-4.48.0.tgz`); remove them from `publish-infra-charts.sh` too.
+  - `[ ]` gentian-apps: moving image tags (`redis:7-alpine` in docmost and paperless-ngx, `postgres:16-alpine` in openproject, `python:3.12-alpine` in open-webui, `latest` in git-modules); `validate-image-tags.py` should also walk the local charts' values. To decide: replace Redis with Valkey, since Redis 7.4+ is not under an OSI-approved license.
+  - `[ ]` British spelling, the remainder. gentian-os: prose, comments and messages are American; what is left crosses a boundary and needs a decision to migrate: API and CRD fields (`catalogue`, `catalogueVersion`, `organisation`), Go packages and exported names (`catalogue`, `tilecatalogue`, `BundleArtefact`, `Materialise*`), the `kubectl gentian catalogues` subcommand, env vars (`GENTIAN_CATALOGUE_*`), file names, and the bundle header the director and the installer write alike. gentian-ui: about 300 "catalogue" hits including routes, and "organisation" in the English UI strings. gentian-apps: about 350 hits. gentian-sidecars: 1.
