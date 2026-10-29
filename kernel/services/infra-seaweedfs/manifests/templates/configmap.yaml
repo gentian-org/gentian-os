@@ -210,7 +210,9 @@ data:
       resources:
         limits:
           cpu: "4"
-          memory: 2Gi
+          # A bundle upload is written while it arrives; at 2Gi the pod was
+          # killed for memory part-way through a tenant's import.
+          memory: 4Gi
         requests:
           cpu: 250m
           memory: 256Mi
