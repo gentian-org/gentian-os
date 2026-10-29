@@ -154,11 +154,19 @@ func (s *Server) uploadBundle(w http.ResponseWriter, r *http.Request, _ call) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetReadDeadline(time.Time{})
 	_ = rc.SetWriteDeadline(time.Time{})
+	// A tenant's administrator's is recorded as the tenant's, and bounded by
+	// what a tenant may put into the import storage. into is an upload
+	// startUpload made: filled, or continued after a transfer that stopped.
+	q := ownTenant(r)
+	if into := r.URL.Query().Get("into"); into != "" {
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("into", into)
+	}
 	path := "/v1/bundles"
-	if t := r.PathValue("t"); t != "" && r.PathValue("c") == "" {
-		// A tenant's administrator's: recorded as the tenant's, and bounded
-		// by what a tenant may put into the import storage.
-		path += "?tenant=" + url.QueryEscape(t)
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	status, body, err := s.cfg.Lifecycle.Upload(r.Context(), path, r.Header.Get("Content-Type"), r.Body)
 	if err != nil {
@@ -166,6 +174,26 @@ func (s *Server) uploadBundle(w http.ResponseWriter, r *http.Request, _ call) {
 		return
 	}
 	s.started(w, r, status, body)
+}
+
+// startUpload makes an empty upload in the import storage and answers
+// where, for a sender that has to survive a transfer stopping part-way: it
+// fills the upload with POST .../bundles?into=<prefix>, again after a stop,
+// sending what uploadedFiles does not list.
+func (s *Server) startUpload(w http.ResponseWriter, r *http.Request, c call) {
+	path := "/v1/bundles/uploads"
+	if q := ownTenant(r); q != nil {
+		path += "?" + q.Encode()
+	}
+	status, body, err := s.cfg.Lifecycle.Do(r.Context(), path, c.meta.ActorName(), struct{}{})
+	s.relay(w, r, status, body, err)
+}
+
+// uploadedFiles lists what an upload being filled holds: each file's size,
+// by its name in the bundle.
+func (s *Server) uploadedFiles(w http.ResponseWriter, r *http.Request, _ call) {
+	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/bundles/"+url.PathEscape(r.PathValue("prefix"))+"/files", ownTenant(r))
+	s.relay(w, r, status, body, err)
 }
 
 // inspectBundle opens the manifest and says what the bundle holds, so a

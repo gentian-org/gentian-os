@@ -1544,10 +1544,20 @@ Directly against the director:
 
 ```
 POST /v1/clusters/{c}/bundles                 body: the .gentian bytes -> {bundle}
+POST /v1/clusters/{c}/bundles/uploads         an empty upload -> {bundle}
+POST /v1/clusters/{c}/bundles?into={prefix}   body: the .gentian bytes, or those not yet there -> {bundle}
+GET  /v1/clusters/{c}/bundles/{prefix}/files  what an upload holds -> {files: {name: size}, complete}
 POST /v1/clusters/{c}/bundles/inspect         {bundle, decryption} -> manifest
 POST /v1/clusters/{c}/tenants/import          {bundle, decryption, keepCustomDomain?} -> 202 status
 GET  /v1/clusters/{c}/tenants/{t}/import      the status
 ```
+
+A large bundle is uploaded in steps, so that a transfer that stops part-way
+is continued rather than begun again: start an upload, fill it with `?into=`,
+and after a stop send the files `files` does not list into the same upload.
+What arrived stays until the upload is complete or swept; nothing restores
+from an upload not yet complete. The tenant routes take the same three, under
+`/v1/tenants/{t}/bundles`.
 
 **A bundle in storage outside the cluster** is read from a *bundle source*
 the cluster's administrator declares, never with an address and keys typed

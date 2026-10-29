@@ -72,12 +72,40 @@ type Inspection struct {
 }
 
 // UploadBundle lays a .gentian tar out under a fresh prefix in the import
-// bucket and returns where it went. tenant is the tenant whose administrator
-// uploads it, empty for the cluster's: a tenant's upload is recorded as its
-// own and refused past its limits (bundlestore.MaxTenantUpload,
-// MaxTenantImports), by the sizes the tar's own headers give before each
-// file is stored, and what was stored of a refused one is removed.
+// bucket and returns where it went, in one request: StartUpload and one
+// FillUpload, with what was stored removed if it fails. A caller that has to
+// survive a transfer stopping part-way starts the upload and fills it
+// itself.
 func (s *Service) UploadBundle(ctx context.Context, body io.Reader, tenant string) (*gentianov1alpha1.BundleRef, error) {
+	ref, err := s.StartUpload(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	filled, err := s.FillUpload(ctx, body, tenant, ref.Prefix)
+	if err != nil {
+		if rerr := s.removeUpload(context.WithoutCancel(ctx), ref.Prefix); rerr != nil {
+			return nil, fmt.Errorf("%w (and what was stored of it could not be removed: %v)", err, rerr)
+		}
+		return nil, err
+	}
+	return filled, nil
+}
+
+// errNoUpload is a prefix that is not an upload of this caller's, or, to
+// fill, one already complete.
+var errNoUpload = errors.New("no such upload being filled")
+
+// errUploadStore is the import storage failing to store a file of an
+// upload: worth sending the upload again, unlike a body that is not a
+// bundle.
+var errUploadStore = errors.New("the import storage did not store the file")
+
+// StartUpload makes an empty upload under a fresh prefix of the import
+// bucket, recorded as incomplete, and returns where: FillUpload fills it.
+// tenant is the tenant whose administrator uploads it, empty for the
+// cluster's: a tenant's upload is recorded as its own and counts towards its
+// limits.
+func (s *Service) StartUpload(ctx context.Context, tenant string) (*gentianov1alpha1.BundleRef, error) {
 	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
 	if err != nil {
 		return nil, err
@@ -86,25 +114,49 @@ func (s *Service) UploadBundle(ctx context.Context, body io.Reader, tenant strin
 		return nil, err
 	}
 	imports := bundlestore.ImportsOf(mc)
-	allowance := int64(-1)
 	if tenant != "" {
-		if allowance, err = imports.TenantAllowance(ctx, tenant); err != nil {
+		if _, err := imports.TenantAllowance(ctx, tenant); err != nil {
 			return nil, err
 		}
 	}
 	now := time.Now().UTC()
 	prefix := now.Format("20060102-150405") + "-" + uuid.NewString()[:8]
-	if err := imports.PutRecord(ctx, prefix, bundlestore.Record{Tenant: tenant, Kind: "upload", At: now}); err != nil {
+	if err := imports.PutRecord(ctx, prefix, bundlestore.Record{Tenant: tenant, Kind: "upload", At: now, Incomplete: true}); err != nil {
 		return nil, err
 	}
-	discard := func(cause error) error {
-		if rerr := imports.Remove(context.WithoutCancel(ctx), prefix); rerr != nil {
-			return fmt.Errorf("%w (and what was stored of it could not be removed: %v)", cause, rerr)
+	return &gentianov1alpha1.BundleRef{Bucket: importBucket, Prefix: prefix}, nil
+}
+
+// FillUpload lays a .gentian tar out under the prefix of an upload
+// StartUpload made, and marks it complete once the tar has ended. A file
+// already stored there at the size the tar gives is skipped: a transfer that
+// stopped part-way is continued by sending the tar again, or only the files
+// UploadedFiles does not list, and what arrived stays where it is. A tenant's
+// upload is refused past its limits (bundlestore.MaxTenantUpload,
+// MaxTenantImports), by the sizes the tar's own headers give before each file
+// is stored, and what was stored of a refused one is removed.
+func (s *Service) FillUpload(ctx context.Context, body io.Reader, tenant, prefix string) (*gentianov1alpha1.BundleRef, error) {
+	mc, imports, rec, err := s.uploadOf(ctx, tenant, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if !rec.Incomplete {
+		return nil, fmt.Errorf("%w: upload %s is complete", errNoUpload, prefix)
+	}
+	allowance := int64(-1)
+	if tenant != "" {
+		if allowance, err = imports.TenantAllowanceFor(ctx, tenant, prefix); err != nil {
+			return nil, err
 		}
-		return cause
+	}
+	stored, err := imports.Stored(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	stopped := func(cause error) error {
+		return fmt.Errorf("%w; what arrived of upload %s stays, and sending it again continues from there", cause, prefix)
 	}
 	tr := tar.NewReader(body)
-	var count int
 	var total int64
 	for {
 		hdr, err := tr.Next()
@@ -112,24 +164,97 @@ func (s *Service) UploadBundle(ctx context.Context, body io.Reader, tenant strin
 			break
 		}
 		if err != nil {
-			return nil, discard(fmt.Errorf("the upload is not a bundle (tar): %w", err))
+			return nil, stopped(fmt.Errorf("the upload is not a bundle (tar), or it ended early: %w", err))
 		}
 		name := strings.TrimPrefix(hdr.Name, "./")
 		if hdr.Typeflag != tar.TypeReg || name == "" || strings.Contains(name, "..") {
 			continue
 		}
 		if total += hdr.Size; allowance >= 0 && total > allowance {
-			return nil, discard(bundlestore.TooLarge(total, allowance))
+			cause := bundlestore.TooLarge(total, allowance)
+			if rerr := imports.Remove(context.WithoutCancel(ctx), prefix); rerr != nil {
+				return nil, fmt.Errorf("%w (and what was stored of it could not be removed: %v)", cause, rerr)
+			}
+			return nil, cause
+		}
+		if size, ok := stored[name]; ok && size == hdr.Size {
+			continue
 		}
 		if _, err := mc.PutObject(ctx, importBucket, prefix+"/"+name, tr, hdr.Size, minio.PutObjectOptions{}); err != nil {
-			return nil, discard(fmt.Errorf("storing %s: %w", name, err))
+			return nil, stopped(fmt.Errorf("%w: %s: %v", errUploadStore, name, err))
 		}
-		count++
+		stored[name] = hdr.Size
 	}
-	if count == 0 {
-		return nil, discard(errors.New("the upload holds no files"))
+	if len(stored) == 0 {
+		return nil, errors.New("the upload holds no files")
+	}
+	rec.Incomplete = false
+	if err := imports.PutRecord(ctx, prefix, *rec); err != nil {
+		return nil, err
 	}
 	return &gentianov1alpha1.BundleRef{Bucket: importBucket, Prefix: prefix}, nil
+}
+
+// UploadedFiles is what an upload holds -- each file's size, by its name in
+// the bundle -- and whether it is complete: a sender whose last fill's answer
+// was lost learns here that it arrived.
+func (s *Service) UploadedFiles(ctx context.Context, tenant, prefix string) (map[string]int64, bool, error) {
+	_, imports, rec, err := s.uploadOf(ctx, tenant, prefix)
+	if err != nil {
+		return nil, false, err
+	}
+	files, err := imports.Stored(ctx, prefix)
+	return files, !rec.Incomplete, err
+}
+
+// uploadOf is the upload at prefix, when it is one of tenant's (the
+// cluster's for empty).
+func (s *Service) uploadOf(ctx context.Context, tenant, prefix string) (*minio.Client, *bundlestore.Imports, *bundlestore.Record, error) {
+	if !importPrefix.MatchString(prefix) {
+		return nil, nil, nil, fmt.Errorf("%w: %q", errNoUpload, prefix)
+	}
+	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	imports := bundlestore.ImportsOf(mc)
+	rec, err := imports.Record(ctx, prefix)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if rec == nil || rec.Kind != "upload" || rec.Tenant != tenant {
+		return nil, nil, nil, fmt.Errorf("%w: %q", errNoUpload, prefix)
+	}
+	return mc, imports, rec, nil
+}
+
+// removeUpload deletes an upload and its record.
+func (s *Service) removeUpload(ctx context.Context, prefix string) error {
+	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{})
+	if err != nil {
+		return err
+	}
+	return bundlestore.ImportsOf(mc).Remove(ctx, prefix)
+}
+
+// uploadComplete refuses a bundle of the import bucket whose upload has not
+// all arrived.
+func (s *Service) uploadComplete(ctx context.Context, ref *gentianov1alpha1.BundleRef) error {
+	if !bundlestore.IsImported(ref) {
+		return nil
+	}
+	mc, err := s.bundleClient(ctx, ref)
+	if err != nil {
+		return err
+	}
+	rec, err := bundlestore.ImportsOf(mc).Record(ctx, ref.Prefix)
+	if err != nil {
+		return err
+	}
+	if rec != nil && rec.Incomplete {
+		return fmt.Errorf("upload %s has not all arrived; send the rest of it first", ref.Prefix)
+	}
+	return nil
 }
 
 // InspectBundle opens the manifest with the key supplied and returns it.
@@ -264,6 +389,9 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	case req.Bundle.Bucket == "" || req.Bundle.Prefix == "":
 		return nil, errors.New("bundle.bucket and bundle.prefix, or backup, are required")
 	}
+	if err := s.uploadComplete(ctx, &req.Bundle); err != nil {
+		return nil, err
+	}
 	if _, err := req.Decryption.identities(); err != nil {
 		return nil, err
 	}
@@ -367,6 +495,8 @@ func restoreStatus(r *gentianov1alpha1.TenantRestore, tenant string) *RestoreSta
 
 func (h *HTTPServer) registerImportRoutes(mux router) {
 	mux.HandleFunc("POST /v1/bundles", h.handleBundleUpload)
+	mux.HandleFunc("POST /v1/bundles/uploads", h.handleStartUpload)
+	mux.HandleFunc("GET /v1/bundles/{prefix}/files", h.handleUploadedFiles)
 	mux.HandleFunc("POST /v1/bundles/inspect", h.handleBundleInspect)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/restore", h.handleRestore)
 	// Where a restore stands is state, and the usher's to answer as well.
@@ -379,16 +509,57 @@ func (h *HTTPServer) handleBundleUpload(w http.ResponseWriter, r *http.Request) 
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	// tenant is the tenant whose administrator uploads, which the director
 	// sets from its route: the upload counts towards that tenant's limits.
-	ref, err := h.Service.UploadBundle(r.Context(), r.Body, r.URL.Query().Get("tenant"))
+	// into is an upload StartUpload made, filled or continued; without it the
+	// upload is made and filled at once.
+	q := r.URL.Query()
+	var ref *gentianov1alpha1.BundleRef
+	var err error
+	if into := q.Get("into"); into != "" {
+		ref, err = h.Service.FillUpload(r.Context(), r.Body, q.Get("tenant"), into)
+	} else {
+		ref, err = h.Service.UploadBundle(r.Context(), r.Body, q.Get("tenant"))
+	}
 	switch {
 	case errors.Is(err, bundlestore.ErrImportLimit):
 		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	case errors.Is(err, errNoUpload):
+		writeErr(w, http.StatusNotFound, err)
+		return
+	case errors.Is(err, errUploadStore):
+		writeErr(w, http.StatusBadGateway, err)
 		return
 	case err != nil:
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"bundle": ref})
+}
+
+func (h *HTTPServer) handleStartUpload(w http.ResponseWriter, r *http.Request) {
+	ref, err := h.Service.StartUpload(r.Context(), r.URL.Query().Get("tenant"))
+	switch {
+	case errors.Is(err, bundlestore.ErrImportLimit):
+		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"bundle": ref})
+}
+
+func (h *HTTPServer) handleUploadedFiles(w http.ResponseWriter, r *http.Request) {
+	files, complete, err := h.Service.UploadedFiles(r.Context(), r.URL.Query().Get("tenant"), r.PathValue("prefix"))
+	switch {
+	case errors.Is(err, errNoUpload):
+		writeErr(w, http.StatusNotFound, err)
+		return
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "complete": complete})
 }
 
 func (h *HTTPServer) handleBundleInspect(w http.ResponseWriter, r *http.Request) {

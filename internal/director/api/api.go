@@ -610,6 +610,10 @@ func (s *Server) routes() {
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
+			// An upload in steps, which a transfer that stops part-way
+			// continues: started, then filled with ?into=, its files listed.
+			s.guarded("POST /v1/clusters/{c}/bundles/uploads", "can_configure", s.clusterObject, s.startUpload)
+			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/files", "can_configure", s.clusterObject, s.uploadedFiles)
 			s.guarded("POST /v1/clusters/{c}/bundles/inspect", "can_configure", s.clusterObject, s.inspectBundle)
 			// Removing one thing the catalogue left behind: an object no
 			// bundle owns any more, or a profile nobody uses. The list is
@@ -888,6 +892,8 @@ func (s *Server) routes() {
 		// needs. Uploading is the first half of restoring a bundle that is
 		// not a backup here, under the same relation.
 		s.guarded("POST /v1/tenants/{t}/bundles", "can_set_policy", tenantObject, s.uploadBundle)
+		s.guarded("POST /v1/tenants/{t}/bundles/uploads", "can_set_policy", tenantObject, s.startUpload)
+		s.guarded("GET /v1/tenants/{t}/bundles/{prefix}/files", "can_set_policy", tenantObject, s.uploadedFiles)
 		s.guarded("POST /v1/tenants/{t}/bundles/inspect", "can_set_policy", tenantObject, s.inspectTenantBundle)
 		s.action("POST /v1/tenants/{t}/actions/restore", "can_set_policy", tenantObject, s.restoreTenant)
 		// Where the tenant's bundles are: its bucket in the cluster's storage
