@@ -17,6 +17,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -159,7 +160,7 @@ func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, 
 	}
 	for i := range deployments.Items {
 		d := &deployments.Items[i]
-		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, appName) {
 			continue
 		}
 		patch := client.MergeFrom(d.DeepCopy())
@@ -175,7 +176,7 @@ func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, 
 	}
 	for i := range statefulSets.Items {
 		st := &statefulSets.Items[i]
-		if !workloadBelongsToApp(st.Labels, st.Name, appName) {
+		if !workloadOfApp(st.ObjectMeta, st.Spec.Template, appName) {
 			continue
 		}
 		patch := client.MergeFrom(st.DeepCopy())
@@ -203,7 +204,7 @@ func (r *TenantReconciler) appRolloutPending(ctx context.Context, tenantName, ap
 	}
 	for i := range deployments.Items {
 		d := &deployments.Items[i]
-		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, appName) {
 			continue
 		}
 		want := replicasOf(d.Spec.Replicas)
@@ -221,7 +222,7 @@ func (r *TenantReconciler) appRolloutPending(ctx context.Context, tenantName, ap
 	}
 	for i := range statefulSets.Items {
 		st := &statefulSets.Items[i]
-		if !workloadBelongsToApp(st.Labels, st.Name, appName) {
+		if !workloadOfApp(st.ObjectMeta, st.Spec.Template, appName) {
 			continue
 		}
 		want := replicasOf(st.Spec.Replicas)
@@ -259,15 +260,17 @@ func (r *TenantReconciler) scaleAppWorkloads(ctx context.Context, tenantName, ap
 		return err
 	}
 
+	matched := 0
 	deployments := &appsv1.DeploymentList{}
 	if err := r.List(ctx, deployments, client.InNamespace(ns)); err != nil {
 		return fmt.Errorf("list deployments in %s: %w", ns, err)
 	}
 	for i := range deployments.Items {
 		d := &deployments.Items[i]
-		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, appName) {
 			continue
 		}
+		matched++
 		if err := r.scaleOne(ctx, d, d.Spec.Replicas, replicas, func(v *int32) { d.Spec.Replicas = v }); err != nil {
 			return err
 		}
@@ -279,12 +282,19 @@ func (r *TenantReconciler) scaleAppWorkloads(ctx context.Context, tenantName, ap
 	}
 	for i := range statefulSets.Items {
 		s := &statefulSets.Items[i]
-		if !workloadBelongsToApp(s.Labels, s.Name, appName) {
+		if !workloadOfApp(s.ObjectMeta, s.Spec.Template, appName) {
 			continue
 		}
+		matched++
 		if err := r.scaleOne(ctx, s, s.Spec.Replicas, replicas, func(v *int32) { s.Spec.Replicas = v }); err != nil {
 			return err
 		}
+	}
+	// A pause that reached no workload leaves the app running while its data
+	// is captured or replaced underneath it, so it is refused rather than
+	// reported as done. Resuming one never paused is fine.
+	if replicas >= 0 && matched == 0 {
+		return fmt.Errorf("no Deployment or StatefulSet of app %q in %s to scale down", appName, ns)
 	}
 	return nil
 }
@@ -338,6 +348,15 @@ func (r *TenantReconciler) scaleOne(
 	restored := int32(original)
 	set(&restored)
 	return r.Update(ctx, obj)
+}
+
+// workloadOfApp matches a Deployment or StatefulSet to an installed app, by
+// its own labels and name or by those of the pods it makes: a chart may put
+// the platform's app label on its pods only (Odoo's does), and a matcher that
+// read the workload alone left that app running through a restore.
+func workloadOfApp(meta metav1.ObjectMeta, template corev1.PodTemplateSpec, appName string) bool {
+	return workloadBelongsToApp(meta.Labels, meta.Name, appName) ||
+		workloadBelongsToApp(template.Labels, "", appName)
 }
 
 // workloadBelongsToApp matches a workload to an installed app.

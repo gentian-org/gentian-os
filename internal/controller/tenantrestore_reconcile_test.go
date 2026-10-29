@@ -135,6 +135,10 @@ func newRestoreWorld(t *testing.T, mutate func(*gentianov1alpha1.TenantRestore))
 			Annotations: map[string]string{"meta.helm.sh/release-name": "wiki-release"}}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "drive-release-data", Namespace: "tenant-demo",
 			Annotations: map[string]string{"meta.helm.sh/release-name": "drive-release"}}},
+		// What a restore pauses. At zero replicas, so that resuming them has no
+		// rollout to wait for that the fake client would never finish.
+		deployment("wiki-release-worker", "wiki", 0),
+		deployment("drive-release-worker", "drive", 0),
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
 		WithStatusSubresource(&gentianov1alpha1.TenantRestore{}).Build()

@@ -183,6 +183,43 @@ func TestQuiesceLeavesOtherAppsRunning(t *testing.T) {
 	}
 }
 
+// Odoo's chart labels its Deployment only with its own name and puts the
+// platform's app label on the pods. Matched by the Deployment alone, a restore
+// replaced Odoo's database under the running pod and called it done.
+func TestQuiesceFindsAWorkloadByItsPodsAppLabel(t *testing.T) {
+	odoo := deployment("odoo", "", 1)
+	odoo.Labels = map[string]string{"app.kubernetes.io/name": "odoo"}
+	odoo.Spec.Template.Labels = map[string]string{"gentianos.io/app": "odoo-base-ce"}
+	r := quiesceReconciler(odoo)
+	ctx := context.Background()
+
+	if _, err := r.quiesceApp(ctx, "demo", "odoo-base-ce", nil); err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if got := *getDeployment(t, r.Client, "odoo").Spec.Replicas; got != 0 {
+		t.Fatalf("odoo still runs %d replica(s) after the pause", got)
+	}
+	if err := r.resumeApp(ctx, "demo", "odoo-base-ce"); err != nil {
+		t.Fatalf("resumeApp: %v", err)
+	}
+	if got := *getDeployment(t, r.Client, "odoo").Spec.Replicas; got != 1 {
+		t.Errorf("replicas after resume = %d, want 1", got)
+	}
+}
+
+// A pause that reaches nothing must not pass for one: the caller goes on to
+// capture or replace the app's data while it keeps running.
+func TestQuiesceThatFindsNoWorkloadFails(t *testing.T) {
+	r := quiesceReconciler(deployment("openproject", "openproject-ce", 1))
+
+	if _, err := r.quiesceApp(context.Background(), "demo", "odoo-base-ce", nil); err == nil {
+		t.Fatal("quiesceApp reported a pause for an app it found no workload of")
+	}
+	if err := r.resumeApp(context.Background(), "demo", "odoo-base-ce"); err != nil {
+		t.Errorf("resuming an app with nothing paused: %v", err)
+	}
+}
+
 // A profile asking for command mode still gets its writes paused; only the
 // mechanism differs. The returned mode is what reaches the manifest, so it must
 // report what actually happened rather than what was requested.
