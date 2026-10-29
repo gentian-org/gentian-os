@@ -31,7 +31,7 @@ This document proposes:
 4. **A customization record** — DEP-3-inspired manifest (§5) — so every rung ≥ L2 is tracked,
    owned, dated, and has exit criteria.
 5. **A deterministic decision procedure for agents** (§6).
-6. **Best practices, templated into `gentian-app-template`** (§7) so first-party apps are *born*
+6. **Best practices, templated into `gentian-apps/apps/_template`** (§7) so first-party apps are *born*
    customizable at L1–L3 instead of forcing everyone to L5.
 7. **Governance, CI gates, and a customization-debt report** (§8).
 
@@ -513,7 +513,7 @@ Build **new code as a separate deployable** that talks to the target app only th
 *published* API. The target app is not modified in any way.
 
 This is the SAP "side-by-side extensibility" rung and the Nextcloud **ExApp** rung, and in Gentian
-it is already fully supported infrastructure: scaffold from `gentian-app-template`, publish a
+it is already fully supported infrastructure: scaffold from `gentian-apps/apps/_template`, publish a
 profile, and wire it to the target with a **contract**.
 
 ```yaml
@@ -1570,7 +1570,7 @@ state.
 
 ---
 
-## 7. Best practices, templated in `gentian-app-template`
+## 7. Best practices, templated in `gentian-apps/apps/_template`
 
 Requirement (2): the practices should not be prose — they should be *scaffolding*, so that every
 first-party Gentian app is born at **Grade A** and never forces a consumer to L5.
@@ -1578,7 +1578,7 @@ first-party Gentian app is born at **Grade A** and never forces a consumer to L5
 ### 7.1 New directory: `customization/`
 
 ```
-gentian-app-template/
+gentian-apps/apps/_template/
 └── customization/
     ├── README.md              # the ladder, filled in for THIS app; the doc consumers read
     ├── profile-block.yaml     # spec.customization block, ready to paste into the ComponentProfile
@@ -1807,7 +1807,7 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 3 | `spec.customization` on the `ComponentProfile` CRD + populated for those apps | `gentian-os`, `gentian-apps` | **done** |
 | 4 | §6 procedure added to all `AGENTS.md` files | all | **done** |
 | 5 | `Customization` CRD + CI validator + debt report generator | `gentian-os`, `gentian-apps` | **done** |
-| 6 | `customization/` scaffolding + extension loader + slots in the template | `gentian-app-template` | **done** |
+| 6 | `customization/` scaffolding + extension loader + slots in `apps/_template` | `gentian-apps` | **done** |
 | 7 | `values.schema.json` for Gentian-owned charts | `gentian-apps` | **done** |
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
