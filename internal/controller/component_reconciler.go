@@ -38,6 +38,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -623,7 +624,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 		if !releaseReady {
-			releaseMessage = r.withWaiverHint(ctx, comp, profile, pull.withPullHint(releaseMessage, profile))
+			releaseMessage = r.withCredentialHint(ctx, comp, tenant, profile, r.withWaiverHint(ctx, comp, profile, pull.withPullHint(releaseMessage, profile)))
 		}
 
 	case profile.Spec.Package.Chart != nil:
@@ -639,7 +640,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 		if !releaseReady {
-			releaseMessage = r.withWaiverHint(ctx, comp, profile, pull.withPullHint(releaseMessage, profile))
+			releaseMessage = r.withCredentialHint(ctx, comp, tenant, profile, r.withWaiverHint(ctx, comp, profile, pull.withPullHint(releaseMessage, profile)))
 		}
 
 	case profile.Spec.Package.Addon != nil:
@@ -1396,10 +1397,25 @@ func releaseFailureOutlook(msg string) string {
 		return quotaWarning(m[1], m[2], m[3], m[4])
 	}
 	if strings.Contains(msg, "failed to get value from source") && strings.Contains(msg, "not found") {
-		return " (this usually resolves itself within a minute or two, once the app's secrets are written; " +
-			"it is retried on its own)"
+		return secretsOutlook
 	}
 	return ""
+}
+
+const secretsOutlook = " (this usually resolves itself within a minute or two, once the app's secrets are written; " +
+	"it is retried on its own)"
+
+// withCredentialHint puts first, on a release that is not ready, the
+// credentials the profile asks a person for that are not set: the release
+// waits for them, and nothing writes them but that person (or the App
+// Store, for what it was handed). The wait is then not one that ends by
+// itself, so the outlook that says it does is taken out.
+func (r *ComponentReconciler) withCredentialHint(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, msg string) string {
+	awaited := credentialprobe.Text(credentialprobe.AwaitedSupplied(ctx, r.Client, tenant.Name, comp.Name, profile))
+	if awaited == "" {
+		return msg
+	}
+	return "The app " + awaited + ". " + strings.Replace(msg, secretsOutlook, "", 1)
 }
 
 // withWaiverHint puts first, on a release that is not ready, the pod-security
