@@ -35,14 +35,14 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// A catalogue that is an OCI artifact.
+// A catalog that is an OCI artifact.
 //
-// The same catalogue an address serves -- index.yaml, profiles/<name>.yaml,
+// The same catalog an address serves -- index.yaml, profiles/<name>.yaml,
 // optionally packages/<name>.yaml -- packed into one gzip'd tar and pushed to
 // a registry as an artifact of its own type. What it adds is the one thing an
 // address cannot have: it is read with a credential. Not one the declaration
 // carries, and not one the director holds of its own, but the credential of a
-// repository its owner declared -- the tenant's, for a tenant's catalogue; the
+// repository its owner declared -- the tenant's, for a tenant's catalog; the
 // cluster's, for one of the whole cluster -- read from the vault when it is
 // pulled (Registries).
 //
@@ -51,7 +51,7 @@ import (
 // addresses, checked again in the dialer; no proxy; no redirect, but for the
 // two a registry cannot work without, each said where it is followed. The
 // bytes are not trusted for having been read with a credential: the manifest
-// and the layer are held to their digests, the tar to what a catalogue is
+// and the layer are held to their digests, the tar to what a catalog is
 // (untarCatalogue), and each bundle in it to the digest an install names and
 // to what its origin may bring, exactly as a bundle from an address is.
 //
@@ -62,7 +62,7 @@ import (
 
 // The artifact's types. A manifest whose artifact type, or for a registry
 // that keeps no artifact type its config's media type, is not the first, or
-// whose one layer is not the second, is not a catalogue.
+// whose one layer is not the second, is not a catalog.
 const (
 	OCIArtifactType = "application/vnd.gentianos.catalogue.v1"
 	OCILayerType    = "application/vnd.gentianos.catalogue.v1.tar+gzip"
@@ -75,7 +75,7 @@ const (
 	maxManifest = 256 << 10
 	// maxLayer bounds the packed catalogue, as the registry serves it.
 	maxLayer = 10 << 20
-	// maxTree bounds what the layer unpacks to. A catalogue of a thousand
+	// maxTree bounds what the layer unpacks to. A catalog of a thousand
 	// apps at a few kilobytes each is a fraction of it; a gzip that unpacks
 	// past it is refused rather than read to the end.
 	maxTree = 32 << 20
@@ -89,20 +89,20 @@ const (
 )
 
 // ErrArtifactRefused is an artifact reference the director will not pull
-// from, or an artifact that is not a catalogue.
+// from, or an artifact that is not a catalog.
 var ErrArtifactRefused = errors.New("catalogue: the artifact is refused")
 
-// ErrRegistryRefused is a repository a catalogue cannot be read with: not
-// declared for whoever the catalogue belongs to, not a registry, or not the
+// ErrRegistryRefused is a repository a catalog cannot be read with: not
+// declared for whoever the catalog belongs to, not a registry, or not the
 // registry the artifact is in.
 var ErrRegistryRefused = errors.New("catalogue: the repository is not one this catalog can be read with")
 
-// OCISource is where a catalogue kept as an OCI artifact is pulled from, and
+// OCISource is where a catalog kept as an OCI artifact is pulled from, and
 // with whose credential.
 type OCISource struct {
 	// Owner is whose repository the credential is of: a tenant's name for a
-	// tenant's catalogue, "" for a catalogue of the whole cluster. It is
-	// taken from where the catalogue is declared, never from the declaration.
+	// tenant's catalog, "" for a catalog of the whole cluster. It is
+	// taken from where the catalog is declared, never from the declaration.
 	Owner string
 	// Repository is the name of the repository the owner declared.
 	Repository string
@@ -123,7 +123,7 @@ type Registry struct {
 	Username, Password, Token string
 }
 
-// Registries answers the repository a catalogue is read with: the one named
+// Registries answers the repository a catalog is read with: the one named
 // repository declared by owner ("" for the cluster), with its credential.
 // Nothing else is asked of it, so what it can answer is the scope of what a
 // catalogue can be read with.
@@ -169,7 +169,7 @@ var (
 )
 
 // ParseOCIReference reads an artifact reference as it is written and checks
-// it, resolving nothing: a registry host as public as a catalogue's address
+// it, resolving nothing: a registry host as public as a catalog's address
 // must be (CheckAddress), a repository path of plain components, and a tag
 // or a digest.
 func ParseOCIReference(raw string) (OCIReference, error) {
@@ -291,7 +291,7 @@ func ociKey(src Source) string {
 	return src.Key + "\n" + src.OCI.Owner + "\n" + src.OCI.Repository + "\n" + src.OCI.Artifact
 }
 
-// ociFile is one file of a catalogue kept as an artifact.
+// ociFile is one file of a catalog kept as an artifact.
 func (f *Fetcher) ociFile(ctx context.Context, src Source, file string) ([]byte, error) {
 	tree, err := f.ociTree(ctx, src)
 	if err != nil {
@@ -325,7 +325,7 @@ func (f *Fetcher) ociTree(ctx context.Context, src Source) (ociTree, error) {
 	return tree, nil
 }
 
-// pull reads one catalogue artifact: the reference is checked, the
+// pull reads one catalog artifact: the reference is checked, the
 // repository is asked for, the artifact is checked to lie inside it, and only
 // then is a request made.
 func (f *Fetcher) pull(ctx context.Context, src *OCISource) (ociTree, error) {
@@ -393,7 +393,7 @@ type ociDescriptor struct {
 	Size      int64  `json:"size"`
 }
 
-// checkManifest says whether a manifest is a catalogue's, and answers its one
+// checkManifest says whether a manifest is a catalog's, and answers its one
 // layer.
 func checkManifest(raw []byte, contentType string) (ociDescriptor, error) {
 	refuse := func(why string) (ociDescriptor, error) {
@@ -432,12 +432,12 @@ func checkManifest(raw []byte, contentType string) (ociDescriptor, error) {
 	return layer, nil
 }
 
-// untarCatalogue unpacks a catalogue's layer: a gzip'd tar of plain files
-// below plain directories, each path relative and inside the catalogue.
+// untarCatalogue unpacks a catalog's layer: a gzip'd tar of plain files
+// below plain directories, each path relative and inside the catalog.
 //
 // What it may not hold refuses the whole artifact rather than being skipped:
 // a link of any kind, a device, a path that is absolute, climbs out with
-// "..", or is written twice. A catalogue that holds one was not built by the
+// "..", or is written twice. A catalog that holds one was not built by the
 // tools that build catalogs, and what else it holds is then not known.
 func untarCatalogue(blob []byte) (map[string][]byte, error) {
 	refuse := func(why string) (map[string][]byte, error) {
@@ -510,7 +510,7 @@ func untarCatalogue(blob []byte) (map[string][]byte, error) {
 	return files, nil
 }
 
-// catalogueEntryName is an entry's path as the catalogue is read by it, or
+// catalogueEntryName is an entry's path as the catalog is read by it, or
 // why it is refused. "./index.yaml" is "index.yaml"; "." and "./" are the
 // catalogue itself, "".
 func catalogueEntryName(raw string) (string, error) {
@@ -581,7 +581,7 @@ func (s *registrySession) get(ctx context.Context, address, accept string, limit
 		// storage. Followed, because a registry cannot otherwise be read --
 		// and safe to follow, because nothing is trusted that arrives this
 		// way: the bytes are held to the digest the manifest names, the
-		// host is held to every rule a catalogue's address is held to, and
+		// host is held to every rule a catalog's address is held to, and
 		// the request carries no credential. The signed address in the
 		// redirect is what admits it.
 		location := resp.Header.Get("Location")
@@ -603,8 +603,8 @@ func (s *registrySession) get(ctx context.Context, address, accept string, limit
 	switch {
 	case resp.StatusCode == http.StatusOK:
 	case resp.StatusCode == http.StatusNotFound:
-		// Not fs.ErrNotExist: that is a file the catalogue does not have,
-		// and a catalogue that is not there is not one without an index.
+		// Not fs.ErrNotExist: that is a file the catalog does not have,
+		// and a catalog that is not there is not one without an index.
 		return nil, nil, fmt.Errorf("catalogue: %s has no artifact %s (or does not show it to this credential)", host, s.ref)
 	case isRedirect(resp.StatusCode):
 		return nil, nil, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed for a manifest: "+
@@ -668,7 +668,7 @@ func redirectTarget(from *url.URL, location string) (string, error) {
 // Basic: the repository's login is sent to the registry itself. Bearer: a
 // token is asked of the realm the registry names, with the login, for a pull
 // of this one repository, and is then presented to the registry. The realm is
-// held to the rules of a catalogue's address and must be of the registry's
+// held to the rules of a catalog's address and must be of the registry's
 // own registrable domain (ghcr.io's is ghcr.io; registry-1.docker.io's,
 // auth.docker.io), so a registry cannot have the login sent to somebody else.
 func (s *registrySession) authenticate(ctx context.Context, challenge string) error {
@@ -806,7 +806,7 @@ type DeclaredRegistry struct {
 // declared: a tenant's own, or the cluster's. Read reads one path of the
 // vault. The path is the declaration's, and is held here as well to the one
 // place the owner's repository credentials are kept, so that neither a
-// declaration nor a mistake in reading one can make a catalogue of one
+// declaration nor a mistake in reading one can make a catalog of one
 // tenant be read with another's credential, or with the cluster's.
 type VaultRegistries struct {
 	Declared func(ctx context.Context, owner, repository string) (DeclaredRegistry, error)

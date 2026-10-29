@@ -20,7 +20,7 @@ import (
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
 
-// A catalogue kept as an OCI artifact, pulled from a registry that plays
+// A catalog kept as an OCI artifact, pulled from a registry that plays
 // every host a test names (directortest.Registry).
 
 const registryHost = "registry.example.com"
@@ -206,7 +206,7 @@ func TestARegistryServingSomethingElseIsRefused(t *testing.T) {
 	}
 }
 
-// A manifest is not redirected; an artifact that is not a catalogue is not
+// A manifest is not redirected; an artifact that is not a catalog is not
 // read; an artifact outside the repository is not pulled at all.
 func TestWhatIsNotACatalogueArtifactIsRefused(t *testing.T) {
 	redirected := dt.NewRegistry(t)
@@ -242,7 +242,7 @@ func TestWhatIsNotACatalogueArtifactIsRefused(t *testing.T) {
 }
 
 // The repository is asked of the owner the source names, and of nobody
-// else: a tenant's catalogue cannot be read with another tenant's
+// else: a tenant's catalog cannot be read with another tenant's
 // repository, or the cluster's.
 func TestACatalogueIsReadWithItsOwnersRepositoryOnly(t *testing.T) {
 	reg := dt.NewRegistry(t)

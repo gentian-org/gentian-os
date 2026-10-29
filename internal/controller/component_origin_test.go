@@ -19,7 +19,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// from is a materialised profile recorded as coming from a catalog.
+// from is a materialized profile recorded as coming from a catalog.
 func from(t *testing.T, bundle, origin string) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
 	p := materialised(t, bundle)

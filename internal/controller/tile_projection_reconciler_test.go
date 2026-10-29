@@ -79,7 +79,7 @@ func tileNames(got []tilecatalogue.Tile) []string {
 	return out
 }
 
-// The catalogue is what the cluster routes and nothing else. A console whose
+// The catalog is what the cluster routes and nothing else. A console whose
 // route this operator did not compose is not offered, because a tile is a
 // promise that the address answers.
 func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
@@ -284,7 +284,7 @@ func TestAProfileAsksForPreopenOnItsTile(t *testing.T) {
 	}
 }
 
-// Rebuilding a catalogue that has not changed must not rewrite the ConfigMap:
+// Rebuilding a catalog that has not changed must not rewrite the ConfigMap:
 // everything mounting it is woken by a write, and a projection that churns on
 // its requeue floor would wake them every ten minutes for nothing.
 func TestAnUnchangedCatalogueIsNotRewritten(t *testing.T) {

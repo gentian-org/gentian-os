@@ -675,7 +675,7 @@ type wantedProfile struct {
 // never installed those apps the tenant stayed Degraded on a profile that was
 // not there, and the import failed two hours later. So, for each:
 //
-//   - A build the bundle records (a digest) is fetched from a catalogue this
+//   - A build the bundle records (a digest) is fetched from a catalog this
 //     cluster declares -- the one of the name the bundle records first, then
 //     every other -- and committed. The bytes have to hash to the digest,
 //     whichever catalogue serves them, so it does not matter which does. A
@@ -777,7 +777,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 			missing = append(missing, fmt.Sprintf("%s at %s (this cluster has no catalog to fetch it from)", w.what, profilebundle.Short(digest)))
 			continue
 		}
-		// The catalogue the bundle names first, when this cluster has one of
+		// The catalog the bundle names first, when this cluster has one of
 		// that name.
 		ordered := make([]visibleSource, 0, len(sources))
 		for _, src := range sources {

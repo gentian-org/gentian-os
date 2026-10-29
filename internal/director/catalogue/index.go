@@ -25,8 +25,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// A catalogue source publishes index.yaml beside its profiles/ directory: the
-// technical half of a catalogue, and deliberately nothing else.
+// A catalog source publishes index.yaml beside its profiles/ directory: the
+// technical half of a catalog, and deliberately nothing else.
 //
 // What it does NOT carry is the point. No display name, no description, no
 // icon, no price. Those are the App Store's, they are what the store is for,
@@ -41,7 +41,7 @@ import (
 // catalogue of a thousand apps is well under this.
 const maxIndex = 1 << 20
 
-// indexTTL is how long a fetched index is reused. A catalogue changes when
+// indexTTL is how long a fetched index is reused. A catalog changes when
 // somebody publishes to it, which is not often, and a store screen that is
 // opened, filtered and closed should not be a burst of requests to somebody
 // else's web server.
@@ -52,7 +52,7 @@ type IndexEntry struct {
 	// Name is the profile's metadata.name, which is the second half of its
 	// coordinate.
 	Name string `json:"name"`
-	// Version is the catalogue version of this entry.
+	// Version is the catalog version of this entry.
 	Version string `json:"version,omitempty"`
 	// Edition is ce, me, ie, pe or ee. An entry that does not say is taken to be
 	// ce, which is what an unmarked public profile has always been.
@@ -89,7 +89,7 @@ type cachedIndex struct {
 	// route, this is what remains when it is not. They are kept all the
 	// same, for the one reader that is not a screen: the update report,
 	// which compares an app a tenant has already acquired and installed
-	// through the store with the build its catalogue offers now.
+	// through the store with the build its catalog offers now.
 	storeOnly []IndexEntry
 	// placed holds the entries the platform places itself (PlacedWith).
 	placed []IndexEntry
@@ -117,7 +117,7 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 	if f == nil {
 		return Listing{}, fmt.Errorf("%w: this director fetches from no catalog", ErrNotFound)
 	}
-	// By the catalogue and by where it is read from: a catalogue removed and
+	// By the catalog and by where it is read from: a catalog removed and
 	// added again at another address, or as another artifact, is another
 	// catalogue under the same name.
 	key := src.Key + "\n" + src.URL
@@ -173,7 +173,7 @@ func (f *Fetcher) fetchIndex(ctx context.Context, src Source) (cachedIndex, erro
 	body, err := f.read(ctx, src, "index.yaml", "the index of "+catalogue, maxIndex)
 	if errors.Is(err, fs.ErrNotExist) {
 		// A source that publishes bundles but no index. Not an error worth
-		// failing a screen over: it means this catalogue cannot be browsed
+		// failing a screen over: it means this catalog cannot be browsed
 		// from here, which is what an empty listing says.
 		return cachedIndex{at: time.Now()}, nil
 	}

@@ -376,7 +376,7 @@ func (m *Manifest) NamesArtefacts() bool {
 
 // ManifestStore is one captured artifact.
 type ManifestStore struct {
-	// Kind is one of the Artefact kinds: postgres, postgresOwned, mariadb,
+	// Kind is one of the Artifact kinds: postgres, postgresOwned, mariadb,
 	// mariadbOwned, s3, volume, secrets, identity or mailboxes.
 	Kind string `json:"kind"`
 	// Name is the database, bucket or claim captured; for secrets, the app;

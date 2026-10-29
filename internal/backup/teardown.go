@@ -116,7 +116,7 @@ type KindRule struct {
 	// ExportNote says how it is carried, or why it is not.
 	ExportNote string
 	// Artefacts are the kinds of bundle artefact the kind is carried as
-	// (bundle.Artefact...). Empty for a kind no artefact of its own carries:
+	// (bundle.Artefact...). Empty for a kind no artifact of its own carries:
 	// one an export omits, and one carried inside the realm's.
 	Artefacts []string
 	// Uninstall is what removing the app from the tenant does.
@@ -382,8 +382,8 @@ var TenantOwned = []TenantRule{
 	},
 }
 
-// TenantRuleFor is the rule of what a tenant's own artefact kind is carried
-// for. It panics on a kind no rule carries: an artefact nothing on the list
+// TenantRuleFor is the rule of what a tenant's own artifact kind is carried
+// for. It panics on a kind no rule carries: an artifact nothing on the list
 // accounts for is a programming error.
 func TenantRuleFor(artefact string) TenantRule {
 	for _, rule := range TenantOwned {

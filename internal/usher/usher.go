@@ -210,7 +210,7 @@ type tileOut struct {
 
 // catalogue is what the operator projected.
 //
-// A catalogue that cannot be read is a failure and is answered as one. An
+// A catalog that cannot be read is a failure and is answered as one. An
 // empty list in its place would show a person a desktop with nothing on it,
 // which looks exactly like holding no rights and says nothing about the
 // projection being missing.

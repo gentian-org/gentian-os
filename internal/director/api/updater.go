@@ -19,7 +19,7 @@ import (
 
 // The platform's own mover: what "latest" means (docs/plans/versioning.md
 // §4.1). Inside the cluster's window it moves apps in latest mode, and their
-// pinned add-ons, to the newest build their catalogue offers, one tenant
+// pinned add-ons, to the newest build their catalog offers, one tenant
 // first, the rest once that one's move has ended well. A move that is rolled back or fails holds every
 // other tenant's move to that build: the report says so, and a person
 // decides. Nothing is stored between runs; each run reads the report again,

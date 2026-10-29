@@ -46,7 +46,7 @@ import (
 // can_install_app and nothing else.
 //
 // Which catalogs there are is read when it is asked, from git, and it
-// depends on who is asking for which tenant. A catalogue exists in one of
+// depends on who is asking for which tenant. A catalog exists in one of
 // three ways:
 //
 //   - for the whole cluster, on the Cluster claim: every tenant sees it;
@@ -59,17 +59,17 @@ import (
 // artifact read with the credential of a repository its owner declared
 // (catalogue/oci.go). An artifact is added by whoever may add an address, and
 // is read with the credential of the owner's repository only: the cluster's
-// for a catalogue of the cluster, the tenant's for one of a tenant. It
-// changes where the bytes come from and nothing else -- a catalogue kept as
-// an artifact is a catalogue of the cluster or of a tenant exactly as one at
-// an address is. A catalogue is never kept in the deployments repository,
+// for a catalog of the cluster, the tenant's for one of a tenant. It
+// changes where the bytes come from and nothing else -- a catalog kept as
+// an artifact is a catalog of the cluster or of a tenant exactly as one at
+// an address is. A catalog is never kept in the deployments repository,
 // which holds the cluster's state only.
 //
-// To a tenant, another tenant's catalogue does not exist: it is not listed,
+// To a tenant, another tenant's catalog does not exist: it is not listed,
 // a coordinate that names it is refused in the words an unknown catalogue is
 // refused in, and nothing it serves can be installed anywhere else.
 
-// Scopes of a catalogue, as the lists name them.
+// Scopes of a catalog, as the lists name them.
 const (
 	scopeCluster = "cluster"
 	scopeTenant  = "tenant"
@@ -77,17 +77,17 @@ const (
 
 type catalogueOut struct {
 	Name string `json:"name"`
-	// URL is the address it is served from; empty for a catalogue kept as
+	// URL is the address it is served from; empty for a catalog kept as
 	// an OCI artifact.
 	URL string `json:"url"`
 	// OCI is the artifact it is kept as, and the repository it is read
-	// with, for a catalogue that has no address.
+	// with, for a catalog that has no address.
 	OCI *ociOut `json:"oci,omitempty"`
-	// Scope is "cluster" for a catalogue every tenant sees and "tenant" for
+	// Scope is "cluster" for a catalog every tenant sees and "tenant" for
 	// one only this tenant does.
 	Scope string `json:"scope"`
 	// AddedBy is who added it: "cluster" for the cluster's administrator,
-	// "tenant" for the tenant's own, "store" for a catalogue of the whole
+	// "tenant" for the tenant's own, "store" for a catalog of the whole
 	// cluster the installer added because the cluster's store lists it.
 	AddedBy string `json:"addedBy"`
 }
@@ -97,7 +97,7 @@ type ociOut struct {
 	Artifact   string `json:"artifact"`
 }
 
-// ociOutOf is an artifact as the lists show it; nil for a catalogue that is
+// ociOutOf is an artifact as the lists show it; nil for a catalog that is
 // none.
 func ociOutOf(o gitops.CatalogueOCI) *ociOut {
 	if !o.Set() {
@@ -137,14 +137,14 @@ type entryOut struct {
 	Installable bool `json:"installable"`
 }
 
-// visibleSource is one catalogue as a tenant sees it.
+// visibleSource is one catalog as a tenant sees it.
 type visibleSource struct {
 	catalogue.Source
 	scope   string
 	addedBy string
 }
 
-// origin is what a profile fetched from this catalogue is recorded as
+// origin is what a profile fetched from this catalog is recorded as
 // coming from.
 func (v visibleSource) origin(tenant string) string {
 	if v.scope == scopeTenant {
@@ -155,10 +155,10 @@ func (v visibleSource) origin(tenant string) string {
 
 // visibleSources reads what a tenant may install from: the cluster's
 // catalogs and its own, in that order, and whether its administrators may
-// add more. Read from git every time it is asked, so a catalogue added a
+// add more. Read from git every time it is asked, so a catalog added a
 // moment ago is there and one removed is gone.
 //
-// A name is one catalogue. The routes that add catalogs keep a tenant's
+// A name is one catalog. The routes that add catalogs keep a tenant's
 // names apart from the cluster's; should the two files ever disagree, the
 // name is left out here and so refused everywhere, rather than meaning one
 // catalogue when it was pinned and another when it is fetched.
@@ -206,7 +206,7 @@ func (s *Server) visibleSources(ctx context.Context, tenant string) ([]visibleSo
 // clusterSource is one of the cluster's catalogs as it is fetched from:
 // an address or an artifact, read with a repository of the cluster's. Every
 // reader of the cluster's catalogs builds its source here, so none of them
-// knows fewer kinds of catalogue than the others.
+// knows fewer kinds of catalog than the others.
 func clusterSource(src gitops.CatalogueSource) visibleSource {
 	return visibleSource{
 		Source: catalogue.Source{
@@ -226,7 +226,7 @@ func clusterAddedBy(src gitops.CatalogueSource) string {
 	return string(gitops.ByCluster)
 }
 
-// resolveSource answers the catalogue a name means to a tenant, or false.
+// resolveSource answers the catalog a name means to a tenant, or false.
 func (s *Server) resolveSource(ctx context.Context, tenant, name string) (visibleSource, bool, error) {
 	sources, _, err := s.visibleSources(ctx, tenant)
 	if err != nil {
@@ -321,7 +321,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 		s.fail(w, r, http.StatusNotFound, "this cluster has no catalog by that name")
 		return
 	case errors.Is(err, catalogue.ErrRegistryRefused), errors.Is(err, catalogue.ErrArtifactRefused):
-		// An artifact that is not a catalogue, or a repository it can no
+		// An artifact that is not a catalog, or a repository it can no
 		// longer be read with. The owner has to act, so the reason is said.
 		s.cfg.Log.WarnContext(r.Context(), "a catalog artifact could not be read",
 			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err.Error())
@@ -362,25 +362,25 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 
 // Adding and removing catalogs.
 //
-// Every one of these is a commit: to the Cluster claim for a catalogue of
+// Every one of these is a commit: to the Cluster claim for a catalog of
 // the whole cluster, to the tenant's manifest for one of a tenant. Who made
 // it is the commit's author, and the role they made it in is the route's --
 // a tenant's administrator reaches only the two tenant routes, which add and
 // remove with addedBy: tenant and are refused unless the tenant is delegated.
-// Nothing in a request body says whose a catalogue is or who added it.
+// Nothing in a request body says whose a catalog is or who added it.
 
-// catalogueRequest says where the catalogue is: at an https address, or as
+// catalogueRequest says where the catalog is: at an https address, or as
 // an OCI artifact read with a declared repository. One of the two.
 type catalogueRequest struct {
 	URL string               `json:"url"`
 	OCI *gitops.CatalogueOCI `json:"oci"`
 }
 
-// vetted reads where a request says the catalogue is and checks it.
+// vetted reads where a request says the catalog is and checks it.
 //
 // An address is checked as it is written and by what its host resolves to,
 // whoever sends it -- the cluster's administrator's typo must not make this
-// process probe the cluster either. A catalogue is never a directory of the
+// process probe the cluster either. A catalog is never a directory of the
 // deployments repository, which holds the cluster's state only: a body that
 // names one (path) is refused as any other unknown field is.
 //
@@ -390,7 +390,7 @@ type catalogueRequest struct {
 // host resolves to, and against the repository it names: one owner
 // declared, a registry, whose address the artifact lies inside. Whether the
 // credential is set is not asked here, so that a repository can be declared,
-// the catalogue added and the credential set in any order; it is asked on
+// the catalog added and the credential set in any order; it is asked on
 // every pull.
 func (s *Server) vetted(w http.ResponseWriter, r *http.Request, owner string) (catalogueRequest, bool) {
 	var body catalogueRequest
@@ -518,16 +518,16 @@ func (s *Server) removeTenantCatalogue(w http.ResponseWriter, r *http.Request, c
 	s.catalogueWritten(w, r, res, err, scopeTenant, r.PathValue("t"))
 }
 
-// Renaming a catalogue.
+// Renaming a catalog.
 //
-// A catalogue's name is in three places: its source entry, the catalogue:
+// A catalog's name is in three places: its source entry, the catalogue:
 // of every app entry and add-on pin installed from it, and the origin of
 // every profile materialized from it. Removing it and adding it under
 // another name leaves the last two at the old name, and the next install
 // from the new one is refused as another origin's. So a rename is one
 // commit to all three (gitops.RenameCatalogueSource), by the cluster's
-// administrator, for a catalogue of the cluster or of a tenant alike: what
-// it rewrites is the cluster's catalogue directory, whoever's the source is.
+// administrator, for a catalog of the cluster or of a tenant alike: what
+// it rewrites is the cluster's catalog directory, whoever's the source is.
 // No pin moves, since the bytes a digest was taken over carry no origin.
 
 // renameRequest is the new name.

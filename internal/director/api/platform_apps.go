@@ -25,12 +25,12 @@ import (
 // tenant does. The entry is in the tenant's manifest like any app, so the
 // operator handles it like any app. What differs is who writes it: nobody
 // installs or uninstalls it by name, and the App Store does not offer it
-// (the catalogue lists it listed: false).
+// (the catalog lists it listed: false).
 //
 // The one capability is llm, the cluster serving models (spec.llm.enabled).
 // An entry naming another is left alone.
 //
-// Only the cluster's catalogs place: a tenant's own catalogue writing an
+// Only the cluster's catalogs place: a tenant's own catalog writing an
 // app into every other tenant would be a way around every install check.
 
 const (
@@ -42,13 +42,13 @@ const (
 	// capabilityLLM is the cluster serving models.
 	capabilityLLM = "llm"
 	// requiresCapabilityAnnotation names the capability a profile the
-	// platform places comes with; the catalogue's index repeats it as
+	// platform places comes with; the catalog's index repeats it as
 	// placedWith.
 	requiresCapabilityAnnotation = "gentianos.io/requires-capability"
 )
 
 // platformAppsRun is whether this director places apps at all: like the
-// platform's mover, only with a catalogue to read and an operator beside it,
+// platform's mover, only with a catalog to read and an operator beside it,
 // and not where the mover is switched off (a test drives it by hand).
 func (s *Server) platformAppsRun() bool {
 	return s.cfg.Catalogue != nil && s.cfg.Lifecycle != nil && !s.cfg.UpdaterOff

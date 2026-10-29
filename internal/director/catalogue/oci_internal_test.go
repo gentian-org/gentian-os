@@ -143,7 +143,7 @@ func tarball(t *testing.T, entries ...entry) []byte {
 	return buf.Bytes()
 }
 
-// A catalogue's layer is the files of a catalogue and nothing else.
+// A catalog's layer is the files of a catalog and nothing else.
 func TestALayerUnpacksToItsFiles(t *testing.T) {
 	files, err := untarCatalogue(tarball(t,
 		entry{name: "./", typeflag: tar.TypeDir},
@@ -162,7 +162,7 @@ func TestALayerUnpacksToItsFiles(t *testing.T) {
 	}
 }
 
-// What a catalogue's layer may not hold refuses the whole of it.
+// What a catalog's layer may not hold refuses the whole of it.
 func TestALayerThatIsNotACatalogueIsRefused(t *testing.T) {
 	big := strings.Repeat("x", maxBundle+1)
 	for why, entries := range map[string][]entry{
@@ -189,7 +189,7 @@ func TestALayerThatIsNotACatalogueIsRefused(t *testing.T) {
 	}
 }
 
-// A layer that unpacks to more than a catalogue can be is not read to its
+// A layer that unpacks to more than a catalog can be is not read to its
 // end: the limit is on what is unpacked, not on what was sent.
 func TestALayerThatUnpacksPastTheLimitIsRefused(t *testing.T) {
 	var entries []entry
@@ -223,7 +223,7 @@ func layer(mediaType string, size int) string {
 	return `{"mediaType":"` + mediaType + `","digest":"` + someDigest + `","size":` + strconv.Itoa(size) + `}`
 }
 
-// A manifest is a catalogue's when it says so and holds one layer of the
+// A manifest is a catalog's when it says so and holds one layer of the
 // catalogue's type.
 func TestAManifestIsACataloguesOrRefused(t *testing.T) {
 	ok := layer(OCILayerType, 100)
@@ -254,7 +254,7 @@ func TestAManifestIsACataloguesOrRefused(t *testing.T) {
 	}
 }
 
-// A blob's redirect is followed only to where a catalogue could be fetched
+// A blob's redirect is followed only to where a catalog could be fetched
 // from at all.
 func TestABlobIsRedirectedOnlyToAPublicHTTPSHost(t *testing.T) {
 	from, _ := url.Parse("https://ghcr.io/v2/acme/notes/blobs/" + someDigest)

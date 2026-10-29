@@ -46,14 +46,14 @@ import (
 // (can_install_app), and whether the app then arrives is decided where its
 // artifacts are pulled.
 type CatalogueSource struct {
-	// Name is the catalogue's slug: the first half of a coordinate, so
+	// Name is the catalog's slug: the first half of a coordinate, so
 	// "main/nextcloud-base-ce" is served by the source named main.
 	Name string `json:"name"`
 	// URL is the https address bundles are fetched from.
 	URL string `json:"url,omitempty"`
-	// OCI is an OCI artifact the catalogue is kept as, read with the
+	// OCI is an OCI artifact the catalog is kept as, read with the
 	// credential of a repository declared for the cluster (catalogue/oci.go).
-	// A source states one of URL and OCI. A catalogue is never kept in the
+	// A source states one of URL and OCI. A catalog is never kept in the
 	// deployments repository: that holds the cluster's state only.
 	OCI CatalogueOCI `json:"oci,omitempty"`
 	// AddedBy is SourceAddedByStore for a source the installer added
@@ -63,7 +63,7 @@ type CatalogueSource struct {
 	AddedBy string `json:"addedBy,omitempty"`
 }
 
-// SourceAddedByStore marks a catalogue of the whole cluster the installer
+// SourceAddedByStore marks a catalog of the whole cluster the installer
 // added from the store's GET /v1/meta (scripts/lib/catalogue.sh, ensure_claim_store_catalogues).
 const SourceAddedByStore = "store"
 
@@ -73,7 +73,7 @@ func sameSource(a, b CatalogueSource) bool {
 	return a.Name == b.Name && a.URL == b.URL && a.OCI == b.OCI
 }
 
-// CatalogueOCI is a catalogue kept as an OCI artifact: the repository whose
+// CatalogueOCI is a catalog kept as an OCI artifact: the repository whose
 // credential it is read with, and the artifact. Zero is none.
 type CatalogueOCI struct {
 	Repository string `json:"repository,omitempty"`
@@ -83,7 +83,7 @@ type CatalogueOCI struct {
 // Set says the source states an artifact at all.
 func (o CatalogueOCI) Set() bool { return o != CatalogueOCI{} }
 
-// CheckCatalogueOCI says what is wrong with an artifact a catalogue is
+// CheckCatalogueOCI says what is wrong with an artifact a catalog is
 // declared as, as it is written: the repository's name and the reference. It
 // resolves nothing and reads no repository.
 func CheckCatalogueOCI(o CatalogueOCI) error {
@@ -158,7 +158,7 @@ func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
 		src.OCI = trimOCI(src.OCI)
 		if src.Name == "" || !usableSource(src.URL, src.OCI) {
 			// http:// is skipped here as it is everywhere else: the digest
-			// makes the bytes safe, but a cluster fetching its catalogue in
+			// makes the bytes safe, but a cluster fetching its catalog in
 			// clear announces what it runs. So is an entry that states both
 			// an address and an artifact, or neither.
 			continue
@@ -173,7 +173,7 @@ func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
 // A source with no name, or with neither an https URL nor an artifact, is
 // skipped rather than refused: the
 // claim is read on every start, and one malformed entry must not stop a
-// director from serving. What it costs is that installs from that catalogue
+// director from serving. What it costs is that installs from that catalog
 // are refused for want of a source, which says the same thing where somebody
 // will see it.
 func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error) {
@@ -195,7 +195,7 @@ func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error
 // tenant's manifest touches spec.catalogue, and which of these methods a
 // caller reaches is decided by the route it was authorized on.
 
-// TenantCatalogueSource is one catalogue only a tenant sees.
+// TenantCatalogueSource is one catalog only a tenant sees.
 type TenantCatalogueSource struct {
 	Name string `json:"name"`
 	URL  string `json:"url,omitempty"`
@@ -216,21 +216,21 @@ type TenantCatalogue struct {
 	Sources   []TenantCatalogueSource `json:"sources"`
 }
 
-// Errors of declaring a catalogue.
+// Errors of declaring a catalog.
 var (
-	// ErrCatalogueNameTaken is a name that already means another catalogue
+	// ErrCatalogueNameTaken is a name that already means another catalog
 	// to the tenants that would see this one.
 	ErrCatalogueNameTaken = errors.New("the catalog name is taken")
-	// ErrCatalogueNotFound is a catalogue that is not there to remove, or
+	// ErrCatalogueNotFound is a catalog that is not there to remove, or
 	// not the caller's to remove.
 	ErrCatalogueNotFound = errors.New("no such catalog")
 	// ErrCatalogueNotDelegated is a tenant whose own administrators may not
 	// add catalogs.
 	ErrCatalogueNotDelegated = errors.New("adding catalogs is not delegated to this tenant")
-	// ErrCatalogueNotTenants is a catalogue the cluster's administrator
+	// ErrCatalogueNotTenants is a catalog the cluster's administrator
 	// added, which the tenant's may not remove.
 	ErrCatalogueNotTenants = errors.New("the catalog was added by the cluster's administrator")
-	// ErrCatalogueFlowForm is a catalogue section written in a form the
+	// ErrCatalogueFlowForm is a catalog section written in a form the
 	// line editor cannot change.
 	ErrCatalogueFlowForm = errors.New("the catalog section is written on one line; write it as a block to change it here")
 )
@@ -318,7 +318,7 @@ func checkCatalogueSource(name, address string) error {
 	return nil
 }
 
-// AddClusterCatalogueSource names a catalogue every tenant sees, on the
+// AddClusterCatalogueSource names a catalog every tenant sees, on the
 // Cluster claim. The name must not be one any tenant already uses for a
 // catalogue of its own: to that tenant the name would then mean two things.
 func (g *GitOps) AddClusterCatalogueSource(ctx context.Context, name, address string, meta Meta) (Result, error) {
@@ -328,7 +328,7 @@ func (g *GitOps) AddClusterCatalogueSource(ctx context.Context, name, address st
 	return g.addClusterSource(ctx, CatalogueSource{Name: name, URL: address}, meta)
 }
 
-// AddClusterCatalogueOCI names a catalogue every tenant sees that is kept as
+// AddClusterCatalogueOCI names a catalog every tenant sees that is kept as
 // an OCI artifact, read with the credential of a repository declared for the
 // cluster. That the repository is declared, and that the artifact lies inside
 // it, is the caller's to have asked (RegistryRepository); it is asked again
@@ -387,7 +387,7 @@ func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, met
 	})
 }
 
-// RemoveClusterCatalogueSource takes a catalogue off the Cluster claim.
+// RemoveClusterCatalogueSource takes a catalog off the Cluster claim.
 // What was installed from it stays installed: the profiles are in the
 // deployments repository, and only a new install or a new build needs the
 // source.
@@ -499,13 +499,13 @@ const (
 	ByTenant  TenantCatalogueActor = gentianov1alpha1.CatalogueAddedByTenant
 )
 
-// AddTenantCatalogueSource names a catalogue only one tenant sees, on that
+// AddTenantCatalogueSource names a catalog only one tenant sees, on that
 // tenant's manifest.
 //
 // by is the role the caller was authorized in. A tenant's administrator may
 // add one only where the cluster's administrator delegated that, which is
 // read from the same text the entry is written into, so the two cannot
-// disagree. The name must not be a catalogue of the whole cluster or another
+// disagree. The name must not be a catalog of the whole cluster or another
 // of this tenant.
 func (g *GitOps) AddTenantCatalogueSource(
 	ctx context.Context, tenant, name, address string, by TenantCatalogueActor, meta Meta,
@@ -516,7 +516,7 @@ func (g *GitOps) AddTenantCatalogueSource(
 	return g.addTenantSource(ctx, tenant, TenantCatalogueSource{Name: name, URL: address, AddedBy: string(by)}, meta)
 }
 
-// AddTenantCatalogueOCI names a catalogue only one tenant sees that is kept
+// AddTenantCatalogueOCI names a catalog only one tenant sees that is kept
 // as an OCI artifact, read with the credential of a repository declared for
 // that tenant. by is the role the caller was authorized in, as for an
 // address: a tenant's administrator adds one where that is delegated.

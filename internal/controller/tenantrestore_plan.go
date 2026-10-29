@@ -36,7 +36,7 @@ import (
 // So an app the bundle held and the tenant did not have installed was dropped
 // without a word; an app the tenant had and the bundle did not was "restored"
 // from an artifact that was not there; and a bundle brought in under another
-// tenant name could not be found at all, because its artefacts are named
+// tenant name could not be found at all, because its artifacts are named
 // after the tenant it was taken of.
 //
 // The plan below is made once, before anything is changed, from the manifest
@@ -556,7 +556,7 @@ func planRestore(
 	return plan, nil
 }
 
-// planApp decides one app: its artefacts with where each goes, or why it is
+// planApp decides one app: its artifacts with where each goes, or why it is
 // not restored. An error is a manifest that cannot be trusted at all.
 func planApp(
 	m *backup.Manifest,
@@ -688,7 +688,7 @@ func secretsPlanNote(appName string, profile *gentianov1alpha1.ComponentProfile,
 }
 
 // planRetained decides an app the bundle holds as retained and the tenant
-// does not have installed: its artefacts with where each goes, or why it is
+// does not have installed: its artifacts with where each goes, or why it is
 // not put back.
 //
 // Each artifact goes into the store of that kind the tenant holds for the
@@ -841,7 +841,7 @@ func buildRule(app backup.ManifestApp, profile *gentianov1alpha1.ComponentProfil
 }
 
 // derivedStores is what a format 1 manifest's app entry means: it names the
-// kinds captured and nothing more, so the artefacts are the ones the tenant
+// kinds captured and nothing more, so the artifacts are the ones the tenant
 // the bundle was taken of would have produced, by the inventory's names for
 // that tenant. Volumes are not named even so; the claims the app has now are
 // taken to be the ones captured, and a claim the bundle turns out not to

@@ -505,11 +505,11 @@ func renderRepository(doc map[string]any, tenant, name string, d RepositoryDecla
 	return b.String(), nil
 }
 
-// ErrRepositoryNotRegistry is a repository a catalogue names that is not an
+// ErrRepositoryNotRegistry is a repository a catalog names that is not an
 // OCI registry.
 var ErrRepositoryNotRegistry = errors.New("the repository is not an OCI registry")
 
-// RegistryRepository answers one repository owner declared, as a catalogue
+// RegistryRepository answers one repository owner declared, as a catalog
 // kept as an OCI artifact is read with it: its address, and where its
 // credential is. owner is a tenant, or "" for the cluster.
 //

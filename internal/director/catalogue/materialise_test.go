@@ -67,7 +67,7 @@ func source(t *testing.T, body string) served {
 	return served{f, catalogue.Source{Key: "cluster/main", Name: "main", URL: srv.URL}}
 }
 
-// served is a fetcher and the one catalogue the test serves, asked by
+// served is a fetcher and the one catalog the test serves, asked by
 // coordinate the way an install asks.
 type served struct {
 	*catalogue.Fetcher
@@ -181,7 +181,7 @@ data:
 `
 
 // The digest is of the file: the profile and its companions together. The
-// same profile with another companion is another build, and a catalogue of a
+// same profile with another companion is another build, and a catalog of a
 // tenant's own brings the profile alone.
 func TestABundleArrivesWithItsCompanionsAtTheDigestOfTheWholeFile(t *testing.T) {
 	body := nextcloudProfile + "---\n" + nextcloudPage

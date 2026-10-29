@@ -608,9 +608,9 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
 	}
 
-	// A profile leaving the catalogue directory is a change of what every
+	// A profile leaving the catalog directory is a change of what every
 	// tenant is given by default (ensureDefaultComponents), and nothing else
-	// about the profile changes: the catalogue's Application saying so is the
+	// about the profile changes: the catalog's Application saying so is the
 	// event. Only where Argo CD is installed.
 	if _, err := mgr.GetRESTMapper().RESTMapping(profilebundle.ApplicationGVK.GroupKind(), profilebundle.ApplicationGVK.Version); err == nil {
 		catalogueApp := &unstructured.Unstructured{}
@@ -1449,8 +1449,8 @@ func toInterfaceSlice(in []string) []interface{} {
 	return out
 }
 
-// catalogueProfilesGoneChanged passes the catalogue's Application when the
-// profiles it reports as gone from the catalogue directory change, and
+// catalogueProfilesGoneChanged passes the catalog's Application when the
+// profiles it reports as gone from the catalog directory change, and
 // nothing else of it: its status is rewritten on every comparison.
 func catalogueProfilesGoneChanged() predicate.Funcs {
 	catalogue := func(obj client.Object) bool {

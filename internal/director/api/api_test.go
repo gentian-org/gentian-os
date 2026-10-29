@@ -120,7 +120,7 @@ func startWithCatalogue(
 }
 
 // withFetcher gives the director a fetcher that reaches the test server and
-// accepts any address for a new catalogue. Address checks have tests of their
+// accepts any address for a new catalog. Address checks have tests of their
 // own (catalogue/address_test.go, and catalogues_test.go with the real one).
 func withFetcher(src *httptest.Server) func(*api.Config) {
 	return func(cfg *api.Config) {
@@ -363,7 +363,7 @@ func TestThePlatformAdminReachesOnlyTenantsThatAreOperated(t *testing.T) {
 }
 
 // Installing asks one question, of the person: may they install apps in this
-// tenant. Nothing is asked about the app, the catalogue it comes from or the
+// tenant. Nothing is asked about the app, the catalog it comes from or the
 // tenant's right to it -- the platform does no license gating. (An install
 // for everyone asks a second, about granting: install_for_everyone_test.go.)
 func TestInstallAsksOnlyWhetherThePersonMayInstallInTheTenant(t *testing.T) {

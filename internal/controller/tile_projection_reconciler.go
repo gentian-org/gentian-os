@@ -47,9 +47,9 @@ import (
 // director could only drift from the first, and while it existed an installed
 // app could not appear on the portal without a director release.
 //
-// So the catalogue is projected from what is actually routed, and the usher
+// So the catalog is projected from what is actually routed, and the usher
 // is left with the question it exists to answer: which of these may this
-// caller open. A tile whose route does not exist is not in the catalogue,
+// caller open. A tile whose route does not exist is not in the catalog,
 // which means a console the cluster does not serve yet cannot be advertised as
 // a broken link.
 //
@@ -59,7 +59,7 @@ import (
 // delete it.
 
 const (
-	// tileProjectionRequeue is the floor under which the catalogue is rebuilt
+	// tileProjectionRequeue is the floor under which the catalog is rebuilt
 	// even when nothing watched has changed. Hostnames come from routes and
 	// relations from profiles, both of which are watched; the floor is for the
 	// ConfigMap itself, which a person can edit and which nothing else
@@ -86,14 +86,14 @@ type TileProjectionReconciler struct {
 	// whether it offers an App Store, which is written beside the tiles.
 	UsageStatisticsEnabled bool
 	// WatchClusterClaim re-runs the projection when the Cluster claim
-	// changes, so that a store named or withdrawn there is in the catalogue
+	// changes, so that a store named or withdrawn there is in the catalog
 	// without waiting out the floor. Off where the claim's kind is not
 	// installed, which a watch would never get past.
 	WatchClusterClaim bool
 }
 
 // primaryExposureName is what a component's own host is called: the first
-// gateway entry of a profile, which the catalogue conversion names "web".
+// gateway entry of a profile, which the catalog conversion names "web".
 // An addon's tile is resolved against its base's entry of that name.
 const primaryExposureName = "web"
 
@@ -200,13 +200,13 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gentianos.io,resources=components;componentprofiles;tenants,verbs=get;list;watch
 
-// Reconcile rebuilds the catalogue and writes it.
+// Reconcile rebuilds the catalog and writes it.
 func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	if r.Cluster == "" {
 		// Without a cluster id there is no object to hold a kernel console's
 		// relations on, so every kernel tile would be unanswerable. Say so
-		// rather than project a catalogue nobody can be checked against.
+		// rather than project a catalog nobody can be checked against.
 		logger.Info("no cluster id is configured, so no tile catalog is projected",
 			"setting", "GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 		return ctrl.Result{RequeueAfter: tileProjectionRequeue}, nil
@@ -459,7 +459,7 @@ func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile, cluster st
 	return "app:" + tenant + "/" + profile
 }
 
-// write puts the catalogue in the control namespace, beside the usher that
+// write puts the catalog in the control namespace, beside the usher that
 // mounts it and is its only reader, creating the ConfigMap the first time and
 // patching it only when the content differs. The bouncer's route table is a
 // different object and stays in the edge namespace, where the bouncer is.
@@ -498,10 +498,10 @@ func (r *TileProjectionReconciler) writeTo(ctx context.Context, namespace, rende
 	return r.Patch(ctx, existing, patch)
 }
 
-// SetupWithManager rebuilds the catalogue when a component, a profile, a
+// SetupWithManager rebuilds the catalog when a component, a profile, a
 // tenant or a route changes, and on the requeue floor otherwise.
 //
-// Routes are watched because they are the catalogue's source of hostnames: a
+// Routes are watched because they are the catalog's source of hostnames: a
 // console that becomes reachable should appear without waiting out the floor.
 func (r *TileProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// One request for the whole projection: it is not per-object work, and a

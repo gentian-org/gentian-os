@@ -612,7 +612,7 @@ func (g *GitOps) CatalogueDeclares(ctx context.Context, kind, name string) (stri
 // bundle file, the carrier beside it and both entries in the kustomization,
 // as one commit.
 //
-// It is the only way a materialised profile leaves git, and it is refused
+// It is the only way a materialized profile leaves git, and it is refused
 // with ErrProfileInUse while any tenant's manifest names the profile, as an
 // app or as an add-on. That is read from the same state the commit is made
 // on, and read again when a push is refused because somebody else wrote

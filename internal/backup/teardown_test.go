@@ -380,7 +380,7 @@ func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 			t.Errorf("provisioning lacks %q", want)
 		}
 	}
-	// The artefact is the bundle's name for it and the bucket is the
+	// The artifact is the bundle's name for it and the bucket is the
 	// tenant's: two names.
 	fetch := containerByName(job, "fetch").Args[0]
 	if !strings.Contains(fetch, "s3/old-wiki.tar.gz") {
@@ -404,7 +404,7 @@ func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 // rights nobody can derive were in no backup for want of the rest.
 //
 // The directions are held together here: a thing carried is a thing with a
-// kind of artefact, a restore and an import; a kind of artefact a bundle
+// kind of artifact, a restore and an import; a kind of artifact a bundle
 // can hold for a tenant is some thing's on this list; and what a deletion
 // does not take away says so. Adding to one direction only fails.
 func TestWhatATenantOwnsSaysWhatEveryActDoesWithIt(t *testing.T) {
@@ -450,7 +450,7 @@ func TestWhatATenantOwnsSaysWhatEveryActDoesWithIt(t *testing.T) {
 			t.Errorf("%s: destroyed = %v, and the deletion says %q", rule.What, rule.Destroyed, rule.Delete)
 		}
 	}
-	// Every kind of artefact a bundle can hold for a tenant is some thing's.
+	// Every kind of artifact a bundle can hold for a tenant is some thing's.
 	for _, kind := range bundle.TenantArtefacts {
 		if carried[kind] == "" {
 			t.Errorf("a bundle can hold a tenant's %q, and nothing the tenant owns is carried as it", kind)
@@ -518,8 +518,8 @@ func TestWhatNoDeletionRemovesIsSaidToStay(t *testing.T) {
 
 // An app that was uninstalled with its data kept is carried by a bundle as
 // an installed one is: the same kinds, by the same artifacts. So every kind
-// an artefact carries is one an uninstall keeps -- there is then something
-// to carry -- and every kind of artefact a bundle can hold for an app is
+// an artifact carries is one an uninstall keeps -- there is then something
+// to carry -- and every kind of artifact a bundle can hold for an app is
 // some kind's.
 func TestWhatABundleCarriesOfAnAppIsWhatAnUninstallKeeps(t *testing.T) {
 	claimed := map[string]Kind{}
@@ -550,7 +550,7 @@ func TestWhatABundleCarriesOfAnAppIsWhatAnUninstallKeeps(t *testing.T) {
 			t.Errorf("%s is carried as %q, which is not a kind of artifact a bundle holds for an app", claimed[artefact], artefact)
 		}
 	}
-	// What is carried and has no artefact of its own is inside the realm's.
+	// What is carried and has no artifact of its own is inside the realm's.
 	for _, rule := range AppKinds {
 		if rule.Export == Carries && len(rule.Artefacts) == 0 && !strings.Contains(rule.ExportNote, "inside the realm export") {
 			t.Errorf("%s: carried, by no artifact, and not inside the realm's", rule.Kind)

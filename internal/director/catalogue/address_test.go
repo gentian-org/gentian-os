@@ -113,7 +113,7 @@ func (r resolves) LookupNetIP(_ context.Context, _, host string) ([]netip.Addr, 
 }
 
 // A name that looks public and resolves to something that is not: refused
-// when the catalogue is added, with what it resolved to.
+// when the catalog is added, with what it resolved to.
 func TestAnAddressIsRefusedForWhatItsHostResolvesTo(t *testing.T) {
 	dns := resolves{
 		"public.example.com":    {"93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"},
@@ -150,7 +150,7 @@ func TestAnAddressIsRefusedForWhatItsHostResolvesTo(t *testing.T) {
 }
 
 // The check that cannot be argued with: the address the dialer is about to
-// connect to. Whatever a name resolved to when the catalogue was added, this
+// connect to. Whatever a name resolved to when the catalog was added, this
 // is what it resolves to now, and it is the address that is connected to.
 func TestTheDialerRefusesWhatItWouldConnectTo(t *testing.T) {
 	for _, address := range []string{
@@ -175,7 +175,7 @@ func TestTheDialerRefusesWhatItWouldConnectTo(t *testing.T) {
 	}
 }
 
-// The fetcher as the director builds it, pointed at a catalogue on this
+// The fetcher as the director builds it, pointed at a catalog on this
 // machine: it does not connect. A served profile and a served index are both
 // refused, and the server never sees a request.
 func TestTheFetcherDoesNotConnectInsideTheNetwork(t *testing.T) {

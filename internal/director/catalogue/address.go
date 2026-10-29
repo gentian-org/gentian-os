@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-// A catalogue's address is something a person typed, and the director that
+// A catalog's address is something a person typed, and the director that
 // fetches from it runs in the control namespace: beside the operator, the
 // identity provider and the secret store, on a node of somebody's network.
 // Left unchecked, "add a catalogue" would be "make the director send a
@@ -35,7 +35,7 @@ import (
 //
 //   - what is written: https, a public-looking host name, no credentials, no
 //     port but 443, nothing after the path (CheckAddress);
-//   - what the name resolves to, when the catalogue is added, so a typo is
+//   - what the name resolves to, when the catalog is added, so a typo is
 //     told to the person who made it rather than found at the first install
 //     (Vet);
 //   - what is connected to, every time: the address is checked in the dialer,
@@ -49,7 +49,7 @@ import (
 // ErrAddressRefused is an address the director will not fetch from.
 var ErrAddressRefused = errors.New("catalogue: the address is refused")
 
-// refusedNets are the destinations a catalogue is never fetched from: every
+// refusedNets are the destinations a catalog is never fetched from: every
 // range that is not the public internet.
 var refusedNets = func() []netip.Prefix {
 	var out []netip.Prefix
@@ -86,7 +86,7 @@ var refusedNets = func() []netip.Prefix {
 	return out
 }()
 
-// refusedIP says why an address is not one a catalogue is fetched from, or "".
+// refusedIP says why an address is not one a catalog is fetched from, or "".
 func refusedIP(addr netip.Addr) string {
 	if !addr.IsValid() {
 		return "it is not an address"
@@ -105,7 +105,7 @@ func refusedIP(addr netip.Addr) string {
 // on the machine itself.
 var internalSuffixes = []string{".svc", ".cluster.local", ".local", ".localhost", ".internal"}
 
-// CheckAddress says what is wrong with a catalogue address as it is written,
+// CheckAddress says what is wrong with a catalog address as it is written,
 // or nil. It resolves nothing.
 func CheckAddress(raw string) error {
 	refuse := func(why string) error {
@@ -210,7 +210,7 @@ func guardedDial(network, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// guardedTransport refuses a request whose address is not a catalogue's
+// guardedTransport refuses a request whose address is not a catalog's
 // before anything is resolved, and connects only to what guardedDial admits.
 type guardedTransport struct {
 	next http.RoundTripper
@@ -223,7 +223,7 @@ func (g guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return g.next.RoundTrip(req)
 }
 
-// guardedClient is the only client a catalogue is fetched with outside a
+// guardedClient is the only client a catalog is fetched with outside a
 // test.
 func guardedClient() *http.Client {
 	dialer := &net.Dialer{
@@ -233,8 +233,8 @@ func guardedClient() *http.Client {
 	}
 	transport := &http.Transport{
 		// No proxy, whatever the environment says. A proxy would be dialed
-		// instead of the catalogue, at an address nobody checked, and would
-		// then resolve the catalogue's name itself.
+		// instead of the catalog, at an address nobody checked, and would
+		// then resolve the catalog's name itself.
 		Proxy:                 nil,
 		DialContext:           dialer.DialContext,
 		ForceAttemptHTTP2:     true,
@@ -246,7 +246,7 @@ func guardedClient() *http.Client {
 	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: guardedTransport{next: transport},
-		// A catalogue redirecting somewhere else is a catalogue changing
+		// A catalog redirecting somewhere else is a catalog changing
 		// which host serves the bytes -- and the way a public address hands a
 		// request to a private one. It is not followed.
 		CheckRedirect: func(*http.Request, []*http.Request) error {

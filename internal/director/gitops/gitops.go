@@ -501,13 +501,13 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 // Install adds profile to the tenant's manifest, pinned to digest when one is
-// given. It is InstallFrom with no catalogue to record.
+// given. It is InstallFrom with no catalog to record.
 func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
 	return g.InstallFrom(ctx, tenant, profile, digest, "", nil, meta)
 }
 
 // InstallFrom adds profile to the tenant's manifest, pinned to digest when one
-// is given, and records the catalogue the build was fetched from when the
+// is given, and records the catalog the build was fetched from when the
 // caller vouches for one.
 //
 // The digest is the build the install was asked for, and it is recorded as a
@@ -516,9 +516,9 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 // its group, its object in the authorization store, its route -- is spelled
 // from the name.
 //
-// The catalogue is the first half of the coordinate the build was fetched
+// The catalog is the first half of the coordinate the build was fetched
 // under, and with the name it is the coordinate. It is recorded only beside a
-// digest, and only by a caller that fetched the bundle from that catalogue's
+// digest, and only by a caller that fetched the bundle from that catalog's
 // source and saw it hash to the digest: the entry then says where the pinned
 // build came from, which nothing else in the cluster does.
 //
@@ -531,7 +531,7 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 //
 // Installing an app that is already there at another digest moves the pin and
 // reports "updated", and so does stating a default grant the entry does not
-// already have; with neither, nothing changes. A pin moved with no catalogue
+// already have; with neither, nothing changes. A pin moved with no catalog
 // named loses the one it had, because that one described the build it no
 // longer points at.
 func (g *GitOps) InstallFrom(

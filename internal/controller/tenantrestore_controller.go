@@ -1286,7 +1286,7 @@ func (r *TenantRestoreReconciler) bundleKey(ctx context.Context, restore *gentia
 }
 
 // recordPlan writes the plan into the restore's status: one entry per app
-// with the artefacts it will restore, the tenant's own, what is not restored
+// with the artifacts it will restore, the tenant's own, what is not restored
 // and why, and what no restore brings back.
 func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.BundleSchemaVersion = plan.schemaVersion
