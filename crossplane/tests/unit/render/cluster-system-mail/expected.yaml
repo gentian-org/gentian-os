@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 30 more'
+      gentian-cluster-config, and 34 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -156,6 +156,46 @@ spec:
           gentianos.io/config-type: cluster-config
         name: gentian-cluster-config
         namespace: kernel-provisioning
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: issuer-platform-services
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-issuer-platform-services
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        labels:
+          gentianos.io/issuer-role: internal-ca
+        name: gentian-ca-platform-services
+      spec:
+        vault:
+          auth:
+            kubernetes:
+              mountPath: /v1/auth/kubernetes
+              role: cert-manager-platform-services
+              serviceAccountRef:
+                name: gentian-ca-issuer
+          caBundleSecretRef:
+            key: ca.crt
+            name: openbao-ca-bundle
+          path: pki-internal/sign/platform-services
+          server: https://openbao.kernel-secrets.svc.cluster.local:8200
   providerConfigRef:
     name: kubernetes
 ---
@@ -458,6 +498,36 @@ spec:
     roleName: cert-manager-gentian-ca
     tokenPolicies:
     - cert-manager-gentian-ca
+    tokenTtl: 600
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-cert-manager-platform-services
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-cert-manager-platform-services
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    audience: vault://gentian-ca-platform-services
+    backend: kubernetes
+    boundServiceAccountNames:
+    - gentian-ca-issuer
+    boundServiceAccountNamespaces:
+    - kernel-edge
+    roleName: cert-manager-platform-services
+    tokenPolicies:
+    - cert-manager-platform-services
     tokenTtl: 600
   providerConfigRef:
     name: openbao
@@ -898,6 +968,47 @@ spec:
   providerConfigRef:
     name: openbao
 ---
+apiVersion: pki.vault.upbound.io/v1alpha1
+kind: SecretBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-pki-role-platform-services
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-pki-role-platform-services
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    allowAnyName: false
+    allowBareDomains: false
+    allowGlobDomains: false
+    allowIpSans: false
+    allowLocalhost: false
+    allowSubdomains: true
+    allowWildcardCertificates: false
+    allowedDomains:
+    - tenant-platform.svc
+    - tenant-platform.svc.cluster.local
+    backend: pki-internal
+    clientFlag: false
+    enforceHostnames: true
+    keyBits: 256
+    keyType: ec
+    maxTtl: 2160h
+    name: platform-services
+    noStore: true
+    requireCn: false
+    serverFlag: true
+    ttl: 2160h
+  providerConfigRef:
+    name: openbao
+---
 apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
@@ -918,6 +1029,29 @@ spec:
     name: cert-manager-gentian-ca
     policy: |
       path "pki-internal/sign/gentian-ca" { capabilities = ["update"] }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-cert-manager-platform-services
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-cert-manager-platform-services
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: cert-manager-platform-services
+    policy: |
+      path "pki-internal/sign/platform-services" { capabilities = ["update"] }
   providerConfigRef:
     name: openbao
 ---

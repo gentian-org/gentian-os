@@ -199,6 +199,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if err := r.deleteClusterRoles(ctx, comp); err != nil {
 				return ctrl.Result{}, err
 			}
+			// The log destination's certificate lives in the observability
+			// namespace, where no owner reference of this component reaches.
+			if err := r.deleteLogDestinationCertificate(ctx, comp); err != nil {
+				return ctrl.Result{}, err
+			}
 			controllerutil.RemoveFinalizer(comp, componentFinalizer)
 			return ctrl.Result{}, r.Update(ctx, comp)
 		}
@@ -576,6 +581,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Whichever way the chart is delivered.
 	if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
 		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
+	}
+	// The certificate and the way in for the platform's log forwarder, for
+	// the component of the platform tenant that declares it, before the chart
+	// runs so that its pods find the Secret they serve with.
+	if err := r.ensureLogDestination(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("log destination: %w", err)
 	}
 	// The way to the desktop's API, for a component that asked where it is.
 	if err := r.ensureDesktopAccess(ctx, comp, profile); err != nil {

@@ -454,6 +454,16 @@ the evidence's own settings away from its readers; and `{"person": "<subject>", 
 auditors hold for every tenant and a `tenantAuditor` ([commands.md](commands.md)) for one. In any other tenant `audit` is ignored, and a key without it is
 refused (`403`) when it names a relation.
 
+**A component of the platform tenant that receives the platform's log forwarder** inside the cluster
+declares `spec.requires.services.logDestination: {service, port}`: its Service, and the port that
+Service and its pods serve HTTPS on (the same number on both). It needs `trustTier: platform`. The
+platform issues the Service's names a certificate from the internal CA, delivered as the Secret
+`log-destination-tls-<profile>` (`tls.crt`, `tls.key`, `ca.crt`) and renewed in place, which the
+forwarder trusts; and it admits the forwarder's pods to that port and nothing else of the kernel. The
+cluster's `logForwarding.destination.endpoint` is then `https://<service>.tenant-platform.svc:<port>/…`.
+A cluster has one log destination: a second component that declares it is given nothing, and its
+`LogDestination` condition names the first. In any other tenant the declaration does nothing.
+
 **A component that obtains a person's token while the person is away** declares vouching
 (`spec.requires.services.vouching`, with `keys.service`, `keys.port` and optionally `keys.path`:
 where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`. The

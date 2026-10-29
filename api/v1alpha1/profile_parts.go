@@ -232,6 +232,11 @@ type ServiceRequirements struct {
 	// +optional
 	Rights *RightsRequirement `json:"rights,omitempty"`
 
+	// LogDestination declares that the component receives the platform's log
+	// forwarder over HTTPS inside the cluster. See LogDestinationRequirement.
+	// +optional
+	LogDestination *LogDestinationRequirement `json:"logDestination,omitempty"`
+
 	// Vouching declares that the component obtains tokens of a person who is
 	// not at a browser, on the strength of that person's earlier consent: it
 	// signs a short statement naming the person, and the tenant's realm
@@ -464,6 +469,33 @@ type VouchingKeys struct {
 //
 // The answer says who in the tenant may use what, so the requirement is for
 // a profile of platform trust.
+// LogDestinationRequirement names where a component of the platform tenant
+// takes the platform's log forwarder (spec.logForwarding.destination of the
+// Cluster claim), so that the records never leave the cluster.
+//
+// The platform then does two things for that one Service and port: it issues
+// the Service's names (<service>.<namespace>.svc and .svc.cluster.local) a
+// serving certificate from the internal CA, delivered as the Secret
+// log-destination-tls-<profile> in the component's namespace (tls.crt,
+// tls.key, ca.crt), which the forwarder trusts; and it admits the forwarder's
+// pods to that port of the component's pods, and nothing else of the kernel.
+// A cluster has one log destination: a second component declaring it is
+// held with a condition saying which one is.
+//
+// Honored for a component of platform trust in the platform tenant only;
+// anywhere else the declaration does nothing.
+type LogDestinationRequirement struct {
+	// Service is the name of the component's Service the forwarder is sent
+	// to.
+	// +kubebuilder:validation:Pattern=`^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`
+	Service string `json:"service"`
+	// Port is the port that Service and its pods serve HTTPS on, the same
+	// number on both: it is the pods' port the network admits.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+}
+
 type RightsRequirement struct {
 	// Audit lets the same key ask three more questions, for a person of the
 	// platform tenant: may they audit the cluster (cluster#can_audit), may

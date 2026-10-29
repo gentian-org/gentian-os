@@ -80,6 +80,7 @@ spec:
     - authbackendroles.kubernetes.vault.upbound.io
     - secretv2s.kv.vault.upbound.io
     - policies.vault.vault.upbound.io
+    - secretbackendroles.pki.vault.upbound.io
     # -- provider configuration kinds -------------------------------------
     # Crossplane 2.2.1 never turns these into ManagedResourceDefinitions
     # (internal/converter/custom_to_managed.go): they are plain CRDs and need

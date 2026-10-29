@@ -73,6 +73,7 @@ kinds:
   - group: cert-manager.io
     resources:
       - certificates     # Certificate
+      - clusterissuers   # ClusterIssuer
   - group: external-secrets.io
     resources:
       - clusterexternalsecrets  # ClusterExternalSecret
