@@ -114,10 +114,19 @@ data:
       # What weed server would start besides S3 and the platform does not
       # use: the Iceberg and Lance catalogues on ports of their own, and the
       # IAM API on the S3 port. Identities are made with weed shell.
+      #
+      # And a bound on what each layer holds of uploads in flight, which is
+      # otherwise none: a bundle arriving faster than it is written piled up
+      # in memory until the pod was killed. Past the bound a writer waits.
+      # Each is well above one part of a multipart upload (16MiB for objects
+      # up to 156GiB), so a single upload is never held back by it.
       extraArgs:
         - -s3.port.iceberg=0
         - -s3.port.lance=0
         - -s3.iam=false
+        - -s3.concurrentUploadLimitMB=256
+        - -filer.concurrentUploadLimitMB=256
+        - -volume.concurrentUploadLimitMB=256
       data:
         type: persistentVolumeClaim
       # Mutual TLS on every gRPC port, and signed tokens on every write and
