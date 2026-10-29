@@ -29,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -231,8 +232,9 @@ type RestoreStatus struct {
 	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
 }
 
-// StartRestore writes the key into a Secret the TenantRestore names, owned
-// by it so the key goes when the restore does, and creates the restore.
+// StartRestore writes the key into a Secret, creates the TenantRestore
+// naming it, and makes the restore its owner so the key goes when the
+// restore does.
 func (s *Service) StartRestore(ctx context.Context, tenantName string, req RestoreRequest, actor string) (*RestoreStatus, error) {
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
@@ -288,9 +290,10 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	} else {
 		restore.Spec.Bundle = &req.Bundle
 	}
-	if err := s.client.Create(ctx, restore); err != nil {
-		return nil, fmt.Errorf("create restore: %w", err)
-	}
+	// The key is stored first and named on the restore as it is created: the
+	// operator takes a restore up the moment it exists, and one created
+	// without its key was failed for want of it before a second write could
+	// name it -- which then lost to the operator's status update.
 	key, value := "identity", req.Decryption.Identity
 	if req.Decryption.Passphrase != "" {
 		key, value = "passphrase", req.Decryption.Passphrase
@@ -300,11 +303,7 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 		Type:       corev1.SecretTypeOpaque,
 		StringData: map[string]string{key: value},
 	}
-	if err := controllerutil.SetControllerReference(restore, secret, s.client.Scheme()); err != nil {
-		return nil, err
-	}
 	if err := s.client.Create(ctx, secret); err != nil {
-		_ = s.client.Delete(ctx, restore)
 		return nil, fmt.Errorf("store the key: %w", err)
 	}
 	ref := &gentianov1alpha1.SecretKeyRef{Name: secret.Name, Key: key}
@@ -313,8 +312,18 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	} else {
 		restore.Spec.Decryption = &gentianov1alpha1.RestoreDecryption{IdentitySecretRef: ref}
 	}
-	if err := s.client.Update(ctx, restore); err != nil {
-		return nil, fmt.Errorf("name the key on the restore: %w", err)
+	if err := s.client.Create(ctx, restore); err != nil {
+		_ = s.client.Delete(ctx, secret)
+		return nil, fmt.Errorf("create restore: %w", err)
+	}
+	// Owned by the restore, so the key goes when the restore does. Nothing
+	// else writes the Secret, so this patch has nobody to lose to.
+	owned := secret.DeepCopy()
+	if err := controllerutil.SetControllerReference(restore, owned, s.client.Scheme()); err != nil {
+		return nil, err
+	}
+	if err := s.client.Patch(ctx, owned, client.MergeFrom(secret)); err != nil {
+		return nil, fmt.Errorf("restore %s started, but its key %s is not owned by it and stays when it goes: %w", name, secret.Name, err)
 	}
 	return restoreStatus(restore, tenantName), nil
 }
