@@ -74,7 +74,7 @@ platforms:
       # serves. Upstream calls this out: cloud-provider-openstack#2866.
       loadbalancer.openstack.org/enable-health-monitor: "true"
 
-  # Infomaniak Public Cloud is OpenStack, so it inherits the Octavia behaviour
+  # Infomaniak Public Cloud is OpenStack, so it inherits the Octavia behavior
   # above rather than describing it twice. Kept as its own name because that is
   # the name an operator knows their cluster by.
   infomaniak:
@@ -115,7 +115,7 @@ platforms:
       service.beta.kubernetes.io/aws-load-balancer-eip-allocations: '{{ .Values.addressRef }}'
 
   # ── Google Cloud ───────────────────────────────────────────────────────────
-  # GKE honours loadBalancerIP, but ONLY for an address already reserved as a
+  # GKE honors loadBalancerIP, but ONLY for an address already reserved as a
   # regional external static IP in the cluster's own region. An arbitrary
   # address leaves the Service Pending, which is why nodeIp on GCP is a value
   # somebody reserves first rather than one they pick.

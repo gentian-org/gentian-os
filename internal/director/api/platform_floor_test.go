@@ -57,7 +57,7 @@ func TestABuildAboveThisPlatformsLineIsListedAsUnmetAndRefused(t *testing.T) {
 		t.Fatalf("install of a build above this line = %d %v", code, out)
 	}
 	if catalogueHas(t, h, "future.yaml") {
-		t.Fatal("a refused build was materialised")
+		t.Fatal("a refused build was materialized")
 	}
 
 	code, out = h.do(t, "POST", "/v1/tenants/demo/apps/present", tom,

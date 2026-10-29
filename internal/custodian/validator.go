@@ -67,7 +67,7 @@ type RelayResolver func(ctx context.Context) (host, port string, err error)
 // Validate dispatches on spec.validate.type.
 //
 // An unknown type is an ERROR, not a pass. Silently accepting a credential the
-// catalogue asked to have checked is the failure this exists to prevent.
+// catalog asked to have checked is the failure this exists to prevent.
 //
 // host is spec.validate.host — the endpoint to probe, when the requirement
 // declares one. It is not a submitted field: the declared schema for these
@@ -105,7 +105,7 @@ func (v *EndpointValidator) Validate(ctx context.Context, kind, host string, fie
 // CHECKED is the wrong way round: the credential is still needed, the
 // declaration is what is incomplete, and blocking the write blocks whatever
 // was waiting on the credential. The deployments token could not be set at
-// all for exactly this reason -- its catalogue entry asks for a git-https
+// all for exactly this reason -- its catalog entry asks for a git-https
 // probe and names no host.
 var ErrNoEndpoint = errors.New("no endpoint to probe")
 
@@ -215,7 +215,7 @@ func (v *EndpointValidator) smtpProbe(ctx context.Context, fields map[string]str
 		// Implicit TLS. No STARTTLS is offered on this port.
 		// tls.Dialer, not tls.DialWithDialer: the latter takes no context, so
 		// this branch ignored cancellation while the STARTTLS branch below
-		// honoured it. The dialer's own timeout still applies.
+		// honored it. The dialer's own timeout still applies.
 		td := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}}
 		conn, err = td.DialContext(ctx, "tcp", addr)
 	} else {

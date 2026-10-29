@@ -140,7 +140,7 @@ def build(directory: Path) -> tuple[list[dict], list[str]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("directory", type=Path, help="the catalogue source directory")
+    ap.add_argument("directory", type=Path, help="the catalog source directory")
     ap.add_argument("--catalogue", default="", help="the slug, recorded as a comment only")
     ap.add_argument("--check", action="store_true",
                     help="fail if index.yaml is missing or out of date, and write nothing")
@@ -171,7 +171,7 @@ def main() -> int:
     shown = ", ".join(f"{n} {ed}" for ed, n in sorted(by_edition.items()))
     print(f"wrote {out} ({len(entries)} entries: {shown or 'none'})")
     # A cluster lists ce, me and ie; pe and ee are the store's. Saying so here
-    # is what stops somebody publishing a catalogue of pe entries and
+    # is what stops somebody publishing a catalog of pe entries and
     # wondering why no cluster shows them.
     local = sum(by_edition.get(ed, 0) for ed in ("ce", "me", "ie"))
     print(f"  a cluster browsing this source will list {local}; "

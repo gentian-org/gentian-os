@@ -2,7 +2,7 @@
 # step: B-03-vault-init
 # phase: secrets
 # requires: B-02-seal-init
-# provides: initialised, auto-unsealed vault in the secrets namespace; BAO_TOKEN for the rest of the run
+# provides: initialized, auto-unsealed vault in the secrets namespace; BAO_TOKEN for the rest of the run
 # mutates: vault storage; ~/.gentian/openbao-init.json (the recovery key and root token, until the recovery kit holds them)
 # pins: openbao
 

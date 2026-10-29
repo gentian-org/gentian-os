@@ -34,7 +34,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// wikiBundle is a profile as a catalogue source publishes it: the bytes an
+// wikiBundle is a profile as a catalog source publishes it: the bytes an
 // install's digest is taken over.
 const wikiBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
@@ -289,7 +289,7 @@ func TestAComponentWithNoDigestIsRolledOutAsBefore(t *testing.T) {
 	}
 }
 
-// talkBundle is an addon as a catalogue source publishes it: it deploys
+// talkBundle is an addon as a catalog source publishes it: it deploys
 // nothing and activates inside wiki.
 const talkBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile

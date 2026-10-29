@@ -235,7 +235,7 @@ func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
 //
 // Empty when the client has no rootUrl, which is what a realm composed before
 // this looks like. An invitation then carries no redirect, which is the old
-// behaviour rather than a failure.
+// behavior rather than a failure.
 func (c *Client) ZoneLanding(ctx context.Context, r Realm, clientID string) string {
 	var found []struct {
 		ClientID string `json:"clientId"`

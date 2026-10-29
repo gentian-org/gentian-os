@@ -22,7 +22,7 @@ SPDX-License-Identifier: MPL-2.0
 // Every route follows the director's four steps and none may skip one:
 // establish who is calling from a verified token, name the relation the route
 // requires, ask OpenFGA, and only then act. A route is registered together
-// with its relation, so a handler that forgot to authorise is not something
+// with its relation, so a handler that forgot to authorize is not something
 // this package can express. The paths, the relations and the bodies are the
 // ones the director served; a caller changes the address it calls and
 // nothing else.
@@ -125,7 +125,7 @@ type Config struct {
 	DesktopAPI string
 	// VouchingKeys is the list of components that vouch for people, each
 	// with the hash of its own key, as the operator writes it. Optional:
-	// with none, no component is recognised by its key, and the people who
+	// with none, no component is recognized by its key, and the people who
 	// may take a link away still can (vouching.go).
 	VouchingKeys *VouchingKeys
 	// Invitations is where a request to invite a tenant's administrator is
@@ -189,7 +189,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID{}, id)))
 }
 
-// Start serves until ctx is cancelled. It satisfies manager.Runnable, so the
+// Start serves until ctx is canceled. It satisfies manager.Runnable, so the
 // server shares the lifecycle of the client it reads the tenants with.
 func (s *Server) Start(ctx context.Context) error {
 	srv := &http.Server{

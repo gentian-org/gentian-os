@@ -138,7 +138,7 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	// The commit says which digest was checked, so a reviewer need not hash
 	// the file to know whether it is the build that was asked for.
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-3", "main")
-	if !strings.Contains(log, "materialise element at sha256:") {
+	if !strings.Contains(log, "materialize element at sha256:") {
 		t.Fatalf("no materialise commit:\n%s", log)
 	}
 	// And the tenant's entry is pinned to the same build, as a field.
@@ -146,7 +146,7 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	if !strings.Contains(tenant, "  - profile: element\n    digest: "+sha(elementProfile)+"\n") {
 		t.Fatalf("the install does not record its digest:\n%s", tenant)
 	}
-	// And it says which catalogue the build was fetched from, which with the
+	// And it says which catalog the build was fetched from, which with the
 	// name is the coordinate.
 	if !strings.Contains(tenant, "    catalogue: main\n") {
 		t.Fatalf("the install does not record its catalogue:\n%s", tenant)
@@ -166,7 +166,7 @@ func TestInstallingWhatIsAlreadyMaterialisedCommitsItOnce(t *testing.T) {
 		t.Fatalf("second install = %d %v", code, out)
 	}
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "main")
-	if n := strings.Count(log, "materialise element at sha256:"); n != 1 {
+	if n := strings.Count(log, "materialize element at sha256:"); n != 1 {
 		t.Fatalf("the entry was materialised %d times:\n%s", n, log)
 	}
 }
@@ -231,8 +231,8 @@ func TestMaterialisingNeedsTheDigest(t *testing.T) {
 	}
 }
 
-// An install comes from a catalogue source the cluster declares. A coordinate
-// in any other catalogue is refused before anything is written: it used to
+// An install comes from a catalog source the cluster declares. A coordinate
+// in any other catalog is refused before anything is written: it used to
 // proceed with no fetch, and the digest beside it was recorded unverified.
 func TestACoordinateFromAnUndeclaredCatalogueIsRefused(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
@@ -249,7 +249,7 @@ func TestACoordinateFromAnUndeclaredCatalogueIsRefused(t *testing.T) {
 		if code != http.StatusUnprocessableEntity {
 			t.Fatalf("%s: install = %d %v, want 422", name, code, out)
 		}
-		// The refusal names the catalogue asked for and the ones there are.
+		// The refusal names the catalog asked for and the ones there are.
 		said := fmt.Sprint(out["error"])
 		if !strings.Contains(said, `"elsewhere"`) || !strings.Contains(said, "This tenant's catalogues: main.") {
 			t.Fatalf("%s: the refusal does not say what is declared: %q", name, said)
@@ -269,7 +269,7 @@ func TestACoordinateIsRefusedWhereNoSourceIsDeclared(t *testing.T) {
 
 	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
 		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile)))
-	if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "has no catalogue to install from") {
+	if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "has no catalog to install from") {
 		t.Fatalf("install = %d %v, want 422 saying no source is declared", code, out)
 	}
 	if h.tip(t) != before {

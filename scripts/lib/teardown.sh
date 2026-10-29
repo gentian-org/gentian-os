@@ -469,7 +469,7 @@ _delete_gentianos_api_scaffold() {
 #
 # `--uninstall` reverses the steps: it removes what the installer created on the
 # cluster and stops there. OpenBao's KV survives, which is the documented and
-# usually correct behaviour — reinstalling onto the same cluster then recovers
+# usually correct behavior — reinstalling onto the same cluster then recovers
 # the credentials instead of re-prompting.
 #
 # `--purge` is for when that is exactly wrong: handing a cluster back, or

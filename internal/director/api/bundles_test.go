@@ -26,7 +26,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// shopBundle is a profile and what travels with it: one file, as a catalogue
+// shopBundle is a profile and what travels with it: one file, as a catalog
 // publishes it.
 func shopBundle(extra ...string) string {
 	profile := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: shop\n  labels:\n    gentianos.io/profile-name: shop\n" +
@@ -109,7 +109,7 @@ func TestABundleWithCompanionsIsCommittedWhole(t *testing.T) {
 
 // A companion is an object of the whole cluster or of a namespace of the
 // platform, and a Composition creates what it likes with the providers'
-// rights. A tenant's own catalogue brings none: the install is refused,
+// rights. A tenant's own catalog brings none: the install is refused,
 // saying so, and nothing is written.
 func TestATenantsOwnCatalogueBringsNoCompanions(t *testing.T) {
 	bundle := shopBundle()
@@ -125,7 +125,7 @@ func TestATenantsOwnCatalogueBringsNoCompanions(t *testing.T) {
 	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/shop", tom, fmt.Sprintf(`{"coordinate":"own/shop","digest":%q}`, sha(bundle)))
 	said := fmt.Sprint(out["error"])
 	if code != http.StatusUnprocessableEntity || !strings.Contains(said, "Composition app-shop") ||
-		!strings.Contains(said, "only a catalogue of the whole cluster") || !strings.Contains(said, "nothing was installed") {
+		!strings.Contains(said, "only a catalog of the whole cluster") || !strings.Contains(said, "nothing was installed") {
 		t.Fatalf("a Composition from a tenant's own catalogue: %d %v", code, out)
 	}
 	if catalogueHas(t, h, "shop.yaml") || strings.Contains(dt.RemoteFile(t, h.remote, dt.TenantPath("demo")), "profile: shop") {
@@ -138,7 +138,7 @@ func TestATenantsOwnCatalogueBringsNoCompanions(t *testing.T) {
 	}
 }
 
-// What is not on the list is refused whatever catalogue serves it, before
+// What is not on the list is refused whatever catalog serves it, before
 // anything is written.
 func TestABundleHoldingWhatItMayNotIsRefused(t *testing.T) {
 	cases := map[string]struct{ bundle, says string }{
@@ -179,7 +179,7 @@ func TestABundleTooLargeWithItsCompanionsIsRefused(t *testing.T) {
 	}
 }
 
-// The bundles gentian-apps builds install from a catalogue of the cluster,
+// The bundles gentian-apps builds install from a catalog of the cluster,
 // each at the digest of its whole file, and are committed byte for byte.
 func TestTheBuiltBundlesInstall(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "profilebundle", "testdata", "bundles", "*.yaml"))

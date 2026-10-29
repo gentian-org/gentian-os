@@ -13,7 +13,7 @@ SPDX-License-Identifier: MPL-2.0
 // a given (rung, scope) pair is permitted.
 //
 // The package is deliberately app-neutral. It knows about rungs and scopes, never
-// about individual catalogue entries — per-app behaviour comes from the
+// about individual catalog entries — per-app behavior comes from the
 // ComponentProfile's declared customization surface. See docs/app-customization.md.
 package customization
 

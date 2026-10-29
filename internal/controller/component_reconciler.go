@@ -293,7 +293,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// The profile is one object per name for the whole cluster, and it
 		// is the newest build any tenant installed. When this tenant's pin
 		// is another build, the ProfileBuild of that digest is read instead
-		// -- the director writes one beside every build it materialises --
+		// -- the director writes one beside every build it materializes --
 		// and this instance renders from it, held to the same checks. So
 		// one tenant's move does not hold another's install; what holds an
 		// install is a build the cluster does not have.
@@ -325,7 +325,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	} else if comp.Labels[componentOriginLabel] == componentOriginDefault {
 		// A Component the platform placed comes from no install and names
-		// no digest. Where its profile was placed from a catalogue -- the
+		// no digest. Where its profile was placed from a catalog -- the
 		// installer's default profile is -- the digest is the one recorded
 		// with the profile, and the profile and its companions are held to
 		// it at the same point and in the same way. A default whose profile
@@ -382,8 +382,8 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	// Whose the profile is, and whether every add-on has one.
 	//
-	// A ComponentProfile is cluster-scoped, and a catalogue need not be: a
-	// tenant may have one only it sees, and what was materialised from it
+	// A ComponentProfile is cluster-scoped, and a catalog need not be: a
+	// tenant may have one only it sees, and what was materialized from it
 	// says so (profilebundle.OriginAnnotation). The director refuses to
 	// install such a profile anywhere else, but the object is there for the
 	// whole cluster and a Component can be written naming it by other means,
@@ -444,7 +444,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	// The sign-in sidecar, for a profile that declares one: decided before
 	// anything is written, because a profile that may not have one -- its
-	// handler comes from a tenant's own catalogue, or from no reviewed
+	// handler comes from a tenant's own catalog, or from no reviewed
 	// bundle at all -- must not be installed with no way in either.
 	signIn, noSignIn := r.signInSidecarFor(comp, profile, tenant, zone)
 	if noSignIn != "" {
@@ -878,9 +878,9 @@ func (r *ComponentReconciler) unverifiedAddon(ctx context.Context, comp *gentian
 	return nil, nil
 }
 
-// catalogueNamespace is where the cluster's catalogue is applied, and so
+// catalogueNamespace is where the cluster's catalog is applied, and so
 // where the companions of a bundle that have a namespace are: the destination
-// of the Application that syncs the catalogue directory
+// of the Application that syncs the catalog directory
 // (kernel/appsets/raw/11b-catalogue.yaml).
 func catalogueNamespace() string { return layout.Namespace(layout.Provisioning) }
 
@@ -2074,7 +2074,7 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
 			builder.WithPredicates(mainAddressChanged())).
-		// A tenant's country and organisation, which a profile naming countryKey,
+		// A tenant's country and organization, which a profile naming countryKey,
 		// organizationKey or timeZoneKey is told
 		// (tenant_country.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),

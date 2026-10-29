@@ -79,7 +79,7 @@ type perimeterEnablement struct {
 	release string
 	// alias is a second host the surface answers at, directly under the
 	// cluster's own domain, where the cluster's administrator gave it one
-	// that is honoured (addresses.AliasHost). Empty otherwise.
+	// that is honored (addresses.AliasHost). Empty otherwise.
 	alias string
 	// website marks a tenant's surface on the cluster's main address: its
 	// proxy refuses the platform's paths there (main_address.go).
@@ -228,7 +228,7 @@ func (r *ComponentReconciler) ensurePerimeter(
 }
 
 // aliasesFor fills in the alias of each live surface that has one. Whether an
-// alias is honoured depends on every tenant -- a name a tenant is called is
+// alias is honored depends on every tenant -- a name a tenant is called is
 // that tenant's address, and one alias is one surface's -- so the tenants are
 // read, and only where a surface of this component carries one.
 func (r *ComponentReconciler) aliasesFor(
@@ -265,7 +265,7 @@ func aliasHostFor(in mainAddressInputs, tenant *gentianov1alpha1.Tenant, comp *g
 	return addresses.AliasHost(in, tenant.Name, comp.Name, p.on.ExposureName)
 }
 
-// ensureDMZNamespace makes the tenant's perimeter namespace, labelled by tier
+// ensureDMZNamespace makes the tenant's perimeter namespace, labeled by tier
 // so the policies that select on tier apply to it (AD-7).
 func (r *ComponentReconciler) ensureDMZNamespace(ctx context.Context, tenant *gentianov1alpha1.Tenant, dmz string) error {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Convert a catalogue of AppProfiles and prove the result is admissible: every
+# Convert a catalog of AppProfiles and prove the result is admissible: every
 # converted ComponentProfile is run through the generated CRD's OpenAPI schema
 # and CEL rules, the way the API server would.
 #

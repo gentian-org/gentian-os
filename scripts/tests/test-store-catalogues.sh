@@ -3,18 +3,18 @@
 # scripts/tests/test-store-catalogues.sh
 # =============================================================================
 # Step 0 reads GET /v1/meta of the store the Cluster claim names and adds each
-# catalogue it lists that the claim has no source of that name for, marked
+# catalog it lists that the claim has no source of that name for, marked
 # addedBy: store (store API 1.5), so an app bought at the store installs
 # without a `kubectl gentian catalogues add` first. Held here:
 #
-#   - a listed catalogue the claim lacks is added, after the last source,
+#   - a listed catalog the claim lacks is added, after the last source,
 #     with its mark; nothing else of the claim moves; a second run adds
 #     nothing;
 #   - a source the claim has is never changed: the same name at another
 #     address is kept and warned about with both addresses;
-#   - a name a tenant uses for a catalogue of its own is not added;
+#   - a name a tenant uses for a catalog of its own is not added;
 #   - http, or a name that is not one, is not added;
-#   - a store that cannot be reached, answers 404, or lists no catalogues is a
+#   - a store that cannot be reached, answers 404, or lists no catalogs is a
 #     warning, and the claim is as it was;
 #   - one the store stops listing stays on the claim;
 #   - `sources: []` and a section with no sources get the list; a list written
@@ -135,7 +135,7 @@ ensure() { run 'ensure_claim_store_catalogues "'"${CLAIM}"'" "'"${TENANTS}"'"; e
 sources() { run '_claim_sources_tsv "'"${CLAIM}"'"' | tr '\t' '|'; }
 
 echo ""
-echo "Step 0: the catalogues the store lists"
+echo "Step 0: the catalogs the store lists"
 echo ""
 
 new_world; both
@@ -191,7 +191,7 @@ said="$(ensure)"
 is "http, a name that is none, and an address with a space are not added" "$(cat "${CLAIM}")" "${before}"
 is "each is said" "$(grep -c 'cannot take' <<< "${said}")" "3"
 
-# A tenant's own catalogue of the name.
+# A tenant's own catalog of the name.
 new_world; both
 mkdir -p "${TENANTS}/team"
 printf 'apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata:\n  name: team\nspec:\n  catalogue:\n    sources:\n      - name: publisher\n        oci:\n          repository: r\n          artifact: ghcr.io/x/c:1\n        addedBy: cluster\n' > "${TENANTS}/team/tenant.yaml"

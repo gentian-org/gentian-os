@@ -142,7 +142,7 @@ backup destination's is, and never sits in the claim; Reloader restarts the
 DaemonSet when it changes, because Vector reads it only at start. The
 inventory in `internal/kernel/kernelnet/inventory.yaml` names its egress.
 
-Minimisation beyond redaction — pseudonymising addresses, truncating client
+Minimization beyond redaction — pseudonymizing addresses, truncating client
 IPs, deciding what is evidence — is the destination's, because it depends
 on what the destination keeps and for how long.
 

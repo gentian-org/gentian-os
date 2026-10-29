@@ -146,11 +146,11 @@ func TestBearerProbe_RejectionAttributesTheOneField(t *testing.T) {
 	fieldsOf(t, err, "api-token")
 }
 
-// TestUnknownValidatorType is an ERROR, not a silent pass — the catalogue
+// TestUnknownValidatorType is an ERROR, not a silent pass — the catalog
 // asked for a check this validator does not implement.
 func TestUnknownValidatorType(t *testing.T) {
 	v := NewEndpointValidator()
 	if err := v.Validate(context.Background(), "made-up", "", nil); err == nil {
-		t.Fatal("expected an error for an unrecognised validator type")
+		t.Fatal("expected an error for an unrecognized validator type")
 	}
 }

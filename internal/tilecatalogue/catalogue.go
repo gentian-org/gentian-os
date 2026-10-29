@@ -8,22 +8,22 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package tilecatalogue is the tile catalogue's format: what the operator
+// Package tilecatalogue is the tile catalog's format: what the operator
 // writes and what the usher reads.
 //
 // It is its own package, and not part of internal/tiles, because that one is
 // the portal's icon set. The two share a word and nothing else, and the
-// director should not carry an embedded glyph catalogue to read a list of
+// director should not carry an embedded glyph catalog to read a list of
 // links.
 //
-// The catalogue used to be a list compiled into the director, which meant the
+// The catalog used to be a list compiled into the director, which meant the
 // director held a second, hand-maintained copy of facts the operator already
 // owned: which consoles exist, what hostname each answers on, and which
 // relation opens it. Two copies of the same thing drift, and an installed app
 // could not appear on the portal without a director release, which is the
 // wrong answer for a platform whose point is installing apps.
 //
-// So the catalogue is projected by the operator from what it actually routes,
+// So the catalog is projected by the operator from what it actually routes,
 // and the director does the one thing that is its job: it asks the graph, per
 // caller, which of these the caller may open. This package is the format they
 // agree on, in one place so that the writer and the reader cannot disagree
@@ -38,13 +38,13 @@ import (
 )
 
 const (
-	// ConfigMapName is the one ConfigMap the catalogue is projected into. It
+	// ConfigMapName is the one ConfigMap the catalog is projected into. It
 	// lives in the control namespace, beside the usher that reads it.
 	ConfigMapName = "gentian-tiles"
 
 	// Key is the entry within it. The content is YAML rather than one key per
 	// tile because a tile is read and replaced whole, and because a person
-	// running kubectl describe should see the catalogue as a list.
+	// running kubectl describe should see the catalog as a list.
 	Key = "tiles.yaml"
 )
 
@@ -57,12 +57,12 @@ const (
 // exists to stop.
 type Tile struct {
 	// Name identifies the tile, for the portal and for logs. Unique within
-	// one catalogue.
+	// one catalog.
 	Name string `json:"name"`
 
 	// DisplayName, Description and Icon are what a person sees. DisplayNames
 	// are translations of the label keyed by locale; the portal picks the
-	// viewer's and falls back to DisplayName, so a catalogue with no
+	// viewer's and falls back to DisplayName, so a catalog with no
 	// translations renders exactly as before.
 	DisplayName  string            `json:"displayName"`
 	DisplayNames map[string]string `json:"displayNames,omitempty"`
@@ -146,7 +146,7 @@ const header = `# The tiles this cluster offers, projected by the operator, and 
 # changes, and an edit made here is lost at the next reconcile.
 `
 
-// Marshal renders a catalogue for the ConfigMap.
+// Marshal renders a catalog for the ConfigMap.
 func Marshal(c Catalogue) (string, error) {
 	if c.Tiles == nil {
 		c.Tiles = []Tile{}

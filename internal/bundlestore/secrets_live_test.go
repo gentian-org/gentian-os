@@ -45,7 +45,7 @@ import (
 // An app's own secrets against an object store and a vault.
 //
 // What the operator does with them -- reads them from the vault, encrypts
-// them, writes the artefact, reads it back, opens it, replaces the stored
+// them, writes the artifact, reads it back, opens it, replaces the stored
 // value -- against the platform's object store (SeaweedFS, at the image the
 // platform pins) and an OpenBao server, with secrets drawn at random as under
 // secretMode: random. It needs docker, for the object store, and the bao
@@ -230,7 +230,7 @@ func TestAppSecretsAgainstAnObjectStoreAndAVault(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.PutArtefact(ctx, ref, "secrets/plain.json", []byte(`{"secrets":{"k":"v"}}`)); err == nil {
-		t.Error("a plaintext artefact was written")
+		t.Error("a plaintext artifact was written")
 	}
 
 	// What whoever reads the backup storage gets: the one object, under the
@@ -349,7 +349,7 @@ func TestAppSecretsAgainstAnObjectStoreAndAVault(t *testing.T) {
 	}
 	back, err := store.AppSecrets(ctx, withKeys, path, key)
 	if err != nil || back.Secrets["WIKI_SECRET_KEY"] != "" {
-		t.Fatalf("the artefact with declared keys: %v", err)
+		t.Fatalf("the artifact with declared keys: %v", err)
 	}
 	if changed, err := seeder.ReplaceDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY", back.Derived["WIKI_SECRET_KEY"]); err != nil || !changed {
 		t.Fatalf("replace the declared key: changed %v, %v", changed, err)

@@ -522,7 +522,7 @@ validate_oidc_discovery() {
 # run_validator <type> [args...] — dispatch by spec.validate.type.
 #
 # An unknown type is an error rather than a pass: silently accepting a
-# credential the catalogue asked to have checked is the failure this file
+# credential the catalog asked to have checked is the failure this file
 # exists to prevent.
 run_validator() {
     local type="$1"; shift

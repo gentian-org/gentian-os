@@ -8,9 +8,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package catalogue materialises a profile on reference (AD-3).
+// Package catalogue materializes a profile on reference (AD-3).
 //
-// The cluster holds no catalogue. Thirty-odd profiles do not sit in it
+// The cluster holds no catalog. Thirty-odd profiles do not sit in it
 // waiting for somebody to want one; a profile arrives when a tenant installs
 // it, at a content digest, and it arrives through the director.
 //
@@ -27,7 +27,7 @@ SPDX-License-Identifier: MPL-2.0
 // install and cannot change what gets installed.
 //
 // The digest is not a license and is not signed. Whether a tenant may have an
-// app is not decided here at all: it is decided where the app's artefacts are
+// app is not decided here at all: it is decided where the app's artifacts are
 // pulled, by the credential the tenant holds for their repository.
 package catalogue
 
@@ -62,7 +62,7 @@ var ErrNotFound = errors.New("catalogue: the source does not serve this entry")
 // platform does not control.
 const maxBundle = 1 << 20
 
-// Source is one catalogue as an install or a listing names it: resolved, by
+// Source is one catalog as an install or a listing names it: resolved, by
 // whoever asked, from what the cluster and the tenant declare.
 //
 // Which address a name means is never the caller's to supply. An install
@@ -71,16 +71,16 @@ const maxBundle = 1 << 20
 // chose. The name comes from the request; the address comes from the Cluster
 // claim or the tenant's manifest in git.
 type Source struct {
-	// Key tells this catalogue from every other on the cluster:
+	// Key tells this catalog from every other on the cluster:
 	// "cluster/<name>" or "tenant/<tenant>/<name>". Two tenants may each have
-	// a catalogue called the same thing; they are not the same catalogue, and
+	// a catalog called the same thing; they are not the same catalog, and
 	// what is remembered of one is never served for the other.
 	Key string
-	// Name is the catalogue's name: the first half of a coordinate.
+	// Name is the catalog's name: the first half of a coordinate.
 	Name string
 	// URL is the base address its index and profiles are served from.
 	URL string
-	// OCI is the artifact the catalogue is kept as, and the repository it is
+	// OCI is the artifact the catalog is kept as, and the repository it is
 	// read with (oci.go). A source has one of URL and OCI.
 	OCI *OCISource
 }
@@ -105,7 +105,7 @@ func (f *Fetcher) read(ctx context.Context, src Source, file, what string, limit
 	return body, nil
 }
 
-// served fetches one file from a catalogue's address.
+// served fetches one file from a catalog's address.
 func (f *Fetcher) served(ctx context.Context, base, file string, limit int) ([]byte, error) {
 	parts := strings.Split(file, "/")
 	for i := range parts {
@@ -129,7 +129,7 @@ func (f *Fetcher) served(ctx context.Context, base, file string, limit int) ([]b
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		return nil, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
-			"declare the address the catalogue is served from", ref.Host)
+			"declare the address the catalog is served from", ref.Host)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
@@ -146,10 +146,10 @@ type Fetcher struct {
 	// Client makes the requests. NewFetcher's refuses every address that is
 	// not a public https one, at the moment it connects (address.go).
 	Client *http.Client
-	// Vet checks an address when a catalogue is added: as it is written, and
+	// Vet checks an address when a catalog is added: as it is written, and
 	// what its host resolves to.
 	Vet func(ctx context.Context, address string) error
-	// Registries answers the repository, and its credential, a catalogue
+	// Registries answers the repository, and its credential, a catalog
 	// kept as an OCI artifact is read with. Nil is a director that reads no
 	// such catalogue.
 	Registries Registries
@@ -170,7 +170,7 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-// Profile is a materialised catalogue entry.
+// Profile is a materialized catalogue entry.
 type Profile struct {
 	// Name is the ComponentProfile's own metadata.name, read from the bundle
 	// rather than taken from the coordinate — and then checked against it.
@@ -228,7 +228,7 @@ func (f *Fetcher) Fetch(ctx context.Context, src Source, name, digest string) (*
 	// which file they hashed. The file is committed whole and everything in
 	// it is applied, so everything in it is looked at: one ComponentProfile
 	// of this name, first, and after it only what this profile may bring
-	// from a catalogue of this origin (profilebundle.Check). Before anything
+	// from a catalog of this origin (profilebundle.Check). Before anything
 	// is written, and again by the operator before anything is rolled out.
 	bundle, err := profilebundle.Check(body, name, src.Key)
 	if err != nil {

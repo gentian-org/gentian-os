@@ -71,7 +71,7 @@ func TestAnUnanswerableTileIsDropped(t *testing.T) {
 	}
 }
 
-// An empty catalogue is a list, not a null: the console renders a desktop with
+// An empty catalog is a list, not a null: the console renders a desktop with
 // nothing on it, and a file that says "tiles: null" reads like a projection
 // that failed halfway.
 func TestAnEmptyCatalogueIsAList(t *testing.T) {
@@ -103,7 +103,7 @@ func TestURLDefaultsToTheFrontPage(t *testing.T) {
 
 // A tile's translations survive the round trip through the projected file.
 //
-// They exist because thirty tiles in the catalogue are genuinely translated and
+// They exist because thirty tiles in the catalog are genuinely translated and
 // the type that replaced the old one dropped the map. The projection is the
 // narrow part of that path: if Marshal and Parse do not carry displayNames, the
 // desktop has nothing to pick from however well it picks.

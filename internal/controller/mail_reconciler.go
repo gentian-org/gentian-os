@@ -367,7 +367,7 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 	// one of them and has to say what becomes of the mailbox.
 	tenant.Status.MailboxDomain = r.mailboxDomainOf(ctx, tenant)
 
-	// An opt-in this cluster cannot honour is refused, not attempted.
+	// An opt-in this cluster cannot honor is refused, not attempted.
 	//
 	// selfhosted means "register in the shared kernel Postfix and Dovecot".
 	// A cluster relaying through a provider has neither, and v5 has no step
@@ -1271,7 +1271,7 @@ func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant
 // authenticate IMAP.
 //
 // Dovecot's oauth2 passdb takes a single introspection URL, so multi-realm support
-// is multiple passdb blocks rather than one parameterised block. Each realm gets a
+// is multiple passdb blocks rather than one parameterized block. Each realm gets a
 // `<realm>.conf` holding the passdb and a `<realm>.oauth2.ext` holding its
 // settings; dovecot.conf includes only *.conf, so the .ext files are read via the
 // passdb args and never included as configuration themselves.
@@ -1814,9 +1814,9 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 	// The tenant's mail records, removed whatever the deletion policy says,
 	// for the reason the routing above is. The DNSEndpoint is in the mail
 	// perimeter's namespace, not the tenant's, and carries no tenant label, so
-	// neither the namespace's deletion nor the sweep of labelled objects took
+	// neither the namespace's deletion nor the sweep of labeled objects took
 	// it: the domain of a deleted tenant went on publishing an MX for this
-	// cluster, an SPF record authorising it and a DKIM key, for a domain
+	// cluster, an SPF record authorizing it and a DKIM key, for a domain
 	// Postfix had stopped accepting.
 	if err := r.deleteTenantMailDNS(ctx, tenant, mailEdgeNamespace); err != nil {
 		return fmt.Errorf("remove the mail DNS records of tenant %s: %w", tenant.Name, err)
@@ -2002,7 +2002,7 @@ func mailSPFRecord(egressHost string) string {
 // p=none: report, do not reject. The reports are what say whether a stricter
 // policy would bounce legitimate mail, and publishing quarantine or reject
 // before reading any is how a domain silences its own invites. Tighten it once
-// rua has been arriving for a while and shows only sources you recognise.
+// rua has been arriving for a while and shows only sources you recognize.
 //
 // rua needs a mailbox that can actually receive, which is why the kernel
 // domain's MX is published alongside this rather than left to chance.

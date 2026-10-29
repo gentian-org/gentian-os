@@ -77,7 +77,7 @@ spec:
                     valueFromFieldPath: metadata.name
             # The cluster's brand, published by the operator from the
             # Branding: the name a realm's mail is sent under and its sign-in
-            # options are labelled with. minMatch 0: until it is published the
+            # options are labeled with. minMatch 0: until it is published the
             # platform's own name stands.
             - kind: ConfigMap
               into: branding

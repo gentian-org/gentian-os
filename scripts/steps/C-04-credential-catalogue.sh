@@ -2,17 +2,17 @@
 # step: C-04-credential-catalogue
 # phase: platform
 # requires: C-01-cluster-claim
-# provides: CredentialRequirement catalogue and its ESO satisfaction probes
+# provides: CredentialRequirement catalog and its ESO satisfaction probes
 # mutates: cluster-scoped CredentialRequirement objects, ExternalSecrets in the control namespace
 
-# The on-cluster half of the catalogue. credential-requirements.yaml travels
+# The on-cluster half of the catalog. credential-requirements.yaml travels
 # with the installer; these are the same content as API objects, so the
 # custodian and any gating Composition can read them.
 #
 # Each requirement gets an ExternalSecret with creationPolicy: None. ESO
 # resolves the remote reference and reports SecretSynced without creating a
 # Secret, which makes satisfaction observable as a Kubernetes condition without
-# materialising cluster-wide credential material into a namespace that has no
+# materializing cluster-wide credential material into a namespace that has no
 # use for it.
 #
 # v5 had no such step, and the consequence was not subtle: `make
@@ -28,7 +28,7 @@ _cc_ns() { ns_kernel control; }
 
 _catalogue_file() { echo "${SCRIPT_DIR}/kernel/credentials/credential-requirements.yaml"; }
 
-# The catalogue with this cluster's addresses in it.
+# The catalog with this cluster's addresses in it.
 #
 # The repository hosts are substituted, because a git-https probe has no
 # endpoint of its own -- username and password do not carry one -- so a
@@ -45,9 +45,9 @@ _cc_render() {
         "$(_catalogue_file)"
 }
 
-# What this cluster asks for, not the whole catalogue.
+# What this cluster asks for, not the whole catalog.
 #
-# The catalogue describes the platform -- every DNS provider, every source
+# The catalog describes the platform -- every DNS provider, every source
 # repository, every LLM provider -- and applying all of it filled the
 # custodian with forms nothing on the cluster would ever read: six
 # DNS providers on a Cloudflare cluster, NOT SET under each. An entry is
@@ -75,7 +75,7 @@ _cc_wanted() {
     done < <(catalogue_names)
 }
 
-# _cc_select <names> — the rendered catalogue, reduced to these requirements
+# _cc_select <names> — the rendered catalog, reduced to these requirements
 # and their probes. A probe is named credreq-<requirement>.
 _cc_select() {
     # shellcheck disable=SC2016 # awk's own fields
@@ -94,8 +94,8 @@ _cc_select() {
     '
 }
 
-# _cc_prune <names> — remove catalogue requirements this cluster no longer
-# asks for, and their probes. Only what the catalogue applied: a requirement
+# _cc_prune <names> — remove catalog requirements this cluster no longer
+# asks for, and their probes. Only what the catalog applied: a requirement
 # with an owner was composed by something else and is that thing's to remove.
 # The declaration goes; a value already stored in OpenBao stays.
 _cc_prune() {
@@ -119,7 +119,7 @@ check() {
     # control namespace — which the Cluster XR composes, so it can be removed
     # and recreated underneath them.
     #
-    # Existence is not enough. A probe left over from an earlier catalogue
+    # Existence is not enough. A probe left over from an earlier catalog
     # still exists while querying a field nobody writes, reports
     # SecretSyncedError for ever, and check-credentials calls the credential
     # missing; a check testing only that the object is there would skip the
@@ -178,7 +178,7 @@ apply() {
     wanted="$(_cc_wanted)"
     rendered="$(_cc_render | _cc_select "${wanted}")"
     if grep -q '__GENTIAN_' <<<"${rendered}"; then
-        error "The credential catalogue still holds an unsubstituted placeholder:"
+        error "The credential catalog still holds an unsubstituted placeholder:"
         grep -o '__GENTIAN_[A-Z_]*__' <<<"${rendered}" | sort -u | while IFS= read -r ph; do
             error "  ${ph}"
         done

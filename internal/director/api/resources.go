@@ -64,7 +64,7 @@ type setResourcePlanRequest struct {
 // setResourcePlan writes the chosen plan to git.
 //
 // The choice is validated against the operator's answer for this tenant: a
-// plan the catalogue does not have is 404, one this tenant may not move to is
+// plan the catalog does not have is 404, one this tenant may not move to is
 // refused with the operator's reason, and one the tenant's committed usage
 // does not fit under is 409 unless forced. What is written is the plan's
 // own quantities, so the ceiling the tenant ends up on is exactly one the
@@ -356,7 +356,7 @@ func (s *Server) tenantOrganization(w http.ResponseWriter, r *http.Request, _ ca
 	s.json(w, http.StatusOK, org)
 }
 
-// setTenantOrganization commits the display name and organisation. An empty
+// setTenantOrganization commits the display name and organization. An empty
 // display name keeps the one there; a currency left empty is the country's.
 func (s *Server) setTenantOrganization(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
@@ -470,7 +470,7 @@ func (s *Server) clearAppGrant(w http.ResponseWriter, r *http.Request, c call) {
 // From git because this is the list the screen edits: read from the cluster
 // it would be the last thing that synced, and an edit made on top of that
 // drops a change committed a moment earlier. What the cluster has, and what
-// the catalogue asks of it, is live state and the usher's to answer.
+// the catalog asks of it, is live state and the usher's to answer.
 func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
 	declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
 	if err != nil {

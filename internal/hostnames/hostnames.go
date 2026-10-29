@@ -13,7 +13,7 @@ SPDX-License-Identifier: MPL-2.0
 //
 // A component is published at <label>.<its tenant's domain>, and the label
 // is the profile's to state (exposure subDomain, or the component's name).
-// A profile from a catalogue is not written by the platform, so the name is
+// A profile from a catalog is not written by the platform, so the name is
 // not trusted from it: two routes that claim one host are resolved by the
 // Gateway by age, silently, and an app at desktop.<tenant> would be the page
 // a tenant's people believe is their desktop. The names the platform depends
@@ -40,11 +40,11 @@ type Reserved struct {
 	// (app-store-pe, edition label pe) is the owner too: the edition is not
 	// part of what the component is.
 	Owner string
-	// FromClusterCatalogue admits the owner from a catalogue of the cluster
+	// FromClusterCatalogue admits the owner from a catalog of the cluster
 	// itself (origin cluster/<source>: the installer's default profiles, or
 	// one the cluster's administrators added), never from a tenant's own
-	// catalogue. For an owner the platform no longer ships: the App Store
-	// app comes from the store's catalogue.
+	// catalog. For an owner the platform no longer ships: the App Store
+	// app comes from the store's catalog.
 	FromClusterCatalogue bool
 	// Why is the one-line reason, as the documents state it.
 	Why string
@@ -56,14 +56,14 @@ type Reserved struct {
 //
 // Three are held by a component and may be taken by that component alone:
 // the desktop and the admin console, which the platform ships, and the App
-// Store app, from the cluster's own catalogue. The others are kept free: nothing answers on them, so
+// Store app, from the cluster's own catalog. The others are kept free: nothing answers on them, so
 // that no app can stand where people expect the platform -- its former
 // address, or a name a sign-in or account page would have.
 //
 // Short on purpose. Names that are an app's business (mail, chat, files,
 // docs, wiki, api, www -- a tenant's website is rightly www.<its domain>)
 // are not here, and neither is operations: the Operations Console is a
-// catalogue component like any other, and reserving its label would refuse
+// catalog component like any other, and reserving its label would refuse
 // it. Matching is exact; there is no look-alike matching (desktop1,
 // desk-top), because no rule for it is well defined.
 var platformLabels = []Reserved{
@@ -155,24 +155,24 @@ func Kept(label string) *Reserved {
 }
 
 // PlatformShipped reports a profile the platform's own chart ships, as
-// opposed to one that reached the cluster from a catalogue.
+// opposed to one that reached the cluster from a catalog.
 //
 // A profile reaches a cluster in two ways: rendered by the platform's chart,
-// or committed to the cluster's catalogue directory by the director, which
-// materialises what a catalogue serves and records on it where it came from
+// or committed to the cluster's catalog directory by the director, which
+// materializes what a catalog serves and records on it where it came from
 // (profilebundle.OriginAnnotation) and the bundle it was (profilebundle.
-// Annotation). A source that states either itself is refused, so a catalogue
+// Annotation). A source that states either itself is refused, so a catalog
 // cannot serve a profile that arrives without them. A profile with neither
-// is one no catalogue brought. (The installer writes such profiles too, into
+// is one no catalog brought. (The installer writes such profiles too, into
 // the same directory, on the authority of whoever installs the cluster.)
 //
 // It is one of two things asked. The other is the name: a reserved label is
 // admitted only for the profile named as its owner, and those names are the
-// ones the director refuses to materialise from any catalogue
+// ones the director refuses to materialize from any catalog
 // (gitops.PlatformProfile), ComponentProfiles being cluster-scoped.
 //
 // What a profile says about itself is not asked: trustTier platform is a
-// field any catalogue can write, and catalogue profiles do.
+// field any catalog can write, and catalog profiles do.
 func PlatformShipped(profile *gentianov1alpha1.ComponentProfile) bool {
 	if profile == nil {
 		return false
@@ -181,9 +181,9 @@ func PlatformShipped(profile *gentianov1alpha1.ComponentProfile) bool {
 		strings.TrimSpace(profile.Annotations[profilebundle.Annotation]) == ""
 }
 
-// fromClusterCatalogue reports a profile materialised from a catalogue of the
+// fromClusterCatalogue reports a profile materialized from a catalog of the
 // cluster itself, as its recorded origin says: cluster/<source>. A tenant's
-// catalogue (tenant/<tenant>/<source>) is not one.
+// catalog (tenant/<tenant>/<source>) is not one.
 func fromClusterCatalogue(profile *gentianov1alpha1.ComponentProfile) bool {
 	origin := strings.TrimSpace(profile.Annotations[profilebundle.OriginAnnotation])
 	return strings.HasPrefix(origin, profilebundle.ClusterOrigin("")) &&
@@ -249,10 +249,10 @@ func (r *Refusal) Message() string {
 //
 // A reserved platform name is admitted for one claimant: the profile the
 // platform ships for it, installed under its own name -- or, for a name whose
-// owner comes from the cluster's own catalogue (FromClusterCatalogue), that
+// owner comes from the cluster's own catalog (FromClusterCatalogue), that
 // profile from there. The desktop may be at
 // desktop and not at admin; and a profile called desktop that came from a
-// catalogue is not the desktop.
+// catalog is not the desktop.
 func Check(component string, profile *gentianov1alpha1.ComponentProfile, zone Zone) *Refusal {
 	if profile == nil {
 		return nil

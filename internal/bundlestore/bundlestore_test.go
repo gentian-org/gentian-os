@@ -56,7 +56,7 @@ func TestOpenManifestReadsOldFormatsAndRefusesNewerOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Format 1, as it was written: apps with kinds, and no artefact named.
+	// Format 1, as it was written: apps with kinds, and no artifact named.
 	v1 := []byte(`{"schemaVersion":1,"tenant":"old","export":"nightly","createdAt":"2026-01-01T00:00:00Z",
 		"apps":[{"name":"wiki","chartVersion":"2.0.0","stores":[{"kind":"postgres","name":"wiki","path":""}]},
 		        {"name":"gentian-tenant","stores":[{"kind":"identity","name":"gentian-tenant","path":""}]}],
@@ -119,7 +119,7 @@ func TestAKeyIsAPassphraseOrAnIdentity(t *testing.T) {
 func TestOnlyAnUploadedBundleIsRemoved(t *testing.T) {
 	upload := gentianov1alpha1.BundleRef{Bucket: ImportBucket, Prefix: "20261007-101500-1a2b3c4d"}
 	if !IsImported(&upload) {
-		t.Error("an upload is not recognised")
+		t.Error("an upload is not recognized")
 	}
 	for _, ref := range []gentianov1alpha1.BundleRef{
 		{Bucket: "demo-gentian-backup", Prefix: "nightly"},

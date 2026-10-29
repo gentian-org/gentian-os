@@ -30,7 +30,7 @@ type AddonPin struct {
 	Name string `json:"name"`
 	// Digest is the build the addon was installed at.
 	Digest string `json:"digest"`
-	// Catalogue is the catalogue that build was fetched from: with the name,
+	// Catalogue is the catalog that build was fetched from: with the name,
 	// its coordinate.
 	Catalogue string `json:"catalogue,omitempty"`
 }
@@ -62,7 +62,7 @@ func (g *GitOps) SetAddons(ctx context.Context, tenant, profile string, addons [
 //
 // pins are the builds this call states, each for an addon in the list, and
 // each vouched for by the caller: it fetched the addon's bundle from that
-// catalogue's source and saw it hash to the digest. They are written beside
+// catalog's source and saw it hash to the digest. They are written beside
 // the list, under addonPins, keyed by name -- the list itself stays a list of
 // names, which is what every reader of it walks.
 //
@@ -94,7 +94,7 @@ func (g *GitOps) SetAddonsPinned(
 	stated := map[string]AddonPin{}
 	said := make([]string, 0, len(pins))
 	for _, pin := range pins {
-		// A pinned addon is a profile this director materialised, so its
+		// A pinned addon is a profile this director materialized, so its
 		// name is a profile's and not merely something safe to splice.
 		if !ValidName(pin.Name) || !listed[pin.Name] {
 			return Result{}, fmt.Errorf("%w: pinned addon %q", ErrInvalidName, pin.Name)
@@ -103,7 +103,7 @@ func (g *GitOps) SetAddonsPinned(
 			return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, pin.Digest)
 		}
 		if !ValidName(pin.Catalogue) {
-			return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, pin.Catalogue)
+			return Result{}, fmt.Errorf("%w: catalog %q", ErrInvalidName, pin.Catalogue)
 		}
 		if _, twice := stated[pin.Name]; twice {
 			return Result{}, fmt.Errorf("%w: addon %q is pinned twice", ErrInvalidName, pin.Name)

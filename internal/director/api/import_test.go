@@ -322,9 +322,9 @@ func TestAnImportTakesTheBundlesNameAndItsOwnNamesFollowFromIt(t *testing.T) {
 }
 
 // An import commits the definition of an app before the tenant that names
-// it, as an install does: from a catalogue this cluster declares, at the
-// build the bundle records -- whichever of the cluster's catalogues serves
-// those bytes, since the catalogue's name on the cluster the bundle came
+// it, as an install does: from a catalog this cluster declares, at the
+// build the bundle records -- whichever of the cluster's catalogs serves
+// those bytes, since the catalog's name on the cluster the bundle came
 // from says nothing here.
 func TestAnImportMaterialisesTheProfilesTheBundleRecords(t *testing.T) {
 	defer api.SetImportPoll(20 * time.Millisecond)()
@@ -388,7 +388,7 @@ func TestAnImportIsRefusedUpFrontWhenAProfileCannotBeObtained(t *testing.T) {
 		said = string(raw)
 	}
 	for _, want := range []string{
-		"app element at sha256:abababababab", "none of this cluster's catalogues serves that build: main",
+		"app element at sha256:abababababab", "none of this cluster's catalogs serves that build: main",
 		"app crm (the bundle records no build of it", "add-on nextcloud-talk of nextcloud", "Nothing was changed",
 	} {
 		if !strings.Contains(said, want) {

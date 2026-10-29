@@ -125,7 +125,7 @@ const defaultAppComposition = "app-default"
 // condition under which it is known to be the profile's own: the install is
 // pinned to a digest, and the bundle that digest names -- verified against
 // the cluster just before this -- carries it. That bundle can only have come
-// from a catalogue of the whole cluster, and its Composition can only be
+// from a catalog of the whole cluster, and its Composition can only be
 // app-<profile> (profilebundle.Check). spec.package.composition alone selects
 // nothing: a name in a profile is not a Composition anybody vouched for, and
 // a profile could otherwise have itself rendered by another app's.

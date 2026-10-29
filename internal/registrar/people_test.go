@@ -36,7 +36,7 @@ type fakeIdentity struct {
 	shownOnly bool
 	// groups is what each realm has.
 	groups map[string][]identity.Group
-	// requestIDs is what travelled with each call.
+	// requestIDs is what traveled with each call.
 	requestIDs []string
 	// lastInvite is what the last invitation asked for.
 	lastInvite identity.Invitation
@@ -314,7 +314,7 @@ func TestTheInvitationNamesTheZonesOwnClient(t *testing.T) {
 		t.Fatalf("client = %q, want gentian-edge-demo", f.lastInvite.ClientID)
 	}
 	// A realm whose client states no root gets no redirect, which is the old
-	// behaviour rather than a failure: sending one Keycloak refuses would make
+	// behavior rather than a failure: sending one Keycloak refuses would make
 	// every invitation fail.
 	if f.lastInvite.RedirectURI != "" {
 		t.Fatalf("redirect = %q, want none when the client states no root", f.lastInvite.RedirectURI)

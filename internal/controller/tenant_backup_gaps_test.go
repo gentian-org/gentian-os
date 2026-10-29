@@ -640,7 +640,7 @@ func TestAnImportBringsRetainedDataWithoutInstallingTheApp(t *testing.T) {
 	if pvc.Annotations["meta.helm.sh/release-name"] != "files-release" || pvc.Annotations["meta.helm.sh/release-namespace"] != "tenant-demo" {
 		t.Errorf("the claim does not say whose it is here: %v", pvc.Annotations)
 	}
-	// Each artefact was loaded by the unit an installed app's is, from the
+	// Each artifact was loaded by the unit an installed app's is, from the
 	// bundle's name for it into this tenant's.
 	var restored []string
 	for name, job := range jobs {
@@ -877,7 +877,7 @@ func TestATenantsMailboxesAreCapturedRestoredAndDestroyed(t *testing.T) {
 		t.Errorf("the unit is not beside the mail server's volume: %v %v", pod.NodeSelector, pod.Volumes[0])
 	}
 	if !strings.Contains(containerArgs(mail.Job), `backup "maildir:`) {
-		t.Error("the unit does not copy by the mail server's own synchronisation")
+		t.Error("the unit does not copy by the mail server's own synchronization")
 	}
 	if !slices.Contains(unitNamespaces(units), mailNamespace) || !slices.Contains(runNamespaces("tenant-demo"), mailNamespace) {
 		t.Error("the run's credentials are not staged, or not removed, beside the mail server")
@@ -1172,7 +1172,7 @@ func TestAnExportCarriesTheRightsThatFollowFromNothingElse(t *testing.T) {
 		t.Errorf("withdrawn = %+v", rights.Withdrawn)
 	}
 
-	// They travel in the manifest, which is encrypted like every artefact.
+	// They travel in the manifest, which is encrypted like every artifact.
 	unit, err := w.er.manifestUnit(w.export, w.tenant, gapsEncryption, rights)
 	if err != nil {
 		t.Fatal(err)
@@ -1567,7 +1567,7 @@ func TestAFormat2BundleStillRestores(t *testing.T) {
 
 // --- the inventory, held to the code -----------------------------------------
 
-// Every kind of artefact a bundle holds for a tenant is captured by an
+// Every kind of artifact a bundle holds for a tenant is captured by an
 // export, planned and put back by a restore, and -- where the inventory
 // says a deletion destroys what it carries -- destroyed by a deletion. A
 // kind added to the bundle's list and to one of these only fails here: this
@@ -1671,7 +1671,7 @@ func TestEveryTenantArtefactIsCapturedPlannedRestoredAndDestroyed(t *testing.T) 
 			t.Errorf("%s (%s): a deletion destroys it, and the inventory says it stays", kind, rule.What)
 		}
 	}
-	// And the same for an app's: every kind of artefact a bundle holds for
+	// And the same for an app's: every kind of artifact a bundle holds for
 	// an app is one a restore of an installed app and of a retained one
 	// both know.
 	for _, kind := range bundle.AppArtefacts {

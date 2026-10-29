@@ -319,7 +319,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	if len(missing) > 0 {
 		s.fail(w, r, http.StatusUnprocessableEntity, "this cluster cannot obtain the definition of every app the bundle's tenant has: "+
-			strings.Join(missing, "; ")+". Nothing was changed. Add a catalogue that serves them (kubectl gentian catalogues add), "+
+			strings.Join(missing, "; ")+". Nothing was changed. Add a catalog that serves them (kubectl gentian catalogues add), "+
 			"or install the apps' definitions here, and import again")
 		return
 	}
@@ -675,7 +675,7 @@ type wantedProfile struct {
 // never installed those apps the tenant stayed Degraded on a profile that was
 // not there, and the import failed two hours later. So, for each:
 //
-//   - A build the bundle records (a digest) is fetched from a catalogue this
+//   - A build the bundle records (a digest) is fetched from a catalog this
 //     cluster declares -- the one of the name the bundle records first, then
 //     every other -- and committed. The bytes have to hash to the digest,
 //     whichever catalogue serves them, so it does not matter which does. A
@@ -774,10 +774,10 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 			continue
 		}
 		if s.cfg.Catalogue == nil || len(sources) == 0 {
-			missing = append(missing, fmt.Sprintf("%s at %s (this cluster has no catalogue to fetch it from)", w.what, profilebundle.Short(digest)))
+			missing = append(missing, fmt.Sprintf("%s at %s (this cluster has no catalog to fetch it from)", w.what, profilebundle.Short(digest)))
 			continue
 		}
-		// The catalogue the bundle names first, when this cluster has one of
+		// The catalog the bundle names first, when this cluster has one of
 		// that name.
 		ordered := make([]visibleSource, 0, len(sources))
 		for _, src := range sources {
@@ -794,7 +794,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 		for _, src := range ordered {
 			profile, err := s.cfg.Catalogue.Fetch(ctx, src.Source, w.name, digest)
 			if err != nil {
-				s.cfg.Log.InfoContext(ctx, "a catalogue does not serve a build an import needs",
+				s.cfg.Log.InfoContext(ctx, "a catalog does not serve a build an import needs",
 					"request_id", reqID(ctx), "catalogue", src.Name, "profile", w.name, "digest", digest, "error", err.Error())
 				continue
 			}
@@ -802,7 +802,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 			break
 		}
 		if got == nil {
-			missing = append(missing, fmt.Sprintf("%s at %s (none of this cluster's catalogues serves that build: %s)",
+			missing = append(missing, fmt.Sprintf("%s at %s (none of this cluster's catalogs serves that build: %s)",
 				w.what, profilebundle.Short(digest), strings.Join(sourceNames, ", ")))
 			continue
 		}
@@ -827,7 +827,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 			return nil, err
 		}
 		if res.Changed {
-			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry for an import",
+			s.cfg.Log.InfoContext(ctx, "materialized a catalog entry for an import",
 				"request_id", reqID(ctx), "profile", f.profile.Name, "origin", f.source.origin(tenant), "commit", res.Commit)
 		}
 	}

@@ -84,7 +84,7 @@ const (
 //
 // There used to be a third value, "argocd", from when the operator created a
 // per-app Argo CD Application itself. That path is gone — reconcileTenantApps
-// creates no Applications — and no profile in the catalogue declared it. What
+// creates no Applications — and no profile in the catalog declared it. What
 // kept it alive was one branch treating any non-crossplane value as "the
 // operator owns the OIDC client", and a dozen test fixtures using it as an
 // arbitrary value, which meant the suite exercised a configuration no real
@@ -97,7 +97,7 @@ const (
 	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
 	// App Composition that emits an ExternalSecret and a provider-helm Release.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
-	// DeploymentMethodAPI marks an ApiProfile: a catalogue entry that runs no
+	// DeploymentMethodAPI marks an ApiProfile: a catalog entry that runs no
 	// workload pods. The orchestrator provisions no Helm release or App claim;
 	// runtime traffic is served by an external service (see spec.apiIntegration).
 	DeploymentMethodAPI DeploymentMethod = "api"

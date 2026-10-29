@@ -1,10 +1,10 @@
-# App Catalogue, Profiles and Integrations
+# App Catalog, Profiles and Integrations
 
 **Companion to:** [architecture.md](../architecture.md), [custom-catalogues.md](../custom-catalogues.md), [store-contract.md](store-contract.md), [app-customization.md](../app-customization.md)
 
 ---
 
-## 1. The Catalogue Model
+## 1. The Catalog Model
 
 Four kinds matter for an app. Two are authored (`ComponentProfile`, `Tenant`);
 two are made by the operator (`Component`, `IntegrationBinding`).
@@ -31,28 +31,28 @@ flowchart TD
     Component --> Routes
 ```
 
-- A **catalogue** is an https address that serves static files: an `index.yaml`
+- A **catalog** is an https address that serves static files: an `index.yaml`
   and one profile bundle per app. Nothing is copied from it into a cluster
   ahead of an install. One whose profiles must not be public is an OCI
   artifact holding the same files, read with the credential of a repository
   its owner declared; never a directory of the deployments repository, which
-  holds the cluster's state only. Format, the three ways a catalogue is added to a cluster
+  holds the cluster's state only. Format, the three ways a catalog is added to a cluster
   and the commands are in [custom-catalogues.md](../custom-catalogues.md).
 - An **install** names an entry and the digest of its bundle. The director
   fetches that one file, refuses it unless the bytes hash to the digest and
   pass the bundle checks, and commits it under
   `clusters/<cluster>/catalogue/` together with the app's entry in
   `Tenant.spec.apps`. Installs come from the App Store app or from
-  `kubectl gentian apps install`; no screen of the cluster lists a catalogue
+  `kubectl gentian apps install`; no screen of the cluster lists a catalog
   ([store-contract.md](store-contract.md) §3, §9).
 - The operator makes one **`Component`** per entry of `spec.apps`, in the
   tenant's namespace. The Component is what the release, the routes, the tile,
   the approved privileges and the published addresses hang off.
 
 Kernel and system services (Keycloak, OpenFGA, PostgreSQL, the gateway, …)
-are deployed by Argo CD from `kernel/`, not from a catalogue. The desktop, the
+are deployed by Argo CD from `kernel/`, not from a catalog. The desktop, the
 administration console and the concierge are components too, from profiles
-the operator chart ships; the App Store app is one from the store's catalogue,
+the operator chart ships; the App Store app is one from the store's catalog,
 placed by the installer as one of the store's extra services
 ([store-contract.md §6](store-contract.md)).
 
@@ -63,22 +63,22 @@ placed by the installer as one of the store's extra services
 | Actor | Writes | Effect |
 |---|---|---|
 | **Platform team** | `gentian-os`: Compositions, XRDs, admission policy, the profiles the chart ships | Defines the install pipeline |
-| **Catalogue publisher** | The files a catalogue serves | Decides what a bundle says; cannot change which bytes an install pinned |
-| **Cluster administrator** | The Cluster claim: catalogues for every tenant or for one, delegation to a tenant (`can_configure`) | Decides which catalogues exist on the cluster |
-| **Tenant administrator** | `Tenant.spec.apps`, through the director (`can_install_app`); the tenant's own catalogues where delegated | Chooses profiles and builds; cannot edit a `ComponentProfile` |
+| **Catalog publisher** | The files a catalog serves | Decides what a bundle says; cannot change which bytes an install pinned |
+| **Cluster administrator** | The Cluster claim: catalogs for every tenant or for one, delegation to a tenant (`can_configure`) | Decides which catalogs exist on the cluster |
+| **Tenant administrator** | `Tenant.spec.apps`, through the director (`can_install_app`); the tenant's own catalogs where delegated | Chooses profiles and builds; cannot edit a `ComponentProfile` |
 | **Member** | Nothing | Uses installed apps |
 
-**A catalogue is not trusted.** What protects a cluster is the digest and the
+**A catalog is not trusted.** What protects a cluster is the digest and the
 checks on a bundle, not who serves it ([custom-catalogues.md](../custom-catalogues.md) §7):
 
 - The digest covers the whole bundle. The director checks it at fetch; the
   operator checks again at rollout, for a Component pinned to a digest, that
   the profile and its companions on the cluster are what the bundle says.
 - A bundle may hold a short list of kinds beside its profile (a Composition,
-  an `OIDCPackCatalog`, ConfigMaps, `Customization` records). Only a catalogue
+  an `OIDCPackCatalog`, ConfigMaps, `Customization` records). Only a catalog
   of the whole cluster may bring any of them; a bundle from a tenant's own
-  catalogue is its profile and nothing else.
-- A profile from a tenant's own catalogue is installable only in that tenant,
+  catalog is its profile and nothing else.
+- A profile from a tenant's own catalog is installable only in that tenant,
   and never takes a name another origin holds.
 - The names the platform answers on (`desktop`, `admin`, `store`, …) are
   refused to every profile but the platform's own ([routing.md §3.1](routing.md)).
@@ -87,15 +87,15 @@ checks on a bundle, not who serves it ([custom-catalogues.md](../custom-catalogu
 
 | Scenario | Impact | What limits it |
 |---|---|---|
-| A catalogue serves a harmful chart or image | Runs in the tenants that install it | Tenant namespace isolation, pod security and network policy ([security.md](security.md)). The digest pins the profile, not the chart or images it names |
-| A cluster-wide catalogue serves a harmful Composition | A Composition is trusted as the platform's own | Only the cluster's administrator adds such a catalogue; adding it is that decision |
+| A catalog serves a harmful chart or image | Runs in the tenants that install it | Tenant namespace isolation, pod security and network policy ([security.md](security.md)). The digest pins the profile, not the chart or images it names |
+| A cluster-wide catalog serves a harmful Composition | A Composition is trusted as the platform's own | Only the cluster's administrator adds such a catalog; adding it is that decision |
 | A profile asks for more than it needs | Larger blast radius | Everything permissive in a profile is a request: privileges, public addresses and `clientAuthorization: app` take effect only once a named person approved them on the tenant |
 | A profile takes another's name or host | A page people mistake for the platform's | Origin rules and reserved host labels, above |
 | Secrets in Helm values | Credential leak | Secrets reach a release through an ExternalSecret, not through `Release.spec.values` |
 
 ---
 
-## 3. ComponentProfile — the Catalogue Entry
+## 3. ComponentProfile — the Catalog Entry
 
 Says what a component **is**: how it is deployed, what it needs from the
 platform, what it offers other apps, and what it exposes.
@@ -181,7 +181,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 | **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `secrets`, a gateway entry in `expose` with a tile | At install |
 | **Needs an approval on the tenant** | `requires.privileges` (pod-security waivers, egress, cluster roles); an `expose` entry for the internet; `clientAuthorization: app` | Only once approved; until then the Component waits or the entry is an ordinary one ([security.md §2.14](security.md)) |
 | **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching` | Refused by the schema otherwise |
-| **Needs a pinned install from a cluster-wide catalogue** | `package.composition` (the bundle's own Composition), `identity.sidecar` | Otherwise `app-default` renders the app, or the Component is held |
+| **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition), `identity.sidecar` | Otherwise `app-default` renders the app, or the Component is held |
 
 ---
 
@@ -189,7 +189,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 
 `spec.trustTier` is required and states the review level of an entry:
 `platform`, `certified` or `experimental`. The schema uses it for the rules in
-§3.1. Stating `platform` in a catalogue does not make a profile the
+§3.1. Stating `platform` in a catalog does not make a profile the
 platform's: the reserved host labels are admitted only for the profiles the
 chart ships.
 
@@ -207,7 +207,7 @@ than its chart has two ways:
   own requirements.
 - **Its own Composition**, brought by its bundle and named `app-<profile>`
   (`package.composition`). Used only for an install pinned to that bundle's
-  digest from a catalogue of the whole cluster.
+  digest from a catalog of the whole cluster.
 
 The platform's sign-in sidecar is neither: a profile declares
 `requires.services.identity.sidecar` and the platform runs it
@@ -226,10 +226,10 @@ The platform's sign-in sidecar is neither: a profile declares
    pod-security waiver.
 4. **Runtime policy**: Kyverno, pod security and network policy in the tenant's
    namespaces.
-5. **Git**: every install, approval and catalogue is a commit by the director,
+5. **Git**: every install, approval and catalog is a commit by the director,
    authored as the person.
 
-CI in a catalogue's own repository (rendering against `app-default`, schema
+CI in a catalog's own repository (rendering against `app-default`, schema
 validation) is the publisher's.
 
 ---
@@ -265,7 +265,7 @@ spec:
         replicas: 2
 ```
 
-The manifest is in the deployments repository. Its `apps`, catalogues,
+The manifest is in the deployments repository. Its `apps`, catalogs,
 approvals and policies are written by the director; the full list of fields is
 `api/v1alpha1/tenant_types.go`. A tenant's own domain is not a field of the
 spec: it is bound by a `TenantDomain` ([routing.md](routing.md)).
@@ -348,16 +348,16 @@ kept (`Retain`) or dropped (`Delete`).
 
 ---
 
-## 11. Catalogue Repository Layout
+## 11. Catalog Repository Layout
 
-A catalogue's source can be laid out in any way; what it must serve is:
+A catalog's source can be laid out in any way; what it must serve is:
 
 ```
 index.yaml               what is in the catalogue: name, version, edition, digest
 profiles/<name>.yaml     one bundle per app: its ComponentProfile first, then what travels with it
 ```
 
-How `gentian-apps` produces the default catalogue from its `profiles/`
+How `gentian-apps` produces the default catalog from its `profiles/`
 directory is [custom-catalogues.md §3](../custom-catalogues.md).
 
 For version, edition and tiles, see [app-profiles.md](app-profiles.md).

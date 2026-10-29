@@ -93,7 +93,7 @@ func updateEntryOf(t *testing.T, out map[string]any, tenant, profile string) map
 	return nil
 }
 
-// An app pinned to a build its catalogue has moved past is reported as
+// An app pinned to a build its catalog has moved past is reported as
 // outdated, under the mode the cluster gives it. Under latest, the default,
 // a tenant's administrator cannot move it; the cluster's can, and the
 // report then says it is current.
@@ -150,7 +150,7 @@ func TestOutdatedAppsAreReportedAndMovedUnderTheirMode(t *testing.T) {
 	}
 }
 
-// An app the catalogue lists for the store alone -- an ee entry, acquired
+// An app the catalog lists for the store alone -- an ee entry, acquired
 // and installed through the App Store -- moves like any other once it is
 // installed: the report names its newest build and move-outdated moves it.
 // The acquisition is per app, not per build. For a tenant that does not have
@@ -165,7 +165,7 @@ func TestAnInstalledStoreOnlyAppMovesLikeAnyOther(t *testing.T) {
 	h := startCatalogues(t, src, withOperator(op))
 	alice := h.token(t, "gentian", "alice")
 	// The store installs by coordinate and digest, through the same route.
-	// Nothing reads the index until the catalogue has moved on: it is cached
+	// Nothing reads the index until the catalog has moved on: it is cached
 	// once read.
 	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/ledger", alice,
 		fmt.Sprintf(`{"coordinate":"gentian/ledger","digest":%q}`, sha(one))); code != http.StatusAccepted {
@@ -357,7 +357,7 @@ func TestAPinnedAddonIsReportedAndMovedUnderItsAppsMode(t *testing.T) {
 		t.Fatalf("set addons = %d %v", code, out)
 	}
 	op.set([]map[string]any{{"tenant": "demo", "profile": "notes", "pinned": sha(notes), "running": sha(notes), "phase": "Done", "ready": true}})
-	// Nothing reads the index until the catalogue has moved on: it is
+	// Nothing reads the index until the catalog has moved on: it is
 	// cached once read.
 	talk2, deck2 := addon("notes-talk", "2.0.0"), addon("notes-deck", "2.0.0")
 	content["gentian"]["notes-talk"], content["gentian"]["notes-deck"] = talk2, deck2

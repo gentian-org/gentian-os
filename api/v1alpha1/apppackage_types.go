@@ -68,7 +68,7 @@ type AppPackageSpec struct {
 	// +listType=set
 	Addons []string `json:"addons"`
 
-	// Author is who supplies this preset — a company, an organisation, or an
+	// Author is who supplies this preset — a company, an organization, or an
 	// individual.
 	// +optional
 	// +kubebuilder:validation:MaxLength=128

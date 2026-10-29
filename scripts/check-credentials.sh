@@ -112,10 +112,10 @@ check_via_vault() {
 # =============================================================================
 # cluster — read what ESO already knows
 # =============================================================================
-# _probe_namespace — where the catalogue's ExternalSecrets live.
+# _probe_namespace — where the catalog's ExternalSecrets live.
 #
 # This was a literal namespace name, from the layout before this one, so every
-# credential reported "no probe ExternalSecret ... is the catalogue applied?"
+# credential reported "no probe ExternalSecret ... is the catalog applied?"
 # on a cluster where most of them were fine -- and a genuinely absent one was
 # invisible in the noise.
 #

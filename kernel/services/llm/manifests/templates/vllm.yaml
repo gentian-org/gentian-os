@@ -105,7 +105,7 @@ spec:
         - name: VLLM_MODEL_ID
           value: "{{ $i.modelId }}"
         # Stay well under 1.0, and under what is left after every other
-        # workload sharing the card, so this pod does not starve its neighbours.
+        # workload sharing the card, so this pod does not starve its neighbors.
         - name: VLLM_GPU_MEMORY_UTILIZATION
           value: "{{ $i.gpuMemoryUtilization | default "0.85" }}"
         - name: VLLM_MAX_MODEL_LEN

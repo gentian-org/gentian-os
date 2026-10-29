@@ -23,7 +23,7 @@ import (
 
 // What the cluster knows for the console's remaining screens: which apps
 // consume which contracts, what the platform permits to escape the default
-// posture, and how much customisation the cluster is carrying.
+// posture, and how much customization the cluster is carrying.
 //
 // Reads, like the backup and resources reads beside them. Each of these is
 // computed from CRs the operator already reconciles, and computing them here
@@ -188,7 +188,7 @@ func (s *Service) Integrations(ctx context.Context, tenantName string) (*Integra
 // ── Platform security ───────────────────────────────────────────────────────
 
 // PlatformSecurityResult is what the cluster permits to escape the default
-// posture, and what the catalogue asks for.
+// posture, and what the catalog asks for.
 type PlatformSecurityResult struct {
 	AllowedMacWaivers []MacWaiverInfo `json:"allowedMacWaivers"`
 	// CatalogueRequests are the waivers profiles ask for, whether or not the
@@ -221,7 +221,7 @@ type MacWaiverAsk struct {
 	Scope  string `json:"scope"`
 }
 
-// PlatformSecurity reports the policy and what the catalogue asks of it.
+// PlatformSecurity reports the policy and what the catalog asks of it.
 func (s *Service) PlatformSecurity(ctx context.Context) (*PlatformSecurityResult, error) {
 	out := &PlatformSecurityResult{AllowedMacWaivers: []MacWaiverInfo{}, CatalogueRequests: []MacWaiverCatalogueInfo{}}
 
@@ -313,7 +313,7 @@ type CustomizationDebt struct {
 	Records              []CustomizationRecord `json:"records"`
 }
 
-// CustomizationDebtReport lists every carried customisation.
+// CustomizationDebtReport lists every carried customization.
 func (s *Service) CustomizationDebtReport(ctx context.Context) (*CustomizationDebt, error) {
 	var list gentianov1alpha1.CustomizationList
 	if err := s.client.List(ctx, &list); err != nil {

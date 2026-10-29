@@ -34,7 +34,7 @@ import (
 // rather than guessing at fields that moved.
 //
 // Version 1 named each app and the kinds of store captured for it, and
-// nothing else: not the database, bucket or claim an artefact was taken
+// nothing else: not the database, bucket or claim an artifact was taken
 // from, nor where in the bundle it is. A restore could therefore only derive
 // both from the tenant it was restoring into, and went by what that tenant
 // had installed rather than by what the bundle held.
@@ -43,7 +43,7 @@ import (
 // captured from, and its path in the bundle; and the build of the app that
 // wrote the data -- its profile, chart version, pinned digest, Helm releases
 // and database engine. It adds fields and renames none, so a version 1
-// manifest still reads: its apps name no artefact, which is how a reader
+// manifest still reads: its apps name no artifact, which is how a reader
 // tells (Manifest.NamesArtefacts), and a restore of one falls back to
 // deriving the names and says so in its result.
 //
@@ -59,7 +59,7 @@ import (
 // of version 2 would take a retained app for an installed one and would say
 // nothing of the mailboxes and the rights it left out.
 //
-// Version 4 adds one kind of artefact to an app's, and renames nothing: the
+// Version 4 adds one kind of artifact to an app's, and renames nothing: the
 // app's own secrets (ArtefactSecrets), the values the platform generated for
 // it and its data is encrypted or signed with. A version 3 bundle holds none
 // and reads as before: a restore of one changes no stored secret, so what an
@@ -67,7 +67,7 @@ import (
 // written with. The version is bumped because a reader of version 3 does not
 // know the kind and would leave the app that has one out.
 //
-// Version 5 adds one kind of artefact to an app's, and renames nothing: the
+// Version 5 adds one kind of artifact to an app's, and renames nothing: the
 // app's authorization store (ArtefactAuthorization), its model and every
 // tuple, written by the operator itself as the secrets are. A version 4
 // bundle holds none and reads as before. The version is bumped because a
@@ -85,7 +85,7 @@ const OldestReadableSchemaVersion = 1
 // out.
 const TenantComponent = "gentian-tenant"
 
-// The kinds of artefact a bundle holds.
+// The kinds of artifact a bundle holds.
 const (
 	// ArtefactPostgres is a custom-format pg_dump of one database.
 	ArtefactPostgres = "postgres"
@@ -116,7 +116,7 @@ const (
 	// ArtefactMailboxes is an archive of the mailboxes of one mail domain.
 	// Inside it, INDEX names the mailboxes one per line, by the part of the
 	// address before the @, and <line number, from 0>/ is each one's mail as
-	// a Maildir++ tree, written by the mail server's own synchronisation
+	// a Maildir++ tree, written by the mail server's own synchronization
 	// (doveadm backup): every folder, every message, with its flags and its
 	// identifiers. Since version 3.
 	ArtefactMailboxes = "mailboxes"
@@ -124,7 +124,7 @@ const (
 	// generated for it because its profile asked for them
 	// (spec.secrets.generated, an extension's appSecrets, and the keys
 	// under spec.secrets.derived). One JSON
-	// document per app (AppSecrets), encrypted like every artefact and by
+	// document per app (AppSecrets), encrypted like every artifact and by
 	// the operator itself, so that the values are in no Job. It holds names
 	// and values and no path: a restore writes a value only under a name
 	// the app's profile declares where it is restored, at that app's own
@@ -142,7 +142,7 @@ const (
 	ArtefactAuthorization = "authorization"
 )
 
-// AppArtefacts are the kinds of artefact an app's data is carried as, for
+// AppArtefacts are the kinds of artifact an app's data is carried as, for
 // an installed app and for one that was uninstalled with its data kept
 // alike.
 var AppArtefacts = []string{ArtefactPostgres, ArtefactPostgresOwned, ArtefactMariaDB, ArtefactMariaDBOwned, ArtefactS3, ArtefactVolume, ArtefactSecrets, ArtefactAuthorization}
@@ -159,7 +159,7 @@ type AppAuthorization struct {
 	Tuples []RightsTuple `json:"tuples"`
 }
 
-// AppSecrets is the content of an app's secrets artefact.
+// AppSecrets is the content of an app's secrets artifact.
 //
 // Names and values, and nothing that says where a value is kept: the place
 // is the restoring platform's to decide, from the tenant restored into and
@@ -177,7 +177,7 @@ type AppSecrets struct {
 	// Derived are the keys the app's profile declares under
 	// spec.secrets.derived, by key: values the platform made for the app
 	// and keeps in the vault like the generated ones, apart from them. A
-	// document written before these travelled has none, and reads as
+	// document written before these traveled has none, and reads as
 	// before.
 	Derived map[string]string `json:"derived,omitempty"`
 }
@@ -198,7 +198,7 @@ func (a *AppSecrets) Empty() bool {
 	return true
 }
 
-// TenantArtefacts are the kinds of artefact that are a tenant's own and no
+// TenantArtefacts are the kinds of artifact that are a tenant's own and no
 // app's. A restore puts the rights back last, after the realm whose groups
 // they name. A kind added here has to be captured, planned,
 // restored and destroyed, or the tests of the inventory fail.
@@ -340,15 +340,15 @@ type ManifestApp struct {
 	Releases []string `json:"releases,omitempty"`
 
 	// Retained says the app was not installed when the bundle was taken: it
-	// had been uninstalled and its data kept. The artefacts are the same as
+	// had been uninstalled and its data kept. The artifacts are the same as
 	// an installed app's. No build is recorded, because none was running;
 	// a restore puts the data back as retained and installs nothing. Since
 	// version 3.
 	Retained bool `json:"retained,omitempty"`
 
 	// Stores lists what was captured. In version 1 each entry is a kind and
-	// the app's name; since version 2 it is one entry per artefact, with the
-	// name of what was captured and the artefact's path.
+	// the app's name; since version 2 it is one entry per artifact, with the
+	// name of what was captured and the artifact's path.
 	Stores []ManifestStore `json:"stores,omitempty"`
 
 	// QuiesceStart and QuiesceEnd bound the window this app's writes were
@@ -363,20 +363,20 @@ type ManifestApp struct {
 
 	// BoundSecretKeys is reserved and never written. Of what the vault
 	// holds, a bundle carries the app's own secrets and nothing else, as an
-	// artefact among the app's stores (ArtefactSecrets): no value is in the
+	// artifact among the app's stores (ArtefactSecrets): no value is in the
 	// manifest.
 	BoundSecretKeys []string `json:"boundSecretKeys,omitempty"`
 }
 
-// NamesArtefacts reports whether the manifest says where each artefact is
+// NamesArtefacts reports whether the manifest says where each artifact is
 // and what it was captured from. A version 1 manifest does not.
 func (m *Manifest) NamesArtefacts() bool {
 	return m != nil && m.SchemaVersion >= 2
 }
 
-// ManifestStore is one captured artefact.
+// ManifestStore is one captured artifact.
 type ManifestStore struct {
-	// Kind is one of the Artefact kinds: postgres, postgresOwned, mariadb,
+	// Kind is one of the Artifact kinds: postgres, postgresOwned, mariadb,
 	// mariadbOwned, s3, volume, secrets, identity or mailboxes.
 	Kind string `json:"kind"`
 	// Name is the database, bucket or claim captured; for secrets, the app;
@@ -384,14 +384,14 @@ type ManifestStore struct {
 	// the role whose databases the archive holds; for mariadbOwned, the
 	// provisioned database whose name the archive's databases begin with.
 	Name string `json:"name"`
-	// Path is the artefact's location within the bundle prefix, without the
+	// Path is the artifact's location within the bundle prefix, without the
 	// suffix encryption adds.
 	Path string `json:"path"`
 	// Release is the Helm release a volume claim recorded when it was
 	// captured. Volumes only, and only when the claim recorded one. Since
 	// version 2.
 	Release string `json:"release,omitempty"`
-	// Claim is the volume claim an artefact was captured from, as far as
+	// Claim is the volume claim an artifact was captured from, as far as
 	// making it again needs: volumes of a retained app only. Since version
 	// 3.
 	Claim *ManifestClaim `json:"claim,omitempty"`

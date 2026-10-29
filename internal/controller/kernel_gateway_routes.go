@@ -840,7 +840,7 @@ func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
 }
 
 // hostRedirectRule sends every request on a host to another host, keeping
-// path and query: a redirect that replaced them dropped whatever travelled on
+// path and query: a redirect that replaced them dropped whatever traveled on
 // the request, which is why the portal used to be served on these names
 // rather than redirected. Nothing travels on them now -- the session is in
 // cookies on the zone's domain -- so an alias by redirect loses nothing.

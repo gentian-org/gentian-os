@@ -60,7 +60,7 @@ type Sampler struct {
 	Actual ActualSource
 }
 
-// Start runs until ctx is cancelled. It implements manager.Runnable.
+// Start runs until ctx is canceled. It implements manager.Runnable.
 func (s *Sampler) Start(ctx context.Context) error {
 	// Sample once at start-up rather than waiting out the first interval: an
 	// operator restart is otherwise a hole in the series as long as the

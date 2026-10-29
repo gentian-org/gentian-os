@@ -68,7 +68,7 @@ spec:
         - keyless:
             # The identity GitHub gives a workflow run: the issuer is GitHub's
             # OIDC provider, the subject names the repository and workflow.
-            # Any workflow of the organisation may sign; a fork's cannot.
+            # Any workflow of the organization may sign; a fork's cannot.
             issuer: https://token.actions.githubusercontent.com
             subjectRegExp: ^https://github\.com/gentian-org/[^/]+/\.github/workflows/.+@refs/.+$
             rekor:

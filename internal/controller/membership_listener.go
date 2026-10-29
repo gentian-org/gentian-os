@@ -106,7 +106,7 @@ func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logge
 	}, nil
 }
 
-// Start runs the server until the manager's context is cancelled.
+// Start runs the server until the manager's context is canceled.
 func (l *MembershipListener) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	// The path Keycloak's listener is configured with. Kept as it was in the

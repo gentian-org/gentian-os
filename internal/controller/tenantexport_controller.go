@@ -86,7 +86,7 @@ type TenantExportReconciler struct {
 	Scheme *runtime.Scheme
 
 	// Reconciler supplies the tenant-side helpers (Job waiting, requeue
-	// backoff, catalogue lookups) that already exist on the tenant loop.
+	// backoff, catalog lookups) that already exist on the tenant loop.
 	Reconciler *TenantReconciler
 
 	// VolumeReader lists a tenant's PVCs, uncached, and deliberately so — see
@@ -98,7 +98,7 @@ type TenantExportReconciler struct {
 
 	// LogTailer reads a failed capture container's output, so a failure can say
 	// what went wrong rather than only that it did. Optional: nil keeps the old
-	// behaviour, which the unit suites rely on and which is merely less useful,
+	// behavior, which the unit suites rely on and which is merely less useful,
 	// not incorrect.
 	LogTailer PodLogTailer
 
@@ -238,7 +238,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if export.Status.Bundle == nil {
 		// Resolved once, when the bundle is assigned, and recorded on it. An
 		// export that resolved its destination afresh on every reconcile could
-		// have half its artefacts in one bucket and half in another if the
+		// have half its artifacts in one bucket and half in another if the
 		// policy changed while it ran.
 		eff, effErr := r.effectivePolicy(ctx, tenant)
 		if effErr != nil {
@@ -418,7 +418,7 @@ func (r *TenantExportReconciler) captureApp(
 	entry.ChartVersion = profileChartVersion(profile)
 	entry.Digest = tenantAppDigest(tenant, appName)
 	entry.Stores = unitKinds(units)
-	// What was captured, artefact by artefact: this is what the manifest
+	// What was captured, artifact by artefact: this is what the manifest
 	// says the bundle holds, and what a restore goes by.
 	entry.Artefacts = unitArtefacts(units)
 	// And the secrets the data was written with, which the operator puts
@@ -450,7 +450,7 @@ func (r *TenantExportReconciler) captureApp(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-// captureUnit is one artefact to produce.
+// captureUnit is one artifact to produce.
 type captureUnit struct {
 	Kind string
 	Name string

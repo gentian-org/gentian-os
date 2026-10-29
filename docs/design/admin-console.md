@@ -52,7 +52,7 @@ service's answer from OpenFGA.
 | **Role holders** (platform administrator) | Who holds `cluster#security_officer` or `cluster#auditor` by name: a picker over every tenant's administrators and a role, the holders as the Cluster claim declares them (§7) | registrar (the picker), director |
 | **Approvals** (security officer; the console of the officer's own tenant) | Every tenant's app requests of a privilege that weakens what protects the node — pod-security waivers, cluster roles — with the profile's reason and who asked for it; Approve with a reason. The list is the usher's (`GET /v1/clusters/{c}/approvals`, `can_approve` or `can_configure`); the approval is the director's privilege route, decided by the kind ([store-contract.md](store-contract.md) §8) | usher (read), director |
 | **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, the two serving switches, and the switch for the gateway's own console. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
-| **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
+| **Catalogs** | Hidden. The cluster renders no catalog of its own; the screen is kept and not linked |
 
 **Nothing is installed from the console.** Apps come from the App Store app, a
 component of its own beside the console ([store-contract.md](store-contract.md)
@@ -238,7 +238,7 @@ console is the shape.
 | Capability | Tenant admin | Platform admin |
 |---|---|---|
 | **Current ceiling** | Own tenant: enforced limits paired with committed use, and live consumption where a metrics source exists | Any tenant, plus an all-tenants headroom table |
-| **Plan catalogue** | Plans they may select, each blocked one carrying its reason | The whole catalogue, including plans withheld from self-service |
+| **Plan catalog** | Plans they may select, each blocked one carrying its reason | The whole catalog, including plans withheld from self-service |
 | **Change plan** | Self-service, held to the tenant's entitlement ceiling | Any plan; may **force** a shrink below current use |
 | **Usage history** | Own tenant, per resource, over 7d–12m | Any tenant |
 | **Billed intervals** | The stretches the window resolves to, with the SKU in effect over each | Same |
@@ -294,7 +294,7 @@ on the desktop is [iam.md §1.6](iam.md).
 
 **Accounts inside apps.** The platform does not create or remove a person's
 account in an app; an app makes one at the person's first sign-in. The one
-thing synchronised is who administers an app: members of
+thing synchronized is who administers an app: members of
 `gentian:tenant:<t>:app-admins` are given the administrator role an app's
 profile declares (`spec.hooks.provisioning`, [iam.md §1.8](iam.md)).
 
@@ -385,7 +385,7 @@ These stay outside the console:
 - Installing apps (the App Store app, or the command line)
 - Scheduled backups, the backup policy and its destinations (the Operations Console)
 - Editing NetworkPolicy, Kyverno policy or other MAC rules
-- Authoring a `ComponentProfile` or a catalogue
+- Authoring a `ComponentProfile` or a catalog
 
 ---
 

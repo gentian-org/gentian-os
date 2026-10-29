@@ -31,11 +31,11 @@ bind work in *this* repo:
 
 * **Nothing app-specific lands here.** `ComponentProfile.spec.customization` describes an app's ladder
   in app-neutral terms; `internal/customization/` implements rung ordering and policy without
-  knowing any profile name. If a customization needs a new operator behaviour, extend the
+  knowing any profile name. If a customization needs a new operator behavior, extend the
   generic contract — never add `case "myapp"` to a reconciler.
 * **Platform scope (S2) is the narrowest-blast-radius exception, not the default.** A
   customization may enter `gentian-os` only when the mechanism is generic across apps. App-specific
-  behaviour belongs in `gentian-apps` at whatever rung fits, regardless of how convenient the
+  behavior belongs in `gentian-apps` at whatever rung fits, regardless of how convenient the
   operator would be.
 
 The `Customization` CRD records deviations at L2+; the operator computes debt signals on its

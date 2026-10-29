@@ -22,7 +22,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
-// EncryptedSuffix is appended to every artefact in a bundle. Bundles are always
+// EncryptedSuffix is appended to every artifact in a bundle. Bundles are always
 // encrypted, so the suffix is not a variant — it is what the files are called.
 const EncryptedSuffix = ".age"
 
@@ -91,9 +91,9 @@ func (e Encryption) PlatformReadable(clusterRecipients []string) bool {
 	return false
 }
 
-// encryptContainer builds the step that encrypts one staged artefact in place.
+// encryptContainer builds the step that encrypts one staged artifact in place.
 //
-// It runs between producing the artefact and uploading it, and deletes the
+// It runs between producing the artifact and uploading it, and deletes the
 // plaintext before exiting, so an upload can only ever find the encrypted file.
 // Ordering it after the upload, or leaving the plaintext for the uploader to
 // skip, would both mean a crash at the wrong moment leaves a tenant's data

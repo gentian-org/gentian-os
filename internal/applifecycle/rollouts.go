@@ -23,7 +23,7 @@ import (
 // Rollout is one installed app as the cluster runs it: the build it is
 // pinned to, the build it runs, and how the last move between the two went
 // (component_move.go in the operator). What the director's report of
-// outdated apps reads, beside what git says and what the catalogue offers.
+// outdated apps reads, beside what git says and what the catalog offers.
 type Rollout struct {
 	Tenant  string `json:"tenant"`
 	Profile string `json:"profile"`

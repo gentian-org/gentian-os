@@ -43,7 +43,7 @@ func (s *Server) removeClusterRepository(w http.ResponseWriter, r *http.Request,
 
 // declareRepository commits one. tenant is the owner the route named; empty
 // is the cluster. It is never taken from the body: whose repository this is
-// follows from the object the caller was authorised on.
+// follows from the object the caller was authorized on.
 func (s *Server) declareRepository(w http.ResponseWriter, r *http.Request, c call, tenant string) {
 	name := r.PathValue("name")
 	var body gitops.RepositoryDeclaration

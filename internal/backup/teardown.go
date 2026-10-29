@@ -81,7 +81,7 @@ const (
 	// KindFiles is the volume claims the app's chart creates.
 	KindFiles Kind = "files"
 	// KindRecords is what provisioning left in the cluster about the app:
-	// its Jobs, their pods and the Secrets labelled with it.
+	// its Jobs, their pods and the Secrets labeled with it.
 	KindRecords Kind = "provisioningRecords"
 )
 
@@ -116,7 +116,7 @@ type KindRule struct {
 	// ExportNote says how it is carried, or why it is not.
 	ExportNote string
 	// Artefacts are the kinds of bundle artefact the kind is carried as
-	// (bundle.Artefact...). Empty for a kind no artefact of its own carries:
+	// (bundle.Artefact...). Empty for a kind no artifact of its own carries:
 	// one an export omits, and one carried inside the realm's.
 	Artefacts []string
 	// Uninstall is what removing the app from the tenant does.
@@ -148,7 +148,7 @@ type KindRule struct {
 // fails the package's tests, which is the point of having one table.
 var AppKinds = []KindRule{
 	{
-		Kind: KindRecords, MadeBy: "every provisioning Job, and the operator's labelled Secrets, from the first step on",
+		Kind: KindRecords, MadeBy: "every provisioning Job, and the operator's labeled Secrets, from the first step on",
 		Export: Omits, ExportNote: "not data; re-made by provisioning",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's and the app's labels on each object",
@@ -292,7 +292,7 @@ var TenantOwned = []TenantRule{
 	},
 	{
 		What: "the tenant's vault subtree", MadeBy: "the tenant reconciler's seeder, and people",
-		Export: "not carried as a whole: of it a bundle holds each app's own secrets, as an artefact of the app, and no other stored credential",
+		Export: "not carried as a whole: of it a bundle holds each app's own secrets, as an artifact of the app, and no other stored credential",
 		Retain: "kept",
 		Delete: "deleted; an operator with no vault that was not told to run without one fails here", Destroyed: true,
 	},
@@ -368,7 +368,7 @@ var TenantOwned = []TenantRule{
 	{
 		What: "the tenant's mailboxes: the mail its people received and filed, on the mail server's own volume; and the archived mailboxes of people who were removed from the tenant with their mail kept", MadeBy: "the mail server, as mail arrives; where the cluster runs its own. An archived mailbox by the operator, when a person is removed and whoever removed them chose to archive",
 		Artefact: bundle.ArtefactMailboxes,
-		Export:   "carried, where the cluster runs its own mail server and the mail domain is the tenant's alone: every mailbox of the domain, and every archived mailbox of it as an archived one, copied by the mail server's own synchronisation beside its volume",
+		Export:   "carried, where the cluster runs its own mail server and the mail domain is the tenant's alone: every mailbox of the domain, and every archived mailbox of it as an archived one, copied by the mail server's own synchronization beside its volume",
 		Restore:  "put back on top: a message the bundle holds and the mailbox lacks is added with its flags, a message that arrived since stays; an archived mailbox comes back as an archived one, into no live mailbox",
 		Import:   "the same, into the mailboxes of the tenant's mail domain here, by the part of each address before the @; the archived mailboxes into that domain's archive",
 		Retain:   "kept, the archived ones too; the tenant's addresses stop receiving",
@@ -382,8 +382,8 @@ var TenantOwned = []TenantRule{
 	},
 }
 
-// TenantRuleFor is the rule of what a tenant's own artefact kind is carried
-// for. It panics on a kind no rule carries: an artefact nothing on the list
+// TenantRuleFor is the rule of what a tenant's own artifact kind is carried
+// for. It panics on a kind no rule carries: an artifact nothing on the list
 // accounts for is a programming error.
 func TenantRuleFor(artefact string) TenantRule {
 	for _, rule := range TenantOwned {
@@ -635,7 +635,7 @@ const (
 	// namespace: tls.crt, tls.key and the CA's ca.crt.
 	ObjectStoreClientTLSSecret = "seaweedfs-shell-tls"
 	// ObjectStoreSigningSecret holds the keys the store signs its tokens
-	// with, materialised from the vault in the store's namespace.
+	// with, materialized from the vault in the store's namespace.
 	ObjectStoreSigningSecret = "seaweedfs-jwt"
 
 	objectStoreClientTLSVolume = "object-store-client-tls"

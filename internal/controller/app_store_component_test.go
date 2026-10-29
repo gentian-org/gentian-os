@@ -110,7 +110,7 @@ func appStoreScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-// The profile a catalogue carries is the one the app's README asks for: the API
+// The profile a catalog carries is the one the app's README asks for: the API
 // behind /api, the store's sign-in callback and the two probes, with the
 // zone's token forwarded; everything else to the bundle; one host, store; and
 // a tile for the people who may install apps in the tenant.

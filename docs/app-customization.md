@@ -31,7 +31,7 @@ This document proposes:
 4. **A customization record** — DEP-3-inspired manifest (§5) — so every rung ≥ L2 is tracked,
    owned, dated, and has exit criteria.
 5. **A deterministic decision procedure for agents** (§6).
-6. **Best practices, templated into `gentian-app-template`** (§7) so first-party apps are *born*
+6. **Best practices, templated into `gentian-apps/apps/_template`** (§7) so first-party apps are *born*
    customizable at L1–L3 instead of forcing everyone to L5.
 7. **Governance, CI gates, and a customization-debt report** (§8).
 
@@ -43,14 +43,14 @@ Research that informed the design is in §10; open questions in §11.
 
 | # | Principle | Origin |
 |---|---|---|
-| P1 | **Lowest viable rung, narrowest viable scope.** Two independent minimisations, always both. | SAP Clean Core; ServiceNow OOTB-first |
+| P1 | **Lowest viable rung, narrowest viable scope.** Two independent minimizations, always both. | SAP Clean Core; ServiceNow OOTB-first |
 | P2 | **The app declares its own ladder.** Rung availability is a property of the app, published in its `ComponentProfile`. Generic advice is useless; "Odoo supports L3 via addons, Collabora does not" is actionable. | Eclipse *declared* extension points |
 | P3 | **Upstream first.** Any rung ≥ L4 carries an obligation to attempt the change upstream and to record the outcome. Carrying a downstream delta is a debt with a due date, not a decision. | Fedora "Upstream First"; Debian DEP-3 `Forwarded:` |
 | P4 | **Every customization is a tracked artifact in git.** No rung of this ladder terminates in a live cluster. The existing absolute prohibition on cluster hotfixes is Rung X (§2.8). | gentian-apps `app-profile-guide.md` |
 | P5 | **Descend over time.** Rungs are not permanent homes. Each record names exit criteria and a review date; the platform reports on aging debt. | Debian patch series shrink as patches land upstream |
 | P6 | **Configuration layers, it does not fork.** Drop-in precedence is fixed and documented (image → chart → profile → tenant), like `/usr` → `/run` → `/etc`. | systemd drop-in precedence |
 | P7 | **Extension APIs are versioned contracts.** An app that offers L3 owes plugin authors a stability policy, a deprecation window, and a "proposed API" lane for the unstable parts. | VS Code proposed API; Eclipse API freeze |
-| P8 | **Customization inherits the trust model.** A customization can never raise its target's `trustTier` or bypass Kyverno, MAC waivers, licensing, or tenant isolation. | existing catalogue tiers, MAC waivers |
+| P8 | **Customization inherits the trust model.** A customization can never raise its target's `trustTier` or bypass Kyverno, MAC waivers, licensing, or tenant isolation. | existing catalog tiers, MAC waivers |
 | P9 | **An app declares needs, never endpoints.** A profile says *that* it sends mail, uses a database, needs object storage — never where those are or what credentials reach them. Hosts, ports, users and passwords arrive through `valueMapping`, as references the app does not resolve. | this section |
 
 ---
@@ -167,19 +167,19 @@ and the app Composition composes it beside the app's own: redirect addresses
 `${TENANT_DOMAIN}` filled in, PKCE for a public one, and for a confidential one
 the secret the operator seeds at the extension's own key,
 `apps/<app>-<extension>/oidc`. Its audiences are held as the app's own. A
-client the profile's OIDC pack catalogue holds a pack for is the pack Job's
+client the profile's OIDC pack catalog holds a pack for is the pack Job's
 instead. The extension's release is handed its client through
 `extensions[].valueMapping.oidc`, with the keys `package.valueMapping.oidc`
 offers the app (`issuerKey`, `clientIdKey`, `clientSecretKey`, and the
 `clientSecretOpenbao*` overrides), read from its own key as the app's are
 from the app's.
 
-**Which catalogue.** A client's pack is looked up in one place only: the
-`OIDCPackCatalog` labelled `gentianos.io/profile-name: <profile>`, the one
+**Which catalog.** A client's pack is looked up in one place only: the
+`OIDCPackCatalog` labeled `gentianos.io/profile-name: <profile>`, the one
 the profile's bundle brings; an extension's in its parent's. The app
-Composition and the operator read that one, so a pack any other catalogue
-holds does not make a client the pack Job's. A profile two catalogues are
-labelled for has its clients refused.
+Composition and the operator read that one, so a pack any other catalog
+holds does not make a client the pack Job's. A profile two catalogs are
+labeled for has its clients refused.
 
 **One client for many places.** A client whose sign-ins come from many places
 -- an issuer that every cluster's App Store app signs in at, each with its own
@@ -391,14 +391,14 @@ thing that determines upgrade cost.
 
 ### 2.1 L0 — Configure
 
-Change behaviour using knobs the app already exposes. No new files, no new code.
+Change behavior using knobs the app already exposes. No new files, no new code.
 
 | Scope | Where | Mechanism |
 |---|---|---|
 | Tenant | the tenant's manifest in the deployments repository | `Tenant.spec.apps[].config.extraValues` (deep-merged over profile) |
 | Profile | `gentian-apps/profiles/<n>/profile.yaml` | `spec.package.extraValues`, `spec.expose` (with its tiles), `spec.requires.services` |
 
-The director's install route writes an app's profile, digest, catalogue, add-ons and default
+The director's install route writes an app's profile, digest, catalog, add-ons and default
 grant, and nothing under `config`: a tenant-scoped value is an edit of the tenant's manifest that
 no route of the director makes today.
 
@@ -424,7 +424,7 @@ commit, never drawn by a browser or served. A person sees, first that is set:
 The first two are the desktop's, in its own database. The App Store app stores a tenant's tile by
 calling the desktop's API in the same namespace with the person's token, at the address its
 profile asks for with `valueMapping.platform.desktopUrlKey`. Nothing about them is in Git or in
-the cluster's state: the tile catalogue the operator projects carries the profile's default only.
+the cluster's state: the tile catalog the operator projects carries the profile's default only.
 The platform's glyphs are `internal/tiles/glyphs/*.svg`, rendered into
 `internal/tiles/catalogue.json` and the chart's own tiles by `scripts/tools/render-tiles.py`.
 
@@ -465,7 +465,7 @@ drop-in path is a contract the upstream project maintains and an undeclared one 
 
 L1 is the **highest rung a tenant admin may reach unaided**, and the only rung where self-service
 makes sense: a tenant admin can supply a logo, a locale bundle, or a config fragment without a
-catalogue PR, but cannot introduce code.
+catalog PR, but cannot introduce code.
 
 ```yaml
 # the tenant's manifest — Tenant.spec.apps[]
@@ -482,7 +482,7 @@ catalogue PR, but cannot introduce code.
 **Delivery: a tenant's drop-in has no effect on the app yet.** The operator reconciles
 `Tenant.spec.apps[].config.dropIns` into a ConfigMap `app-dropin-<profile>-<name>` in the tenant
 namespace (`internal/controller/dropin_reconciler.go`) and removes it when the entry goes. That is
-where it ends: the platform generates no mount, and no chart of the catalogue mounts that
+where it ends: the platform generates no mount, and no chart of the catalog mounts that
 ConfigMap, so the content is validated, stored, and read by nothing. For it to take effect a chart
 has to mount the ConfigMap of that name at the declared path, after the profile's own, where
 tenant files win by the `90-`–`99-` prefix ([roadmap.md](roadmap.md) §2.33).
@@ -513,7 +513,7 @@ Build **new code as a separate deployable** that talks to the target app only th
 *published* API. The target app is not modified in any way.
 
 This is the SAP "side-by-side extensibility" rung and the Nextcloud **ExApp** rung, and in Gentian
-it is already fully supported infrastructure: scaffold from `gentian-app-template`, publish a
+it is already fully supported infrastructure: scaffold from `gentian-apps/apps/_template`, publish a
 profile, and wire it to the target with a **contract**.
 
 ```yaml
@@ -615,7 +615,7 @@ compose the client itself.
 **Which handler runs.** A handler is handed the app's signing key and its database: it can become
 anybody in the app. So it runs only where it is known to be the reviewed file:
 
-- from a bundle of a catalogue of the **whole cluster**. A tenant's own catalogue publishes
+- from a bundle of a catalog of the **whole cluster**. A tenant's own catalog publishes
   profiles alone and has no handler to bring; a profile of one that declares a sidecar is held
   (`SignInSidecarRefused`) rather than installed with no way in;
 - for an install **pinned to a digest**, whose bundle brings the handler. The operator compares
@@ -729,7 +729,7 @@ rather than per-tenant addon *binaries*. The framework should make this explicit
 
 > **L3 rule (namespace test).** Per-tenant addons are allowed **only if the app instance runs in
 > that tenant's own namespace** (`tenant-<name>`). If the instance lives in a shared namespace
-> serving more than one tenant, addons are **profile-scoped only** — per-tenant behaviour must come
+> serving more than one tenant, addons are **profile-scoped only** — per-tenant behavior must come
 > from the addon reading tenant context at runtime, never from divergent addon sets.
 
 The namespace, not the profile, is the test: "one instance per tenant" is an intention, but
@@ -761,7 +761,7 @@ those in gentian-os's `crossplane/providers/activation.yaml`. One of another typ
 never appears. `make lint-provider-activation` in gentian-os reads the gentian-apps checkout beside
 it and names the type to add ([install-reference.md §4](install-reference.md)).
 
-**The L4 boundary test:** if you would have to change the file when upstream reorganises its chart
+**The L4 boundary test:** if you would have to change the file when upstream reorganizes its chart
 or its filesystem layout, it is L4. If upstream *promises* the path, it is L1.
 
 **Prefer, in order:** (a) upstream chart + `extraValues`, (b) upstream chart + Kustomize
@@ -770,12 +770,12 @@ copy. (d) is a fork of the packaging and should be recorded as such (see `UPSTRE
 already used for vendored charts).
 
 **Obligations:** `Customization` record; a rendered-manifest golden test (`crossplane render` diff,
-already in the catalogue CI plan); an `UPSTREAM.md` for any vendored chart; upstream-first check
+already in the catalog CI plan); an `UPSTREAM.md` for any vendored chart; upstream-first check
 recorded.
 
 ### 2.6 L5 — Patch
 
-Gentian modifies **upstream source** and rebuilds the artifact. Modelled directly on Debian's
+Gentian modifies **upstream source** and rebuilds the artifact. Modeled directly on Debian's
 `3.0 (quilt)` source format: pristine upstream + an ordered, individually-documented patch series.
 
 ```
@@ -808,7 +808,7 @@ would rightly refuse.
 must be re-validated (rebased or dropped) at *every* upstream version bump, and CI must fail the
 bump if `patches/series` does not apply cleanly; review date ≤ 6 months.
 
-**Explicitly forbidden at L5 and L6** (restating the existing catalogue prohibition, because this
+**Explicitly forbidden at L5 and L6** (restating the existing catalog prohibition, because this
 is the rung where the temptation lives): patches that bypass license-key validation, unlock
 enterprise features, or crack terms of service. No `sed` over minified bundles, no SQL triggers
 flipping `*_enabled` columns.
@@ -828,7 +828,7 @@ divergence" declaration.
 ### 2.8 Rung X — Cluster hotfix (forbidden)
 
 `kubectl patch`, `kubectl exec` + edit, hand-created ConfigMaps shadowing image files, editing
-Secrets to change behaviour. This is **not** the top of the ladder — it is off the ladder.
+Secrets to change behavior. This is **not** the top of the ladder — it is off the ladder.
 See the absolute prohibition in `gentian-apps/docs/app-profile-guide.md`. The framework's job is to
 make Rung X unnecessary by ensuring there is always a *reachable* legitimate rung, and by making
 L0/L1 fast enough that nobody is tempted.
@@ -869,7 +869,7 @@ spec:
 
 **What v0.4 must not do** is bake in the assumption that Gentian is the author. Two concrete
 consequences: `Customization.spec.owner` is a free-form owner reference rather than a Gentian team
-enum, and the §8.1 approval matrix names *roles* (catalogue maintainer, platform team) rather than
+enum, and the §8.1 approval matrix names *roles* (catalog maintainer, platform team) rather than
 Gentian individuals, so an external maintainer can hold a role later without a schema change.
 
 ---
@@ -995,7 +995,7 @@ from signing in until they clear their cookies, and it can sign a person in
 to an account the script's author chose, without the person noticing. The
 platform cannot check what a website loads, so the rule is yours to keep:
 
-- only a site whose scripts your organisation itself controls;
+- only a site whose scripts your organization itself controls;
 - no third-party scripts (analytics, embeds, widgets, anything loaded from
   another host);
 - no pages uploaded by users.
@@ -1067,7 +1067,7 @@ for a session it does not have.
 - The path is segments of letters, digits, `_`, `~` and `-`, with single dots
   inside a segment: no query, no fragment, no `..`, no `//`.
 - The older `backchannelLogoutUrl`, an address of the profile's own writing,
-  is refused, and the message names this field. It let a catalogue entry make
+  is refused, and the message names this field. It let a catalog entry make
   the identity provider post to any address, and every profile that used it
   named an address the notice could not reach.
 - It is served for the component's own client, by the platform's Composition.
@@ -1097,16 +1097,16 @@ second entry without `apex`. A fixture profile is in
 
 ## 3. The second axis — scope (blast radius)
 
-Rung and scope are **independent**. Minimise both.
+Rung and scope are **independent**. Minimize both.
 
 | Scope | Affects | Authored in | Approved by |
 |---|---|---|---|
 | **S0 · Tenant** | one tenant's install | the tenant's manifest in the deployments repository (`Tenant.spec.apps[].config`) | cluster admin |
-| **S1 · Profile** | every tenant that installs this profile | `gentian-apps` (`profiles/<n>/`, `apps/<n>/`, addon repo) | catalogue maintainer |
+| **S1 · Profile** | every tenant that installs this profile | `gentian-apps` (`profiles/<n>/`, `apps/<n>/`, addon repo) | catalog maintainer |
 | **S2 · Platform** | every tenant, every app | `gentian-os` (kernel, operator, compositions, policy) | platform team |
 
 **The S2 gate is the existing platform boundary rule and does not change:** a customization may
-enter `gentian-os` *only* if it is generic across apps. App-specific behaviour at S2 scope is
+enter `gentian-os` *only* if it is generic across apps. App-specific behavior at S2 scope is
 forbidden regardless of rung — no `case "myapp"` in a reconciler, ever. If many apps need the same
 thing, extend the `ComponentProfile` contract generically; if one app needs it, it belongs in
 `gentian-apps` at whatever rung fits.
@@ -1219,8 +1219,8 @@ declaration that Odoo is customized at L2. An agent reads `supportedRungs` to de
 and reads `publishes` only after step 3 of §6 has already selected L2.
 
 **Defaults when the block is absent:** `{grade: unknown, supportedRungs: [L0, L4]}` — i.e. an
-uncharacterised app can only be configured or repackaged (L2 remains available per the above).
-Agents must not infer more, and must raise a task to characterise the app.
+uncharacterized app can only be configured or repackaged (L2 remains available per the above).
+Agents must not infer more, and must raise a task to characterize the app.
 
 ### 4.1 Customization readiness grades
 
@@ -1233,7 +1233,7 @@ answer to "the way to do it depends on the app".
 | **B** | A plugin system exists, but it is **undocumented, unversioned, or ABI-unstable**. Config, drop-ins and a published API as well. | L0–L3, at the risk `extension.apiStability` records | Element/Synapse (`synapse-module`), OpenProject (`openproject-plugin`), LiteLLM (`litellm-callback`) |
 | **C** | Config only; monolithic; **no** extension surface at all | L0, then L2 or L4 | Collabora, many appliance images |
 | **D** | Anything beyond a value change requires touching source | L0, then L5/L6 | unmaintained or hostile upstreams |
-| **?** | Not yet characterised | L0, L4 | new catalogue entries |
+| **?** | Not yet characterized | L0, L4 | new catalog entries |
 
 **Grading rubric** (each +1; **A** ≥ 7, **B** 5–6, **C** 3–4, **D** ≤ 2): documented config
 reference · declared drop-in directories · documented plugin/addon API · plugin API versioned with
@@ -1253,20 +1253,20 @@ is a decision the record must justify — not something the grade should silentl
 
 Only at **C** is L3 genuinely unreachable, because there is nothing to extend.
 
-**Assignment is manual for v0.4.** The catalogue maintainer scores the rubric by hand, records the
+**Assignment is manual for v0.4.** The catalog maintainer scores the rubric by hand, records the
 score in `customization.md`, and sets `spec.customization.grade`. Several criteria — "upstream
 accepts patches", "ABI survives minor releases" — are judgements about a community, not facts a
 script can read. Automating the mechanical subset is roadmap item **2.13**; until then CI only
 checks that a grade is *present* and that the recorded score matches the banding.
 
 Publishing the grade does two things: it sets expectations *before* a customization is requested,
-and it creates pressure on the catalogue to prefer Grade A apps — the same pressure Debian applies
+and it creates pressure on the catalog to prefer Grade A apps — the same pressure Debian applies
 by making well-behaved upstreams cheap to package.
 
 
 ### 4.2 Bases, addons, editions and packages
 
-The catalogue shape L3 is delivered through. Referenced by the `ComponentProfile`,
+The catalog shape L3 is delivered through. Referenced by the `ComponentProfile`,
 `AppPackage` and `Tenant` CRD field documentation.
 
 ```text
@@ -1306,9 +1306,9 @@ the entry*, not who publishes it:
 
 | | |
 | --- | --- |
-| `ce` | community edition: open source, as the upstream organisation publishes it |
-| `me` | maintained edition: the community edition's code, curated and maintained by the catalogue's maintainer, who runs it itself |
-| `ie` | internal edition: somebody's own profile, in their own catalogue source, for their own tenants |
+| `ce` | community edition: open source, as the upstream organization publishes it |
+| `me` | maintained edition: the community edition's code, curated and maintained by the catalog's maintainer, who runs it itself |
+| `ie` | internal edition: somebody's own profile, in their own catalog source, for their own tenants |
 | `pe` | proprietary edition: a supplier's proprietary product, free of charge |
 | `ee` | enterprise edition: proprietary and paid for, supported by its supplier |
 
@@ -1327,7 +1327,7 @@ family and no per-edition compatibility matrix.
 The split that matters operationally is not free against paid but **where the
 entry comes from**. `ce`, `me` and `ie` are entries a cluster can hold and
 install on its own — `ce` and `me` because their code is public, `ie` because
-it is the operator's own — so a cluster browsing its own catalogue sources
+it is the operator's own — so a cluster browsing its own catalog sources
 lists exactly those three. `pe` and `ee` are a supplier's proprietary
 products, which is the App Store's business: a cluster counts them and sends
 the person to the store, because an entry whose whole value is a relationship
@@ -1336,11 +1336,11 @@ with a supplier is not something a cluster can describe usefully.
 An **edition shares a family name and nothing else** — `nextcloud-base-ee` may
 deploy a supplier's all-in-one chart from a credentialed registry where
 `nextcloud-base-ce` deploys the community chart — so it inherits no ladder and must
-be characterised on its own.
+be characterized on its own.
 
 **Naming is a hint, not a contract.** Two profiles may both be edition `ee` from
 different authors under unrelated names. A profile carries neither an edition nor an author
-field: the edition is what the catalogue's index entry states for it
+field: the edition is what the catalog's index entry states for it
 ([custom-catalogues.md](custom-catalogues.md)), and who supplies an entry is the store's to say.
 Never infer either from a profile name.
 
@@ -1353,8 +1353,8 @@ bundle stays a preset rather than becoming an artifact.
 
 ## 5. The `Customization` record
 
-**Required for every customization at L2 and above.** Written **before** the code. Modelled on
-DEP-3 patch headers, generalised to the whole ladder.
+**Required for every customization at L2 and above.** Written **before** the code. Modeled on
+DEP-3 patch headers, generalized to the whole ladder.
 
 **`Customization` is a namespaced CRD** (decision §11.1). Records are authored in git, beside the
 artifact they describe: a profile's in `gentian-apps/profiles/<n>/customizations/<name>.yaml`,
@@ -1369,16 +1369,16 @@ three things a file cannot:
   the debt report is computed by the operator, not by a script guessing from YAML.
 
 Profiles and Compositions are cluster-scoped — there is no per-profile namespace. Profile-scoped
-records land in the **one namespace the cluster's catalogue is applied in** (the provisioning
+records land in the **one namespace the cluster's catalog is applied in** (the provisioning
 namespace, `kernel-provisioning`), a cluster-wide constant that is not derived from the profile
 name. Tenant-scoped records belong in `tenant-<name>`; no route of the director writes one, so
 today such a record reaches a cluster only by a commit beside the tenant's manifest.
 
 **A profile-scoped record arrives in its profile's bundle.** A profile reaches a cluster one at a
-time, from a catalogue, when a tenant installs it, as one file under one digest
+time, from a catalog, when a tenant installs it, as one file under one digest
 ([custom-catalogues.md §2](custom-catalogues.md)). A record travels in that file as a companion:
 named `<profile>.<record>`, `spec.target.profile` its own profile, `spec.scope: profile`, and only
-from a catalogue of the whole cluster — a tenant's own catalogue brings profiles alone. The
+from a catalog of the whole cluster — a tenant's own catalog brings profiles alone. The
 ApplicationSet that used to sync a whole profile directory — profile, `customizations/`,
 `composition.yaml` — from a `role: apps`, `type: git` repository is retired, and the director
 refuses to declare such a repository.
@@ -1570,7 +1570,7 @@ state.
 
 ---
 
-## 7. Best practices, templated in `gentian-app-template`
+## 7. Best practices, templated in `gentian-apps/apps/_template`
 
 Requirement (2): the practices should not be prose — they should be *scaffolding*, so that every
 first-party Gentian app is born at **Grade A** and never forces a consumer to L5.
@@ -1578,7 +1578,7 @@ first-party Gentian app is born at **Grade A** and never forces a consumer to L5
 ### 7.1 New directory: `customization/`
 
 ```
-gentian-app-template/
+gentian-apps/apps/_template/
 └── customization/
     ├── README.md              # the ladder, filled in for THIS app; the doc consumers read
     ├── profile-block.yaml     # spec.customization block, ready to paste into the ComponentProfile
@@ -1662,7 +1662,7 @@ gentian-apps/profiles/<n>/
 └── customizations/         # Customization records
 ```
 
-Populating `spec.customization` for the existing catalogue — the families **odoo**, **nextcloud**,
+Populating `spec.customization` for the existing catalog — the families **odoo**, **nextcloud**,
 **xwiki**, **element**, **openproject**, **activepieces**, **litellm**, plus the first-party
 **admin-console** — is the highest-value first implementation step: it is
 pure documentation work that immediately makes the agent procedure executable. Grades are recorded
@@ -1678,9 +1678,9 @@ inherit their base profile's declaration rather than repeating it.
 | Rung | Scope | Reviewer | Extra gate |
 |---|---|---|---|
 | L0–L1 | S0/S1 | normal PR review | schema validation |
-| L2 | S1 | catalogue maintainer | contract review; new profile |
-| L3 | S1 | catalogue maintainer | addon CI against pinned app version |
-| L4 | S1 | catalogue maintainer + platform | render-golden diff; `UPSTREAM.md` if vendored |
+| L2 | S1 | catalog maintainer | contract review; new profile |
+| L3 | S1 | catalog maintainer | addon CI against pinned app version |
+| L4 | S1 | catalog maintainer + platform | render-golden diff; `UPSTREAM.md` if vendored |
 | L5 | S1 | **platform team, 2 reviewers** | DEP-3 complete; `Forwarded:` set; SBOM; signed image |
 | L6 | S1 | **platform + product sign-off** | named owner, CVE watch, comparison doc |
 | any | S2 | platform team | must be generic across apps |
@@ -1734,7 +1734,7 @@ ServiceNow and SAP shops build after the damage is done, and that Gentian can bu
 
 | Request | Target | Chosen | Why not lower | Where |
 |---|---|---|---|---|
-| "Our brand colours in the ERP" | Odoo (A) | **L1** | no L0 knob for asset files | `profiles/odoo-cb-base/dropins/50-branding/` |
+| "Our brand colors in the ERP" | Odoo (A) | **L1** | no L0 knob for asset files | `profiles/odoo-cb-base/dropins/50-branding/` |
 | "Approval workflow on invoices" | Odoo (A) | **L3** | must extend `account.move` and the purchase UI | `odoo-modules/gentian_invoice_approval` |
 | "Dashboard combining ERP + project data" | Odoo + OpenProject | **L2** | stands alone; two targets; neither should own it | new `gentian-apps/apps/insights` + contracts |
 | "Raise Collabora's document size limit" | Collabora (C) | **L0** | it is a documented value | `spec.package.extraValues` |
@@ -1756,8 +1756,8 @@ ServiceNow and SAP shops build after the damage is done, and that Gentian can bu
 | **`dpkg` conffiles / `dpkg-divert` / `update-alternatives`** | The idea that "you now own this file" is a discrete, recorded event |
 | **SAP Clean Core (levels A–D; key-user → side-by-side → developer extensibility)** | Two-axis thinking, the grade concept, and "exhaust the cheap tiers before the expensive ones" |
 | **ServiceNow configuration-vs-customization + upgrade governance** | The debt report, review boards, and the empirical claim that customization-heavy instances take months to upgrade |
-| **Odoo module inheritance** (`_inherit`, view `inherit_id` + `xpath`) | The canonical L3 model: patch behaviour without copying the original |
-| **Nextcloud apps + AppAPI ExApps** | Direct evidence that L2 and L3 are *both* first-class and distinct — ExApps are containerised side-by-side extensions |
+| **Odoo module inheritance** (`_inherit`, view `inherit_id` + `xpath`) | The canonical L3 model: patch behavior without copying the original |
+| **Nextcloud apps + AppAPI ExApps** | Direct evidence that L2 and L3 are *both* first-class and distinct — ExApps are containerized side-by-side extensions |
 | **Kustomize overlays / Helm post-renderers** | L4 preference order; "customize without forking the chart" |
 | **VS Code proposed API; Eclipse declared extension points & API freeze** | P7: extension APIs are versioned contracts with a deprecation window and an explicit unstable lane |
 | **Kubernetes/OTel API stability & N-2 deprecation** | The concrete deprecation policy the template's extension API adopts |
@@ -1803,11 +1803,11 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | Step | Deliverable | Repo | Status |
 |---|---|---|---|
 | 1 | This document reviewed and agreed | `gentian-os` | **done** |
-| 2 | `customization.md` + grades for the existing catalogue apps | `gentian-apps` | **done** |
+| 2 | `customization.md` + grades for the existing catalog apps | `gentian-apps` | **done** |
 | 3 | `spec.customization` on the `ComponentProfile` CRD + populated for those apps | `gentian-os`, `gentian-apps` | **done** |
 | 4 | §6 procedure added to all `AGENTS.md` files | all | **done** |
 | 5 | `Customization` CRD + CI validator + debt report generator | `gentian-os`, `gentian-apps` | **done** |
-| 6 | `customization/` scaffolding + extension loader + slots in the template | `gentian-app-template` | **done** |
+| 6 | `customization/` scaffolding + extension loader + slots in `apps/_template` | `gentian-apps` | **done** |
 | 7 | `values.schema.json` for Gentian-owned charts | `gentian-apps` | **done** |
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |

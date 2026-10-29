@@ -4,7 +4,7 @@
 # is has to be the one the platform actually provisions the administrator
 # into. Those were two fields: oidc.clusterAdminGroup, defaulted in the XRD,
 # and platformRoles.admin. S1 renamed the role and only one of them moved --
-# and because the API server had already materialised the old default onto
+# and because the API server had already materialized the old default onto
 # every existing composite, the stale value survived the XRD being corrected.
 #
 # The failure was silent and total: the administrator signed in, held

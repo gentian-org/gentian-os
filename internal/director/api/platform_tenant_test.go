@@ -43,9 +43,9 @@ func adoptKernelRealm(t *testing.T, h *harness, tenant string, more ...string) {
 	dt.Git(t, seed, "push", "origin", "HEAD:main")
 }
 
-// The platform tenant takes no catalogue apps. Somebody who may install apps
+// The platform tenant takes no catalog apps. Somebody who may install apps
 // in it is told so, in a sentence that says why and what to do instead, and
-// nothing is fetched from a catalogue or committed for the install.
+// nothing is fetched from a catalog or committed for the install.
 func TestAnInstallInThePlatformTenantIsRefusedWithTheReason(t *testing.T) {
 	src := addonSource(t, map[string]string{"element": elementProfile})
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})

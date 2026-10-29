@@ -9,7 +9,7 @@
 #   code → model        a can_* the director names that the model does not define
 #                       is a check that can only ever deny
 #
-# Relations planned but not yet modelled are listed, with the reason, in
+# Relations planned but not yet modeled are listed, with the reason, in
 # authz/model/<version>/planned.txt.
 set -euo pipefail
 

@@ -57,7 +57,7 @@ The system services are other projects' software under their own licenses.
 The object store is SeaweedFS (Apache-2.0), installed from its own chart
 (Apache-2.0, vendored unchanged with its attribution in
 `charts/infra/seaweedfs`); the Jobs that move a tenant's objects run rclone
-(MIT) in the platform's storage tools image. Catalogue apps keep their
+(MIT) in the platform's storage tools image. Catalog apps keep their
 upstream licenses and are installed by choice.
 
 ## Contributing

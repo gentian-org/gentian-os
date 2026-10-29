@@ -49,7 +49,7 @@ import (
 // gives the app -- the privilege stays pending and the install keeps
 // waiting, exactly as before the answer -- so it is recorded beside the
 // request it answers, with who said no, when and why, and not in git. The
-// director authorises it as it authorises the approval of that kind.
+// director authorizes it as it authorizes the approval of that kind.
 
 // privilegeRequestsAnnotation holds every request made of this Component,
 // and every decline, as JSON keyed by <kind>/<name>. One annotation rather

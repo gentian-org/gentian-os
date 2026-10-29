@@ -27,7 +27,7 @@ Four layers, each holding only what the layer below it can't know:
 | 2a. Cross-stage shared | `<deployments>/profiles/_base.yaml` | every cluster of this deployment | what is the same in all stages but not something every deployer wants |
 | 2b. Stage profile | `<deployments>/profiles/<stage>.yaml` | every cluster of that stage | genuine stage deltas only: log level, ACME issuer |
 | 3. Cluster overlay | `<deployments>/clusters/<cluster>/kernel/values.yaml` | one cluster | genuine deltas only |
-| 4. Cluster definition | `<deployments>/clusters/<cluster>/kernel/claims/cluster.yaml` | one cluster | what the cluster is: `kernelDomain`, tenancy mode, network mode, mail, models, catalogues |
+| 4. Cluster definition | `<deployments>/clusters/<cluster>/kernel/claims/cluster.yaml` | one cluster | what the cluster is: `kernelDomain`, tenancy mode, network mode, mail, models, catalogs |
 
 Argo CD merges the Helm values of the platform's own chart in that order
 (1 → 2a → 2b → 3), and over them the values the installer renders into the
@@ -39,7 +39,7 @@ at all — it's the Crossplane `Cluster` claim. Its schema
 field has a default, and step 0 of the installer writes each setting it asked
 for.
 
-**When in doubt where a value belongs:** would a different organisation
+**When in doubt where a value belongs:** would a different organization
 deploying gentian-os from scratch want this value too? If yes, chart default.
 If it is the same across your stages but particular to your deployment,
 `_base.yaml`. If it varies by stage, `profiles/<stage>.yaml`.
@@ -94,11 +94,11 @@ There is no `<stage>` suffix or subdirectory inside a cluster's tree:
 | --- | --- | --- |
 | **gentian-os** | The platform's chart, Crossplane definitions, kernel manifests, installer | a branch (dev) · a release tag `v*` (prod) |
 | **gentian-ui** | The charts of the desktop, the consoles and the sign-in page | a branch or tag |
-| **deployments repository** | Stage profiles, per-cluster claims and values, the materialised catalogue, tenant manifests | `main` |
+| **deployments repository** | Stage profiles, per-cluster claims and values, the materialized catalog, tenant manifests | `main` |
 
-A catalogue such as `gentian-apps` is not among them: a cluster reads no
-catalogue's git repository. A profile arrives one at a time through the
-director, from the https address a catalogue is published at
+A catalog such as `gentian-apps` is not among them: a cluster reads no
+catalog's git repository. A profile arrives one at a time through the
+director, from the https address a catalog is published at
 ([custom-catalogues.md](custom-catalogues.md)).
 
 Environment separation lives in **directory paths and layered values files**
@@ -204,7 +204,7 @@ edited claim), to take a newer build (§4), or to repair.
 | **Cluster data** — unique per cluster | the claims, the `values.yaml` overlay, the signing keys' public halves | `clusters/<cluster>/kernel/` | Yes, by step 0 |
 | **Bootstrap Applications** — the same on every cluster | the `gentian-os` Application, the ApplicationSets | Nowhere in the deployments repository: templates in `gentian-os`, rendered and applied by `install.sh` | No |
 | **Tenants and their apps** | a tenant's manifest; Nextcloud for it | `clusters/<cluster>/tenants/<tenant>/` and `clusters/<cluster>/catalogue/`, written by the director | No — created through the director |
-| **Add-ons** — something a deployer runs beside the platform | an organisation's own service | Not in the platform's tree at all (below) | No |
+| **Add-ons** — something a deployer runs beside the platform | an organization's own service | Not in the platform's tree at all (below) | No |
 
 The test for the first two rows: **does this cluster need its own copy of
 the data, or just its own values in an otherwise identical template?**
@@ -229,7 +229,7 @@ present, and an add-on can be removed by deleting its `Application`,
 `AppProject` and namespace — with nothing left behind in the platform.
 
 Something a *tenant* uses is not an add-on: it is an app, installed from a
-catalogue through the director (`kubectl gentian apps install <app> --tenant
+catalog through the director (`kubectl gentian apps install <app> --tenant
 <name>`).
 
 ---
@@ -419,7 +419,7 @@ runs both back to back, which is why they are listed together.
 2. Merge `develop` → `main`.
 3. Write the release notes as `docs/releases/vX.Y.md` — what the release
    contains, and what an operator must do differently after it. Create an
-   annotated tag `vX.Y.Z` on `main` whose message summarises them.
+   annotated tag `vX.Y.Z` on `main` whose message summarizes them.
 4. Wait for CI on the tag. Its `docker` job publishes
    `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y`; nothing downstream can
    adopt the release until that lands.

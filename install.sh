@@ -360,7 +360,7 @@ parse_driver_args() {
 
     # --dry-run and --validate promise to change nothing, and these commands
     # do not know the promise: each goes its own way through main() and never
-    # reaches the place a dry run is honoured. --verify-only restarts Argo
+    # reaches the place a dry run is honored. --verify-only restarts Argo
     # CD's controller when it finds it stuck, --activate-admin issues a link
     # and resets a password, --export-recovery-kit writes a file and may store
     # a backup key. Refused together rather than run as if the flag were not

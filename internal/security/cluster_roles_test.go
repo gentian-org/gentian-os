@@ -60,7 +60,7 @@ func TestTheClusterRoleSetAndTheChartAgree(t *testing.T) {
 	for _, role := range shippedClusterRoles(t) {
 		name := role.Labels[security.ClusterRoleNameLabel]
 		if name == "" || role.Name != security.ClusterRoleObjectName(name) {
-			t.Errorf("ClusterRole %q: it must be named %s<name> and labelled %s: <name>",
+			t.Errorf("ClusterRole %q: it must be named %s<name> and labeled %s: <name>",
 				role.Name, security.ClusterRoleObjectPrefix, security.ClusterRoleNameLabel)
 			continue
 		}

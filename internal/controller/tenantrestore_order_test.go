@@ -161,7 +161,7 @@ func TestAFailedOwedResumeCommandFailsTheApp(t *testing.T) {
 
 // The databases an app made itself are named only inside their archive, and
 // are known only once the restore's Job has put them back. What it reports
-// is kept on the artefact, for the app's post-restore commands to be told.
+// is kept on the artifact, for the app's post-restore commands to be told.
 func TestTheNamesOwnedDatabasesWerePutBackUnderAreKept(t *testing.T) {
 	w := newRestoreWorld(t, nil)
 	pod := &corev1.Pod{
@@ -185,5 +185,5 @@ func TestTheNamesOwnedDatabasesWerePutBackUnderAreKept(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("no owned artefact in the plan")
+	t.Fatal("no owned artifact in the plan")
 }

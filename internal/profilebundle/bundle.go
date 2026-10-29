@@ -29,7 +29,7 @@ import (
 
 // What a bundle is, and what it may hold.
 //
-// One profile, one file, one fingerprint. The file a catalogue publishes for
+// One profile, one file, one fingerprint. The file a catalog publishes for
 // an entry is a YAML stream: the ComponentProfile first, and after it the
 // other objects the app needs on a cluster -- its COMPANIONS. The digest is
 // taken over the whole file, so an install pinned to a digest is pinned to
@@ -38,7 +38,7 @@ import (
 // there were any.
 //
 // Everything in the file is applied to the cluster with the rights of the
-// catalogue's Argo CD Application, which are wide. So what may be in it is a
+// catalog's Argo CD Application, which are wide. So what may be in it is a
 // short list, each kind with the one name it may have, and the list is held
 // twice: by the director before it writes anything, and by the operator
 // before it rolls anything out. Anything not on the list is refused -- a
@@ -48,14 +48,14 @@ import (
 // name produces. Two bundles therefore cannot claim one object, and a bundle
 // cannot name an object that is the platform's or another profile's.
 //
-// And companions are a cluster catalogue's to publish. Each of them is an
+// And companions are a cluster catalog's to publish. Each of them is an
 // object of the whole cluster or lives in a namespace of the platform, where
-// a tenant decides nothing: a bundle from a tenant's own catalogue is its
+// a tenant decides nothing: a bundle from a tenant's own catalog is its
 // profile and nothing else.
 
 // ErrRefused is a bundle that holds what a bundle may not. It is not a
 // mismatch -- the bytes may be exactly the build that was asked for -- and
-// retrying changes nothing: the catalogue has to publish something else.
+// retrying changes nothing: the catalog has to publish something else.
 var ErrRefused = errors.New("the bundle holds what a bundle may not")
 
 // ProfileLabel is the label every companion carries: the name of the profile
@@ -103,7 +103,7 @@ type Companion struct {
 	Kind       string
 	Name       string
 	// Namespaced says the kind lives in a namespace. A companion states
-	// none: it is applied where the catalogue is, and looked for there.
+	// none: it is applied where the catalog is, and looked for there.
 	Namespaced bool
 	// Object is the document as the cluster received it.
 	Object map[string]any
@@ -134,10 +134,10 @@ func (b *Bundle) Composition() string {
 
 // Check reads a bundle and holds it to what a bundle may be: one
 // ComponentProfile called name, first, and after it only companions this
-// profile may bring from the catalogue origin says it came from.
+// profile may bring from the catalog origin says it came from.
 //
-// origin is a catalogue's origin (ClusterOrigin or TenantOrigin). One that
-// cannot be read, or none, is not a cluster catalogue, and brings no
+// origin is a catalog's origin (ClusterOrigin or TenantOrigin). One that
+// cannot be read, or none, is not a cluster catalog, and brings no
 // companions.
 //
 // Every refusal is ErrRefused with what was found.
@@ -185,8 +185,8 @@ func Check(body []byte, name, origin string) (*Bundle, error) {
 				ErrRefused, orNothing(head.kind), orNothing(head.apiVersion), allowedKinds())
 		}
 		if !cluster {
-			return nil, fmt.Errorf("%w: it holds the %s, and only a catalogue of the whole cluster, which the cluster's "+
-				"administrator adds, brings anything beside a profile; a tenant's own catalogue publishes profiles alone",
+			return nil, fmt.Errorf("%w: it holds the %s, and only a catalog of the whole cluster, which the cluster's "+
+				"administrator adds, brings anything beside a profile; a tenant's own catalog publishes profiles alone",
 				ErrRefused, c)
 		}
 		c.Namespaced = rule.namespaced
@@ -203,7 +203,7 @@ func Check(body []byte, name, origin string) (*Bundle, error) {
 }
 
 // checkProfile holds the profile document to what a Composition needs of it
-// and to what no catalogue states.
+// and to what no catalog states.
 //
 // The app Composition selects the profile by the label ProfileLabel with
 // the profile's own name (crossplane/compositions/app-default.yaml,
@@ -217,7 +217,7 @@ func checkProfile(b *Bundle) error {
 		entries, _ := meta[field].(map[string]any)
 		for key, value := range entries {
 			if strings.HasPrefix(key, argoPrefix) {
-				return fmt.Errorf("%w: its profile states %s, which is addressed to Argo CD and not a catalogue's to set", ErrRefused, key)
+				return fmt.Errorf("%w: its profile states %s, which is addressed to Argo CD and not a catalog's to set", ErrRefused, key)
 			}
 			if field == "labels" && key == ProfileLabel && value != b.Name {
 				return fmt.Errorf("%w: its profile carries the label %s: %v, which is another profile's name", ErrRefused, key, value)
@@ -306,7 +306,7 @@ func shape(c *Companion, r rule, labels map[string]string) error {
 	for key := range meta {
 		if key != "name" && key != "labels" {
 			return fmt.Errorf("%w: the %s states metadata.%s; a companion states its name and its labels and nothing else, "+
-				"and it is applied where the catalogue is, not where it says", ErrRefused, c, key)
+				"and it is applied where the catalog is, not where it says", ErrRefused, c, key)
 		}
 	}
 	stated, _ := meta["labels"].(map[string]any)
@@ -364,7 +364,7 @@ func checkComposition(b *Bundle, c *Companion, r rule) error {
 
 // checkOIDCPacks: the packs for the clients this profile declares.
 //
-// A pack is found by its client's id in the catalogue labelled with the
+// A pack is found by its client's id in the catalog labeled with the
 // profile, and says what the identity provider puts in that client's tokens
 // in every tenant's realm. A
 // profile brings packs for its own clients only, and none for a service
@@ -424,7 +424,7 @@ const rootCABundle = "kube-root-ca.crt"
 // It is a record and changes nothing; the operator reads it for what the
 // cluster owes in maintenance. It is about this profile and at the profile's
 // scope, since a record about another app or about the platform is not this
-// catalogue entry's to file.
+// catalog entry's to file.
 func checkCustomization(b *Bundle, c *Companion, r rule) error {
 	prefix, record, _ := strings.Cut(c.Name, ".")
 	if prefix != b.Name || !dnsLabel.MatchString(record) {
@@ -484,7 +484,7 @@ func orNothing(v any) any {
 // separator with nothing after it, or a document of comments only, is not
 // one.
 //
-// Each is read the way kustomize reads it, because the catalogue directory
+// Each is read the way kustomize reads it, because the catalog directory
 // is a kustomization and that is the reading the cluster received: a bare
 // `yes` or `on` is a string there, where the YAML 1.1 reading kubectl
 // applies would make it a boolean, and a bare date is a timestamp. Whole

@@ -31,11 +31,11 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// What the cluster's catalogue left behind.
+// What the cluster's catalog left behind.
 //
 // A profile arrives as a bundle: the profile, and the few objects that
 // travel with it (profilebundle/bundle.go). The Application that applies
-// the catalogue directory does not prune, so nothing a bundle brought is
+// the catalog directory does not prune, so nothing a bundle brought is
 // taken away when a newer build stops bringing it, and a profile stays when
 // the last tenant uninstalled it. That is deliberate -- a tenant moved back
 // to the older build finds its pieces -- and it means a cluster collects
@@ -49,7 +49,7 @@ import (
 //
 // What is never on the list: the platform's own Composition, anything a
 // chart ships, anything a bundle on this cluster brings, and anything in a
-// namespace other than the one the catalogue is applied in.
+// namespace other than the one the catalog is applied in.
 
 // The rights the list and the removal need. The four companion kinds are
 // listed where they live and deleted one at a time by name; the operator
@@ -65,7 +65,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;delete
 //
 // A profile nobody uses is deleted here too, once Argo CD reports that the
-// catalogue directory no longer declares it.
+// catalog directory no longer declares it.
 //
 // +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants;components,verbs=get;list
@@ -74,14 +74,14 @@ import (
 // Why an object is on the list.
 const (
 	// ResidueDropped: its profile is on the cluster, and the bundle now
-	// materialised for that profile does not bring it.
+	// materialized for that profile does not bring it.
 	ResidueDropped = "dropped"
 	// ResidueOrphaned: it names a profile that is not on the cluster.
 	ResidueOrphaned = "orphaned"
 	// ResidueUnowned: no bundle on the cluster owns it and it names no
 	// profile that has one -- what copying from before bundles left.
 	ResidueUnowned = "unowned"
-	// ResidueUnusedProfile: a materialised profile no tenant has installed
+	// ResidueUnusedProfile: a materialized profile no tenant has installed
 	// and no tenant retains data for.
 	ResidueUnusedProfile = "unused-profile"
 )
@@ -97,17 +97,17 @@ const (
 // answer. It is oidc.ResolvePack's, and the app Composition's.
 const oidcRule = "A client is configured from the OIDCPackCatalog that carries its profile's label, an extension's " +
 	"from its parent profile's; the app's Composition and the identity Job read that one catalog and no other. " +
-	"So a pack catalog on this list is still in effect (yes) when it is the only one labelled for a profile that " +
+	"So a pack catalog on this list is still in effect (yes) when it is the only one labeled for a profile that " +
 	"is installed; contested when another catalog carries the same label, and the profile's clients are then " +
 	"refused until one of the two is removed; and no otherwise."
 
 // catalogueApplication is what the name of the Argo CD Application that
-// applies the catalogue directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
+// applies the catalog directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
 const catalogueApplication = "gentian-catalogue-"
 
 var applicationGVK = runtimeschema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"}
 
-// catalogueNamespace is where the catalogue is applied, and so where the
+// catalogueNamespace is where the catalog is applied, and so where the
 // companions that have a namespace live: the destination of the Application
 // above. The rollout check looks for them in the same place.
 func catalogueNamespace() string { return layout.Namespace(layout.Provisioning) }
@@ -156,7 +156,7 @@ type ResidueOIDC struct {
 
 // CatalogueResidue is the answer of the read.
 type CatalogueResidue struct {
-	// Namespace is where the catalogue is applied.
+	// Namespace is where the catalog is applied.
 	Namespace string        `json:"catalogueNamespace"`
 	Residue   []ResidueItem `json:"residue"`
 	// Incomplete says what could not be established, and so what the list
@@ -212,7 +212,7 @@ func (s *Service) live() client.Reader {
 	return s.client
 }
 
-// CatalogueResidue lists what the catalogue left behind.
+// CatalogueResidue lists what the catalog left behind.
 func (s *Service) CatalogueResidue(ctx context.Context) (*CatalogueResidue, error) {
 	view, err := s.residue(ctx, true)
 	if err != nil {
@@ -273,7 +273,7 @@ func (s *Service) residue(ctx context.Context, withUnused bool) (*residueView, e
 	}
 
 	// The objects of the four kinds, where a companion can be: the whole
-	// cluster for a kind that has no namespace, the catalogue's namespace
+	// cluster for a kind that has no namespace, the catalog's namespace
 	// for one that has.
 	var packs []found
 	for _, kind := range profilebundle.CompanionKinds() {
@@ -381,7 +381,7 @@ func (v *residueView) readUse(ctx context.Context, reader client.Reader) error {
 func (v *residueView) classify(kind profilebundle.CompanionKind, obj *unstructured.Unstructured) (*ResidueItem, string) {
 	name, labels := obj.GetName(), obj.GetLabels()
 	if owner := v.owned[kind.Kind+"/"+name]; owner != "" {
-		return nil, fmt.Sprintf("the bundle now materialised for profile %s brings it", owner)
+		return nil, fmt.Sprintf("the bundle now materialized for profile %s brings it", owner)
 	}
 	shape, shaped := profilebundle.ShapeOwner(kind.Kind, name)
 	removable, notRemovable := true, ""
@@ -454,7 +454,7 @@ func (v *residueView) classify(kind profilebundle.CompanionKind, obj *unstructur
 		item.Reason = fmt.Sprintf("not owned by any bundle: %s, and profile %s is on this cluster without a bundle", by, claimed)
 	default:
 		item.Class = ResidueDropped
-		item.Reason = fmt.Sprintf("%s, and the bundle now materialised for %s does not bring it", by, claimed)
+		item.Reason = fmt.Sprintf("%s, and the bundle now materialized for %s does not bring it", by, claimed)
 	}
 	return item, ""
 }
@@ -506,7 +506,7 @@ func (v *residueView) effective(ctx context.Context, reader client.Reader, packs
 	return nil
 }
 
-// unusedProfiles lists the materialised profiles nobody uses: no tenant has
+// unusedProfiles lists the materialized profiles nobody uses: no tenant has
 // one installed or switched on, no Component runs from one, and no tenant
 // retains data for one. Whether data is retained is the retained-data read's
 // to say (retained.go) and is asked of it, tenant by tenant; where it could
@@ -514,7 +514,7 @@ func (v *residueView) effective(ctx context.Context, reader client.Reader, packs
 func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view *residueView) ([]found, error) {
 	var candidates []*profileState
 	// A profile that declares itself a default is in use by declaration --
-	// until it has left the catalogue directory, after which the operator
+	// until it has left the catalog directory, after which the operator
 	// places it nowhere and it is residue like any other.
 	gone, err := profilebundle.GoneFromCatalogue(ctx, reader, layout.Namespace(layout.GitOps))
 	if err != nil {
@@ -525,7 +525,7 @@ func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view
 		declaredDefault := p.Spec.DefaultForTenants || p.Spec.DefaultForPlatform || p.Spec.DefaultWhereStoreOffered
 		switch {
 		case strings.TrimSpace(p.Annotations[profilebundle.Annotation]) == "":
-			// Not materialised from a catalogue: the platform's chart
+			// Not materialized from a catalogue: the platform's chart
 			// shipped it, or an earlier installer wrote it.
 		case p.Labels["app.kubernetes.io/managed-by"] == "Helm", p.Annotations[platformAppAnnotation] == "true":
 		case declaredDefault && !gone[p.Name]:
@@ -600,7 +600,7 @@ func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view
 var ErrNotResidue = errors.New("not on the residue list")
 
 // ErrStillDeclared is a removal of an object Argo CD still finds declared
-// in the catalogue directory, or cannot say is not. Nothing is deleted.
+// in the catalog directory, or cannot say is not. Nothing is deleted.
 var ErrStillDeclared = errors.New("still declared")
 
 // ErrResidueChanged is a removal that lost a race: the object changed, or
@@ -626,7 +626,7 @@ type RemoveResidueResult struct {
 // anything that is not on it -- a companion a bundle brings, the platform's
 // Composition, a ConfigMap that is nobody's companion, an object a new
 // install adopted a moment ago -- is refused with the reason, and so is one
-// for an object Argo CD still finds declared in the catalogue directory:
+// for an object Argo CD still finds declared in the catalog directory:
 // whatever is declared there would be applied again, and deleting it would
 // report something that did not stay done.
 //
@@ -723,7 +723,7 @@ func (s *Service) removeResidue(ctx context.Context, kind, name, namespace, acto
 	case err != nil:
 		return nil, fmt.Errorf("delete %s %s: %w", kind, name, err)
 	}
-	log.FromContext(ctx).WithName("catalogue-residue").Info("removed catalogue residue",
+	log.FromContext(ctx).WithName("catalogue-residue").Info("removed catalog residue",
 		"kind", kind, "name", name, "namespace", target.item.Namespace, "class", target.item.Class, "actor", actor)
 
 	// Said only when it is so: the object is looked for again.
@@ -754,7 +754,7 @@ func (s *Service) whyNot(ctx context.Context, view *residueView, kind, name stri
 		case state == nil:
 			return fmt.Sprintf("there is no ComponentProfile %s on this cluster", name)
 		case strings.TrimSpace(state.profile.Annotations[profilebundle.Annotation]) == "":
-			return fmt.Sprintf("the ComponentProfile %s was not materialised from a catalogue: the platform ships it, or the installer wrote it", name)
+			return fmt.Sprintf("the ComponentProfile %s was not materialized from a catalogue: the platform ships it, or the installer wrote it", name)
 		case view.inUse[name]:
 			return fmt.Sprintf("the ComponentProfile %s is in use: a tenant has it installed or switched on as an add-on", name)
 		case state.profile.Spec.DefaultForTenants || state.profile.Spec.DefaultForPlatform || state.profile.Spec.DefaultWhereStoreOffered:
@@ -789,7 +789,7 @@ func (s *Service) whyNot(ctx context.Context, view *residueView, kind, name stri
 	return fmt.Sprintf("the %s %s is not on the residue list", kind, name)
 }
 
-// notDeclared asks Argo CD whether the catalogue directory still declares
+// notDeclared asks Argo CD whether the catalog directory still declares
 // an object, and answers ErrStillDeclared when it does or when that cannot
 // be told.
 //
@@ -805,7 +805,7 @@ func (s *Service) notDeclared(ctx context.Context, target *found) error {
 	apps := &unstructured.UnstructuredList{}
 	apps.SetGroupVersionKind(applicationGVK.GroupVersion().WithKind("ApplicationList"))
 	if err := s.live().List(ctx, apps, client.InNamespace(layout.Namespace(layout.GitOps))); err != nil {
-		return fmt.Errorf("%w: Argo CD's Application for the catalogue could not be read, so whether the %s %s is still "+
+		return fmt.Errorf("%w: Argo CD's Application for the catalog could not be read, so whether the %s %s is still "+
 			"declared is not known (%v). Nothing was deleted", ErrStillDeclared, target.item.Kind, target.item.Name, err)
 	}
 	seen, prunable := false, false
@@ -826,7 +826,7 @@ func (s *Service) notDeclared(ctx context.Context, target *found) error {
 				continue
 			}
 			if r["requiresPruning"] != true {
-				return fmt.Errorf("%w: Argo CD (%s) finds the %s %s declared in the catalogue directory as it last "+
+				return fmt.Errorf("%w: Argo CD (%s) finds the %s %s declared in the catalog directory as it last "+
 					"compared it, and would apply it again. Nothing was deleted", ErrStillDeclared,
 					app.GetName(), target.item.Kind, target.item.Name)
 			}
@@ -839,7 +839,7 @@ func (s *Service) notDeclared(ctx context.Context, target *found) error {
 			target.item.Kind, target.item.Name)
 	}
 	if target.item.Kind == profilebundle.KindProfile && !prunable {
-		return fmt.Errorf("%w: Argo CD does not yet report the ComponentProfile %s as gone from the catalogue directory. "+
+		return fmt.Errorf("%w: Argo CD does not yet report the ComponentProfile %s as gone from the catalog directory. "+
 			"It is deleted once Argo CD has synced the commit that removed it; nothing was deleted now",
 			ErrStillDeclared, target.item.Name)
 	}

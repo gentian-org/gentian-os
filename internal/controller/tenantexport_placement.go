@@ -131,7 +131,7 @@ func runSecret(name, namespace, tenantName, run string, data map[string][]byte) 
 //
 // sourceSecret names where those credentials come from, beside the object
 // store. For a bundle going to the platform's own storage that is the object
-// store's administrator's Secret; for an external destination it is the Secret ESO materialised
+// store's administrator's Secret; for an external destination it is the Secret ESO materialized
 // from the destination's credential, and the two are different accounts on
 // different systems.
 //

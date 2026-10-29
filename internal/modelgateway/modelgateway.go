@@ -80,7 +80,7 @@ func HashKey(key string) string {
 // LegacyKey is the key the platform used to register for an app: text made
 // from the tenant's and the app's names, which anybody who knew the two could
 // write down. Nothing presents it any more. It is spelled here only so that
-// one still registered can be recognised and removed.
+// one still registered can be recognized and removed.
 func LegacyKey(tenant, app string) string { return fmt.Sprintf("sk-gentian-%s-%s", tenant, app) }
 
 // KeyAlias is the name the gateway knows an app's key by. Aliases are unique at
@@ -309,7 +309,7 @@ func (c *Client) TeamID(ctx context.Context, alias string) (id string, found boo
 	if err := json.Unmarshal(raw, &teams); err != nil {
 		var wrapped map[string]json.RawMessage
 		if err2 := json.Unmarshal(raw, &wrapped); err2 != nil {
-			return "", false, fmt.Errorf("model gateway /team/list: unrecognised response: %w", err)
+			return "", false, fmt.Errorf("model gateway /team/list: unrecognized response: %w", err)
 		}
 		inner, ok := wrapped["teams"]
 		if !ok {

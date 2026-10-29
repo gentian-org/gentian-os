@@ -109,8 +109,8 @@ func TestIngressProgramsRoutes(t *testing.T) {
 }
 
 // TestTunnelDeclaresItsDNSTarget pins the seam between the two halves. This
-// annotation is the only thing that tells external-dns where a tunnelled
-// hostname points, since a tunnelled Gateway has no address of its own.
+// annotation is the only thing that tells external-dns where a tunneled
+// hostname points, since a tunneled Gateway has no address of its own.
 //
 // Proxied is not a preference: cfargotunnel.com resolves to nothing a client
 // could connect to, so an unproxied record answers and then refuses.
@@ -224,7 +224,7 @@ func TestEdgeRecordCarriesProviderSettingsPerRecord(t *testing.T) {
 	}
 }
 
-// TestEdgeRecordIsStableAcrossCalls: Go randomises map iteration, and this
+// TestEdgeRecordIsStableAcrossCalls: Go randomizes map iteration, and this
 // record set is compared field by field on every reconcile. An unstable order
 // would rewrite the object on roughly every pass, forever.
 func TestEdgeRecordIsStableAcrossCalls(t *testing.T) {

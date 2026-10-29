@@ -68,7 +68,7 @@ const (
 // no session, so there is nothing for an enablement to switch on.
 // +kubebuilder:validation:XValidation:rule="self.class != 'service' || !has(self.exposures) || self.exposures.size() == 0",message="a service switches on no perimeter entry: its console is on the gateway"
 type ComponentSpec struct {
-	// ProfileRef names the catalogue entry this is an instance of.
+	// ProfileRef names the catalog entry this is an instance of.
 	ProfileRef ProfileRef `json:"profileRef"`
 
 	// Class is the one mode this instance runs under. It must be a member of

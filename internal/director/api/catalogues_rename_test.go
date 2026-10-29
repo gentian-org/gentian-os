@@ -21,7 +21,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// A catalogue is renamed by the cluster's administrator, as one commit to
+// A catalog is renamed by the cluster's administrator, as one commit to
 // the source entry, the entries installed from it and the profiles' origin;
 // the next install from the new name is the same build again.
 func TestACatalogueIsRenamedWithWhatWasInstalledFromIt(t *testing.T) {
@@ -61,7 +61,7 @@ func TestACatalogueIsRenamedWithWhatWasInstalledFromIt(t *testing.T) {
 	if dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main~1") != before {
 		t.Fatal("more than one commit")
 	}
-	if subject := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%s", "main"); !strings.Contains(subject, "Alice|feat(cluster): rename catalogue partner to acme") {
+	if subject := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%s", "main"); !strings.Contains(subject, "Alice|feat(cluster): rename catalog partner to acme") {
 		t.Fatalf("commit = %q", subject)
 	}
 	if claim := dt.RemoteFile(t, h.remote, dt.ClaimPath); !strings.Contains(claim, "      - name: acme\n        url: "+src.URL+"/partner") || strings.Contains(claim, "name: partner") {

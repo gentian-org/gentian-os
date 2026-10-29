@@ -21,12 +21,12 @@ were missing, and each one cost something different:
 | Any observation of what was used underneath it | Nobody could tell an over-provisioned tenant from a tight one |
 
 This design adds all three, and adds them the way the App Store adds an app: a
-**named choice** from a **priced catalogue**, written to the deployments
+**named choice** from a **priced catalog**, written to the deployments
 repository through an **API shared by the CLI and the console**.
 
 ---
 
-## 2. Why a catalogue, and not a number
+## 2. Why a catalog, and not a number
 
 `Tenant.spec.quotas` accepts any quantity. That is right for the file, and wrong
 for the API: a ceiling that can be any number can be any number that was never
@@ -64,7 +64,7 @@ spec:
     storage: 100Gi
 ```
 
-The default catalogue ships in the operator chart under `usage.plans.catalogue`;
+The default catalog ships in the operator chart under `usage.plans.catalogue`;
 a cluster selling something else replaces it wholesale in its own values.
 
 ### 2.2 What a plan sells: reserved capacity, not burst
@@ -104,7 +104,7 @@ so it is a policy limit set per cluster or per tenant, and no plan touches it in
 either direction. Writing it would sell a policy as capacity; nulling it would
 have a plan change quietly delete a cluster's app cap.
 
-The catalogue's limits multiples — 4× CPU, 2× memory — come from that table
+The catalog's limits multiples — 4× CPU, 2× memory — come from that table
 rather than from a round number. A tighter ceiling would refuse pods on a plan
 whose *reserved* capacity is barely touched, which is the confusing failure this
 whole design exists to avoid.
@@ -133,7 +133,7 @@ inherent to a multiplicative ceiling and is why the top plan says to arrange
 anything larger with the platform operator.
 
 **Tenants already running will read as `custom`** until a plan is applied,
-because a cluster's existing `tenant-defaults` predates the catalogue and sets
+because a cluster's existing `tenant-defaults` predates the catalog and sets
 no reserved capacity at all. That is the honest reading — nothing prices those
 tenants — and applying a plan settles it. A cluster that wants new tenants to
 start on `base` should set its `tenant-defaults` component to `base`'s
@@ -153,7 +153,7 @@ inserted later without renumbering ones already sold.
 
 Selecting a plan is a **commit to `gentian-deployments`**, exactly as installing
 an app is, and it is made by the same writer: the **director**. It checks that
-the caller holds `can_set_plan` on the tenant, reads the catalogue as it applies
+the caller holds `can_set_plan` on the tenant, reads the catalog as it applies
 to that tenant from the operator (§7), refuses a plan the tenant may not move
 to, and commits the patch below as the person who asked. Argo CD syncs it, the
 operator reconciles the ResourceQuota, records the plan change in the tenant's
@@ -274,7 +274,7 @@ the cluster, which is a worse answer to a typo than no ceiling, and the operator
 who typed it sees the tenant able to upgrade.
 
 Absent means uncapped, matching the shape the App Store already uses: an
-unreachable commerce backend leaves the catalogue usable rather than blocking it.
+unreachable commerce backend leaves the catalog usable rather than blocking it.
 
 Set it from wherever a deployment's commerce integration lives — the platform
 reads the annotation and does not care which service wrote it.
@@ -298,7 +298,7 @@ default):
 | `hard` | `ResourceQuota.status.hard` | The ceiling in force |
 | `used` | `ResourceQuota.status.used` | **Committed consumption — what is billed** |
 | `actual` | `metrics.k8s.io`, when installed | Advisory: is the plan the right size? |
-| `plan`, `productSku` | Resolved from the catalogue | The label a stretch is priced under |
+| `plan`, `productSku` | Resolved from the catalog | The label a stretch is priced under |
 
 Rows land in **that tenant's own `{tenant}_shell` database**, the desktop's,
 beside its notifications. A tenant's consumption is tenant data: it goes
@@ -307,7 +307,7 @@ where the rest of that tenant's data goes, it leaves with the tenant, and the
 is that a cluster-wide roll-up opens one connection per tenant — the honest price
 of the isolation, paid by a screen nobody loads in a loop.
 
-`productSku` is denormalised onto every sample deliberately: a plan's SKU can be
+`productSku` is denormalized onto every sample deliberately: a plan's SKU can be
 re-pointed, and an invoice for March must not change because of an edit made in
 June.
 
@@ -335,12 +335,12 @@ director when it is asked for. The tenant reconciler compares the
 `resource-plan` annotation with `status.resourcePlan`, the plan whose event was
 last written, and when they differ records the move — from the recorded plan
 (or, for a history that predates the status field, the store's last event) to
-the annotated one, with the SKU from the catalogue and the actor from
+the annotated one, with the SKU from the catalog and the actor from
 `resource-plan-set-by` — then notes it on the status. So the record describes
 the ceiling the cluster went on to enforce, which is the one a bill can be
 defended with, and it still names who chose it, because the commit carried
 that into the Tenant. A usage store that is not reachable yet leaves the status
-alone and the event is written on a later reconcile; a plan the catalogue does
+alone and the event is written on a later reconcile; a plan the catalog does
 not know is recorded without a SKU rather than not at all.
 
 ### 6.4 The report
@@ -370,7 +370,7 @@ moved *to* — because a gap is honest and a wrong price is not.
 
 ## 7. Surfaces
 
-One set of rules, one writer. The plan catalogue, the downgrade guard and the
+One set of rules, one writer. The plan catalog, the downgrade guard and the
 entitlement ceiling live in the operator, which answers them for a tenant; the
 usher relays those answers to whoever may view the tenant, and the director
 validates a choice against them and makes the one write. Nothing reimplements
@@ -410,7 +410,7 @@ is what the director turns into a status:
 | `403` | The caller does not hold `can_set_plan`, or asked to `force` without `can_configure` on the cluster |
 
 Whether the caller chooses for themselves — a tenant administrator, held to
-the self-service catalogue — or for the cluster is decided by the director from
+the self-service catalog — or for the cluster is decided by the director from
 `can_configure` on the cluster, and asserted by no screen. The console adds
 nothing: it forwards the caller's own token and hands back what it was
 answered, including a refusal.
@@ -418,7 +418,7 @@ answered, including a refusal.
 ### 7.1 Console
 
 Tenant administrators see their plan, the ceiling paired with what is committed
-under it, live consumption where available, the plan catalogue with a reason
+under it, live consumption where available, the plan catalog with a reason
 beside anything they cannot pick, the usage history, and the billed intervals.
 
 Platform administrators additionally get an **All tenants** table — plan,
@@ -476,7 +476,7 @@ Operator chart (`charts/gentian-os/values.yaml`):
 | `usage.sampler.interval` | `15m` | How often every tenant is sampled |
 | `usage.sampler.retention` | `9600h` (400d) | Sample retention; plan events are never pruned |
 | `usage.metricsServer.enabled` | `false` | Add the live-consumption series |
-| `usage.plans.enabled` | `true` | Ship the plan catalogue |
+| `usage.plans.enabled` | `true` | Ship the plan catalog |
 | `usage.plans.catalogue` | five node tiers | The priced plans themselves |
 
 Director and usher (the same chart):
@@ -512,8 +512,8 @@ through the `desktop-database` Secret in the tenant's namespace. A tenant withou
 that Secret is skipped and logged; the others are unaffected.
 
 **Plan shows as `custom`:** the tenant's quotas match no plan. Either the tenant
-predates the catalogue and reserves nothing (see [§2.3](#23-the-ladder)), the
-catalogue was re-priced under a tenant already on it, or `tenant.yaml` was
+predates the catalog and reserves nothing (see [§2.3](#23-the-ladder)), the
+catalog was re-priced under a tenant already on it, or `tenant.yaml` was
 edited by hand. Applying a plan settles it.
 
 **Plan shows as `drifted`:** the recorded plan and the enforced ceiling

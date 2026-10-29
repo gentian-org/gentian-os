@@ -43,7 +43,7 @@ type fakeBundles struct {
 	err       error
 	keys      []bundlestore.Key
 	removed   []string
-	// objects are the artefacts the operator wrote itself, as it wrote
+	// objects are the artifacts the operator wrote itself, as it wrote
 	// them: ciphertext, by path.
 	objects map[string][]byte
 }
@@ -247,7 +247,7 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 		}
 	}
 
-	// The Jobs: wiki's four artefacts and the tenant's two; nothing for
+	// The Jobs: wiki's four artifacts and the tenant's two; nothing for
 	// drive, which the bundle does not hold, and nothing for notes.
 	jobs := w.jobs(t)
 	var names []string

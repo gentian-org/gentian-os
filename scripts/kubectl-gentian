@@ -64,11 +64,11 @@
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> --oci <artifact> --repository <repository> [--tenant <tenant>]
-#                                  a catalogue kept as an OCI artifact, read with the credential of a
+#                                  a catalog kept as an OCI artifact, read with the credential of a
 #                                  repository declared for the tenant (or, without --tenant, for the cluster)
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
 #   kubectl gentian catalogues rename <old> <new> [--tenant <tenant>]
-#                                  the same catalogue under another name: what was installed from
+#                                  the same catalog under another name: what was installed from
 #                                  it follows, in the same commit, and no build moves
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
@@ -120,7 +120,7 @@
 #   kubectl gentian version
 #
 # Which cluster is the current kubectl context's. The director is found there
-# (the Deployment labelled app.kubernetes.io/component=director) and reached
+# (the Deployment labeled app.kubernetes.io/component=director) and reached
 # through a port-forward for the length of one command; its own settings say
 # which identity provider to sign in with and which cluster it serves. The
 # registrar is found the same way, beside it, and the usher -- which answers
@@ -383,7 +383,7 @@ _disconnect() {
     fi
 }
 
-# The usher: the Deployment labelled app.kubernetes.io/component=usher, in
+# The usher: the Deployment labeled app.kubernetes.io/component=usher, in
 # whichever namespace it runs. It answers what the cluster holds of a tenant
 # right now; the director answers what git declares.
 _USH_PF_PID=""
@@ -417,9 +417,9 @@ _connect_usher() {
     die "the usher in ${ns} could not be reached"
 }
 
-# The registrar: the Deployment labelled app.kubernetes.io/component=registrar
+# The registrar: the Deployment labeled app.kubernetes.io/component=registrar
 # in the director's namespace, on the port its Service names.
-# The custodian: the Deployment labelled app.kubernetes.io/component=custodian,
+# The custodian: the Deployment labeled app.kubernetes.io/component=custodian,
 # beside the director. Credentials are set there, as the person: it checks
 # them against what the requirement declares and writes them to the vault
 # with the person's own authority.
@@ -642,7 +642,7 @@ cmd_tenants_create() {
              + (if $k != "" then {country:$k} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
     if [[ "${catalogues}" == "true" ]]; then
-        echo "Its administrators may add catalogues for their tenant."
+        echo "Its administrators may add catalogs for their tenant."
     fi
     if [[ "${signup}" == "true" ]]; then
         echo "Anybody may sign up to it; an account made that way is a member of nothing."
@@ -884,12 +884,12 @@ _tenant_flag() {
     echo "${t}"
 }
 
-# _apps_offers <tenant> — what the catalogues a tenant sees offer -- the
+# _apps_offers <tenant> — what the catalogs a tenant sees offer -- the
 # cluster's and the tenant's own -- as one JSON document: {sources:
 # [<name>…], unread: [<name>…], entries: [{source, name, version, edition,
-# digest}…]}. The director answers it from each catalogue's index; one it
+# digest}…]}. The director answers it from each catalog's index; one it
 # could not read is named in unread and the rest are still listed. A tenant
-# with no catalogue at all answers no sources.
+# with no catalog at all answers no sources.
 _apps_offers() {
     local t="$1" answer names name listing entries="[]" unread="[]"
     if ! answer="$( (_call GET "/v1/tenants/${t}/catalogues") 2>&1)"; then
@@ -952,10 +952,10 @@ cmd_apps_list() {
     [[ -z "${unread}" ]] || echo "Not read, the director could not reach them: ${unread}." >&2
 }
 
-# apps install: a pinned build from one of the catalogues the tenant sees.
+# apps install: a pinned build from one of the catalogs the tenant sees.
 #
 # The entry is looked up in what the director lists of them: the one
-# catalogue that serves the name, or the one --from names when several do. The
+# catalog that serves the name, or the one --from names when several do. The
 # digest is the one that listing states, unless --digest gives another; either
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
@@ -1093,14 +1093,14 @@ _optional_tenant_flag() {
     echo "${t}"
 }
 
-# Where a catalogue is read from, as the lists show it: its https address, the
+# Where a catalog is read from, as the lists show it: its https address, the
 # artifact it is kept as and the repository it is read with, or the directory
 # of the cluster's own deployments repository it is kept in.
 _CATALOGUE_WHERE='def where: if .oci then "oci: " + .oci.artifact + " (repository " + .oci.repository + ")" else (.url // "") end;'
 
 # catalogues list: with --tenant, what that tenant installs from -- the
-# cluster's catalogues and its own. Without, everything the cluster declares:
-# its own catalogues, each tenant's, and which tenants may add their own.
+# cluster's catalogs and its own. Without, everything the cluster declares:
+# its own catalogs, each tenant's, and which tenants may add their own.
 cmd_catalogues_list() {
     local t answer
     t="$(_optional_tenant_flag "$@")"
@@ -1132,14 +1132,14 @@ cmd_catalogues_list() {
     if [[ -n "${delegated}" ]]; then
         echo "Tenants whose administrators may add catalogues of their own: ${delegated}."
     else
-        echo "No tenant's administrators may add catalogues of their own (tenants delegate-catalogues <tenant> on)."
+        echo "No tenant's administrators may add catalogs of their own (tenants delegate-catalogues <tenant> on)."
     fi
 }
 
 # catalogues add / remove: for the whole cluster without --tenant, for one
 # tenant with it.
 #
-# A tenant's catalogue has two routes, by who is asking. The cluster's
+# A tenant's catalog has two routes, by who is asking. The cluster's
 # administrator adds one for the tenant; the tenant's own administrator adds
 # one where that is delegated to the tenant. The first is asked, and when the
 # director answers that the person may not, the second is: the person is told
@@ -1172,11 +1172,11 @@ _catalogues_change() {
         fi
     else
         echo "Catalogue ${name} removed for ${whose}, as ${via}: committed (${commit:-no commit id})."
-        echo "What was installed from it stays installed; a new install or a new build needs a catalogue that serves it."
+        echo "What was installed from it stays installed; a new install or a new build needs a catalog that serves it."
     fi
 }
 
-# catalogues rename: the catalogue under another name, with everything that
+# catalogues rename: the catalog under another name, with everything that
 # names it -- the source entry, the entries installed from it, the profiles'
 # origin -- as one commit of the director. The cluster administrator's route,
 # with --tenant as without: a tenant's administrator does not rename.
@@ -1202,7 +1202,7 @@ cmd_catalogues_rename() {
     fi
 }
 
-# catalogues residue: what the catalogue left on the cluster -- objects a
+# catalogues residue: what the catalog left on the cluster -- objects a
 # profile's bundle once brought and no bundle owns now, and profiles nobody
 # uses. Nothing removes them by itself. The list is the usher's, worked out
 # by the operator; IN EFFECT says whether an OIDC pack catalog on it is still
@@ -2500,7 +2500,7 @@ cmd_exposures() {
     esac
 }
 
-# apps outdated: which installed apps are behind the build their catalogue
+# apps outdated: which installed apps are behind the build their catalog
 # offers, and what keeps them there (the director's report). For the whole
 # cluster, or one tenant with --tenant.
 cmd_apps_outdated() {
@@ -2552,7 +2552,7 @@ cmd_apps_outdated() {
 }
 
 # apps move-outdated: move every outdated app -- or those of --tenant and
-# --app -- to the newest build its catalogue offers, and try once more every
+# --app -- to the newest build its catalog offers, and try once more every
 # move to a pinned build that was rolled back or did not start. The cluster
 # administrator's act; each move exports first, verifies after and rolls back
 # by itself (kubectl gentian apps outdated shows how each went).

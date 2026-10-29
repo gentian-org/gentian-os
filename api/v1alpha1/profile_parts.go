@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // what it is packaged as, how its values are mapped, what it backs up, and
 // what it puts on a desktop.
 //
-// This was appprofile_types.go. AD-4 says there is one catalogue kind, and
+// This was appprofile_types.go. AD-4 says there is one catalog kind, and
 // AppProfile was the other one -- so the kind is gone, along with the portal
 // tile and the browser-proxy route that only it had. What is left is what
 // ComponentProfile was always built from and had merely inherited from a file
@@ -50,7 +50,7 @@ type ProvisioningSpec struct {
 	// The division is deliberate and load-bearing: resolving a Keycloak group,
 	// detecting membership changes and running a Job to completion are platform
 	// concerns, so they live here. Knowing that one app wants a JSON-RPC call
-	// and another an OCS POST is not, so it lives in the catalogue entry that
+	// and another an OCS POST is not, so it lives in the catalog entry that
 	// owns that app. No application's protocol, endpoint or account model may
 	// be encoded in the kernel — see the platform boundary in
 	// gentian-apps/docs/app-profile-guide.md.
@@ -158,10 +158,10 @@ type PrivilegedRoleSpec struct {
 }
 
 // TileSpec configures a tile icon: a square PNG, 128x128.
-// Set icon (catalogue path) or logo (custom data URI). image is source-repo only
+// Set icon (catalog path) or logo (custom data URI). image is source-repo only
 // and must be inlined to logo before the profile is applied to a cluster.
 type TileSpec struct {
-	// Icon selects a pre-made tile from the Gentian catalogue (path 2).
+	// Icon selects a pre-made tile from the Gentian catalog (path 2).
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 	Icon string `json:"icon,omitempty"`
@@ -470,7 +470,7 @@ type RightsRequirement struct {
 	// may they read one tenant's evidence (tenant#can_read_evidence, which
 	// the cluster's auditors and that tenant's auditor hold). It is for the
 	// service that keeps the evidence and the console that shows it, and is
-	// honoured for a component of the platform tenant only: anywhere else
+	// honored for a component of the platform tenant only: anywhere else
 	// the key asks the app question alone.
 	// +optional
 	Audit bool `json:"audit,omitempty"`
@@ -499,7 +499,7 @@ type LLMRequirement struct {
 	// path to the gateway, and told so through valueMapping.llm.availableKey.
 	// When the key arrives the component is rendered again with it.
 	//
-	// Honoured for a component the platform places on tenants itself. For an
+	// Honored for a component the platform places on tenants itself. For an
 	// app a tenant installs the requirement holds the release as if this
 	// were not set: its chart is rendered by the app Composition, which
 	// reads the key from where it is kept and cannot render without it.
@@ -554,7 +554,7 @@ type IdentityRequirement struct {
 // "<profile>.sign-in-handler" of the profile's bundle (key handler.js, label
 // gentianos.io/asset: sign-in-handler), so the install's digest covers it. A
 // handler holds whatever is declared here, which is why it runs only from a
-// bundle the install is pinned to, and never from a tenant's own catalogue.
+// bundle the install is pinned to, and never from a tenant's own catalog.
 //
 // Who may use the app is not decided here. A sign-in begins on /sso/login,
 // which only a person the front door admits to this app reaches.
@@ -668,7 +668,7 @@ type OIDCClientSpec struct {
 	// wrong with that. Every profile wrote the app's public address, where
 	// every path is behind a session, so the realm's own request was answered
 	// with a redirect to the sign-in and never arrived. And it let a
-	// catalogue entry make the identity provider send a request to any
+	// catalog entry make the identity provider send a request to any
 	// address at all, inside the cluster or outside it.
 	//
 	// The field stays in the definition so that a profile which still
@@ -873,7 +873,7 @@ type DatabaseRequirement struct {
 	// way are the app's by ownership: the app role owns each one it made, so
 	// an export copies them, a restore puts them back and a purge drops them
 	// with the role. They are not otherwise governed — the tenant chooses the
-	// names, and they do not appear in the catalogue's provisioning model.
+	// names, and they do not appear in the catalog's provisioning model.
 	//
 	// On mariadb a database has no owner and the server is shared by every
 	// tenant, so the app's databases are the ones named for it: the app may
@@ -907,7 +907,7 @@ type DatabaseRequirement struct {
 	// the other.
 	//
 	// This is declared rather than inferred: the platform cannot know an app's
-	// migration behaviour from its name, and matching on the name is how a
+	// migration behavior from its name, and matching on the name is how a
 	// second app with the same need silently gets the wrong search_path.
 	// +optional
 	// +kubebuilder:validation:Enum=app-schema;public
@@ -1045,7 +1045,7 @@ type MCPRequirement struct {
 // ChartRef references an upstream Helm chart.
 // APIIntegration configures how an ApiProfile (deploymentMethod: api) reaches
 // its backing external service. No workload pods are created; the operator only
-// contributes catalogue and portal metadata.
+// contributes catalog and portal metadata.
 type APIIntegration struct {
 	// Runtime selects how the tenant reaches the external service.
 	// redirect sends the browser to baseUrl (default).
@@ -1255,7 +1255,7 @@ type PlatformValueMapping struct {
 	// +optional
 	RealmKey string `json:"realmKey,omitempty"`
 	// ZoneKindKey receives "kernel" for a component served in the kernel zone
-	// and "tenant" otherwise. A component whose behaviour differs between the
+	// and "tenant" otherwise. A component whose behavior differs between the
 	// platform's own zone and a customer's decides that from this, rather
 	// than from a list of capabilities the operator composes for it.
 	// +optional
@@ -1981,7 +1981,7 @@ type DerivedSecretKey struct {
 // VolumeValueMapping names the values paths a chart uses for extra volumes.
 //
 // The platform writes extraVolumes/extraVolumeMounts regardless, since that is
-// the common convention and an unrecognised value is inert. These paths are
+// the common convention and an unrecognized value is inert. These paths are
 // written *in addition*, so declaring them cannot remove a mount the chart was
 // already receiving.
 type VolumeValueMapping struct {

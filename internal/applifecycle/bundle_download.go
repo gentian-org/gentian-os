@@ -28,9 +28,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// A bundle, downloaded: the artefacts under its S3 prefix streamed as one tar,
+// A bundle, downloaded: the artifacts under its S3 prefix streamed as one tar,
 // which is the single-file container of sovereignty-concept.md §1.3. The
-// artefacts are age-encrypted already, so what leaves here is what sits in
+// artifacts are age-encrypted already, so what leaves here is what sits in
 // the bucket; nothing is decrypted and nothing is re-packed.
 //
 // Streamed rather than staged: a bundle can be tens of gigabytes, and a copy
@@ -49,7 +49,7 @@ func (s *Service) bundleClient(ctx context.Context, bundle *gentianov1alpha1.Bun
 func (s *Service) bundles() *bundlestore.Store { return &bundlestore.Store{Client: s.client} }
 
 // StreamBundle writes one export's bundle to w as a tar whose entries are the
-// artefact names under the bundle's prefix.
+// artifact names under the bundle's prefix.
 func (s *Service) StreamBundle(ctx context.Context, tenantName, name string, w io.Writer) error {
 	var export gentianov1alpha1.TenantExport
 	if err := s.client.Get(ctx, types.NamespacedName{Name: name, Namespace: layout.Tenant(tenantName)}, &export); err != nil {
@@ -62,7 +62,7 @@ func (s *Service) StreamBundle(ctx context.Context, tenantName, name string, w i
 }
 
 // streamRef writes the bundle at ref to w as a tar whose entries are the
-// artefact names under its prefix.
+// artifact names under its prefix.
 func (s *Service) streamRef(ctx context.Context, bundle *gentianov1alpha1.BundleRef, w io.Writer) error {
 	mc, err := s.bundleClient(ctx, bundle)
 	if err != nil {

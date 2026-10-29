@@ -48,7 +48,7 @@ const (
 
 	// credentialProbePrefix names the ExternalSecret that reports whether a
 	// destination's keys have been supplied. One constant rather than four
-	// literals, because SetupWithManager now has to recognise the name it
+	// literals, because SetupWithManager now has to recognize the name it
 	// builds elsewhere, and a prefix spelled twice is a watch that silently
 	// matches nothing.
 	credentialProbePrefix = "credreq-"
@@ -421,7 +421,7 @@ func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPat
 	})
 }
 
-// ensureConsumingSecret materialises the keys where capture Jobs run.
+// ensureConsumingSecret materializes the keys where capture Jobs run.
 //
 // The kernel namespace, always — including for a tenant's own destination.
 // Capture Jobs run there, the tenant namespace copy is staged from it for the

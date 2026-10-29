@@ -22,7 +22,7 @@
 # This has now happened three times, on the three tenant subtrees that are not
 # `apps`:
 #
-#   tenants/<t>/repositories/<n>   Argo CD repository Secret never materialised
+#   tenants/<t>/repositories/<n>   Argo CD repository Secret never materialized
 #   tenants/<t>/backup/destination BackupPolicy stuck CredentialUnsatisfied
 #   tenants/<t>/contracts/<c>      found by this lint, before it was reached
 #
@@ -79,7 +79,7 @@ DIM = "\033[2m"
 NC = "\033[0m"
 
 # A vault path this platform builds but ESO must not read. Each entry is the
-# normalised pattern (see normalise) and why it is not a Secret.
+# normalized pattern (see normalise) and why it is not a Secret.
 OPERATOR_ONLY = {
     "gentian-os/tenants/+":
         "the tenant's whole subtree, addressed only by DeleteTree on cleanup "

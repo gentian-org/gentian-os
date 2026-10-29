@@ -9,7 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // Package trustanchor builds the gentian-trust-anchor-tls bundle for clusters whose
-// staging clusters. Catalogue apps mount this secret so in-cluster OIDC
+// staging clusters. Catalog apps mount this secret so in-cluster OIDC
 // clients trust https://id.<kernel-domain>.
 package trustanchor
 
@@ -93,7 +93,7 @@ func loadMozillaCABundle(ctx context.Context) ([]byte, error) {
 //
 // Takes a context because it makes up to maxIssuerChain network round trips to
 // URLs named by the certificate itself. Each fetch bounds itself at 30s, but
-// without the caller's context a cancelled reconcile still waited for the whole
+// without the caller's context a canceled reconcile still waited for the whole
 // walk.
 func fetchIssuerChain(ctx context.Context, leafPEM []byte) ([]byte, error) {
 	block, _ := pem.Decode(leafPEM)

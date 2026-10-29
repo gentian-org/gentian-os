@@ -8,7 +8,7 @@
 
 ## 1. Tenancy Model
 
-A **tenant** is an organisation. Each tenant gets:
+A **tenant** is an organization. Each tenant gets:
 
 - A dedicated Kubernetes namespace (`tenant-{name}`), and a second one
   (`tenant-{name}-dmz`) for what the tenant publishes to the internet.
@@ -58,7 +58,7 @@ the sign-in side and the table of addresses):
    components, which are installed with the cluster: the desktop at
    `platform.<KERNEL_DOMAIN>`, the administration console at
    `admin.platform.<KERNEL_DOMAIN>`, the concierge on the bare domain. Nobody
-   installs catalogue apps or add-ons into it: the director answers `409` with
+   installs catalog apps or add-ons into it: the director answers `409` with
    the reason to `POST /v1/tenants/{t}/apps/{p}` and
    `PUT /v1/tenants/{t}/apps/{p}/addons` for a tenant whose manifest names a
    realm other than its own. An app's composition takes the tenant's name as
@@ -118,7 +118,7 @@ Otherwise nothing is published and the component says why
 The reason for the second statement is the realm. A realm's administrators can
 see and change every account in it, and the kernel realm's accounts are the
 ones that administer the cluster. Users of the cluster's apps do not belong
-there, on a cluster of one organisation any more than on a shared one.
+there, on a cluster of one organization any more than on a shared one.
 
 **What the user tenant of a single-tenancy cluster shares with the kernel.**
 Its domain is the cluster's, so it has no listener, certificate, DNS wildcard
@@ -350,7 +350,7 @@ Three roles, three scopes:
 
 | Role | Primary scope | Can do | Cannot do |
 |---|---|---|---|
-| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogues: at a public address, or as an OCI artifact, for every tenant or for one | Perform tenant business actions, bypass GitOps in prod for tenant changes |
+| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogs: at a public address, or as an OCI artifact, for every tenant or for one | Perform tenant business actions, bypass GitOps in prod for tenant changes |
 | **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy |
 | **Tenant user** | Day-to-day app use | Use installed apps via SSO, consume integrations | Install/uninstall apps, modify tenant manifest, see admin surfaces |
 

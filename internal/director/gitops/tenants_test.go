@@ -209,7 +209,7 @@ func TestRetiringATenantRemovesItsDirectory(t *testing.T) {
 
 // The platform tenant carries the kernel realm every administrator signs in
 // against. Retiring it is not a tenant going away, it is the cluster locking
-// everyone out, so the director refuses however the request was authorised.
+// everyone out, so the director refuses however the request was authorized.
 func TestThePlatformTenantCannotBeRetiredThroughTheDirector(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
@@ -307,7 +307,7 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 		DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		Deletion:       &gentianov1alpha1.TenantDeletion{KeepBundles: true},
 		Apps:           []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
-		// Nor with its catalogues, or with leave to add its own.
+		// Nor with its catalogs, or with leave to add its own.
 		Catalogue: &gentianov1alpha1.TenantCatalogue{Delegated: true, Sources: []gentianov1alpha1.TenantCatalogueSource{
 			{Name: "theirs", URL: "https://elsewhere.example.com/apps", AddedBy: "tenant"},
 		}},
@@ -756,7 +756,7 @@ func TestThePlatformTenantsManifestRefusesAppsAndAddons(t *testing.T) {
 // cluster when nothing is said of its switches: its administrators may
 // approve public addresses -- the one switch that is on for this tenant, by
 // the install and by the director alike -- and nothing more: in particular no annotation that would admit
-// the tenant ahead of the handover, and no catalogues of its own. Two templates
+// the tenant ahead of the handover, and no catalogs of its own. Two templates
 // in two languages would drift apart silently, so the shell's output is
 // produced here and compared with the director's as data.
 func TestTheInstallsUserTenantIsTheManifestTheDirectorWrites(t *testing.T) {

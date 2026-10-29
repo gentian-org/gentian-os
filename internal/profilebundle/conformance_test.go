@@ -28,21 +28,21 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// TestThePublishedCataloguesConform holds every bundle a published catalogue
+// TestThePublishedCataloguesConform holds every bundle a published catalog
 // serves to the checks this platform runs at install and at rollout: the
 // bundle hashes to the digest its index states, it is a bundle this platform
 // admits, its profile reads as a ComponentProfile of this build's schema,
 // and its platform floor is well-formed.
 //
-// It runs when GENTIAN_CONFORMANCE_CATALOGUES names the catalogues, comma
-// separated -- CI sets it to the released and the develop catalogue -- so a
+// It runs when GENTIAN_CONFORMANCE_CATALOGUES names the catalogs, comma
+// separated -- CI sets it to the released and the develop catalog -- so a
 // change to the platform that breaks a published profile fails here, in the
 // platform's own pull request, rather than at a tenant's install. Without
 // the variable it is skipped: a unit test does not reach the network.
 func TestThePublishedCataloguesConform(t *testing.T) {
 	addresses := strings.Split(os.Getenv("GENTIAN_CONFORMANCE_CATALOGUES"), ",")
 	if len(addresses) == 1 && strings.TrimSpace(addresses[0]) == "" {
-		t.Skip("GENTIAN_CONFORMANCE_CATALOGUES names no catalogue")
+		t.Skip("GENTIAN_CONFORMANCE_CATALOGUES names no catalog")
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	for _, address := range addresses {
@@ -70,7 +70,7 @@ func TestThePublishedCataloguesConform(t *testing.T) {
 					if got := "sha256:" + hex.EncodeToString(sum[:]); got != e.Digest {
 						t.Fatalf("the index states %s and the file hashes to %s", e.Digest, got)
 					}
-					// As a catalogue of the whole cluster brings it: the one origin
+					// As a catalog of the whole cluster brings it: the one origin
 					// that may bring companions.
 					if _, err := profilebundle.Check(bundle, e.Name, profilebundle.ClusterOrigin("conformance")); err != nil {
 						t.Fatalf("not a bundle this platform installs: %v", err)

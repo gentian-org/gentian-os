@@ -22,7 +22,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 )
 
-// SecuritySpec declares platform security requests for a catalogue entry.
+// SecuritySpec declares platform security requests for a catalog entry.
 // Cluster administrators approve subsets via PlatformSecurityPolicy; the operator
 // intersects requests with the allowlist before compositions apply MAC labels.
 type SecuritySpec struct {
@@ -49,7 +49,7 @@ type MacWaiverRequest struct {
 	Scope string `json:"scope"`
 }
 
-// AllowedMacWaiver is a cluster-admin approved MAC waiver for a catalogue profile.
+// AllowedMacWaiver is a cluster-admin approved MAC waiver for a catalog profile.
 type AllowedMacWaiver struct {
 	// Profile is the ComponentProfile metadata.name that may use this waiver.
 	// +kubebuilder:validation:Required
@@ -65,7 +65,7 @@ type AllowedMacWaiver struct {
 }
 
 // AllowedClusterRole permits one of the platform's cluster roles for one
-// catalogue profile on this cluster.
+// catalog profile on this cluster.
 type AllowedClusterRole struct {
 	// Profile is the ComponentProfile metadata.name that may be bound to it.
 	// +kubebuilder:validation:Required

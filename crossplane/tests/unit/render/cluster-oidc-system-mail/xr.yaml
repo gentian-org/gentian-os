@@ -2,7 +2,7 @@
 #
 # What this asserts is the kernel realm's gentian-dovecot client: with
 # spec.oidc supplied and mail.serviceMode `system`, cluster-default composes it,
-# labelled gentianos.io/purpose: dovecot-oidc for the operator to wait on, with
+# labeled gentianos.io/purpose: dovecot-oidc for the operator to wait on, with
 # its secret read from dovecot-admin in the mail namespace. The sibling fixture,
 # with mail relayed, must compose none: a client nothing authenticates as would
 # sit in the realm suggesting an IMAP server the cluster does not run.

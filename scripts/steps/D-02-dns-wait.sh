@@ -3,7 +3,7 @@
 # phase: applications
 # requires: D-01-operator
 # provides: id.<kernel> resolving publicly, for the OIDC discovery D-03 is the first to need
-# check: none — a pure wait; DNS either resolves or it does not, and there is no artefact to test for
+# check: none — a pure wait; DNS either resolves or it does not, and there is no artifact to test for
 # mutates: nothing — waits on a condition
 
 # The public names, before anything asks a question that needs one.

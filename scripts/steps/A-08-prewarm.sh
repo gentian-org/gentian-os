@@ -3,7 +3,7 @@
 # phase: control-plane
 # requires: A-01-namespaces
 # provides: pre-pulled images on every node, and the two cold-start races burned on a throwaway pod
-# check: none — prewarming is a cache optimisation with no persistent artefact to test for; it is idempotent and cheap to repeat
+# check: none — prewarming is a cache optimization with no persistent artifact to test for; it is idempotent and cheap to repeat
 # mutates: transient DaemonSet/Pods only — nothing that outlives the step
 
 # Last in the control-plane phase, so it runs after the cluster can schedule

@@ -200,15 +200,15 @@ func TestAnAddonWhoseBuildCannotBeVerifiedIsRefused(t *testing.T) {
 		code  int
 		says  string
 	}{
-		"a catalogue the cluster does not declare": {pinnedAddon("elsewhere/element-talk", sha(talk)), http.StatusUnprocessableEntity, "This tenant's catalogues: main."},
-		"a digest with no coordinate":              {fmt.Sprintf(`{"digest":%q}`, sha(talk)), http.StatusUnprocessableEntity, "coordinate"},
-		"a coordinate with no digest":              {`{"coordinate":"main/element-talk"}`, http.StatusBadRequest, "digest"},
-		"a digest that is not one":                 {pinnedAddon("main/element-talk", "latest"), http.StatusBadRequest, "sha256"},
-		"a coordinate that is not one":             {pinnedAddon("element-talk", sha(talk)), http.StatusBadRequest, "<catalogue>/<app>"},
-		"neither":                                  {`{}`, http.StatusBadRequest, "an addon is a name"},
-		"a source serving another build":           {pinnedAddon("main/element-deck", sha(deck)), http.StatusBadGateway, "not this entry"},
-		"an entry the source does not serve":       {pinnedAddon("main/element-poll", sha(talk)), http.StatusNotFound, "does not serve"},
-		"the same addon twice":                     {`"element-talk"`, http.StatusBadRequest, "twice"},
+		"a catalog the cluster does not declare": {pinnedAddon("elsewhere/element-talk", sha(talk)), http.StatusUnprocessableEntity, "This tenant's catalogues: main."},
+		"a digest with no coordinate":            {fmt.Sprintf(`{"digest":%q}`, sha(talk)), http.StatusUnprocessableEntity, "coordinate"},
+		"a coordinate with no digest":            {`{"coordinate":"main/element-talk"}`, http.StatusBadRequest, "digest"},
+		"a digest that is not one":               {pinnedAddon("main/element-talk", "latest"), http.StatusBadRequest, "sha256"},
+		"a coordinate that is not one":           {pinnedAddon("element-talk", sha(talk)), http.StatusBadRequest, "<catalogue>/<app>"},
+		"neither":                                {`{}`, http.StatusBadRequest, "an addon is a name"},
+		"a source serving another build":         {pinnedAddon("main/element-deck", sha(deck)), http.StatusBadGateway, "not this entry"},
+		"an entry the source does not serve":     {pinnedAddon("main/element-poll", sha(talk)), http.StatusNotFound, "does not serve"},
+		"the same addon twice":                   {`"element-talk"`, http.StatusBadRequest, "twice"},
 	} {
 		// After a pin that would verify: it is not committed either.
 		code, out := h.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom, `{"addons":[`+good+`,`+c.entry+`]}`)
@@ -235,7 +235,7 @@ func TestAnAddonWhoseBuildCannotBeVerifiedIsRefused(t *testing.T) {
 		t.Fatalf("install = %d %v", code, out)
 	}
 	if code, out := bare.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom, `{"addons":[`+good+`]}`); code != http.StatusUnprocessableEntity ||
-		!strings.Contains(fmt.Sprint(out["error"]), "fetches from no catalogue") {
+		!strings.Contains(fmt.Sprint(out["error"]), "fetches from no catalog") {
 		t.Fatalf("a pinned addon with no source declared = %d %v", code, out)
 	}
 	if code, out := bare.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom, `{"addons":["element-talk"]}`); code != http.StatusAccepted {
@@ -257,7 +257,7 @@ func TestAPinnedAddonOfAnAppThatIsNotInstalledCommitsNothing(t *testing.T) {
 		t.Fatalf("set addons = %d %v", code, out)
 	}
 	if h.tip(t) != before {
-		t.Fatal("a profile was materialised for an app that is not installed")
+		t.Fatal("a profile was materialized for an app that is not installed")
 	}
 }
 

@@ -201,7 +201,7 @@ test-step0-sync:
 test-user-tenant-scaffold:
 	@bash scripts/tests/test-user-tenant-scaffold.sh
 
-## test-operator-objects: E-05 holds the install to the catalogue and every
+## test-operator-objects: E-05 holds the install to the catalog and every
 ## declared tenant being synced -- their gentianos.io CRDs arrive after their
 ## ApplicationSets -- asks Argo CD again for a failed one, and fails naming
 ## the tenant and Argo CD's message. D-01 asks again first. No cluster.
@@ -220,7 +220,7 @@ test-claims-kinds:
 test-stage-values-scaffold:
 	@bash scripts/tests/test-stage-values-scaffold.sh
 
-## test-catalogue-default: which of gentian-apps's two catalogues a new Cluster
+## test-catalogue-default: which of gentian-apps's two catalogs a new Cluster
 ## claim names -- the released one for a release tag or main, the development
 ## one for any other branch, GENTIAN_CATALOGUE_URL over both -- and that an
 ## existing claim is left alone. No cluster, no network.
@@ -409,15 +409,15 @@ test-build-pin:
 	@bash scripts/tests/test-build-pin.sh
 
 ## The default profile step 0 places (the Operations Console) is written only
-## when it hashes to the digest the catalogue's index lists, or to a pin given
-## in GENTIAN_DEFAULT_PROFILES; a mismatch stops, an unreachable catalogue
-## warns, an existing definition is kept. curl is a stand-in catalogue; no
+## when it hashes to the digest the catalog's index lists, or to a pin given
+## in GENTIAN_DEFAULT_PROFILES; a mismatch stops, an unreachable catalog
+## warns, an existing definition is kept. curl is a stand-in catalog; no
 ## network. That the files are the director's, byte for byte, is a Go test
 ## (internal/director/gitops/installer_profiles_test.go).
 test-default-profile-digest:
 	@bash scripts/tests/test-default-profile-digest.sh
 
-## Step 0 adds the catalogues the store lists in GET /v1/meta that the Cluster
+## Step 0 adds the catalogs the store lists in GET /v1/meta that the Cluster
 ## claim has no source of that name for, marked addedBy: store, and changes or
 ## removes none; an unreachable store is a warning. curl is a stand-in store;
 ## no network.
@@ -468,14 +468,14 @@ lint-job-scripts:
 lint-resolvable:
 	@bash scripts/lint/lint-resolvable.sh
 
-## Assert every reader of an OpenBao path names a field the catalogue declares
+## Assert every reader of an OpenBao path names a field the catalog declares
 ## and the installer writes. A value under the right path with the wrong key
 ## reads as absent and presents as an ESO fault; it has cost two clusters.
 lint-credential-fields:
 	@python3 scripts/lint/lint-credential-fields.py
 
 ## Assert every generated requirement names a validator its own CRD admits.
-## The catalogue and the CRD are generated from different sources, so each can
+## The catalog and the CRD are generated from different sources, so each can
 ## be internally correct while disagreeing with the other — which aborted a
 ## real install at C-06.
 lint-credential-validators:
@@ -564,7 +564,7 @@ lint-marker-ascii:
 ##
 ## Composed resources are named from the thing they represent, and Keycloak
 ## names things Kubernetes will not take: gentian_useruuid has an underscore,
-## VERIFY_PROFILE lowercases to verify_profile, some catalogues name a mapper
+## VERIFY_PROFILE lowercases to verify_profile, some catalogs name a mapper
 ## "full name". Each produces an invalid-RFC-1123 error and leaves the composite
 ## Synced=False. `crossplane render` does not catch it — no API server sees the
 ## object — so the fixtures go green with a name the cluster refuses.
@@ -581,7 +581,7 @@ lint-sequencer-targets:
 
 ## A credential has two halves: something writes it to OpenBao, and ESO reads it
 ## back into a Secret. When only the write is permitted the value stores fine and
-## never materialises — a 403 on the read, and a satisfaction probe that reports
+## never materializes — a 403 on the read, and a satisfaction probe that reports
 ## the credential missing while it sits in the path. Three paths have shipped that
 ## way. Every path this repo builds must be ESO-readable or declared operator-only.
 lint-eso-readable-paths:

@@ -23,7 +23,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// A tenant's catalogue states where it is read from once -- an https address,
+// A tenant's catalog states where it is read from once -- an https address,
 // or an OCI artifact with its repository. The schema says so, so that a
 // manifest written by hand is refused when it is applied and not only left
 // unread by the director. Asked as a dry run: nothing is created.
@@ -52,7 +52,7 @@ func TestTheTenantSchemaAdmitsACatalogueAtAnAddressOrAsAnArtifact(t *testing.T) 
 		tenant := &gentianov1alpha1.Tenant{
 			ObjectMeta: metav1.ObjectMeta{Name: "catalogue-schema"},
 			Spec: gentianov1alpha1.TenantSpec{
-				DisplayName: "Catalogue schema",
+				DisplayName: "Catalog schema",
 				Catalogue:   &gentianov1alpha1.TenantCatalogue{Sources: []gentianov1alpha1.TenantCatalogueSource{c.source}},
 			},
 		}
@@ -68,7 +68,7 @@ func TestTheTenantSchemaAdmitsACatalogueAtAnAddressOrAsAnArtifact(t *testing.T) 
 	}
 }
 
-// A directory of the cluster's deployments repository is not a catalogue
+// A directory of the cluster's deployments repository is not a catalog
 // source: that repository holds the cluster's state only. A manifest written
 // by hand that still names one (path) is refused, and says why.
 func TestTheTenantSchemaRefusesACatalogueInTheDeploymentsRepository(t *testing.T) {
@@ -82,7 +82,7 @@ func TestTheTenantSchemaRefusesACatalogueInTheDeploymentsRepository(t *testing.T
 			"kind":       "Tenant",
 			"metadata":   map[string]any{"name": "catalogue-path"},
 			"spec": map[string]any{
-				"displayName": "Catalogue path",
+				"displayName": "Catalog path",
 				"catalogue":   map[string]any{"sources": []any{source}},
 			},
 		}}

@@ -223,7 +223,7 @@ func heldNames(held *bundle.AppSecrets) []string {
 	return out
 }
 
-// secretsArtefact is the app's secrets artefact among the artefacts of a
+// secretsArtefact is the app's secrets artefact among the artifacts of a
 // status entry, nil when there is none.
 func secretsArtefact(artefacts []gentianov1alpha1.BundleArtefact) *gentianov1alpha1.BundleArtefact {
 	for i := range artefacts {
@@ -243,7 +243,7 @@ func secretsReplaced(entry *gentianov1alpha1.AppExportStatus) bool {
 // --- Export -----------------------------------------------------------------
 
 // captureAppSecrets puts an app's own secrets into the bundle and returns
-// the artefact, nil when the app has none stored.
+// the artifact, nil when the app has none stored.
 //
 // Every secret the profile declares that the vault holds; one it declares
 // and the vault does not hold was never made, and is not in the bundle. A
@@ -828,7 +828,7 @@ func secretsNote(entry *gentianov1alpha1.AppExportStatus) string {
 	return strings.Join(parts, "; ")
 }
 
-// artefactOf is the artefact of a kind among the artefacts of a status
+// artefactOf is the artifact of a kind among the artifacts of a status
 // entry, nil when there is none.
 func artefactOf(artefacts []gentianov1alpha1.BundleArtefact, kind string) *gentianov1alpha1.BundleArtefact {
 	for i := range artefacts {

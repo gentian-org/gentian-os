@@ -52,7 +52,7 @@ This document details the architecture for integrating Large Language Model (LLM
 *   **Open WebUI comes with the models.** While `spec.llm.enabled` is true,
     the director keeps `open-webui-ce` in every tenant's apps, for everyone,
     and removes it when the cluster stops serving models
-    (`internal/director/api/platform_apps.go`). A cluster catalogue's index
+    (`internal/director/api/platform_apps.go`). A cluster catalog's index
     marks such an entry `placedWith: llm`; the App Store does not offer it,
     and an uninstall by hand is refused.
 *   **Built:** the vLLM instances. Each entry of `spec.llm.instances` is a
@@ -193,7 +193,7 @@ Stage 1 focuses on establishing the core loop: running a single-GPU server, secu
     ```
 
 ### Task 4: Integration with Tenant Provisioning
-*   **Action:** Update the `App` composition files in the operator to support injection of LLM environment variables for any catalogue application that requests the `ai-assistant` integration contract.
+*   **Action:** Update the `App` composition files in the operator to support injection of LLM environment variables for any catalog application that requests the `ai-assistant` integration contract.
 
 ---
 
@@ -274,7 +274,7 @@ instances or of providers is lost when that list changes.
 
 **A provider's address is a public one.** The gateway sends a provider's
 token and every prompt to the provider's address, so the director holds it to
-the rules it holds a catalogue's address to
+the rules it holds a catalog's address to
 (`internal/director/catalogue/address.go`): `https`, no port but 443, no user
 name or password, no query, and a host that is not a name or an address inside
 the cluster or a private network. When an address is new to the claim the

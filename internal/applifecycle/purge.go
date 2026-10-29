@@ -633,7 +633,7 @@ type signIn struct {
 // signInOf resolves an app's clients and pack scopes the way provisioning
 // does. A client is called what the profile says, else after the tenant and
 // the app; its pack is the one the profile names, else the one called what
-// the client is, looked up in the profile's own catalogue, an extension's
+// the client is, looked up in the profile's own catalog, an extension's
 // too. A SAML client is called its entity ID. A pack that is a service client
 // has no scope.
 func (s *Service) signInOf(ctx context.Context, tenantName, app string, profile *gentianov1alpha1.ComponentProfile) (signIn, error) {
@@ -700,7 +700,7 @@ func (s *Service) signInOf(ctx context.Context, tenantName, app string, profile 
 //
 // A client or scope is left where an app the tenant still has names the same
 // one -- two profiles may name one pack -- and one of Keycloak's own scopes is
-// never touched, whatever a catalogue called its pack's.
+// never touched, whatever a catalog called its pack's.
 func (s *Service) purgeSignIn(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) error {
 	mine, err := s.signInOf(ctx, tenant.Name, app, profile)
 	if err != nil || (len(mine.clients) == 0 && len(mine.scopes) == 0) {

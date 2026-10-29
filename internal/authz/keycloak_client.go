@@ -216,7 +216,7 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		// does it serves English to everyone — which, for a German-speaking
 		// market, is the product's first screen being in the wrong language.
 		//
-		// With this on, Keycloak honours the browser's Accept-Language and
+		// With this on, Keycloak honors the browser's Accept-Language and
 		// offers a picker, so a German browser gets German without anybody
 		// choosing anything. The default is what answers a browser asking for
 		// a language that is not here, and it is English because that is the
@@ -417,7 +417,7 @@ func (c *KeycloakAdminClient) GroupNames(ctx context.Context, realm, prefix stri
 }
 
 // builtInClientScopes are the client scopes Keycloak gives every realm. They
-// are the realm's own, whatever a catalogue names its packs' scopes: a pack
+// are the realm's own, whatever a catalog names its packs' scopes: a pack
 // that called its scope "profile" must not get the realm's profile scope
 // deleted when its app is purged.
 var builtInClientScopes = map[string]bool{

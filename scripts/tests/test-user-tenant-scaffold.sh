@@ -14,7 +14,7 @@
 #   - single: tenants/user, the manifest the director would write with its
 #     administrators allowed to approve public addresses, and nothing more --
 #     no annotation admits it before the handover, and it may add no
-#     catalogues -- every field of it on the Tenant CRD;
+#     catalogs -- every field of it on the Tenant CRD;
 #   - a tenant that exists, a cluster that already has another user tenant, a
 #     tenant that was removed: never rewritten, never brought back;
 #   - the mode is the claim's when there is a claim, and what the run was told

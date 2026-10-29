@@ -37,7 +37,7 @@ import (
 // holding one beside those databases. What is there is the credential of
 // the database's own role, and it is enough: the owner of a database can
 // dump it, replace its contents and empty it, and can do none of that to
-// its neighbours. So the three Jobs here run in the kernel's data
+// its neighbors. So the three Jobs here run in the kernel's data
 // namespace as that role.
 //
 // The database is the tenant's whole: one desktop writes to it, and no

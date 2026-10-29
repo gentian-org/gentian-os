@@ -20,8 +20,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
-// appAt is a profile with one entry at a label: what a catalogue serves, or
-// what the cluster's catalogue directory holds.
+// appAt is a profile with one entry at a label: what a catalog serves, or
+// what the cluster's catalog directory holds.
 func appAt(name, subDomain, tier string) string {
 	entry := "      subDomain: " + subDomain + "\n"
 	if subDomain == "" {
@@ -55,7 +55,7 @@ func singleClaim(sources ...gitops.CatalogueSource) string {
 	return claimWith(sources...) + "  tenancyMode: single\n"
 }
 
-// An app from a catalogue that would answer on an address name the platform
+// An app from a catalog that would answer on an address name the platform
 // keeps is refused when it is installed, with the reason, and nothing is
 // committed -- whatever trust tier its profile states, and whatever it is
 // called.
@@ -153,7 +153,7 @@ func TestAnAppAtAKernelAddressIsRefusedOnASingleTenancyCluster(t *testing.T) {
 }
 
 // An install by name is of a profile the cluster already holds, and the
-// director reads what it holds from the catalogue directory: the same
+// director reads what it holds from the catalog directory: the same
 // refusal, before the tenant's manifest names the app.
 func TestAnAppAlreadyOnTheClusterAtAReservedAddressIsRefusedByName(t *testing.T) {
 	h := startSeeded(t, nil, func(remote string) {
@@ -162,7 +162,7 @@ func TestAnAppAlreadyOnTheClusterAtAReservedAddressIsRefusedByName(t *testing.T)
 			dt.CataloguePath("notes.yaml"):  appAt("notes", "notes", "certified"),
 			dt.CataloguePath("board.yaml"):  "not: [a profile\n",
 			dt.CataloguePath("status.yaml"): appAt("somebody-else", "status", "certified"),
-			// A profile called desktop in the directory, as a catalogue's
+			// A profile called desktop in the directory, as a catalog's
 			// would be: with the origin the director records.
 			dt.CataloguePath("deck.yaml"): appAt("deck", "desktop", "platform"),
 			dt.CataloguePath(gitops.BundleFile("deck")): "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: deck\n  labels:\n    gentianos.io/profile-name: deck\n" +

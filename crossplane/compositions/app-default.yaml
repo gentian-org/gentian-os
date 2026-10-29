@@ -79,7 +79,7 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
-            # OIDC pack catalogue for the installed app profile (profiles/<app>/oidc-catalog.yaml).
+            # OIDC pack catalog for the installed app profile (profiles/<app>/oidc-catalog.yaml).
             - kind: OIDCPackCatalog
               into: oidcPackCatalog
               apiVersion: gentianos.io/v1alpha1

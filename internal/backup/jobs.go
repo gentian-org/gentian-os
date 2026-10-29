@@ -50,7 +50,7 @@ const (
 	// Staging rather than streaming is a deliberate v1 simplification: piping a
 	// dump straight into the upload needs the dump tool and rclone in one
 	// image, and the platform has no such image. The cost is real — a capture needs
-	// ephemeral node storage the size of the artefact — so ScratchLimit exists
+	// ephemeral node storage the size of the artifact — so ScratchLimit exists
 	// to bound it, and streaming is the obvious Phase 6 follow-up.
 	workDir = "/work"
 )
@@ -69,7 +69,7 @@ type JobParams struct {
 	// Role overrides the database role a restore hands ownership to. Empty
 	// derives it from Tenant and App, which is right for an app: its database,
 	// its role and its label are all the same name. The portal shell is the
-	// exception -- it is labelled with the tenant-wide component so its
+	// exception -- it is labeled with the tenant-wide component so its
 	// progress aggregates there, while its database and role are named for the
 	// shell. Deriving the role from the label restored into a role that has
 	// never existed.
@@ -101,7 +101,7 @@ type JobParams struct {
 	// shared Job waiter recreates a failed Job, so an unbounded capture would
 	// retry a genuinely broken dump forever while holding an app paused.
 	BackoffLimit int32
-	// Encryption protects every artefact this Job writes. There is no unset
+	// Encryption protects every artifact this Job writes. There is no unset
 	// value that means plaintext; Encryption.Validate rejects that before any
 	// Job is built.
 	Encryption Encryption
@@ -146,7 +146,7 @@ func (p JobParams) uploadSecretName() string {
 	return StorageAdminSecret
 }
 
-// Where each artefact is in a bundle, below the bundle's prefix and before
+// Where each artifact is in a bundle, below the bundle's prefix and before
 // the suffix encryption adds. An export writes to these and records them in
 // the manifest; a restore reads the manifest. Nothing else spells a path.
 func PostgresArtefact(database string) string { return "postgres/" + database + ".pgc" }
@@ -356,7 +356,7 @@ echo "archived the databases that are %[2]s's besides itself"`, workDir, databas
 // spec.backup.volumes.excludePaths and are the app author's statement about
 // which bytes are derived; they are applied as tar patterns, so a pattern that
 // matched a config directory would silently drop the key an app's data is
-// encrypted with — which is why the catalogue rejects such patterns rather
+// encrypted with — which is why the catalog rejects such patterns rather
 // than trusting this layer to notice.
 func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1.Job {
 	artefact := VolumeArtefact(claim)
@@ -394,7 +394,7 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // S3ArchiveJob captures one app bucket into the bundle.
 //
 // It copies the bucket to disk and archives it rather than mirroring object to
-// object. Mirroring was the obvious shape and the wrong one: bundle artefacts
+// object. Mirroring was the obvious shape and the wrong one: bundle artifacts
 // are encrypted individually, and a mirrored bucket would have landed as
 // plaintext objects — leaving the largest part of most tenants' data readable
 // by anyone who could list the bundle, in a bundle whose whole premise is that
@@ -547,11 +547,11 @@ kc() {
 }
 `
 
-// uploadJob wires a producing container to an uploader that puts the artefact
+// uploadJob wires a producing container to an uploader that puts the artifact
 // in the bundle and records its checksum next to it.
 //
 // localFile and artefact are separate on purpose: producers write a fixed
-// filename into the scratch mount, while the artefact carries the database or
+// filename into the scratch mount, while the artifact carries the database or
 // claim name it should be filed under in the bundle. Deriving one from the
 // other looks tidy and silently uploads nothing.
 //
@@ -729,7 +729,7 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 					// a coin flip.
 					NodeSelector: nodeSelectorFor(p.Node),
 					// Never Always: a capture is a one-shot, and a restarting
-					// pod would re-dump into an artefact already uploaded.
+					// pod would re-dump into an artifact already uploaded.
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					// Volume Jobs run in tenant namespaces, where Kyverno
 					// enforces the pod-security baseline that platform-kernel

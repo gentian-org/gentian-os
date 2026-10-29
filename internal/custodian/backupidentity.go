@@ -25,7 +25,7 @@ import (
 //
 // Not a CredentialRequirement, deliberately. A requirement is a credential a
 // human supplies and something consumes, and its satisfaction is probed by
-// External Secrets materialising it into a Secret — which is the one thing that
+// External Secrets materializing it into a Secret — which is the one thing that
 // must never happen to this value. The requirement machinery would therefore
 // have to be defeated in the one respect that makes it useful.
 //

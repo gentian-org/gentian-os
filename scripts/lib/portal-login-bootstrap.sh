@@ -477,7 +477,7 @@ _keycloak_smtp_settings() {
             # STARTTLS (smtpd_tls_auth_only), so a realm that does not upgrade
             # cannot present the credential below at all and relays only while
             # the cluster still trusts its address. Java then checks the
-            # certificate against the name it dialled, and the certificate is the
+            # certificate against the name it dialed, and the certificate is the
             # public wildcard for the kernel domain, which covers mail.<domain> and
             # not postfix-<env>.<ns>.svc.cluster.local — the name this used before,
             # together with STARTTLS off, when Postfix presented a self-signed

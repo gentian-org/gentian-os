@@ -21,9 +21,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// A catalogue renamed in place: the source entry, every app entry and add-on
+// A catalog renamed in place: the source entry, every app entry and add-on
 // pin that names it, and the origin of every profile, bundle and build that
-// came from it, as one commit. What came from another catalogue, and the
+// came from it, as one commit. What came from another catalog, and the
 // bytes every pin's digest was taken over, are not touched.
 
 const renameClaim = "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
@@ -96,7 +96,7 @@ func TestRenamingAClusterCatalogueRewritesEverythingThatNamesIt(t *testing.T) {
 	if parent := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main~1"); parent != tip {
 		t.Fatal("the rename is more than one commit")
 	}
-	if subject := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%an|%s", "main"); !strings.Contains(subject, "Ada Lovelace|feat(cluster): rename catalogue partner to acme (via ada@example.com)") {
+	if subject := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%an|%s", "main"); !strings.Contains(subject, "Ada Lovelace|feat(cluster): rename catalog partner to acme (via ada@example.com)") {
 		t.Fatalf("commit = %q", subject)
 	}
 
@@ -109,7 +109,7 @@ func TestRenamingAClusterCatalogueRewritesEverythingThatNamesIt(t *testing.T) {
 		t.Fatalf("the claim:\n%s", claim)
 	}
 	// Every tenant's entries from it, and its pins: not the chart's value,
-	// and not an entry from another catalogue.
+	// and not an entry from another catalog.
 	demo := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
 	if !strings.Contains(demo, "  - profile: shop\n    digest: "+shop+"\n    catalogue: acme\n") {
 		t.Fatalf("demo's entry:\n%s", demo)
@@ -141,11 +141,11 @@ func TestRenamingAClusterCatalogueRewritesEverythingThatNamesIt(t *testing.T) {
 	if err != nil || have.Origin != "cluster/acme" || have.Digest != shop {
 		t.Fatalf("shop on the cluster = %+v, %v", have, err)
 	}
-	// The next install from the renamed catalogue is the same origin again:
+	// The next install from the renamed catalog is the same origin again:
 	// the same bytes, nothing to write.
 	body := []byte(dt.ProfileYAML("shop"))
 	if res, err := g.MaterialiseProfile(ctx, "shop", shop, body, profilebundle.ClusterOrigin("acme"), meta("u-ada")); err != nil || res.Status != "unchanged" {
-		t.Fatalf("materialise from acme = %+v, %v", res, err)
+		t.Fatalf("materialize from acme = %+v, %v", res, err)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestRenamingATenantsCatalogueTouchesThatTenantOnly(t *testing.T) {
 	dt.Commit(t, remote, map[string]string{dt.ClaimPath: renameClaim})
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	ctx := context.Background()
-	// Two tenants with a catalogue of the same name, as two tenants may.
+	// Two tenants with a catalog of the same name, as two tenants may.
 	for _, tenant := range []string{"demo", "solo"} {
 		if _, err := g.AddTenantCatalogueSource(ctx, tenant, "aluvian", "https://"+tenant+".example.com/apps", gitops.ByCluster, meta("u-ada")); err != nil {
 			t.Fatal(err)
@@ -180,7 +180,7 @@ func TestRenamingATenantsCatalogueTouchesThatTenantOnly(t *testing.T) {
 	if err != nil || res.Status != "renamed" || !res.Changed {
 		t.Fatalf("rename = %+v, %v", res, err)
 	}
-	if subject := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%s", "main"); subject != "feat(demo): rename catalogue aluvian to aluvian-team (via ada@example.com)" {
+	if subject := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%s", "main"); subject != "feat(demo): rename catalog aluvian to aluvian-team (via ada@example.com)" {
 		t.Fatalf("commit = %q", subject)
 	}
 	demo := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
@@ -205,7 +205,7 @@ func TestRenamingATenantsCatalogueTouchesThatTenantOnly(t *testing.T) {
 	}
 	own, err := g.TenantCatalogue(ctx, "demo")
 	if err != nil || len(own.Sources) != 1 || own.Sources[0].Name != "aluvian-team" || own.Sources[0].AddedBy != "cluster" {
-		t.Fatalf("demo's catalogue = %+v, %v", own, err)
+		t.Fatalf("demo's catalog = %+v, %v", own, err)
 	}
 }
 

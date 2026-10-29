@@ -241,7 +241,7 @@ func StateOf(job *batchv1.Job) JobState {
 	return JobRunning
 }
 
-// FailureMessage summarises why a Job failed, for the tenant condition.
+// FailureMessage summarizes why a Job failed, for the tenant condition.
 func FailureMessage(job *batchv1.Job) string {
 	for _, c := range job.Status.Conditions {
 		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue && c.Message != "" {

@@ -227,7 +227,7 @@ spec:
 # never runs.
 # CredentialRequirement is COMPOSED by repository-default, not merely read, so
 # this grant is wider than the read-only ones beside it: Crossplane creates,
-# updates and deletes the catalogue entry for each repository's credential.
+# updates and deletes the catalog entry for each repository's credential.
 #
 # Without it the failure is the one already described below for
 # OIDCPackCatalog, and it is just as quiet:

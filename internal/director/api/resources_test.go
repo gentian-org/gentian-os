@@ -28,7 +28,7 @@ import (
 // a stand-in that answers the way internal/applifecycle does, including the
 // plans it marks as not selectable and why.
 
-// operator is the app-lifecycle API as these tests need it: a catalogue of
+// operator is the app-lifecycle API as these tests need it: a catalog of
 // plans, a tenant on the second, and the queries it was asked.
 type operator struct {
 	*httptest.Server
@@ -197,7 +197,7 @@ func TestWhoMayChooseAPlanIsTheGraphsAnswer(t *testing.T) {
 
 // Whether the caller chooses for themselves is decided from the cluster
 // relation, not asserted by a screen: the tenant's administrator is asked
-// the self-service catalogue, the platform's is not.
+// the self-service catalog, the platform's is not.
 func TestSelfServiceIsDecidedHereNotByTheScreen(t *testing.T) {
 	h, op := startWithOperator(t)
 
@@ -500,7 +500,7 @@ func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
 
 // The change history is the audit evidence the platform already had: the
 // commits, with the decision that allowed each one. What it must not do is
-// present a change pushed by hand as though something had authorised it.
+// present a change pushed by hand as though something had authorized it.
 func TestTheChangeHistoryNamesWhatAllowedEachChange(t *testing.T) {
 	h, _ := startWithOperator(t)
 	tom := h.token(t, "tenant-demo", "tom")
@@ -645,7 +645,7 @@ func TestAnOldGrantFileIsCarriedOverByTheNextGrant(t *testing.T) {
 }
 
 // The waiver allowlist is the cluster's own security configuration. It is
-// read under can_audit, joined with what the catalogue asks of it, and
+// read under can_audit, joined with what the catalog asks of it, and
 // changed under can_set_admission -- which model v1 binds to break-glass and
 // nobody holds by standing membership. That is the model's decision and the
 // right one: letting an app out of the pod-security baseline should cost a

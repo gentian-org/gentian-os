@@ -26,7 +26,7 @@ import (
 //
 // The registrar speaks for Keycloak on a caller's behalf (S7A.17) and holds one
 // credential PER REALM rather than one that can reach every realm. That is the
-// whole security argument: the registrar authorises per tenant, so a missed
+// whole security argument: the registrar authorizes per tenant, so a missed
 // check should not be able to reach a realm the caller has nothing to do with,
 // and a credential that only exists for one realm makes that structural rather
 // than policed.
@@ -163,7 +163,7 @@ func (c *KeycloakAdminClient) createRegistrarClient(ctx context.Context, token, 
 	body := map[string]any{
 		"clientId":    RegistrarClientID,
 		"name":        "Gentian registrar (administrative)",
-		"description": "The registrar acts for a caller the platform has already authorised. Its authority is the caller's; this credential is only how it reaches this realm.",
+		"description": "The registrar acts for a caller the platform has already authorized. Its authority is the caller's; this credential is only how it reaches this realm.",
 		"enabled":     true,
 		// Confidential with a service account, and nothing else. No browser
 		// flow, no direct grant: nobody signs in as this, and a credential

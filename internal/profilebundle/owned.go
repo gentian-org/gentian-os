@@ -42,7 +42,7 @@ type CompanionKind struct {
 	Kind string
 	GVK  runtimeschema.GroupVersionKind
 	// Namespaced says objects of the kind live in a namespace: the one the
-	// catalogue is applied in.
+	// catalog is applied in.
 	Namespaced bool
 }
 

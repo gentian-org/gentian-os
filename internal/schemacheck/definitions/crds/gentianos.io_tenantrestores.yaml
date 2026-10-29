@@ -228,12 +228,12 @@ spec:
                   properties:
                     artefacts:
                       description: |-
-                        Artefacts lists each artefact captured for this app, or planned to be
+                        Artefacts lists each artifact captured for this app, or planned to be
                         restored for it: what the bundle's manifest says the bundle holds. An
                         export writes them into the manifest; a restore reads them from it.
                       items:
                         description: |-
-                          BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+                          BundleArtefact is one artifact of a bundle: a database dump, a bucket's
                           archive, a volume's archive.
                         properties:
                           claim:
@@ -288,12 +288,12 @@ spec:
                             type: string
                           name:
                             description: |-
-                              Name is what the artefact was captured from: the database, bucket or
+                              Name is what the artifact was captured from: the database, bucket or
                               volume claim, by its name in the tenant the bundle was taken of; for
                               secrets, the app.
                             type: string
                           path:
-                            description: Path is the artefact's place in the bundle.
+                            description: Path is the artifact's place in the bundle.
                             type: string
                           release:
                             description: Release is the Helm release a captured volume
@@ -706,7 +706,7 @@ spec:
               nameDerivation:
                 description: |-
                   NameDerivation says where the restore took the names of what it
-                  restores from. "manifest": the bundle's manifest names each artefact
+                  restores from. "manifest": the bundle's manifest names each artifact
                   and what it was captured from (format 2 and later). "derived": the
                   manifest is of format 1, which names apps and kinds only, so the
                   database, bucket and claim names were derived from the tenant the

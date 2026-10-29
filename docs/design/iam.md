@@ -13,7 +13,7 @@ This document describes identity, roles, and access control in Gentian OS.
 
 **Keycloak + OpenFGA** are the identity authority. Identity is
 **Keycloak-native per tenant** — each tenant realm is the authoritative
-user and group store for that organisation.
+user and group store for that organization.
 
 ### 1.1 Realms and login
 
@@ -38,7 +38,7 @@ kernel realm instead of getting one of its own, so its people are the
 platform's administrators, and it runs the platform's own components: the
 desktop at `platform.<KERNEL_DOMAIN>`, the administration console at
 `admin.platform.<KERNEL_DOMAIN>`, and the concierge on the bare domain. What
-it runs is installed with the cluster. It takes no catalogue apps and no
+it runs is installed with the cluster. It takes no catalog apps and no
 add-ons: the director refuses both for a tenant whose manifest names a realm
 other than its own (`spec.isolation.keycloakRealm`), with a message that says
 why, and the command line and the console show that message as it is. It is
@@ -101,7 +101,7 @@ stay as they were. The operator reads the mode when it starts.
 ### 1.1b Sign-up: a tenant whose accounts people make themselves
 
 Every account above is made by an invitation. One kind of tenant is for
-people nobody invites: the customers of an organisation whose apps serve the
+people nobody invites: the customers of an organization whose apps serve the
 public, with an account each. Such a tenant is created with sign-up on
 (`kubectl gentian tenants create <name> --self-sign-up`, `spec.signUp.enabled`
 on the Tenant; the CLI says what it opens before it asks the director). It is
@@ -445,7 +445,7 @@ grant, and nothing a store states gives access.
 An app whose OIDC client needs its own client scope, protocol mappers or a
 client role declares them in an **`OIDCPackCatalog`** (cluster-scoped). It
 travels in the app's profile bundle, named `<profile>-oidc`, and only a
-catalogue of the whole cluster may bring one.
+catalog of the whole cluster may bring one.
 
 A pack is looked up by the profile's `requires.services.identity.oidc.clientId`,
 or by `oidcPackRef` where that is set. For an app with a pack the tenant's
@@ -471,7 +471,7 @@ The platform does not create, change or remove a person's account in an app.
 An app makes the account when the person first signs in to it, from the token
 or assertion of that sign-in. There is no event bus and no SCIM delivery.
 
-One thing is synchronised: **who administers an app**. A profile may declare
+One thing is synchronized: **who administers an app**. A profile may declare
 the role an administrator holds in the app and a Job that applies it
 (`spec.hooks.provisioning.privilegedRole`, `.syncJob`). The operator resolves
 the members of `gentian:tenant:<t>:app-admins`, hands the list to the app's
@@ -630,7 +630,7 @@ way in which a program beside the app can become anybody in it.
    reaches the sidecar with the bouncer's identity headers. The sidecar remembers a new request
    and the address of the person it is for, sets a cookie that marks this browser, and sends the
    browser to the realm with a SAML request.
-4. The realm recognises the person from their session and answers without asking: a page that
+4. The realm recognizes the person from their session and answers without asking: a page that
    posts a signed response to `https://<app host>/sso/acs`, the one address registered.
 5. `/sso/acs` is a route of its own with no session, because that post comes from the realm's
    address ([routing.md §4.1](routing.md)). The sidecar checks the response
@@ -657,8 +657,8 @@ No password exists for the app. The sidecar is registered per app and per tenant
 realm, and is removed with the app.
 
 **When the platform runs a sidecar at all.** Only for an install pinned to a digest, whose bundle
-comes from a catalogue of the whole cluster and brings the handler; never from a tenant's own
-catalogue, and never for a tenant that signs in in the kernel realm. Otherwise the Component is
+comes from a catalog of the whole cluster and brings the handler; never from a tenant's own
+catalog, and never for a tenant that signs in in the kernel realm. Otherwise the Component is
 held with `SignInSidecarRefused` and says why ([security.md §2.12](security.md)).
 
 **What none of the three ways gives.** The identity headers an app or a sidecar receives are not
@@ -723,7 +723,7 @@ administrator ends their session. It does not post again if nothing answered, an
 nothing when a session merely runs out. So the notice shortens the common case to nothing; it
 is not what bounds the worst case. The bounds are the lifetimes in the table.
 
-**What the catalogue's apps do** (gentian-apps; each *yes* is shown end to end against the app's
+**What the catalog's apps do** (gentian-apps; each *yes* is shown end to end against the app's
 real image and Keycloak 26.8.0):
 
 | App | Told of a sign-out | The session then |

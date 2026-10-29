@@ -23,16 +23,16 @@ import (
 )
 
 // CatalogueApplicationPrefix is what the name of the Argo CD Application that
-// applies the catalogue directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
+// applies the catalog directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
 const CatalogueApplicationPrefix = "gentian-catalogue-"
 
 // ApplicationGVK is Argo CD's Application.
 var ApplicationGVK = runtimeschema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"}
 
-// GoneFromCatalogue names the ComponentProfiles the catalogue's Application
-// reports as on the cluster and no longer in the catalogue directory: it
+// GoneFromCatalogue names the ComponentProfiles the catalog's Application
+// reports as on the cluster and no longer in the catalog directory: it
 // marks them as requiring pruning, which it never does itself. A profile
-// that left git that way -- retired, or renamed by its catalogue and replaced
+// that left git that way -- retired, or renamed by its catalog and replaced
 // by the installer -- is still an object, and still says whatever it said
 // about where it is placed.
 //

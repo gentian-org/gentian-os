@@ -12,7 +12,7 @@
 #   SATISFIED  the step's `provides:` already holds — skip it.
 #   MISSING    it does not hold — apply() has work to do.
 #   UNDEFINED  the question does not apply, or cannot be answered yet: the
-#              feature is switched off, the step has no install-time artefact,
+#              feature is switched off, the step has no install-time artifact,
 #              or the config that would decide it was never loaded.
 #   ALWAYS     the step runs on every pass by design, so there is no state to
 #              report. Its work is idempotent and cheap, and answering the
@@ -35,11 +35,11 @@ CHECK_ALWAYS=3
 # Crossplane settings the step bodies read.
 export CHECK_SATISFIED CHECK_MISSING CHECK_UNDEFINED CHECK_ALWAYS
 
-# ─── Colour helpers ──────────────────────────────────────────────────────────
+# ─── Color helpers ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 BLUE='\033[0;34m'; BOLD='\033[1m'
 # Exported for the same reason as the CHECK_ constants above: the reader is
-# another file. The colours below this line are consumed by the info/success/
+# another file. The colors below this line are consumed by the info/success/
 # warn/error helpers here, but BLUE and BOLD are used only by the step heading
 # in scripts/lib/driver.sh, so within this file they look unused and shellcheck
 # says so (SC2034). Exporting states the actual contract rather than silencing
@@ -303,7 +303,7 @@ gentian_dns_wait_for() {
 # Matched on the error text, like the kubectl helper, so this only ever retries
 # a transport failure. A chart that is genuinely wrong — a bad value, an
 # immutable field, a failed hook — still fails on the first attempt, which is
-# the behaviour worth keeping: retrying those just delays the diagnosis by
+# the behavior worth keeping: retrying those just delays the diagnosis by
 # however long the backoff lasts.
 #
 # Override with HELM_RETRY_ATTEMPTS / HELM_RETRY_DELAY_SECS.
@@ -480,12 +480,12 @@ GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
 # turned off then keeps it off (gentian_usage_statistics_enabled); 0 turns it on.
 GENTIAN_NO_USAGE_STATISTICS="${GENTIAN_NO_USAGE_STATISTICS:-}"
 GENTIAN_USAGE_STATISTICS_URL="${GENTIAN_USAGE_STATISTICS_URL:-}"
-# The profiles a vanilla installation materialises for every tenant: https
-# addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
+# The profiles a vanilla installation materializes for every tenant: https
+# addresses of profiles in a catalog (<catalogue>/profiles/<name>.yaml),
 # comma separated, each optionally pinned with @sha256:<digest>. Unset means
-# the store's extra services from its catalogue -- the Operations Console,
+# the store's extra services from its catalog -- the Operations Console,
 # the App Store app and the Aluvian Center -- at the digests that
-# catalogue's index lists; empty means none.
+# catalog's index lists; empty means none.
 #
 # --no-extra-services (GENTIAN_NO_EXTRA_SERVICES=1) leaves those three out,
 # and the Cluster claim records it (spec.catalogue.extraServices: false), so a
@@ -1565,7 +1565,7 @@ prompt_cluster_settings() {
         info "  tenancyMode — who this cluster is for:"
         info "    multi  : the platform tenant plus any number of user tenants (an MSP, a shared cluster)."
         info "    single : the platform tenant plus exactly one user tenant, on the cluster's own domain"
-        info "             (one organisation). The install creates that tenant after the handover."
+        info "             (one organization). The install creates that tenant after the handover."
     fi
     prompt_claim_value TENANCY_MODE "tenancyMode" multi "multi single"
     explain_tenancy_mode
@@ -2137,7 +2137,7 @@ check_prereqs() {
         # smtp-relay as phase: runtime and optional, which means the credential
         # manager supplies it once the cluster is up — so requiring it here made
         # the installer a second, stricter opinion about the same credential, and
-        # the catalogue is the one that decides (§4).
+        # the catalog is the one that decides (§4).
         #
         # It aborted every external-mail install, which is the default. The
         # values used to arrive from install.secrets.env; nothing has loaded that
@@ -2691,7 +2691,7 @@ gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
 # run from, else nothing (a detached checkout, or no .git).
 #
 # The one place that default lives. The Repository claim step 0 writes, the
-# bootstrap chart B-01 renders and the catalogue a new claim names each had
+# bootstrap chart B-01 renders and the catalog a new claim names each had
 # their own -- main, develop and the checkout's branch -- so a run with
 # GENTIAN_OS_BRANCH unset could describe three different refs.
 gentian_os_ref() {

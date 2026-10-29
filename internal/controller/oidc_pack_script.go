@@ -234,7 +234,7 @@ for _kj_mid in $(printf '%%s' "${MAPPERS}" | jq -r '.[] | select(.name=="oidc-us
 done
 `)
 	// No mapper POSTs. app-default composes a ProtocolMapper per entry in
-	// pack.Mappers, resolved through the catalogue's mapperTemplates, and those
+	// pack.Mappers, resolved through the catalog's mapperTemplates, and those
 	// adopted the live mappers by their Keycloak ids rather than creating new
 	// ones — verified on corp, where all three kept their ids and their config.
 	//

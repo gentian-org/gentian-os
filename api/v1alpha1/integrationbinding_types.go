@@ -83,7 +83,7 @@ type BindingAuth struct {
 
 // IntegrationBindingStatus holds the observed state of an IntegrationBinding.
 type IntegrationBindingStatus struct {
-	// State summarises whether the binding is functional.
+	// State summarizes whether the binding is functional.
 	// +optional
 	State IntegrationBindingState `json:"state,omitempty"`
 

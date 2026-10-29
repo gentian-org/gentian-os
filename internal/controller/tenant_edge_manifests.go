@@ -32,7 +32,7 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 		return nil, err
 	}
 	// A tenant with a zone of its own needs its listener's certificate and
-	// the grants that let the Gateway use it whether or not it has catalogue
+	// the grants that let the Gateway use it whether or not it has catalog
 	// apps: its desktop and its consoles are components, routed on that same
 	// listener. Gating this on app routes left a tenant with no apps with an
 	// invalid listener, every one of its hosts unroutable, and its console

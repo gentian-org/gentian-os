@@ -50,7 +50,7 @@ import (
 // it is refused here, and the gateway's chart offers no model of one a
 // hand-edited claim carries.
 //
-// A provider's address is held to the rules a catalogue's is
+// A provider's address is held to the rules a catalog's is
 // (catalogue.CheckAddress): the gateway sends the provider's token and every
 // prompt there, so it is an address on the public internet or it is refused.
 
@@ -322,7 +322,7 @@ func ValidateModelSettings(m ModelSettings) error {
 }
 
 // AddressRefusal is why an address was refused, without the words that say
-// it was a catalogue's.
+// it was a catalog's.
 func AddressRefusal(err error) string {
 	return strings.TrimPrefix(err.Error(), catalogue.ErrAddressRefused.Error()+": ")
 }

@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/tests/test-operator-objects.sh
 # =============================================================================
-# The catalogue and the tenants sync gentianos.io kinds whose CRDs arrive with
+# The catalog and the tenants sync gentianos.io kinds whose CRDs arrive with
 # the operator (D-01), from ApplicationSets created before it (C-02). On a
 # fresh install tenant-test and gentian-catalogue-dev failed with
 # `<Kind>.gentianos.io "" not found`, spent their retries, were never tried
@@ -19,8 +19,8 @@
 #     the tenant and Argo CD's message;
 #   - before it, a tenant other than the platform's is reported held back and
 #     not asked for, and the check stays not satisfied;
-#   - D-01 asks again for a failed catalogue once the operator is up;
-#   - a catalogue whose only difference is an object it no longer declares --
+#   - D-01 asks again for a failed catalog once the operator is up;
+#   - a catalog whose only difference is an object it no longer declares --
 #     it never prunes -- is done, and the step names that object; one that
 #     differs in anything else as well is not.
 #
@@ -40,7 +40,7 @@ expect() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
 command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
 echo ""
-echo "operator objects: the catalogue and the tenants are synced at the end, or the install says why not"
+echo "operator objects: the catalog and the tenants are synced at the end, or the install says why not"
 echo ""
 
 SB="$(mktemp -d "${TMPDIR:-/tmp}/gto.XXXXXX")"
@@ -133,7 +133,7 @@ app tenant-test gentian-tenants Synced Succeeded ok; touch "${STATE}/tenants/tes
 out="$(run E-05-operator-objects 'check; echo "rc=$?"' | tail -1)"
 expect "everything synced and every Tenant there: satisfied" '[[ "${out}" == "rc=0" ]]' "${out}"
 
-# 2. The catalogue failed before its CRD existed.
+# 2. The catalog failed before its CRD existed.
 fresh
 app gentian-catalogue-dev gentian-catalogue OutOfSync Failed "${PROFILE_GONE}"
 out="$(run E-05-operator-objects 'check; echo "rc=$?"' | tail -1)"
@@ -180,7 +180,7 @@ out="$(run E-05-operator-objects 'check; echo "check=$?"; apply; echo "rc=$?"')"
 expect "an ApplicationSet in error: not satisfied, and the step fails naming it" \
     '[[ "${out}" == *"check=1"* && "${out}" == *"rc=1"* && "${out}" == *"ApplicationSet gentian-tenants: repository not found"* ]]' "${out}"
 
-# 8. D-01 asks again for the catalogue once the operator is up.
+# 8. D-01 asks again for the catalog once the operator is up.
 fresh
 app gentian-catalogue-dev gentian-catalogue OutOfSync Failed "${PROFILE_GONE}"
 run D-01-operator 'resync_operator_kind_apps "$(ns_kernel gitops)"' >/dev/null
@@ -189,7 +189,7 @@ expect "D-01's resync asks for the failed catalogue and leaves a synced tenant a
 expect "D-01 calls that resync once the operator is running" \
     'grep -q "^    resync_operator_kind_apps \"\${ns}\"" scripts/steps/D-01-operator.sh'
 
-# 9. Synced but for an object the catalogue no longer declares.
+# 9. Synced but for an object the catalog no longer declares.
 leftover() {
     jq --argjson other "$2" '.status.resources = [
           {kind: "ComponentProfile", group: "gentianos.io", name: "nextcloud-base-ce", status: "Synced"},

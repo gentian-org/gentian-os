@@ -345,7 +345,7 @@ type TenantSpec struct {
 	// +optional
 	Security *TenantSecurity `json:"security,omitempty"`
 
-	// DeletionPolicy controls behaviour when the Tenant CR is deleted.
+	// DeletionPolicy controls behavior when the Tenant CR is deleted.
 	// Defaults to Retain.
 	// +optional
 	// +kubebuilder:default=Retain
@@ -359,14 +359,14 @@ type TenantSpec struct {
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
 
-	// Catalogue is where this tenant may install from beside the catalogues
-	// the whole cluster offers: the catalogues only this tenant sees, and
+	// Catalogue is where this tenant may install from beside the catalogs
+	// the whole cluster offers: the catalogs only this tenant sees, and
 	// whether its own administrators may add them.
 	//
 	// The director reads and writes it, in the tenant's manifest in git.
 	// Nothing in the cluster acts on it: what an install may use is decided
 	// when the director resolves a coordinate, and what a tenant may roll out
-	// is decided by the origin a materialised profile carries.
+	// is decided by the origin a materialized profile carries.
 	// +optional
 	Catalogue *TenantCatalogue `json:"catalogue,omitempty"`
 
@@ -383,7 +383,7 @@ type TenantSpec struct {
 	// platform's own set.
 	//
 	// Languages rather than locales: Keycloak serves de-CH from its German
-	// catalogue, and a realm listing regional codes offers a picker full of
+	// catalog, and a realm listing regional codes offers a picker full of
 	// entries that render identically.
 	// +optional
 	// +listType=set
@@ -400,7 +400,7 @@ type TenantSpec struct {
 	Country string `json:"country,omitempty"`
 
 	// Organization is who the tenant is: the facts an app needs to set itself
-	// up for this organisation rather than a placeholder (its company, its
+	// up for this organization rather than a placeholder (its company, its
 	// currency, its clock). Its administrators fill it in under Tenant
 	// Settings; a component whose profile names
 	// valueMapping.platform.organizationKey is told it. An app reads it when
@@ -532,7 +532,7 @@ type TenantExposure struct {
 
 	// Apex is the approver saying that this surface is for the cluster's
 	// main address: the bare domain. The profile's entry must say apex too;
-	// neither alone publishes anything. It is honoured for the one tenant
+	// neither alone publishes anything. It is honored for the one tenant
 	// that may hold the main address -- the one the Cluster claim names, or
 	// the user tenant of a single-tenancy cluster -- and for one surface at
 	// a time.
@@ -541,7 +541,7 @@ type TenantExposure struct {
 
 	// ApexAcknowledgedBy is the subject that acknowledged the rule for a
 	// website on the main address, and ApexAcknowledgedAt when: only a site
-	// whose scripts the organisation itself controls. A script on the bare
+	// whose scripts the organization itself controls. A script on the bare
 	// domain can set cookies the browser sends to the sign-in addresses, and
 	// the platform cannot check what a site loads, so the approver is told
 	// and says so. Set by the director from the caller's token, on an apex
@@ -773,53 +773,53 @@ type TenantQuotas struct {
 // TenantOrganization is who a tenant is, as its apps are told it. Its
 // country and languages are the Tenant's own spec.country and spec.locales.
 type TenantOrganization struct {
-	// LegalName is the name the organisation is registered under (Example AG),
+	// LegalName is the name the organization is registered under (Example AG),
 	// beside the tenant's display name, which is what its people call it.
 	// +optional
 	// +kubebuilder:validation:MaxLength=200
 	LegalName string `json:"legalName,omitempty"`
 
-	// Currency is the organisation's currency, ISO 4217 (CHF, EUR).
+	// Currency is the organization's currency, ISO 4217 (CHF, EUR).
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[A-Z]{3}$`
 	Currency string `json:"currency,omitempty"`
 
-	// TimeZone is the organisation's time zone, an IANA name (Europe/Zurich).
+	// TimeZone is the organization's time zone, an IANA name (Europe/Zurich).
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`
 	TimeZone string `json:"timeZone,omitempty"`
 
-	// FiscalYearStartMonth is the month the organisation's fiscal year begins
+	// FiscalYearStartMonth is the month the organization's fiscal year begins
 	// in, 1 to 12. Unset: January.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=12
 	FiscalYearStartMonth int32 `json:"fiscalYearStartMonth,omitempty"`
 
-	// Address is where the organisation is. Its country is spec.country.
+	// Address is where the organization is. Its country is spec.country.
 	// +optional
 	Address *TenantAddress `json:"address,omitempty"`
 
-	// Website is the organisation's public site, an http(s) address.
+	// Website is the organization's public site, an http(s) address.
 	// +optional
 	// +kubebuilder:validation:MaxLength=200
 	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
 	Website string `json:"website,omitempty"`
 
-	// Email is the organisation's contact address.
+	// Email is the organization's contact address.
 	// +optional
 	// +kubebuilder:validation:MaxLength=200
 	// +kubebuilder:validation:Pattern=`^[^@\s]+@[^@\s]+$`
 	Email string `json:"email,omitempty"`
 
-	// Phone is the organisation's phone number, preferably international
+	// Phone is the organization's phone number, preferably international
 	// (+41 44 123 45 67).
 	// +optional
 	// +kubebuilder:validation:MaxLength=40
 	Phone string `json:"phone,omitempty"`
 
-	// TaxID is the organisation's VAT number (CHE-123.456.789 MWST,
+	// TaxID is the organization's VAT number (CHE-123.456.789 MWST,
 	// DE123456789).
 	// +optional
 	// +kubebuilder:validation:MaxLength=40
@@ -869,44 +869,44 @@ func (t *Tenant) PlatformAdminsEnter() bool {
 	return t.Spec.PlatformAccess != nil && t.Spec.PlatformAccess.AdminsEnter
 }
 
-// TenantCatalogue is a tenant's own catalogues and who may add them.
+// TenantCatalogue is a tenant's own catalogs and who may add them.
 type TenantCatalogue struct {
 	// Delegated says the tenant's own administrators may add and remove
-	// catalogues for this tenant. Off unless the cluster's administrator
+	// catalogs for this tenant. Off unless the cluster's administrator
 	// turns it on; a tenant's administrator cannot.
 	// +optional
 	Delegated bool `json:"delegated,omitempty"`
 
-	// Sources are the catalogues only this tenant sees.
+	// Sources are the catalogs only this tenant sees.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
 	Sources []TenantCatalogueSource `json:"sources,omitempty"`
 }
 
-// TenantCatalogueSource is one catalogue of a tenant: an address that serves
+// TenantCatalogueSource is one catalog of a tenant: an address that serves
 // index.yaml and profiles/<name>.yaml, or an OCI artifact that holds them,
-// read with the credential of a repository the tenant declared. A catalogue
+// read with the credential of a repository the tenant declared. A catalog
 // is never kept in the cluster's deployments repository, which holds the
 // cluster's state only: there is no field for a directory of it, and a
 // source that names one where an address or an artifact belongs is refused.
 //
 // +kubebuilder:validation:XValidation:rule="(has(self.url) ? 1 : 0) + (has(self.oci) ? 1 : 0) == 1",message="a catalogue states where it is read from once: url or oci (a directory of the deployments repository, path, is not a catalogue source)"
 type TenantCatalogueSource struct {
-	// Name is the catalogue's name: the first half of a coordinate,
-	// <name>/<app>. It is not the name of a catalogue of the whole cluster,
-	// nor of another catalogue of this tenant.
+	// Name is the catalog's name: the first half of a coordinate,
+	// <name>/<app>. It is not the name of a catalog of the whole cluster,
+	// nor of another catalog of this tenant.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// URL is the https address the catalogue is served from.
+	// URL is the https address the catalog is served from.
 	// +kubebuilder:validation:Pattern=`^https://`
 	// +kubebuilder:validation:MaxLength=2048
 	// +optional
 	URL string `json:"url,omitempty"`
 
-	// OCI is an OCI artifact the catalogue is kept as, in place of an
+	// OCI is an OCI artifact the catalog is kept as, in place of an
 	// address: read with the credential of a repository declared for this
 	// tenant, and with no other.
 	// +optional
@@ -921,13 +921,13 @@ type TenantCatalogueSource struct {
 	AddedBy string `json:"addedBy,omitempty"`
 }
 
-// CatalogueOCISource is a catalogue kept as an OCI artifact: one layer, a
+// CatalogueOCISource is a catalog kept as an OCI artifact: one layer, a
 // gzip'd tar of index.yaml and profiles/<name>.yaml, of the artifact type
 // application/vnd.gentianos.catalogue.v1.
 type CatalogueOCISource struct {
 	// Repository is the name of the repository whose credential the
 	// artifact is read with: one declared for the tenant, for a tenant's
-	// catalogue; one declared for the cluster, for a catalogue of the whole
+	// catalog; one declared for the cluster, for a catalog of the whole
 	// cluster. The artifact must lie inside its address.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
@@ -942,7 +942,7 @@ type CatalogueOCISource struct {
 	Artifact string `json:"artifact"`
 }
 
-// Who added a tenant's catalogue.
+// Who added a tenant's catalog.
 const (
 	CatalogueAddedByCluster = "cluster"
 	CatalogueAddedByTenant  = "tenant"
@@ -958,7 +958,7 @@ type TenantApp struct {
 	// +optional
 	Profile string `json:"profile,omitempty"`
 
-	// ProfileRef selects a ComponentProfile by catalogue identity (family, version, edition,
+	// ProfileRef selects a ComponentProfile by catalog identity (family, version, edition,
 	// offering tier). Takes precedence over profile when resolving installs.
 	// +optional
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
@@ -991,9 +991,9 @@ type TenantApp struct {
 	// +kubebuilder:validation:MaxLength=128
 	MovedBy string `json:"movedBy,omitempty"`
 
-	// Catalogue is the catalogue the pinned build was fetched from: the first
+	// Catalogue is the catalog the pinned build was fetched from: the first
 	// half of its coordinate, <catalogue>/<profile>. It is written with the
-	// digest by an install that fetched the bundle from that catalogue's
+	// digest by an install that fetched the bundle from that catalog's
 	// source, and is absent on every other entry.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
@@ -1025,7 +1025,7 @@ type TenantApp struct {
 	Addons []string `json:"addons,omitempty"`
 
 	// AddonPins pins addons of this app to the build each was installed
-	// from, like digest and catalogue do for the app itself. It is keyed by
+	// from, like digest and catalog do for the app itself. It is keyed by
 	// the addon's name and stands beside addons rather than inside it: addons
 	// stays the list of names every reader walks, and an addon with no entry
 	// here is activated unpinned, as before.
@@ -1107,7 +1107,7 @@ type AddonPin struct {
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest"`
 
-	// Catalogue is the catalogue the pinned build was fetched from: the first
+	// Catalogue is the catalog the pinned build was fetched from: the first
 	// half of its coordinate, <catalogue>/<name>.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
@@ -1273,7 +1273,7 @@ type BruteForcePolicy struct {
 
 // TenantStatus holds the observed state of a Tenant.
 type TenantStatus struct {
-	// Phase summarises the overall lifecycle state.
+	// Phase summarizes the overall lifecycle state.
 	// +optional
 	Phase TenantPhase `json:"phase,omitempty"`
 
@@ -1380,7 +1380,7 @@ type TenantMailStatus struct {
 
 // Tenant is the Schema for the tenants API.
 //
-// Tenant is cluster-scoped and represents a customer organisation. Creating a
+// Tenant is cluster-scoped and represents a customer organization. Creating a
 // Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
 // creation, Keycloak realm, per-app databases/buckets/cache, and
 // ArgoCD Application (or Crossplane App claim) CRs for each requested app.

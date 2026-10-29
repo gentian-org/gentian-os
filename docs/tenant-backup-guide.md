@@ -61,7 +61,7 @@ not you — forward it.)*
 > **Keep `backup-identity.txt` off the cluster.** A key stored in the cluster it
 > protects is readable by whoever compromises that cluster, which is precisely
 > the situation backups exist for. It belongs with the recovery kit and the
-> master password, wherever your organisation keeps break-glass material.
+> master password, wherever your organization keeps break-glass material.
 >
 > Losing it means every bundle encrypted to it is unreadable. There is no
 > recovery path, and that is deliberate.

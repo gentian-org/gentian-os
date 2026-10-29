@@ -177,7 +177,7 @@ spec:
                 format: int64
                 type: integer
               phase:
-                description: Phase summarises OpenFGA tuple sync.
+                description: Phase summarizes OpenFGA tuple sync.
                 enum:
                 - Pending
                 - Ready

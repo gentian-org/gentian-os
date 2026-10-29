@@ -413,7 +413,7 @@ def check_wiring():
     if seen < 3:
         raise Failure(f"only {seen} composed tenant namespaces found in the render fixtures")
     if table["tenantNamespace"]["labels"].get(TIER) != "tenant":
-        raise Failure("the table's tenant namespace is not labelled as a tenant's")
+        raise Failure("the table's tenant namespace is not labeled as a tenant's")
 
     # CloudNativePG: the version the pinned labels and ports were read at, and
     # the namespace its operator runs in.

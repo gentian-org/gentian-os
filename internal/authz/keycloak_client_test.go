@@ -232,7 +232,7 @@ func TestDeleteGroupRemovesTheGroupAndIsRepeatable(t *testing.T) {
 }
 
 // A pack's client scope is removed by name, with its mappers; one of
-// Keycloak's own is never removed, whatever a catalogue called its scope.
+// Keycloak's own is never removed, whatever a catalog called its scope.
 func TestDeleteClientScope(t *testing.T) {
 	scopes := map[string]bool{"wiki-scope": true, "drive-scope": true, "profile": true}
 	refuse := false

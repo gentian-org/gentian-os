@@ -46,7 +46,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 * **Proposed Solution**: Harden access by routing database and S3 requests through credential-less local sidecars or proxies that query a Policy Decision Point (PEP) to authenticate and validate access permissions on a per-query basis.
 * **Backlog Items**:
   - `[ ]` Develop and configure a database proxy sidecar for PostgreSQL CNPG clusters.
-  - `[ ]` Refactor catalogue apps to connect to database resources via localhost proxy paths.
+  - `[ ]` Refactor catalog apps to connect to database resources via localhost proxy paths.
   - `[ ]` Move database credential storage out of tenant namespaces into the operator's private domain.
 
 ### 1.4 Waiver Exclusion Verification Hardening (**)
@@ -108,7 +108,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 ### 1.10 In-Cluster Secret Disclosure Prevention (*)
 * **Target Domain**: Platform Security & Secrets Management
 * **Context**: Administrative credentials and OpenBao root tokens are echoed to standard console logs during bootstrap, and the raw master key is persisted in plain text within cluster secrets.
-* **Proposed Solution**: Sanitise installation scripts to prevent secrets from leaking into log aggregators. Leverage a KMS (Key Management Service) or HSM (Hardware Security Module) provider to securely wrap key material rather than storing the raw master key in-cluster.
+* **Proposed Solution**: Sanitize installation scripts to prevent secrets from leaking into log aggregators. Leverage a KMS (Key Management Service) or HSM (Hardware Security Module) provider to securely wrap key material rather than storing the raw master key in-cluster.
 * **Backlog Items**:
   - `[ ]` Refactor bootstrap helper scripts (`openbao.sh`, `install.sh`) to suppress secret logging.
   - `[ ]` Integrate external KMS providers (e.g., AWS KMS, HashiCorp Vault Transit) to wrap the cluster master key.
@@ -125,9 +125,9 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.12 SOC 2 Auditing & Compliance Instrumentation (**)
 * **Target Domain**: Compliance & Audit
-* **Context**: Researched against the Trust Services Criteria 2026-09-24. The TSC prescribe no log format; an auditor asks for evidence against criteria, and five touch logging: **CC6.1–6.3** (who has access, how it was granted and removed, periodic review), **CC7.2** (anomalies detected and analysed), **CC7.3–7.5** (incidents, with the evidence behind them), **CC8.1** (changes authorised, approved, deployed) and **A1.2** (backup and restore evidence). Evidence has to cover the whole observation window, resist tampering, and carry timestamps that correlate.
+* **Context**: Researched against the Trust Services Criteria 2026-09-24. The TSC prescribe no log format; an auditor asks for evidence against criteria, and five touch logging: **CC6.1–6.3** (who has access, how it was granted and removed, periodic review), **CC7.2** (anomalies detected and analyzed), **CC7.3–7.5** (incidents, with the evidence behind them), **CC8.1** (changes authorized, approved, deployed) and **A1.2** (backup and restore evidence). Evidence has to cover the whole observation window, resist tampering, and carry timestamps that correlate.
 
-  **What this platform already answers well.** Change management is the criterion most organisations struggle to evidence, and here it is structural rather than procedural: every change to declared state is a commit, reviewed as a pull request, deployed by Argo CD syncing that commit. The director authors each one as the person whose token authorised it and trailers it with the relation and object that permitted the change, joined to a request id — which is more than most platforms can show. CC7.1's configuration baseline and drift detection is answered by Argo CD's desired-versus-live comparison running continuously, not by a quarterly screenshot.
+  **What this platform already answers well.** Change management is the criterion most organizations struggle to evidence, and here it is structural rather than procedural: every change to declared state is a commit, reviewed as a pull request, deployed by Argo CD syncing that commit. The director authors each one as the person whose token authorized it and trailers it with the relation and object that permitted the change, joined to a request id — which is more than most platforms can show. CC7.1's configuration baseline and drift detection is answered by Argo CD's desired-versus-live comparison running continuously, not by a quarterly screenshot.
 
   **What git cannot answer**, in the order an auditor will care:
   - **Reads of data by operators.** Opening a Secret in Headlamp or `kubectl exec` into a tenant's pod writes nothing anywhere. The Kubernetes API audit log is not enabled on any cluster. For a hosting platform this is the "can the provider read customer data" question, and today there is no answer.
@@ -135,27 +135,27 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - **Access granted and revoked.** People and groups live in Keycloak deliberately — git is append-only and a name committed there outlives the account, which collides with erasure — so grants and revocations are Keycloak admin events and are not retained. S7A.17 changes who makes those changes, not where they live: the director will speak to Keycloak for the caller, so the authority behind each one becomes recordable, while the change itself stays a Keycloak admin event that the existing listener is the right place to capture.
   - **Refused requests.** A refusal changes nothing, so it commits nothing. The director and the edge authorization service already log every decision with its request id, to stdout, where nothing ships or retains it.
   - **Actions.** The category the backup work introduced: taking a backup happens once and leaves no commit. Only an annotation on the object and the operator's stdout record it.
-  - **Access reviews.** Nothing produces the artefact of "somebody recertified this". S7A.8's read-only authorization view is the raw material.
+  - **Access reviews.** Nothing produces the artifact of "somebody recertified this". S7A.8's read-only authorization view is the raw material.
 
   **The finding that outranks the rest**: `gentian-deployments` has 924 commits and **none** carries the authorization trailer. Every change so far was pushed from a workstation by one person with direct access — no segregation of duties, no attribution to an authenticated session, no approval gate. That is the first thing an audit opens with, and the fix is not a screen: it is that changes go through the director, which is what the S7A architecture cleanup is for. Related: the repository's history is force-pushable, so the evidence store does not yet resist tampering.
 
   Infrastructure for four of the five gaps already exists. The Keycloak event listener (`kernel/extensions/keycloak-event-listener/`) already receives `LOGIN`, `REGISTER` and `GROUP_MEMBERSHIP` and posts signed statements to the operator; it projects membership and drops the rest. Extending it to record needs no credential anywhere.
 * **Proposed Solution**: Four panes with honest labels rather than one "audit log" that implies completeness. **Changes** from git, which needs no store. **Sign-ins** and **Access changes** from the event listener that already sees them, into a durable store. **Refused requests** from the decision logs the director and the edge already emit, into the same store. **Reads of data** from the Kubernetes API audit log, which is a cluster concern rather than a console screen. Every answer states what it does not cover.
 * **Backlog Items**:
-  - `[x]` Serve the change history from git, per tenant and per cluster, with the authorising decision and request id on each commit, and a commit pushed by hand reported as one. *(director `/v1/tenants/{t}/changes`, `/v1/clusters/{c}/changes`; console Audit → Changes.)*
+  - `[x]` Serve the change history from git, per tenant and per cluster, with the authorizing decision and request id on each commit, and a commit pushed by hand reported as one. *(director `/v1/tenants/{t}/changes`, `/v1/clusters/{c}/changes`; console Audit → Changes.)*
   - `[ ]` Protect the deployments repository's history: branch protection, no force-push, and a decision on signed commits.
   - `[ ]` Persist the director's and the edge's authorization decisions, refusals included, with the request id that joins them to a commit. Decide the store — the tenant's shell database beside the usage history is the obvious candidate.
   - `[ ]` Enable realm events and retention. Needs either a `provider-keycloak` field that does not exist yet or the event listener to carry them, which is the smaller path.
   - `[ ]` Extend the Keycloak event listener to record sign-ins and group membership changes, not only project membership.
   - `[ ]` Record actions — taking a backup, installing an app through the action path — where a commit would have been, so an action is as auditable as a change.
   - `[ ]` Enable the Kubernetes API audit log with a policy that captures reads of Secrets and `exec` into tenant namespaces, and ship it off the node.
-  - `[ ]` Produce an access-review artefact from the authorization view (S7A.8): who held what, when it was reviewed, by whom.
+  - `[ ]` Produce an access-review artifact from the authorization view (S7A.8): who held what, when it was reviewed, by whom.
   - `[ ]` Build automation to verify and test backup restores periodically (A1.2), and keep the results as evidence.
   - `[ ]` Decide retention for each store, against an observation window rather than a habit.
 
-### 1.13 App Catalogue Validating Webhook (**)
+### 1.13 App Catalog Validating Webhook (**)
 * **Target Domain**: Platform Security & Software Supply
-* **Context**: There is no validating webhook for catalogue entries today. `internal/webhook` holds the `Tenant` validator only; the earlier `AppProfile` webhook, which checked `spec.categories` and nothing else, went with that kind. What a `ComponentProfile` is held to is its CRD's own validation rules and, for a profile that arrives through the director, the bundle checks of `internal/profilebundle` (kinds, names, origin, digest). Registry, image digests, `spec.package.composition` and extensions pass unexamined at admission.
+* **Context**: There is no validating webhook for catalog entries today. `internal/webhook` holds the `Tenant` validator only; the earlier `AppProfile` webhook, which checked `spec.categories` and nothing else, went with that kind. What a `ComponentProfile` is held to is its CRD's own validation rules and, for a profile that arrives through the director, the bundle checks of `internal/profilebundle` (kinds, names, origin, digest). Registry, image digests, `spec.package.composition` and extensions pass unexamined at admission.
 * **Proposed Solution**: Add a `ComponentProfile` validator beside the `Tenant` one, for what CRD rules cannot express.
 * **Backlog Items**:
   - `[ ]` Implement an Admission Webhook targeting `ComponentProfile` requests. *(The `AppProfile` one this entry was ticked for is gone — see Context.)*
@@ -222,7 +222,7 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 
 ### 1.18 Kubernetes Secret Encryption at Rest (**)
 * **Target Domain**: Control Plane Security
-* **Context**: The API server runs without `--encryption-provider-config`, so every Kubernetes Secret is stored base64-encoded in etcd rather than encrypted. Base64 is an encoding, not a protection: anyone with an etcd snapshot, a backup of one, or read access to the datastore holds every credential the cluster carries. This undercuts controls that are otherwise sound — ESO materialises OpenBao values into Secrets, so a credential protected by policy in OpenBao lands unprotected in etcd the moment it is consumed. It is the reason the mail passdb is specified to hold ARGON2ID hashes rather than passwords, and `lint-password-schemes` enforces that; but hashing is a mitigation for one credential class, not a substitute for encrypting the store.
+* **Context**: The API server runs without `--encryption-provider-config`, so every Kubernetes Secret is stored base64-encoded in etcd rather than encrypted. Base64 is an encoding, not a protection: anyone with an etcd snapshot, a backup of one, or read access to the datastore holds every credential the cluster carries. This undercuts controls that are otherwise sound — ESO materializes OpenBao values into Secrets, so a credential protected by policy in OpenBao lands unprotected in etcd the moment it is consumed. It is the reason the mail passdb is specified to hold ARGON2ID hashes rather than passwords, and `lint-password-schemes` enforces that; but hashing is a mitigation for one credential class, not a substitute for encrypting the store.
 * **Proposed Solution**: Add an `EncryptionConfiguration` with `aescbc` or a KMS provider ahead of the `identity` provider and restart the API server. Note the migration trap: enabling encryption does **not** rewrite existing Secrets, which stay readable in etcd until rewritten, so the change is incomplete without a `kubectl get secrets --all-namespaces -o json | kubectl replace -f -` sweep. Determine first whether the control plane is ours to configure — on a managed OpenStack control plane this may be the provider's, in which case the item becomes a procurement requirement rather than an engineering task.
 * **Backlog Items**:
   - `[x]` Establish whether the API server configuration is under our control or the provider's. *(Per cluster, at pre-flight: the API server's flags where a static pod or k3s/rke2 node arguments are visible; otherwise the Cluster claim's `controlPlane.secretsAtRest` records what the provider states.)*
@@ -232,11 +232,11 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 
 ### 1.19 Replace Mail App Passwords with OIDC Token Authentication (**)
 * **Target Domain**: Kernel Mail Security
-* **Context**: Identities live in Keycloak and an OIDC login never yields a password, but IMAP clients expect one. The industry has settled this the other way: Google stopped accepting passwords for mail in May 2022 and Microsoft ends basic authentication for IMAP in December 2026, both in favour of OAuth tokens (XOAUTH2/OAUTHBEARER). App passwords are explicitly the fallback for clients that cannot do OAuth, not the multi-user default. Dovecot is already configured for the correct path — per-realm oauth2 passdbs pointed at Keycloak introspection — so the platform side is largely built. The blocker is the client: Nextcloud Mail's OAuth support covers hosted Google and Microsoft only.
+* **Context**: Identities live in Keycloak and an OIDC login never yields a password, but IMAP clients expect one. The industry has settled this the other way: Google stopped accepting passwords for mail in May 2022 and Microsoft ends basic authentication for IMAP in December 2026, both in favor of OAuth tokens (XOAUTH2/OAUTHBEARER). App passwords are explicitly the fallback for clients that cannot do OAuth, not the multi-user default. Dovecot is already configured for the correct path — per-realm oauth2 passdbs pointed at Keycloak introspection — so the platform side is largely built. The blocker is the client: Nextcloud Mail's OAuth support covers hosted Google and Microsoft only.
 * **Proposed Solution**: Track and, where useful, help land [nextcloud/mail#13317](https://github.com/nextcloud/mail/pull/13317), which implements generic OIDC/XOAUTH2 for any compliant provider and names Keycloak explicitly. It was ready for review on 2026-07-20 and reviewed by the Mail lead on 2026-07-21 (error handling, validation codes, test coverage); as of 2026-08-18 it is open, has no release milestone, and awaits code-owner approval — see [issue #12491](https://github.com/nextcloud/mail/issues/12491), which is assigned and marked in progress. Note [#12483](https://github.com/nextcloud/mail/issues/12483) is closed as *not planned* and is a duplicate; reading it alone gives the wrong impression. This cluster is an unusually good test bed for that PR — Keycloak plus Dovecot with introspection already configured — and validating it against a real third-party provider is plausibly the fastest route to a merge. Nextcloud's Community Conference is 2026-09-19/20 with Contributor Week immediately after, which is when stalled PRs tend to move.
 * **Backlog Items**:
   - `[ ]` Run #13317 against this cluster's Keycloak and Dovecot and report results upstream.
-  - `[ ]` Confirm behaviour on Dovecot 2.3.21 — 2.4 changed OAuth handling — and with Keycloak 26+ audience validation during introspection.
+  - `[ ]` Confirm behavior on Dovecot 2.3.21 — 2.4 changed OAuth handling — and with Keycloak 26+ audience validation during introspection.
   - `[ ]` Retire the per-app password minting once token auth works for the webmail client.
   - `[ ]` Keep app passwords only for clients that genuinely cannot do OAuth (phones, Thunderbird), as Google and Fastmail do.
 
@@ -269,7 +269,7 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 
 ### 1.22 Settings That Still Reach the Cluster Without Passing Through the Claim (**)
 * **Target Domain**: Platform Configuration
-* **Context**: The claim is the source, read as a file before the cluster exists and as `gentian-cluster-config` afterwards. The mail settings now travel that way: the Cluster composition writes `mail.serviceMode` and `mail.egressHost` without restating a default — the XRD declares them and the API server materialises them onto the composite — and the operator reads both, demonstrated by making the two sources disagree deliberately. With the Helm value saying `external` and the ConfigMap saying `kernel`, the operator recreated a Job it creates only in kernel mode. Both cluster-level copies are deleted. What remains is structural rather than accidental: ApplicationSets are rendered by Argo CD before that ConfigMap exists, so their settings arrive as Helm parameters the installer writes onto the Application once and nothing re-applies. `make verify-claim-applied` reports when those disagree with the claim, which is the best available answer while the copy has to exist.
+* **Context**: The claim is the source, read as a file before the cluster exists and as `gentian-cluster-config` afterwards. The mail settings now travel that way: the Cluster composition writes `mail.serviceMode` and `mail.egressHost` without restating a default — the XRD declares them and the API server materializes them onto the composite — and the operator reads both, demonstrated by making the two sources disagree deliberately. With the Helm value saying `external` and the ConfigMap saying `kernel`, the operator recreated a Job it creates only in kernel mode. Both cluster-level copies are deleted. What remains is structural rather than accidental: ApplicationSets are rendered by Argo CD before that ConfigMap exists, so their settings arrive as Helm parameters the installer writes onto the Application once and nothing re-applies. `make verify-claim-applied` reports when those disagree with the claim, which is the best available answer while the copy has to exist.
 * **Proposed Solution**: For the remaining parameters, either give the ApplicationSets a source that can be read after the composition has run, or accept the copy and keep the check that makes its drift visible. The second is honest and cheap; the first removes the class.
 * **Backlog Items**:
   - `[x]` Consume the mail settings in the Cluster composition rather than declaring them and stopping there.
@@ -305,7 +305,7 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 
 ### 1.23 A Condition Stays True While Its Reconcile Has Been Failing for Hours (**)
 * **Target Domain**: Operator Observability
-* **Context**: Tenant reconciliation runs its steps in order and returns on the first failure, so every condition after the failing one keeps whatever it last said. With the OpenBao auth step failing, `IdentityReady` went False and `MailReady` went on reporting `True` with a timestamp from the previous day — while the mail step had not run at all, and the DNS records, app passwords and signing tables it maintains were quietly unmaintained. There is no aggregate condition either, so nothing summarises "this tenant last reconciled successfully at T". The practical effect is that a reader checking whether mail is healthy is told yes by a value nothing has re-evaluated since it broke. Both bugs found on 2026-08-20 hid behind this: the symptom that surfaced was a DNS record not updating, several steps away from either cause.
+* **Context**: Tenant reconciliation runs its steps in order and returns on the first failure, so every condition after the failing one keeps whatever it last said. With the OpenBao auth step failing, `IdentityReady` went False and `MailReady` went on reporting `True` with a timestamp from the previous day — while the mail step had not run at all, and the DNS records, app passwords and signing tables it maintains were quietly unmaintained. There is no aggregate condition either, so nothing summarizes "this tenant last reconciled successfully at T". The practical effect is that a reader checking whether mail is healthy is told yes by a value nothing has re-evaluated since it broke. Both bugs found on 2026-08-20 hid behind this: the symptom that surfaced was a DNS record not updating, several steps away from either cause.
 * **Proposed Solution**: Distinguish "true as of the last successful evaluation" from "not evaluated this pass". Either stamp conditions with the reconcile generation and mark the untouched ones Unknown when a pass returns early, or carry a single Ready/LastReconcileSucceeded condition that goes False the moment any step does — so a stale True cannot read as a current one.
 * **Backlog Items**:
   - `[ ]` Mark conditions not evaluated in a failed pass as Unknown, rather than leaving the previous value in place.
@@ -422,9 +422,9 @@ mappers and flow, nor the broker client is made any more
   `system:serviceaccount:platform-kernel:gentian-portal-gentian-portal` — each
   service builds its client with `load_incluster_config()` and no
   `Impersonate-User` header — and that account must be able to serve every
-  tenant. RBAC therefore authorises *the console*, and cannot tell a tenant
+  tenant. RBAC therefore authorizes *the console*, and cannot tell a tenant
   admin from a platform one: "demo's admin edits demo's policy" and "demo's
-  admin edits the cluster policy" are the same request at the authorisation
+  admin edits the cluster policy" are the same request at the authorization
   layer. What separates them is `resolve_admin_tenant`, `_require_platform_admin`
   and per-route filters on `spec.tenant` — application code. This is not
   specific to one resource; it is how every admin operation works today. The
@@ -452,7 +452,7 @@ mappers and flow, nor the broker client is made any more
     name). `BackupPolicy` and `CredentialRequirement` both carry a `scope` field
     for exactly this reason, and both would need namespacing or a webhook to be
     enforceable rather than merely filtered.
-  - Some console reads are legitimately cluster-wide — the app catalogue, the
+  - Some console reads are legitimately cluster-wide — the app catalog, the
     tenant list a platform admin sees — so impersonation cannot be applied
     uniformly, and deciding per call site is the bulk of the work.
 * **Backlog Items**:
@@ -602,7 +602,7 @@ mappers and flow, nor the broker client is made any more
   with their Keycloak ids unchanged, and app-default also composes the group's
   grant of the app's client role.
 
-  The per-app group is app-default's because nine of the catalogue's thirty-one
+  The per-app group is app-default's because nine of the catalog's thirty-one
   profiles carry those attributes — the Odoo ones name the modules and roles the
   app provisions from — and only app-default fetches the profile. It sits
   above the OIDC conditional because an entitlement group is per app, not per
@@ -686,7 +686,7 @@ mappers and flow, nor the broker client is made any more
   recipient accepts. It does not protect against a stolen administrator
   token as such: whoever holds the original can exchange it too. What it
   buys is that a service which is compromised or logs a token carelessly
-  cannot replay it at its neighbours.
+  cannot replay it at its neighbors.
 
   The same question has a second half, at the apps, and it is a gap today:
   **a credential an app issued by itself outlives the person it was issued
@@ -718,7 +718,7 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Decide per service whether an audience of its own is wanted.
   - `[ ]` Decide whether user-facing apps take part or stay on their own clients.
   - `[ ]` Platform-issued, revocable credentials for callers of a public entry, so that removing a person ends their access there; and with them a caller check at the publishing proxy.
-  - `[ ]` List, per catalogue app, the credentials it issues by itself (app passwords, personal access tokens, client tokens) and what removing a person does to each today.
+  - `[ ]` List, per catalog app, the credentials it issues by itself (app passwords, personal access tokens, client tokens) and what removing a person does to each today.
   - `[ ]` Design platform-issued, revocable app credentials: who mints one, what the app verifies, and where a revocation is recorded so it holds at once.
   - `[ ]` On removing a person, revoke every app credential of theirs, and prove with a test that a removed person's app password or token is refused at the next use.
 
@@ -769,7 +769,7 @@ mappers and flow, nor the broker client is made any more
   so the person works in the author's account without noticing ("cookie
   tossing"). The cookie names of the front door cannot be given the `__Host-`
   prefix in the pinned Envoy Gateway. Today the approver is warned and must
-  acknowledge that the site runs only scripts the organisation controls
+  acknowledge that the site runs only scripts the organization controls
   ([security.md §2.10](design/security.md)); the platform cannot check it.
 * **Proposed Solution**: Move the sign-in addresses -- the identity provider,
   the desktop and the consoles -- to a separate domain that never serves
@@ -841,7 +841,7 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` An admission rule, in audit: `SecretStore`, `ClusterSecretStore`, `ClusterExternalSecret` and `PushSecret` only from those identities; in a tenant's namespace an `ExternalSecret` names the tenant's store or none.
   - `[ ]` Enforce it once a cluster has run it without a finding against the platform's own objects.
   - `[ ]` Establish the master password's presence without ESO reading it, and deny the path in `eso-read` ([open-items.md](plans/open-items.md) decision 15).
-  - `[ ]` Rebuild the catalogue's bundles that bring a Composition (Element, Odoo) so their `ExternalSecret`s name the tenant's store, and refresh the copies this repository tests against.
+  - `[ ]` Rebuild the catalog's bundles that bring a Composition (Element, Odoo) so their `ExternalSecret`s name the tenant's store, and refresh the copies this repository tests against.
   - `[ ]` Decide whether the cluster's registry credential may reach a tenant's namespace, and how ([open-items.md](plans/open-items.md) decision 29).
   - `[ ]` Run it on a cluster: an `ExternalSecret` in a tenant's namespace that names the kernel's store, or another tenant's, or a kernel path through its own, yields no Secret.
 
@@ -856,10 +856,10 @@ mappers and flow, nor the broker client is made any more
   an administrator and writes an app's own paths only; nothing checks where
   the bundle came from.
 * **Proposed Solution**: An export signs the manifest, with the digest of
-  every artefact in it, and a restore refuses a bundle whose signature is
+  every artifact in it, and a restore refuses a bundle whose signature is
   not by a key the cluster was told to accept.
 * **Backlog Items**:
-  - `[~]` Record each artefact's digest in the manifest, the secrets' included, and sign the manifest at export. *(The manifest is signed with the cluster's own key and records the cluster's id; no digest yet.)*
+  - `[~]` Record each artifact's digest in the manifest, the secrets' included, and sign the manifest at export. *(The manifest is signed with the cluster's own key and records the cluster's id; no digest yet.)*
   - `[~]` Decide the signing key, where its private half is kept, and how another cluster's key is accepted for an import. *(Each cluster's own Ed25519 key at `gentian-os/kernel/backup/signing`, in the recovery kit; no other cluster's key is accepted.)*
   - `[~]` Have a restore verify the signature and each digest before it changes anything, and say so in its result. *(The signature is verified and decides only whether granted rights come back, `status.rights.provenance`.)*
   - `[~]` Decide what happens to bundles written before signing: refused, or restored with an explicit setting. *(For the rights: restored, with no granted right brought back.)*
@@ -898,9 +898,9 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Implement namespace-scoped subject isolation policies in NATS.
   - `[ ]` Integrate CloudEvents validation layers for inter-app communications.
 
-### 2.4 OCI-Based App Catalogue Delivery (**)
+### 2.4 OCI-Based App Catalog Delivery (**)
 * **Target Domain**: Software Supply
-* **Context**: A catalogue is an https address serving an index and one profile bundle per file, or an OCI artifact holding the same, read with a declared repository's credential. The director fetches the bundle an install names, checks it against its digest and commits it to the deployments repository, from where Argo CD applies it ([custom-catalogues.md](custom-catalogues.md)). The ApplicationSet that copied a whole git repository of profiles into a cluster is retired. Bundles are plain files; they are not OCI artifacts and carry no signature.
+* **Context**: A catalog is an https address serving an index and one profile bundle per file, or an OCI artifact holding the same, read with a declared repository's credential. The director fetches the bundle an install names, checks it against its digest and commits it to the deployments repository, from where Argo CD applies it ([custom-catalogues.md](custom-catalogues.md)). The ApplicationSet that copied a whole git repository of profiles into a cluster is retired. Bundles are plain files; they are not OCI artifacts and carry no signature.
 * **Proposed Solution**: Publish profile bundles as OCI artifacts as well, and let the director fetch a bundle from a registry by the same coordinate and digest.
 * **Backlog Items**:
   - `[ ]` Build a packaging pipeline to publish profile bundles as OCI artifacts.
@@ -908,11 +908,11 @@ mappers and flow, nor the broker client is made any more
 
 ### 2.6 Office & Mail Composition Refactoring (**)
 * **Target Domain**: Platform Infrastructure
-* **Context**: ~~Postfix/Dovecot and Collabora are deployed and managed by the operator via hardcoded installation scripts.~~ **No longer true.** Postfix and Dovecot arrive through the `gentian-mail` ApplicationSet (`kernel/appsets/raw/09a-mail.yaml`), rendered only when `mail.serviceMode` is `system`; both are Helm charts synced by Argo CD. Collabora is a catalogue app, and the operator's only remaining knowledge of it is a routing default in `gateway_route_helpers.go`. `mail_reconciler.go` runs no `helm` and no `kubectl apply`: it registers tenants in a stack it does not deploy.
+* **Context**: ~~Postfix/Dovecot and Collabora are deployed and managed by the operator via hardcoded installation scripts.~~ **No longer true.** Postfix and Dovecot arrive through the `gentian-mail` ApplicationSet (`kernel/appsets/raw/09a-mail.yaml`), rendered only when `mail.serviceMode` is `system`; both are Helm charts synced by Argo CD. Collabora is a catalog app, and the operator's only remaining knowledge of it is a routing default in `gateway_route_helpers.go`. `mail_reconciler.go` runs no `helm` and no `kubectl apply`: it registers tenants in a stack it does not deploy.
 * **What is actually left**: per-tenant mail state — domains, app passwords, DKIM keys, realm SMTP — which the operator still owns. That is provisioning rather than installation, and it is not obviously misplaced: it is per-tenant, and it mints credentials, which is the same gap that blocks §2.2.
 * **Backlog Items**:
   - `[x]` ~~Create Crossplane compositions for Dovecot/Postfix.~~ *(Solved differently: Argo CD ApplicationSets over Helm charts. A Composition buys nothing here — there is no claim to project into values, which is the one thing a Composition does that an ApplicationSet cannot.)*
-  - `[x]` ~~Package Collabora/Office settings into standard Helm deployment templates.~~ *(Collabora is a catalogue app with its own profile in `gentian-apps`.)*
+  - `[x]` ~~Package Collabora/Office settings into standard Helm deployment templates.~~ *(Collabora is a catalog app with its own profile in `gentian-apps`.)*
   - `[ ]` Decide whether per-tenant mail provisioning stays in the operator. If it moves, it moves for the same reason and by the same mechanism as §2.2.
 
 ### 2.7 Per-App HTTP-01 Certificate Issuance (**)
@@ -940,8 +940,8 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Configure the gateway to intercept requests for sleeping namespaces and trigger the wake-up.
 
 ### 2.13 Automated Customization Readiness Grading (**)
-* **Target Domain**: App Catalogue & Customization Framework
-* **Context**: The customization ladder (see [app-customization.md](app-customization.md)) grades each catalogue app **A–D** on how far up the ladder it can be customized, which determines whether a requested change lands at L1, L3, or L5. For v0.4 the grade is assigned by hand by the catalogue maintainer and recorded in `ComponentProfile.spec.customization.grade`; CI only checks that a grade is present and that it matches the recorded rubric score. Hand-assigned grades drift as upstreams evolve, and nothing currently detects that drift.
+* **Target Domain**: App Catalog & Customization Framework
+* **Context**: The customization ladder (see [app-customization.md](app-customization.md)) grades each catalog app **A–D** on how far up the ladder it can be customized, which determines whether a requested change lands at L1, L3, or L5. For v0.4 the grade is assigned by hand by the catalog maintainer and recorded in `ComponentProfile.spec.customization.grade`; CI only checks that a grade is present and that it matches the recorded rubric score. Hand-assigned grades drift as upstreams evolve, and nothing currently detects that drift.
 * **Proposed Solution**: Automate the mechanical subset of the §4.1 rubric in `gentian-apps` CI and re-score on every chart version bump. Criteria such as "declared drop-in directories exist in the image", "published API spec resolves", and "plugin API version is pinned in the test matrix" are machine-checkable; judgement criteria ("upstream accepts patches", "ABI survives minor releases") stay manual with a maintainer attestation and an expiry date. CI proposes a grade change as a PR comment rather than mutating the profile.
 * **Backlog Items**:
   - `[ ]` Implement the mechanical rubric scorer over `spec.customization` and the resolved chart/image.
@@ -950,7 +950,7 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Feed grade history into the customization debt report (Admin Console).
 
 ### 2.14 Third-Party Customization Delegation (***)
-* **Target Domain**: App Catalogue & Partner Ecosystem
+* **Target Domain**: App Catalog & Partner Ecosystem
 * **Context**: The customization framework is authorship-neutral by design — `Customization.spec.origin` already records whether a customization was authored by Gentian, a tenant, a supplier, or a partner, and whether the backing repo is Gentian-owned or external. v0.4 ships the data model only; Gentian still owns every roadmap and repository on the ladder.
 * **Proposed Solution**: Delegate repository and roadmap ownership to app owners and partners, and push the ladder's practices and definitions towards a published specification others can implement. Requires artifact signing and provenance, sandboxing for third-party L3 modules, and a delegated-maintainer role in the approval matrix.
 * **Backlog Items**:
@@ -961,14 +961,14 @@ mappers and flow, nor the broker client is made any more
 
 ### 2.15 Remove LiteLLM Specifics from the Kernel (**)
 * **Target Domain**: Platform Infrastructure
-* **Context**: `internal/controller/app_reconciler.go`, `kernel_gateway_routes.go` and now `litellm_team.go` hardcode one application: its Service name (`litellm-proxy`), base URL, master-key Secret, and direct calls to its `/key/generate`, `/key/info`, `/team/list` and `/team/new` HTTP APIs. The team endpoints moved *into* the operator deliberately, from a shell loop that converged per-tenant state only when someone re-ran the installer — a real improvement to correctness that also deepened exactly the coupling this item is about. Both things are true, and the fix for the second is this item, not a reversal of the first. This is the same class of boundary violation as the per-app privileged-role provisioner removed in §6h of the app-profile-guide — an application the kernel recognises by name is an application the kernel must be modified to support. LiteLLM was dual-natured, which is why this was never obviously wrong: it runs as a kernel singleton from `kernel/services/llm/`, and *also* shipped a `litellm-me` catalogue profile. That profile has left the catalogue, so the first half of the decision below is taken: LiteLLM is a kernel service. The kernel may know its own services; it must not know catalogue entries.
-* **Proposed Solution**: Decide which LiteLLM is — kernel service or catalogue app — and make the code say so. If it is a kernel service, express it the way the other kernel services are (discovered configuration rather than compiled-in constants, in the same shape as SMTP/S3/Keycloak endpoints) so a cluster can run a different LLM gateway or none. If it is a catalogue app, the virtual-key provisioning belongs in its profile via the generic `spec.provisioning.syncJob` mechanism, and the kernel keeps only the generic credential plumbing.
+* **Context**: `internal/controller/app_reconciler.go`, `kernel_gateway_routes.go` and now `litellm_team.go` hardcode one application: its Service name (`litellm-proxy`), base URL, master-key Secret, and direct calls to its `/key/generate`, `/key/info`, `/team/list` and `/team/new` HTTP APIs. The team endpoints moved *into* the operator deliberately, from a shell loop that converged per-tenant state only when someone re-ran the installer — a real improvement to correctness that also deepened exactly the coupling this item is about. Both things are true, and the fix for the second is this item, not a reversal of the first. This is the same class of boundary violation as the per-app privileged-role provisioner removed in §6h of the app-profile-guide — an application the kernel recognizes by name is an application the kernel must be modified to support. LiteLLM was dual-natured, which is why this was never obviously wrong: it runs as a kernel singleton from `kernel/services/llm/`, and *also* shipped a `litellm-me` catalog profile. That profile has left the catalog, so the first half of the decision below is taken: LiteLLM is a kernel service. The kernel may know its own services; it must not know catalog entries.
+* **Proposed Solution**: Decide which LiteLLM is — kernel service or catalog app — and make the code say so. If it is a kernel service, express it the way the other kernel services are (discovered configuration rather than compiled-in constants, in the same shape as SMTP/S3/Keycloak endpoints) so a cluster can run a different LLM gateway or none. If it is a catalog app, the virtual-key provisioning belongs in its profile via the generic `spec.provisioning.syncJob` mechanism, and the kernel keeps only the generic credential plumbing.
 * **Backlog Items**:
-  - `[ ]` Classify LiteLLM as kernel service or catalogue app and record the decision in `architecture.md`.
+  - `[ ]` Classify LiteLLM as kernel service or catalog app and record the decision in `architecture.md`.
   - `[ ]` Replace the `litellmProxy*`/`litellmMasterKey*` constants with values resolved from kernel service configuration — through the `valueMapping` contract an app uses to declare a need, not through endpoint substitution: `${S3_ENDPOINT}` and friends were removed for exactly the reason this item exists.
-  - `[ ]` Move virtual-key issuance (`/key/generate`, `/key/info`) and team sync (`/team/list`, `/team/new`) out of the operator — to the app's own profile if it is a catalogue app, or behind a named kernel-service interface if it is not.
+  - `[ ]` Move virtual-key issuance (`/key/generate`, `/key/info`) and team sync (`/team/list`, `/team/new`) out of the operator — to the app's own profile if it is a catalog app, or behind a named kernel-service interface if it is not.
   - `[ ]` Drop the app-catalogue `litellm` special-case in `kernel_gateway_routes.go`.
-  - `[ ]` Add a CI check that fails when a catalogue app name appears in gentian-os source, so this class of drift is caught rather than reviewed for.
+  - `[ ]` Add a CI check that fails when a catalog app name appears in gentian-os source, so this class of drift is caught rather than reviewed for.
 
 ### 2.16 A Bigger Plan Buys No More Users (**)
 * **Target Domain**: Resource Optimization & Tenant Isolation
@@ -1170,7 +1170,7 @@ mappers and flow, nor the broker client is made any more
   - `[x]` Decide namespace and delivery path; pin the chart in `versions.yaml` and add `--with-headlamp` to `install.sh`. *(`kernel-observability`, a bootstrap Application, pinned under `headlamp:` in `versions.yaml`. It is installed with every cluster: there is no `--with-headlamp`, so it is not optional as this item proposed.)*
   - `[x]` Expose it at `headlamp.<kernel-domain>` on the public gateway — the wildcard certificate already covers the host. *(Behind the kernel sign-in; `D-03-portal-login` gives it its client.)*
   - `[ ]` Gentian plugins (Tenants/Components/ComponentProfiles/IntegrationBindings, tenant ownership on a Namespace, branding), built and published from gentian-ui and mounted by an init container.
-  - `[x]` Per-admin kube identity via OIDC, so the console authorises the person rather than a pasted ServiceAccount token. *(Done without API server OIDC configuration: `kube-oidc-proxy` (`kernel/bootstrap/chart/templates/kube-oidc-proxy.yaml`) verifies the person's token and passes the request on with impersonation headers; its ServiceAccount may impersonate and read nothing.)*
+  - `[x]` Per-admin kube identity via OIDC, so the console authorizes the person rather than a pasted ServiceAccount token. *(Done without API server OIDC configuration: `kube-oidc-proxy` (`kernel/bootstrap/chart/templates/kube-oidc-proxy.yaml`) verifies the person's token and passes the request on with impersonation headers; its ServiceAccount may impersonate and read nothing.)*
 
 ---
 
@@ -1184,8 +1184,8 @@ mappers and flow, nor the broker client is made any more
 
   `reclaimPolicy: Retain` on the default class means a deleted PVC leaves its PV *and its Cinder volume* behind, still billed. One is already there: a `Released` 10Gi volume for `tenant-finnor/odoo-data`, beside the `Bound` one that replaced it. This is a slow leak by construction — correct for data safety, and with no counterpart that ever reclaims.
 
-  None of this is urgent at present utilisation. 99Gi is provisioned across 17 PVs and roughly 3Gi holds data: `odoo-data` is at 1%, `/var/mail` at 1%, `postgres-1` at 9%, and only Nextcloud at 22% looks like a volume in use. The risk is not running out; it is that the first volume to fill does so with no warning and no documented remedy.
-* **Proposed Solution**: Own the classes rather than inherit them. Ship a Gentian StorageClass that sets `WaitForFirstConsumer` and is the default, leaving the provider's classes in place for anything that needs Immediate binding. Note that binding mode is immutable on an existing class, so this is a new class plus a default flip, not an edit — and existing PVs keep the class they were bound with, so it applies to new claims only. Separately, write the expansion path down and alert on utilisation, so the capability that already exists is reachable under pressure.
+  None of this is urgent at present utilization. 99Gi is provisioned across 17 PVs and roughly 3Gi holds data: `odoo-data` is at 1%, `/var/mail` at 1%, `postgres-1` at 9%, and only Nextcloud at 22% looks like a volume in use. The risk is not running out; it is that the first volume to fill does so with no warning and no documented remedy.
+* **Proposed Solution**: Own the classes rather than inherit them. Ship a Gentian StorageClass that sets `WaitForFirstConsumer` and is the default, leaving the provider's classes in place for anything that needs Immediate binding. Note that binding mode is immutable on an existing class, so this is a new class plus a default flip, not an edit — and existing PVs keep the class they were bound with, so it applies to new claims only. Separately, write the expansion path down and alert on utilization, so the capability that already exists is reachable under pressure.
 * **Open decisions**:
   - Whether the platform ships its own class or asserts properties on the provider's. A class of our own is portable across CSI drivers; asserting on theirs avoids a second class to explain.
   - Whether `Retain` stays the default. It is the safe choice for tenant data and the expensive one for churn — the answer probably differs for tenant volumes and for kernel scratch.
@@ -1193,7 +1193,7 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Provide a `WaitForFirstConsumer` class and make it the default; leave the provider's Immediate classes available.
   - `[ ]` Lint that the default class binds late and allows expansion, so a cluster whose provider changes its defaults fails a check rather than a mount.
   - `[ ]` A documented expansion procedure — patch the claim, confirm `FileSystemResizePending` clears — and a rehearsal on a scratch volume, since the capability is untested here.
-  - `[ ]` Alert on volume utilisation. `postgres-1` is the one to watch: 10Gi shared by every tenant app, growing with tenant count rather than with any one tenant.
+  - `[ ]` Alert on volume utilization. `postgres-1` is the one to watch: 10Gi shared by every tenant app, growing with tenant count rather than with any one tenant.
   - `[ ]` Reclaim `Released` PVs, and decide whether that is a sweep or a deliberate operator action. The Cinder volume outlives the PV either way, so deleting the PV is not the end of the bill.
 
 ### 2.25 The Mail Proxy's Load Balancer Is Set on the Claim (*)
@@ -1218,7 +1218,7 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Extend `make test-mail-edge-lab` to a load balancer that sends the header, and to a header from an address that is not on the list.
 
 ### 2.26 Element and Synapse Behind the Front Door (**)
-* **Target Domain**: Routing & App Catalogue
+* **Target Domain**: Routing & App Catalog
 * **Context**: Element runs in the browser and calls the chat server, Synapse,
   on an address of its own, with its own token in the `Authorization` header;
   Synapse is also the party that signs in at the realm, and keeps that
@@ -1237,12 +1237,12 @@ mappers and flow, nor the broker client is made any more
   cover both and only the paths other clients need are published.
 * **Backlog Items**:
   - `[ ]` Decide between a public entry that passes the app's own cookies and Synapse on Element's host.
-  - `[ ]` Build the chosen arrangement and change the Element profile to it in the catalogue.
+  - `[ ]` Build the chosen arrangement and change the Element profile to it in the catalog.
   - `[ ]` Sign in through Element on a cluster, and reach the chat server with a second Matrix client.
   - `[ ]` Decide federation separately: it needs a published port of its own.
 
 ### 2.27 Open WebUI Ends a Session When the Realm Signs a Person Out (*)
-* **Target Domain**: App Catalogue & Sessions
+* **Target Domain**: App Catalog & Sessions
 * **Context**: Open WebUI can be told of a sign-out by the realm and checks
   what it is told, but it ends the session only when it runs with Redis. Its
   profile declares the sign-out and runs it without, so the declaration has
@@ -1252,7 +1252,7 @@ mappers and flow, nor the broker client is made any more
 * **Proposed Solution**: Run Open WebUI with Redis and its switch for
   sign-out, so that a sign-out at the realm ends the person's session in it.
 * **Backlog Items**:
-  - `[ ]` Give the Open WebUI profile a Redis and the setting that makes it honour a sign-out.
+  - `[ ]` Give the Open WebUI profile a Redis and the setting that makes it honor a sign-out.
   - `[ ]` Show, against Open WebUI's image and the realm, that a sign-out ends the session.
 
 ### 2.28 The Platform Starts the vLLM Instances the Claim Lists (**)
@@ -1328,7 +1328,7 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Show it on the Models tab and in `kubectl gentian models list`, and keep the declared flag where no answer exists.
 
 ### 2.32 A Tenant's Values and Drop-In Files Are Written by the Director (**)
-* **Target Domain**: App Catalogue & Customization Framework
+* **Target Domain**: App Catalog & Customization Framework
 * **Context**: A tenant's per-app values (`Tenant.spec.apps[].config.extraValues`), its drop-in files (`config.dropIns`) and a customization record of tenant scope can be set only by a commit to the deployments repository. No route of the director writes them and the administration console has no screen for them ([app-customization.md](app-customization.md) §2.1, §2.2.1).
 * **Proposed Solution**: A route of the director that writes a tenant's per-app values and drop-in files as signed commits, checked against what the profile declares as the operator checks them, and an editor in the administration console for the tenant's administrator.
 * **Backlog Items**:
@@ -1337,8 +1337,8 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Console: the editor, with the resulting diff before it is committed.
 
 ### 2.33 Drop-In Files Are Mounted into the App (**)
-* **Target Domain**: App Catalogue & Customization Framework
-* **Context**: The operator validates a tenant's drop-in files and stores them in a ConfigMap `app-dropin-<profile>-<name>`. Nothing mounts it: the platform generates no mount and no chart of the catalogue mounts that ConfigMap, so drop-in content has no effect on the app ([app-customization.md](app-customization.md) §2.2.1).
+* **Target Domain**: App Catalog & Customization Framework
+* **Context**: The operator validates a tenant's drop-in files and stores them in a ConfigMap `app-dropin-<profile>-<name>`. Nothing mounts it: the platform generates no mount and no chart of the catalog mounts that ConfigMap, so drop-in content has no effect on the app ([app-customization.md](app-customization.md) §2.2.1).
 * **Proposed Solution**: The ConfigMap is mounted at the path the profile declares for the drop-in, after the profile's own files, and the app picks a change up.
 * **Backlog Items**:
   - `[ ]` Decide where the mount is made: by the platform from `spec.customization.dropIns`, or by each chart from a value the platform passes.
@@ -1362,7 +1362,7 @@ mappers and flow, nor the broker client is made any more
     name it yet; `kubectl gentian catalogues residue` should list it as
     `unused build` and remove it like a dropped companion, after one line
     of grace.
-  - `[ ]` **The catalogue keeps every published build.** A tenant moves
+  - `[ ]` **The catalog keeps every published build.** A tenant moves
     back to a build its cluster stored; a build no cluster stored is gone
     once the index moved on. gentian-apps publishes a snapshot per publish
     beside the moving index.
@@ -1390,7 +1390,7 @@ mappers and flow, nor the broker client is made any more
     before builds were kept has no `ProfileBuild` of the build it ran; a
     move rolled back lands on `DigestMismatch` and the instance is held
     (seen on the corp cluster, aluvian-statistics, 2026-10-20). Either the
-    director materialises the old build from the catalogue's snapshot once
+    director materializes the old build from the catalog's snapshot once
     there is one, or the rollout record says plainly that there is nothing
     to go back to and the next build is the way out.
   - `[ ]` **Companions per build.** Two builds of one app share their
@@ -1423,10 +1423,10 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` If chosen: an edge per tenant that declares TURN, and the move of existing tenants off the shared secret.
 
 ### 2.36 One Talk High-Performance Backend for Every Tenant (**) — to evaluate
-* **Target Domain**: App Catalogue & Conferencing
-* **Context**: Nextcloud Talk's high-performance backend (signalling server,
+* **Target Domain**: App Catalog & Conferencing
+* **Context**: Nextcloud Talk's high-performance backend (signaling server,
   Janus, NATS) runs per tenant, inside the tenant's Nextcloud
-  ([networking.md §9.3](plans/networking.md)). The signalling server can serve
+  ([networking.md §9.3](plans/networking.md)). The signaling server can serve
   several Nextcloud instances, each with a secret of its own, so one backend
   could serve every tenant of a cluster.
 * **Proposed Solution**: To evaluate: one backend as a `shared-app` instance
@@ -1435,14 +1435,14 @@ mappers and flow, nor the broker client is made any more
   and a fault in it would reach every tenant's calls.
 * **Backlog Items**:
   - `[ ]` Measure what a per-tenant backend costs at idle and under load, against one shared backend.
-  - `[ ]` Check, against the signalling server's own configuration, that its backends are kept apart: a ticket of one tenant's Nextcloud is refused for another's rooms.
+  - `[ ]` Check, against the signaling server's own configuration, that its backends are kept apart: a ticket of one tenant's Nextcloud is refused for another's rooms.
   - `[ ]` Decide; if shared, a profile of class `shared-app` and a contract that gives each tenant's Nextcloud its backend entry.
 
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
 * **Target Domain**: User Provisioning & Identity
-* **Context**: User provisioning changes are updated directly in Keycloak but do not propagate to catalogue apps.
+* **Context**: User provisioning changes are updated directly in Keycloak but do not propagate to catalog apps.
 * **Proposed Solution**: Build a SCIM (System for Cross-domain Identity Management) listener that translates user/group events to CloudEvents, allowing tenant apps to sync their directories.
 * **Backlog Items**:
   - `[ ]` Build a SCIM-compliant endpoint inside Keycloak or the operator.
@@ -1451,10 +1451,10 @@ mappers and flow, nor the broker client is made any more
 ### 3.2 Fine-Grained OpenFGA launch Authorization (*) — done
 * **Target Domain**: UI/UX & Access Control
 * **Context today**: the question is asked per app. In the model the director and the edge use (`authz/model/v1`), `can_launch` and `can_use` are relations on `app`; a tile names the relation that shows it (`expose[].tile.relation`), the usher lists for a person the tiles they may open, and the bouncer asks `can_use` on every request to an app's route. The `shell_app` object below belongs to the earlier model.
-* **Context as written**: The relation is modelled and enforced, but not per tile. `can_launch` exists on the `shell_app` type in `internal/authz/data/model-v0.json`, resolving through tenant membership and tenant admin, and `gentian-ui/backend/app/core/authz.py` checks it — against the single object `shell_app:gentian-ui`, as an all-or-nothing gate on reaching the shell at all, and short-circuited for platform admins, tenant admins and the bootstrap admin. So the store answers "may this user open the portal", not "may this user see this tile". Every tile a tenant has installed is still rendered to every member.
+* **Context as written**: The relation is modeled and enforced, but not per tile. `can_launch` exists on the `shell_app` type in `internal/authz/data/model-v0.json`, resolving through tenant membership and tenant admin, and `gentian-ui/backend/app/core/authz.py` checks it — against the single object `shell_app:gentian-ui`, as an all-or-nothing gate on reaching the shell at all, and short-circuited for platform admins, tenant admins and the bootstrap admin. So the store answers "may this user open the portal", not "may this user see this tile". Every tile a tenant has installed is still rendered to every member.
 * **Proposed Solution**: Write one `shell_app` object per installed app and query per tile, rather than once for the shell.
 * **Backlog Items**:
-  - `[x]` Implement `can_launch` relation rules inside the OpenFGA authorization store. *(Modelled on `shell_app`, with tenant member and admin inheritance.)*
+  - `[x]` Implement `can_launch` relation rules inside the OpenFGA authorization store. *(Modeled on `shell_app`, with tenant member and admin inheritance.)*
   - `[x]` Write a `shell_app` object per installed app, so the relation has per-app subjects to answer about. *(Done in another form: the object is `app`, with `can_use` and `can_launch` defined on it in `authz/model/v1/model.fga`; the operator projects each installed app.)*
   - `[x]` Refactor the desktop to filter tiles on the per-app answer. *(The usher lists the tiles a person may open (`internal/usher`), and the bouncer asks `can_use` for the app on every request to its route (`internal/bouncer/check.go`).)*
 
@@ -1487,7 +1487,7 @@ mappers and flow, nor the broker client is made any more
 
 ---
 
-### 3.6 Effective Resource Requirements in the Catalogue (**)
+### 3.6 Effective Resource Requirements in the Catalog (**)
 * **Target Domain**: UI/UX & Shell
 * **Context**: The app store shows a "Resource Profile" taken from the profile's `package.extraValues.resources`. That field is the profile's *override* block, not the app's requirement, so an app content with its chart's defaults declares nothing and the store had nothing to show — Docmost reserves 1 CPU and 1Gi from `charts/docmost/values.yaml` and appeared to reserve nothing. Of thirty-one profiles, fourteen declare no override; most legitimately (the nine Nextcloud add-ons install into an existing Nextcloud and start no pods, and a profile whose package is an `api` has no workload of its own), but docmost, mathesar, litellm and the app store itself all run pods on chart defaults. A tenant admin deciding what fits sees a blank where a whole core belongs. Mitigated for now by saying "not set by this profile — the chart's own defaults apply" instead of omitting the panel, so a blank is never read as free; the tenant resources panel shows the truth, but only once the app is installed, which is after the decision.
 * **Proposed Solution**: Resolve the *effective* resources at catalogue-build time rather than reading the override block — the chart is already pulled, so its values are available — and serve requests and limits whether or not the profile overrides them. Copying the numbers into each profile is the alternative and the wrong one: it duplicates the chart's own values and drifts the first time a chart is bumped.
@@ -1568,14 +1568,14 @@ what the components it already runs could do with little extra code.
 * **Context**: Signed bundles and images (security-gap-closing G11) prove provenance, not absence of known vulnerabilities; ISO 27001 A.8.8 and A.8.29 want both.
 * **Proposed Solution**: Scan every image and chart in CI and in-cluster, generate an SBOM per bundle, and let admission refuse unsigned or unscanned images.
 * **Backlog Items**:
-  - `[ ]` Trivy (or equivalent) in CI for gentian-os, gentian-ui and every catalogue bundle; findings gate the release.
+  - `[ ]` Trivy (or equivalent) in CI for gentian-os, gentian-ui and every catalog bundle; findings gate the release.
   - `[ ]` SBOM per bundle, stored beside the digest in the mirror.
   - `[ ]` In-cluster scanning of running images with findings in the security officer's view.
   - `[ ]` Admission refuses images without a signature and a scan record.
 
-### 5.4 Assurance Programme (**)
+### 5.4 Assurance Program (**)
 * **Target Domain**: Audit & Assurance
-* **Context**: The certifications assess the organisation; the platform supplies controls and evidence. The timing of the technical work decides when an assurance period can start.
+* **Context**: The certifications assess the organization; the platform supplies controls and evidence. The timing of the technical work decides when an assurance period can start.
 * **Proposed Solution**: Start the ISAE 3402 / SOC 2 Type II clock the day the director and the immutable log store are live; do a Type I readiness assessment after wave 1 of the gap plan; treat the roles document as the complementary user-entity controls and `docs/compliance/controls.md` as the system description.
 * **Backlog Items**:
   - `[ ]` Type I readiness after wave 1; Type II period after the log store.
@@ -1594,5 +1594,83 @@ what the components it already runs could do with little extra code.
   - `[ ]` Access-review attestation: the review is generated on an interval, the tenant's administrator and the security officer are told, and the sign-off is a checked commit.
   - `[ ]` A signed record of each deletion and each export: who, what, when, verified gone or verified delivered.
   - `[ ]` Residency: a Cluster claim field shown to tenants and in the exports.
-  - `[ ]` A control catalogue (`docs/compliance/controls.md`): one row per control objective, with its principle, mechanism and evidence query.
+  - `[ ]` A control catalog (`docs/compliance/controls.md`): one row per control objective, with its principle, mechanism and evidence query.
   - `[ ]` One request id from the Gateway through the director, the bouncer, the console and Keycloak's events, so the exports join on it. *(The director, the registrar and the bouncer carry `x-request-id` today; Keycloak's events do not.)*
+
+## 6. Cleanup
+
+Defects, duplication and stale code found by a code audit on 2026-10-29 in
+gentian-os, gentian-ui, gentian-apps, gentian-sidecars and gentian-pieces, one
+line each. Tick an item when its fix has merged, and name the PR beside it.
+
+### 6.1 Bugs That Break Behavior Now (**)
+* **Target Domain**: Correctness
+* **Backlog Items**:
+  - `[ ]` gentian-os: the Keycloak event-listener image tag is the raw git ref (`v0.4.2`, or the moving `develop`), while CI publishes `0.4.2`; substitute the resolved image tag (`kernel/appsets/raw/09-identity.yaml`, `kernel/appsets/templates/appsets.yaml`).
+  - `[ ]` gentian-os: concurrent updates of the Cloudflare tunnel configuration lose routes (GET, change one rule, PUT, no lock, two client instances); the `accountID` cache is unsynchronized and the HTTP client has no timeout (`edge_cloudflare_tunnel.go`).
+  - `[ ]` gentian-os: most GitOps writers answer 500 when a push loses a race; only a few retry `errPushRejected`, and `repoError` does not map it. One retrying commit helper, or at least 409 with `Retry-After`.
+  - `[ ]` gentian-os: the director accepts tenant names of 63 characters, but `tenant-<name>` must fit in 63 and the usher allows 52; one `TenantName` validator for director, registrar and usher.
+  - `[ ]` gentian-os: a `Patch` of the Tenant for MAC waivers and app-privilege fingerprints decodes the stored status back and drops the conditions the same reconcile set earlier.
+  - `[ ]` gentian-os: `deleteRetiredJobs` deletes without a propagation policy, orphaning pods, and runs on every reconcile; `retireDirectorRealmSecret` follows the same pattern.
+  - `[ ]` gentian-os: the purge confirmation's `trap … EXIT` replaces the port-forward cleanup trap (`teardown.sh`, `portforward.sh`).
+  - `[ ]` gentian-os: `GENTIAN_PURGE_CONFIRM=<cluster>` skips the single-instance purge lock (`install.sh`).
+  - `[ ]` gentian-os: CI publishes images for commits that failed checks: `publish.needs` lacks `generate` and `crossplane-unit`, and the `keycloak-listener` and `storage-tools` jobs push and sign straight from their build step.
+  - `[ ]` gentian-os: the infra charts are always pulled from upstream `develop`, whatever the cluster's branch or repository, which breaks release, fork and air-gapped installs (`cluster-default.yaml`, `charts/infra/packages/index.yaml`).
+  - `[ ]` gentian-os operator: Customization `observedGeneration` stops advancing when the verdict is unchanged; PlatformSecurityPolicy drops its status-write error; `Result{RequeueAfter}` is returned together with an error, which controller-runtime ignores.
+  - `[ ]` gentian-os director: `quoteScalar` leaves `True`, `FALSE`, `Null`, `0x10` and `.inf` bare; commits made with a commission key get the author email `@users.gentian.invalid`; the custodian answers 404 for any catalog failure; the import-status GET starts a watcher and finished entries are never dropped; the in-process locks assume one director replica although `director.replicas` is configurable.
+  - `[ ]` gentian-ui desktop: tenant notifications are never visible, because visibility is read from a `groups` claim the token does not carry, and dismissing one answers 403; decide visibility from the director's relations.
+  - `[ ]` gentian-ui desktop: the frontend calls the removed `POST /auth/session-started` and `POST /api/v1/auth/logout`, so the backchannel logout it believes it performs never happens; delete both calls.
+  - `[ ]` gentian-ui desktop: `WindowBody`'s embeddability check has no cleanup guard, so a late result opens a popup outside a user gesture; its fallback text is hard-coded English.
+  - `[ ]` gentian-ui desktop: the JWKS and the director relations are fetched on every request, with no cache and no `raise_for_status`; `auth.clientId` is declared twice in the chart values.
+  - `[ ]` gentian-ui: the admin console ignores the tenant language (`GENTIAN_DEFAULT_LANGUAGE`, and `OPENFGA_*`, are set and never read); the chart NetworkPolicies of both apps allow only DNS and the gateway and would cut off the backends if enabled.
+  - `[ ]` gentian-apps: the CI path filters skip real changes (`charts/paperless-ngx/**` is not in the push `paths`, `contracts/**` is in neither list).
+  - `[ ]` gentian-apps: the vendored platform contract 0.5 lacks `valueMapping.platform.organizationKey`, `timeZoneKey` and `objectLock`, and the validator cannot notice (no `additionalProperties: false`, unknown kinds skipped, CEL rules stripped).
+  - `[ ]` gentian-apps: element-ce's resource limits are never applied: the profile sets top-level `resources:`, the chart reads `synapse.resources`.
+  - `[ ]` gentian-apps: two of the three checks in `validate-secret-refs.py` can never fail (they read AppProfile-era fields); Dependabot does not watch paperless-ngx-mcp.
+
+### 6.2 Duplication (**)
+* **Target Domain**: Maintainability
+* **Context**: The copies are what keeps a fix from reaching every place it applies.
+* **Backlog Items**:
+  - `[ ]` One app runtime instead of copies in the desktop, the admin console and `gentian-apps/apps/_template` (`auth.py`, `oidc.ts`, `AuthProvider`, `RequireAuth`, `director.py`, `origin_check.py`, `dropins.py`, `extensions.py`, `registry.ts`, `tenant.py`, `brand.ts`, `i18n.ts`, `logging_middleware.py`): a Python package, an npm package and a library chart published from gentian-ui.
+  - `[ ]` gentian-os: three OpenFGA HTTP clients (`director/authz`, `arbiter`, `authz`); one client package, the arbiter wraps it.
+  - `[ ]` gentian-os: the authenticate-and-authorize pipeline is copied five times (director, registrar, usher); a shared package, and the usher passes the request id instead of `""`.
+  - `[ ]` gentian-os: the key-hash table and its ConfigMap reload loop are copied three times (commission keys, vouching keys, bouncer); one generic table.
+  - `[ ]` gentian-os: nine hand-rolled condition setters that treat `lastTransitionTime` differently (the PSP reconciler resets it every 5 minutes and wakes its own watch); use `apimeta.SetStatusCondition`.
+  - `[ ]` gentian-os: about 20 ensure-Secret/ConfigMap blocks with their own drift rules, 13 copies of the Job helpers and "delete with Background propagation", and duplicate tenant lookups (`tenantConditionTrue`, `tenantHasConditionTrue`, `tenantOf`); one `ensureObject` helper and one `jobs.go`.
+  - `[ ]` gentian-os: version pins outside `versions.yaml` (OpenBao, Kyverno, external-dns, Reloader, CNPG in the bootstrap chart templates; `XP_VERSION` in CI).
+  - `[ ]` gentian-os: the render fixtures hold 61 full copies of the Compositions (153k lines), and the fixture lint silently skips a fixture whose Composition is gone; reference the Composition by name and fail on an unknown one.
+  - `[ ]` gentian-os: `publish-infra-charts.sh` does not package the patched OpenFGA chart; mariadb vendors `common` twice; `init-openbao-transit.sh` copies the `common.sh` logging helpers.
+  - `[ ]` gentian-apps: the odoo-base-ce and element-ce Compositions are forks of app-default (837 of 1236 and 400 of 687 lines shared); move the app-specific steps into profile fields or one extra step on app-default.
+  - `[ ]` gentian-apps: chart discovery is duplicated in `validate-chart-refs.py` and `validate-image-tags.py`, and the profile-loading loop is copied in six scripts.
+  - `[ ]` gentian-apps: the git-sync block is copy-pasted four times, and the odoo chart hard-codes its image twice; one `gitSync.image` value.
+  - `[ ]` gentian-ui: the desktop and admin-console CI workflows have drifted (the desktop runs no ruff and no frontend tests, the admin console has no `v*` tag trigger, neither pushes its chart on a tag); one reusable workflow.
+
+### 6.3 Dead Code (*)
+* **Target Domain**: Maintainability
+* **Backlog Items**:
+  - `[ ]` gentian-ui desktop: `core/authz.py`, `core/openfga_client.py`, the tracked `scratch_*.py` files, `lib/postLogin.ts`, `windows/IframeContent.tsx`, the settings-template routes and client, unused Settings fields and `gentian_groups` helpers.
+  - `[ ]` gentian-ui admin console: about 18 functions in `api/admin.ts` whose backend routes are gone, and the unused `cors_*`, `oidc_client_secret`, `tenant_namespace`, `get_dropin_config` and `redact_sensitive`.
+  - `[ ]` gentian-ui: routes nothing seems to call (desktop `PUT`/`DELETE /tenant-tiles/{app}`, admin console `/cluster/me` and `/session/me`); check for callers first.
+  - `[ ]` gentian-os: the `internal/authz` model-v0 stack (`bridge.go`, `openfga_client.go`, `model_embed.go`, `data/model-v0.json`, `EnsureRealm`).
+  - `[ ]` gentian-os: `RoutingMode` always returns gateway; remove the field, `ROUTING_MODE`, both helpers and the guards.
+  - `[ ]` gentian-os: CRD fields nothing reads or writes: IntegrationBinding `Auth.Method`, `Status.SecretRef`, `LastRotation`, `ObservedGeneration`; ResourcePlan `TenantCount`, `ObservedAt`; AppGrant `TupleCount`; OIDCPackCatalog `PackCount`; Customization `ResolvedNamespace`; Component `SharedInstance`.
+  - `[ ]` gentian-os operator: `resumeApp` is called only from tests, the ProfileBuild conflict branch can never run, the AppGrant finalizer guards nothing, unparam reports unused parameters and results, and the registrar Secret is labeled `managed-by: gentian-operator` instead of `gentian-os`.
+  - `[ ]` gentian-os director: `ClusterBackupPolicy` and `HasCommit` are dead; move the test-only exports into test files.
+  - `[ ]` gentian-os build: kubeconform is installed but never run; the macOS portability job is `continue-on-error` although it passes; the Make targets have an e2e alias, a `test-unit-functions` that would swallow failures, and `validate-steps` running twice; the chart value `watchNamespaces` is never read.
+  - `[ ]` gentian-os: comments to correct: misplaced Makefile and e2e comments, Composition comments that describe v4 or features "not built yet", the CI comment on argocd-image-updater `allow-tags`, the director comment that says no route bypasses `guarded`.
+  - `[ ]` gentian-os: `trap … RETURN` inside functions leaks to the caller (`common.sh`, B-06); harmless today.
+  - `[ ]` gentian-apps: the git-modules sidecar chart and image are unused but still built and pushed as `:latest`; remove them with their CI jobs, the Dependabot entry and the doc rows. Remove the `AppProfile` skeleton (`appprofile.yaml.tmpl`) and the docs that point to it.
+  - `[ ]` gentian-apps: DB and OIDC valueMappings the mathesar and odoo charts never read (they may only feed the Secret; check first).
+
+### 6.4 Retired Things and Naming (*)
+* **Target Domain**: Maintainability
+* **Backlog Items**:
+  - `[ ]` The retired gentian-app-template repository is still called canonical in gentian-apps (`README.md`, `AGENTS.md`, `docs/custom-app-guide.md`, `apps/_template/customization/README.md`, `MANUAL-INSTALL.md`, `bootstrap-gentian-template.sh`) and gentian-ui (`apps/desktop/README.md`); point them at `gentian-apps/apps/_template`.
+  - `[ ]` READMEs that describe what is gone: gentian-sidecars (`AppProfile.spec.sidecars`, dead paths, the git-modules template); gentian-apps v05 docs (`README.md`, `AGENTS.md`, `releasing.md`).
+  - `[ ]` gentian-pieces: `pieces/` holds hollow stubs, and there is no README.
+  - `[ ]` gentian-os: the `_remove_retired_suze_claim` shim in `bootstrap.sh`, once every deployments repository is migrated.
+  - `[ ]` gentian-ui: "Suze" in `apps/desktop/chart/values-production.yaml.example`.
+  - `[ ]` gentian-os: retired charts still shipped (the Bitnami postgresql chart, `postgresql-2.1.2.tgz`, `seaweedfs-4.48.0.tgz`); remove them from `publish-infra-charts.sh` too.
+  - `[ ]` gentian-apps: moving image tags (`redis:7-alpine` in docmost and paperless-ngx, `postgres:16-alpine` in openproject, `python:3.12-alpine` in open-webui, `latest` in git-modules); `validate-image-tags.py` should also walk the local charts' values. To decide: replace Redis with Valkey, since Redis 7.4+ is not under an OSI-approved license.
+  - `[ ]` British spelling, the remainder. gentian-os: prose, comments and messages are American; what is left crosses a boundary and needs a decision to migrate: API and CRD fields (`catalogue`, `catalogueVersion`, `organisation`), Go packages and exported names (`catalogue`, `tilecatalogue`, `BundleArtefact`, `Materialise*`), the `kubectl gentian catalogues` subcommand, env vars (`GENTIAN_CATALOGUE_*`), file names, and the bundle header the director and the installer write alike. gentian-ui: about 300 "catalogue" hits including routes, and "organisation" in the English UI strings. gentian-apps: about 350 hits. gentian-sidecars: 1.

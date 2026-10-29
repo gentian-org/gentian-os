@@ -1016,7 +1016,7 @@ func (s *Server) recordIdentityAction(r *http.Request, c call, action string, re
 	if s.cfg.Record == nil {
 		return
 	}
-	// Not the request's context: it is cancelled the moment the response is
+	// Not the request's context: it is canceled the moment the response is
 	// written, and the record must not be lost to the caller hanging up.
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()

@@ -57,8 +57,8 @@ CLOSED = {
 OPEN = {
     "mail-edge": {
         2525: "inbound mail from the internet: port 25 of the load balancer",
-        2587: "submission: port 587 of the load balancer, dialled by mail clients and, under the public name, by apps and Keycloak",
-        2993: "IMAPS: port 993 of the load balancer, dialled by mail clients and, under the public name, by apps",
+        2587: "submission: port 587 of the load balancer, dialed by mail clients and, under the public name, by apps and Keycloak",
+        2993: "IMAPS: port 993 of the load balancer, dialed by mail clients and, under the public name, by apps",
     },
 }
 
@@ -683,7 +683,7 @@ def wiring_mail(apps, wanted, fn):
     verify = (ROOT / "scripts/lib/verify-kernel-services.sh").read_text()
     if '"gentianos.io/purpose": "verify"' not in verify or '_verify_tcp_from_cluster "${ns}" "${fqdn}" "${port}"' not in verify \
             or 'local ns="${VERIFY_POD_NAMESPACE:-$1}"' not in verify:
-        raise Failure("verify_dovecot_installation no longer runs its probe, labelled gentianos.io/purpose=verify, in the namespace it checks")
+        raise Failure("verify_dovecot_installation no longer runs its probe, labeled gentianos.io/purpose=verify, in the namespace it checks")
 
 
 def wiring_mail_edge(apps, wanted):

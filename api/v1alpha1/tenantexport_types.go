@@ -174,7 +174,7 @@ type ExportDestination struct {
 	// workspace's backups — the same keys the nightly schedule authenticates
 	// with — so a one-off backup to a different bucket on the same provider
 	// needs nobody to retype a secret. Nothing is copied: those keys are
-	// already materialised beside the capture Jobs.
+	// already materialized beside the capture Jobs.
 	//
 	// transient is for keys that exist for this export only. They are supplied
 	// in a Secret, staged beside the Jobs, and removed when the export ends.
@@ -426,18 +426,18 @@ type BundleRef struct {
 	CredentialSecret string `json:"credentialSecret,omitempty"`
 }
 
-// BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+// BundleArtefact is one artifact of a bundle: a database dump, a bucket's
 // archive, a volume's archive.
 type BundleArtefact struct {
 	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
 	// secrets; for what is the tenant's own also identity, mailboxes or
 	// rights.
 	Kind string `json:"kind"`
-	// Name is what the artefact was captured from: the database, bucket or
+	// Name is what the artifact was captured from: the database, bucket or
 	// volume claim, by its name in the tenant the bundle was taken of; for
 	// secrets, the app.
 	Name string `json:"name"`
-	// Path is the artefact's place in the bundle.
+	// Path is the artifact's place in the bundle.
 	// +optional
 	Path string `json:"path,omitempty"`
 	// Release is the Helm release a captured volume claim recorded.
@@ -573,7 +573,7 @@ type AppExportStatus struct {
 	// +optional
 	Stores []string `json:"stores,omitempty"`
 
-	// Artefacts lists each artefact captured for this app, or planned to be
+	// Artefacts lists each artifact captured for this app, or planned to be
 	// restored for it: what the bundle's manifest says the bundle holds. An
 	// export writes them into the manifest; a restore reads them from it.
 	// +optional

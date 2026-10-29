@@ -3,11 +3,11 @@
 # lib-runtime.sh — Shared CRI / kubelet runtime helpers
 # =============================================================================
 # Sourced by install.sh. Keeps the sudo-prompt logic and the
-# microk8s/containerd state-recovery helpers in one place so behaviour stays
+# microk8s/containerd state-recovery helpers in one place so behavior stays
 # consistent between bootstrap and teardown (step destroy()).
 #
 # Required globals (must be defined by the caller before sourcing):
-#   info(), success(), warn(), error()    — colourised log helpers
+#   info(), success(), warn(), error()    — colorized log helpers
 #
 # Public functions:
 #   ensure_sudo [REASON]

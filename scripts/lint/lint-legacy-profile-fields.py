@@ -19,7 +19,7 @@
 # ComponentProfile and refuses the old spellings by name, with the new one
 # beside each. AppProfile is untouched: kernelRequirements, deploymentMethod,
 # compositionRef and customization.addon are still that kind's own vocabulary,
-# and stay until the catalogue converts.
+# and stay until the catalog converts.
 # =============================================================================
 
 import shutil

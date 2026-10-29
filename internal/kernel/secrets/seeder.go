@@ -145,7 +145,7 @@ func randomHex(n int) string {
 	return hex.EncodeToString(buf)[:n]
 }
 
-// seedAndRead writes data with PutOnce, then re-reads to honour any value
+// seedAndRead writes data with PutOnce, then re-reads to honor any value
 // already present (manual overrides or values from a prior reconcile).
 //
 // reproducible says the values in data would come out the same if made again;
@@ -224,7 +224,7 @@ func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID str
 	}, nil
 }
 
-// --- Database (PostgreSQL flavour) -------------------------------------------
+// --- Database (PostgreSQL flavor) -------------------------------------------
 
 // DatabaseCreds is the set of values written to …/database.
 type DatabaseCreds struct {

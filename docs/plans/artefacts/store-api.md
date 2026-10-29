@@ -27,6 +27,17 @@ spelled out in [operations.md §6.2](../../design/operations.md).
 
 Whoever keeps a copy of these files: this is what moved, newest first.
 
+**2026-10-29** (1.15, a 1.14 client is answered as before: it finds no
+`tenant-access` in `features` and calls nothing removed)
+
+1. **No account holds a tenant any more.** Removed: `GET /v1/tenant/access`,
+   `POST /v1/tenant/access/{subject}/approve` and `…/decline`, the feature
+   `tenant-access`, the role `holder` and the code `not-tenant-holder`. An
+   account that does not manage the tenant still gets an acquisition
+   waiting for `approval`; an owner or administrator of the organization
+   the tenant belongs to, or the store's operator, approves or declines it,
+   outside this API (§4).
+
 **2026-10-29** (1.14, additive: a 1.13 client is answered as before)
 
 1. **`organization` on `POST /v1/acquisitions`**, with the feature
@@ -158,7 +169,8 @@ Whoever keeps a copy of these files: this is what moved, newest first.
    it (`GET /v1/tenant/access`, `POST /v1/tenant/access/{subject}/approve`
    and `…/decline`), or the store's operator does. `GET /v1/tenant`
    carries the account's own `access.role`. Such a store does not refuse
-   with `tenant-not-claimed`.
+   with `tenant-not-claimed`. (The holder, its operations and the feature
+   were removed in 1.15.)
 3. **A pending acquisition says what it waits for** (`waitingFor`):
    `confirmation`, `approval` or `checkout`. Only while it waits for a
    checkout does it carry `checkoutUrl`. Not additive for a 1.1 app, which
@@ -211,7 +223,7 @@ Whoever keeps a copy of these files: this is what moved, newest first.
    ending (§7).
 5. **`credential.username` is one per tenant**, chosen by the store, opaque
    to the cluster. A credential is one per tenant and repository (§7).
-6. **Accounts and tenants** (§3): a tenant is an organisation in the
+6. **Accounts and tenants** (§3): a tenant is an organization in the
    store's records, an account is a person, and by default exactly the
    tenant administrator's account acts for the tenant.
    `tenant-not-claimed` is specified as the refusal for an account that is
@@ -345,8 +357,8 @@ everybody who asks in the same language:
 
 | Answer | Headers |
 |---|---|
-| an open read, not personalised | `Cache-Control: public, max-age=<seconds>` (the store chooses; minutes for listings, longer for `/v1/meta`), `ETag`, `Vary: Accept-Language, Authorization` |
-| an open read the store personalised from a token | `Cache-Control: private, no-store`, no `ETag`, the same `Vary` |
+| an open read, not personalized | `Cache-Control: public, max-age=<seconds>` (the store chooses; minutes for listings, longer for `/v1/meta`), `ETag`, `Vary: Accept-Language, Authorization` |
+| an open read the store personalized from a token | `Cache-Control: private, no-store`, no `ETag`, the same `Vary` |
 | every signed-in call | `Cache-Control: no-store` |
 
 The app may repeat an open read with `If-None-Match: <the ETag>`; the store
@@ -370,8 +382,6 @@ present. A type written `string \| null` is present and may be `null`.
 | `GET /v1/apps/{catalogue}/{app}/reports` | **open** | Evaluations and reports about the app |
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask a partner for support with an app: `202 received` |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant the assertion's issuer is, the reason if not, notices to show, and the account's role |
-| `GET /v1/tenant/access` | signed in | Who manages the tenant; for the holder, everybody else who does or asks to |
-| `POST /v1/tenant/access/{subject}/approve`, `…/decline` | signed in, the holder | Let another account manage the tenant, or not |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired; filter `status` |
 | `POST /v1/acquisitions` | signed in | Acquire an app: `201` decided, `202` waiting (checkout, approval, confirmation), `200` already acquired. May say who the tenant is (`organization`, 1.14) |
 | `POST /v1/acquisitions/free` | assertion, no account (1.13) | Acquire an app whose price model is `free` without registering; answers as `POST /v1/acquisitions` |
@@ -383,8 +393,8 @@ reads, where it only adds `acquired`; `GET /v1/meta` ignores it.
 
 ## 3. Partner assertions
 
-A signed-in call — `GET /v1/tenant`, the `/v1/tenant/access` and
-`/v1/acquisitions` operations, a support request — carries a **partner
+A signed-in call — `GET /v1/tenant`, the `/v1/acquisitions` operations, a
+support request — carries a **partner
 assertion** as `Authorization: Bearer`. Browsing needs none.
 
 The store's realm is a partner of the tenant's realm (AD-17,
@@ -423,7 +433,7 @@ the store's account is made at that first arrival. The page links the
 store's terms and privacy notice and asks the company's name, size,
 country, address and industry, each optional. A store that needs a contact
 asks the person for it there or in its checkout. The first account that
-registers for a tenant holds it.
+registers for a tenant manages it (§4).
 
 ### GET /v1/meta
 
@@ -532,7 +542,7 @@ A tenant the store does not serve:
 | `refusal.reason` | Meaning |
 |---|---|
 | `no-reports-for-tenant` | No usage statistics report lists this URL: the cluster does not report, or the tenant's realm is not the one the report names |
-| `tenant-not-claimed` | Reports exist, and the account signed in is not associated with this tenant: it is not the account of the tenant's administrator, or another the store lets act for the tenant (§3). Not used by a store with `tenant-access`, which serves such an account and lets it ask to manage the tenant |
+| `tenant-not-claimed` | Reports exist, and the account signed in is not associated with this tenant: it is not the account of the tenant's administrator, or another the store lets act for the tenant (§3). Not used by a store that serves such an account and lets it ask to manage the tenant (§4) |
 | `reports-stale` | Reports exist and the latest is older than the store accepts |
 | `tenant-blocked` | The store has decided not to serve this tenant |
 
@@ -559,25 +569,22 @@ reason `tenant-not-claimed`:
 }
 ```
 
-**Who manages the tenant** (feature `tenant-access`, 1.2). `GET /v1/tenant`
-carries the account's own role, `"access": {"role": "holder"}`.
+**Who manages the tenant** (1.2). `GET /v1/tenant` carries the account's
+own role, `"access": {"role": "manager"}`.
 
 | Role | Meaning |
 |---|---|
-| `holder` | The first account that signed in for the tenant. Manages it, and decides who else does |
-| `manager` | Approved by the holder or the store's operator. Manages the tenant: acquires for it |
+| `manager` | Manages the tenant: acquires for it. The account the store associated with the tenant, or one approved by an owner or administrator of the organization the tenant belongs to, or by the store's operator |
 | `requested` | Asked to manage the tenant, by acquiring for it. Its acquisitions wait for `approval` |
 | `declined` | Such a request, turned down. Its waiting acquisitions failed with `access-declined` |
 | `none` | Signed in; nothing decided. Reads the tenant's standing and acquisitions |
 
-`GET /v1/tenant/access` answers `{"role": …, "accounts": [...]}`; for the
-holder `accounts` lists every other account that manages the tenant, asks
-to, or was declined (`subject`, `name`, `email`, `role`, `since`), and is
-empty for anybody else. The holder decides with
-`POST /v1/tenant/access/{subject}/approve` or `…/decline`; any other account
-is answered `403 not-tenant-holder`. The answer is the account as it then
-stands. Approving lets the account's waiting acquisitions go on; declining
-fails them, and ends a `manager`'s management.
+An account that does not manage the tenant is not refused when it
+acquires: its acquisition waits for `approval`. An owner or administrator
+of the organization the tenant belongs to, or the store's operator, approves
+or declines it, outside this API. Approving lets the account's waiting
+acquisitions go on; declining fails them with `access-declined`, and ends a
+`manager`'s management.
 
 **Notice**
 
@@ -768,7 +775,7 @@ Everything in the summary, and:
 `?country=` (ISO 3166-1 alpha-2, 1.3) narrows `support` to the offers that
 cover that country, worldwide ones among them. Without it, an anonymous
 caller is shown every offer; for a signed-in caller the store may narrow them
-to a country it knows of the account (its company's), in a personalised
+to a country it knows of the account (its company's), in a personalized
 answer (`Cache-Control: private, no-store`). A `country` asked always wins.
 
 **SupportOffer** (1.3, feature `support`). Plain text throughout.
@@ -1034,7 +1041,7 @@ carries its repository credential: it is the tenant's.
 ### GET /v1/acquisitions/{id}
 
 The outcome. While `pending` the answer carries `Retry-After`, which the app
-honours before asking again, and never asks more often than every two
+honors before asking again, and never asks more often than every two
 seconds. Once `confirmed` the answer carries the confirmation. `?version=`
 names the version the confirmation should be for; otherwise it is for the
 latest the acquisition covers.
@@ -1273,7 +1280,6 @@ Every answer with a status of 400 or above is `application/problem+json`
 |---|---|---|
 | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields. Also an expired cursor |
 | 401 | `unauthenticated` | Signed-in calls only. No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer`. The app signs the person in again |
-| 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
 | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
 | 403 | `registration-required` | `POST /v1/acquisitions/free` only. The app is not free; the registration page is in `WWW-Authenticate: Partner link=…` |
 | 403 | `terms-not-accepted` | `POST /v1/acquisitions/free` only. The tenant has not accepted the store's terms in force |
@@ -1296,8 +1302,9 @@ unaffected; it does not depend on the store being there.
 Decisions this definition leaves to the store's owner, and points where a
 choice was made that should be confirmed before the store is built on it.
 
-**Answered, and no longer open:** who may act for a tenant (§3: the tenant
-administrator's account, the tenant an organisation); credential lifetime
+**Answered, and no longer open:** who may act for a tenant (§3 and §4: the tenant
+administrator's account, and accounts an owner or administrator of the
+tenant's organization approves; the tenant an organization); credential lifetime
 and renewal (§7: no expiry for now, rotation on request); where the
 redirect lands (§3: one address per tenant, the App Store app's callback);
 who names the repository (§7: the cluster's side); the user name

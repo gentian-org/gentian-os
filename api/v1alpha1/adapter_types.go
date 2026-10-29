@@ -70,7 +70,7 @@ type AdaptedApp struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Profile string `json:"profile"`
 
-	// Versions are the catalogue versions of the app this adapter was
+	// Versions are the catalog versions of the app this adapter was
 	// reviewed against. Empty means the reviewer named none.
 	// +optional
 	// +listType=set

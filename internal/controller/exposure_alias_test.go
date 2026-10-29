@@ -66,7 +66,7 @@ func TestAnAliasGetsAListenerWithTheClustersCertificate(t *testing.T) {
 	}
 }
 
-// An alias that could not be honoured publishes nothing, whatever is in git:
+// An alias that could not be honored publishes nothing, whatever is in git:
 // a name the platform keeps, a name a tenant is called, any alias on a
 // single-tenancy cluster, and an alias on an entry that is not published.
 func TestAnAliasThatIsNotHonouredGetsNoListener(t *testing.T) {

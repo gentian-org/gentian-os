@@ -96,9 +96,9 @@ func TestResolvePackRequiresClient(t *testing.T) {
 	}
 }
 
-// A pack is looked up in the catalogue labelled with the profile, where the
-// app Composition looks, and nowhere else: one another profile's catalogue or
-// an unlabelled one holds is not the profile's, and the client stays the
+// A pack is looked up in the catalog labelled with the profile, where the
+// app Composition looks, and nowhere else: one another profile's catalog or
+// an unlabeled one holds is not the profile's, and the client stays the
 // Composition's.
 func TestResolvePackReadsOnlyTheProfilesOwnCatalogue(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -135,7 +135,7 @@ func TestResolvePackReadsOnlyTheProfilesOwnCatalogue(t *testing.T) {
 	}
 }
 
-// Two catalogues labelled with one profile: which the Composition reads is
+// Two catalogs labelled with one profile: which the Composition reads is
 // not defined, and the operator does not guess.
 func TestResolvePackRefusesTwoCataloguesOfOneProfile(t *testing.T) {
 	scheme := runtime.NewScheme()

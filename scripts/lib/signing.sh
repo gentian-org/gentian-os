@@ -174,7 +174,7 @@ gentian_ensure_signing_key() {
     fi
     # Never without the kernel domain either. The key's address would be the
     # placeholder one, and the next run -- which does know the domain -- would
-    # not recognise it as this cluster's.
+    # not recognize it as this cluster's.
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         error "The ${role} signing key cannot be generated before the kernel domain is known." >&2
         return 1
@@ -373,7 +373,7 @@ gentian_require_recorded_break_glass_key() {
     return 1
 }
 
-# gentian_export_public_key <role> — the armoured public half.
+# gentian_export_public_key <role> — the armored public half.
 #
 # By the fingerprint the lookup answered with, not by uid: the key that is
 # exported is then the key that was found, whatever address it was made for.
@@ -383,7 +383,7 @@ gentian_export_public_key() {
     _gpg --armor --export "${fpr}"
 }
 
-# gentian_export_secret_key <role> — the armoured private half.
+# gentian_export_secret_key <role> — the armored private half.
 #
 # Only the director's is ever exported: it has to reach OpenBao, and from
 # there the pod. The break-glass key's private half stays on this host and in

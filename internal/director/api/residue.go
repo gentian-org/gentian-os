@@ -26,7 +26,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
-// Removing what the catalogue left behind.
+// Removing what the catalog left behind.
 //
 // Nothing a bundle brought leaves a cluster by itself (gitops/catalogue.go).
 // The operator lists what no bundle owns any more and the profiles nobody
@@ -39,10 +39,10 @@ import (
 // record -- is not declared anywhere any more, so removing it is a command:
 // the operator works its list out again and deletes the object only if it
 // is on it. Before that the director looks in git, at the bundle files the
-// catalogue directory holds: an object one of them declares is not asked
+// catalog directory holds: an object one of them declares is not asked
 // for at all, whatever the cluster says.
 //
-// An unused profile is declared, in the catalogue directory, so removing it
+// An unused profile is declared, in the catalog directory, so removing it
 // is first a commit: its files and its kustomization entries, refused while
 // any tenant's manifest names it and unless the operator lists it as unused
 // (which is where "no tenant retains data for it" is known). The object is
@@ -233,7 +233,7 @@ func (s *Server) removeAppResidue(w http.ResponseWriter, r *http.Request, c call
 // removeCompanion has the operator delete one object no bundle owns: for the
 // cluster when scope is nil, and otherwise for the tenant and the app named.
 func (s *Server) removeCompanion(w http.ResponseWriter, r *http.Request, c call, target residueTarget, scope *appScope) {
-	// What git says first. A bundle file in the catalogue directory that
+	// What git says first. A bundle file in the catalog directory that
 	// declares the object owns it, whether or not the cluster has caught up.
 	owner, err := s.cfg.Repo.CatalogueDeclares(r.Context(), target.Kind, target.Name)
 	if err != nil {
@@ -357,7 +357,7 @@ func (s *Server) listedAsUnused(ctx context.Context, name string) (string, error
 		}
 	}
 	why := fmt.Sprintf("the cluster does not list the ComponentProfile %s as an unused profile: a tenant has it "+
-		"installed or retains data for it, it is not one a catalogue brought, or it is not there", name)
+		"installed or retains data for it, it is not one a catalog brought, or it is not there", name)
 	for _, note := range list.Incomplete {
 		why += "; " + note
 	}

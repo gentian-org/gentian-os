@@ -15,8 +15,8 @@ needs regardless of which apps run on it. It does **not** contain:
 - App or sidecar implementations/catalogues — see [gentian-apps](https://github.com/gentian-org/gentian-apps)
   (open-source profiles) and [gentian-sidecars](https://github.com/gentian-org/gentian-sidecars)
   (sidecar templates).
-- Proprietary profiles, or any private catalogue: published by whoever maintains
-  them, at an address a cluster or a tenant adds as a catalogue
+- Proprietary profiles, or any private catalog: published by whoever maintains
+  them, at an address a cluster or a tenant adds as a catalog
   ([docs/custom-catalogues.md](docs/custom-catalogues.md)).
 - Any license gate. Editions (`ce · pe · me · ee`) say who maintains and
   supports an app; the OS gates none of them. Whether a paid app arrives is
@@ -42,7 +42,7 @@ bootstrap via `install.sh`.
 - [docs/custom-catalogues.md](docs/custom-catalogues.md) — publishing your own apps
 - [docs/app-customization.md](docs/app-customization.md) — customizing an installed app
 - [docs/security-principles.md](docs/security-principles.md) — the security rules
-- [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavour
+- [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavor
 - [docs/faq.md](docs/faq.md) — frequently asked questions
 - [docs/roadmap.md](docs/roadmap.md) — roadmap
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)

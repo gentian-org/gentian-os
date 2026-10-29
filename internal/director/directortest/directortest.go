@@ -49,7 +49,7 @@ spec:
 `
 }
 
-// OnCluster are the profiles every fixture repository holds in its catalogue
+// OnCluster are the profiles every fixture repository holds in its catalog
 // directory: the ones tests install or switch on by name alone, which is
 // valid only for a profile the cluster already has.
 var OnCluster = []string{

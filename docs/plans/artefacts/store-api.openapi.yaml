@@ -9,7 +9,7 @@
 openapi: 3.1.0
 info:
   title: Gentian OS store API
-  version: "1.14"
+  version: "1.15"
   summary: What a cluster's App Store app asks of a store outside the cluster.
   license:
     name: Mozilla Public License 2.0
@@ -72,16 +72,29 @@ info:
 
     ## Accounts and tenants
 
-    A tenant is an organisation in the store's records; an account is a
+    A tenant is an organization in the store's records; an account is a
     person. They are separate things. A person registers with the store
     once, at its registration page (`registrationUrl` of `GET /v1/meta`):
     the linking sign-in through the tenant's own realm, which makes the
     account at the store, and the store associates that account with the
-    tenant. By default exactly that one account acts for the
-    tenant. Whether a store lets more accounts act for a tenant, and how,
-    is outside this definition for now. An account that is not associated
-    with the tenant URL in its token is refused on the signed-in calls with
-    the reason `tenant-not-claimed` (see `RefusalReason`).
+    tenant. That account manages the tenant: it may acquire for it.
+
+    A store may serve another account linked for the tenant as well: it
+    reads the tenant's standing and acquisitions, and an acquisition it
+    asks for waits for `approval` (see `waitingFor`). An owner or
+    administrator of the organization the tenant belongs to, or the
+    store's operator, approves or declines it, outside this API; once
+    approved, the account manages the tenant. Where a store does not, an
+    account that is not associated with the tenant URL in its token is
+    refused on the signed-in calls with the reason `tenant-not-claimed`
+    (see `RefusalReason`).
+
+    Removed in 1.15: the account that held a tenant and decided through
+    `/v1/tenant/access` who else manages it — the operations
+    `GET /v1/tenant/access`, `POST /v1/tenant/access/{subject}/approve`
+    and `…/decline`, the feature `tenant-access`, the role `holder` and
+    the code `not-tenant-holder`. A 1.14 client finds no `tenant-access`
+    in `features` and does not call them.
 
     Whether a store serves a tenant (`tenant-refused`) is a question of the
     signed-in calls only. An anonymous visitor sees the catalogue whatever
@@ -168,7 +181,6 @@ info:
     | --- | --- | --- |
     | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields |
     | 401 | `unauthenticated` | Signed-in calls only. No assertion, one the store refuses, or a person not linked yet: `WWW-Authenticate: Partner link=…` |
-    | 403 | `not-tenant-holder` | `/v1/tenant/access/{subject}/…` only. Only the account that holds the tenant decides who else manages it |
     | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
     | 403 | `registration-required` | `POST /v1/acquisitions/free` only (1.13). The app is not free; `WWW-Authenticate` names the registration page |
     | 403 | `terms-not-accepted` | `POST /v1/acquisitions/free` only (1.13). The tenant has not accepted the store's terms in force |
@@ -210,7 +222,7 @@ info:
     answers `304` with no body when the answer has not changed. A `304`
     counts against the rate limit like any request.
 
-    An open read the store personalised from a token carries
+    An open read the store personalized from a token carries
     `Cache-Control: private, no-store` and no `ETag`. Every signed-in call
     carries `Cache-Control: no-store`.
 
@@ -331,117 +343,6 @@ paths:
                   $ref: "#/components/examples/TenantNotClaimed"
         "401":
           $ref: "#/components/responses/Unauthenticated"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "500":
-          $ref: "#/components/responses/Internal"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/tenant/access:
-    get:
-      tags: [tenant]
-      operationId: getTenantAccess
-      summary: Who manages the tenant in the token
-      description: |
-        The account's own role for the tenant, and — for the account that
-        holds it — every other account that manages it, asks to, or was
-        declined. Added in 1.2, with the feature `tenant-access`.
-
-        The first account that signs in for a tenant holds it. Any other
-        account may read the tenant's standing and acquisitions; it asks to
-        manage the tenant by acquiring for it, and its acquisition waits
-        for `approval` until the holder — or the store's operator —
-        approves or declines.
-      responses:
-        "200":
-          description: The tenant's access.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantAccess"
-              examples:
-                holder:
-                  value:
-                    role: holder
-                    accounts:
-                      - subject: 5d1c0a2e-0b1f-4c55-9a43-1e2f3a4b5c6d
-                        name: Grace Hopper
-                        email: grace@acme.example
-                        role: requested
-                        since: "2026-10-15T08:01:12Z"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "500":
-          $ref: "#/components/responses/Internal"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/tenant/access/{subject}/approve:
-    post:
-      tags: [tenant]
-      operationId: approveTenantAccess
-      summary: Let another account manage the tenant
-      description: |
-        By the account that holds the tenant only. The account named comes
-        to manage the tenant, and its acquisitions waiting for `approval`
-        go on. The answer is the account as it then stands; its `role` may
-        still be `requested` for a moment while the store records the
-        decision.
-      parameters:
-        - $ref: "#/components/parameters/Subject"
-      responses:
-        "200":
-          description: The account.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantAccount"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-        "500":
-          $ref: "#/components/responses/Internal"
-        "503":
-          $ref: "#/components/responses/Unavailable"
-  /v1/tenant/access/{subject}/decline:
-    post:
-      tags: [tenant]
-      operationId: declineTenantAccess
-      summary: Turn down, or end, another account's management of the tenant
-      description: |
-        By the account that holds the tenant only. The account named does
-        not manage the tenant, and its acquisitions waiting for `approval`
-        fail with `access-declined`.
-      parameters:
-        - $ref: "#/components/parameters/Subject"
-      responses:
-        "200":
-          description: The account.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TenantAccount"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/RateLimited"
         "500":
@@ -676,7 +577,7 @@ paths:
         worldwide offers among them. Without it, the store lists every
         offer to an anonymous caller, and may narrow them for a signed-in
         caller to a country it knows of the account (its company's); such
-        an answer is personalised and carries `Cache-Control: private,
+        an answer is personalized and carries `Cache-Control: private,
         no-store`. A `country` asked always wins.
       parameters:
         - $ref: "#/components/parameters/AcceptLanguage"
@@ -1189,10 +1090,11 @@ paths:
         same key and the same body within 24 hours answers what the first
         one answered and creates nothing.
 
-        The account must manage the tenant (see `TenantAccess`). One that
-        does not is not refused: the acquisition waits for `approval`, and
-        the account that holds the tenant is asked to let it manage the
-        tenant.
+        The account must manage the tenant (see `TenantRole`). One that
+        does not is not refused: the acquisition waits for `approval` until
+        an owner or administrator of the organization the tenant belongs
+        to, or the store's operator, approves or declines it, outside this
+        API.
 
         Acquiring is not installing. The store records that the tenant has
         the app and, for an app whose artefacts are in a private repository,
@@ -1488,13 +1390,13 @@ paths:
       summary: One acquisition, and its confirmation once confirmed
       description: |
         The outcome of an acquisition. While it is `pending` the answer
-        carries `Retry-After`, which a client honours before it asks again
+        carries `Retry-After`, which a client honors before it asks again
         (and never asks more often than every two seconds). Once it is
         `confirmed` the answer carries the confirmation.
 
         A confirmation's repositories carry the `credential` that is valid
         now — answered to an account that manages the tenant (see
-        `TenantAccess`). Answered to any other account, the confirmation is
+        `TenantRole`). Answered to any other account, the confirmation is
         the same without any `credential` member: it is `200`, not `403`;
         the acquisition may be read, the secret may not.
 
@@ -1659,7 +1561,7 @@ components:
         1.10 and earlier: there is no sign-in flow at the store.
 
         It is required on the signed-in calls and optional on the open
-        reads, where it only lets the store personalise an answer.
+        reads, where it only lets the store personalize an answer.
 
         ## Obtaining one
 
@@ -1692,14 +1594,6 @@ components:
         App Store app hands to the cluster's custodian once and does not
         keep.
   parameters:
-    Subject:
-      name: subject
-      in: path
-      required: true
-      description: An account at the store's issuer (`sub`), as `TenantAccount` names it.
-      schema:
-        type: string
-        pattern: "^[A-Za-z0-9._:@-]{1,256}$"
     AcceptLanguage:
       name: Accept-Language
       in: header
@@ -1760,13 +1654,13 @@ components:
     CacheControl:
       description: |
         `public, max-age=<seconds>` on an answer given without regard to a
-        token; `private, no-store` on one the store personalised from a
+        token; `private, no-store` on one the store personalized from a
         token.
       schema:
         type: string
       example: public, max-age=300
     ETag:
-      description: A validator for this answer, for `If-None-Match`. Absent from an answer the store personalised from a token.
+      description: A validator for this answer, for `If-None-Match`. Absent from an answer the store personalized from a token.
       schema:
         type: string
       example: '"7d1c9a40"'
@@ -1853,9 +1747,8 @@ components:
         Either the store does not serve the tenant in the token
         (`tenant-refused`, with `reason`), or a review is asked of an entry
         no tenant of the person's acquired where the store requires that
-        (`review-not-acquired`), or an account that does not hold the
-        tenant decides who manages it (`not-tenant-holder`), or an account
-        that does not manage the tenant asks for a new credential
+        (`review-not-acquired`), or an account that does not manage the
+        tenant asks for a new credential
         (`not-tenant-manager`).
       content:
         application/problem+json:
@@ -2119,8 +2012,6 @@ components:
             account has a company (`/v1/account/company`).
             `reports`: apps have evaluations and reports. `checkout`: an
             acquisition may answer `202` with a checkout address.
-            `tenant-access`: more than one account may manage a tenant;
-            `/v1/tenant/access` says who, and the holder approves the others.
             `support`: apps may carry support offers (`support` on an app)
             and a signed-in person may request one
             (`POST /v1/apps/{catalogue}/{app}/support-requests`).
@@ -2130,6 +2021,8 @@ components:
             `tenant-organization` (1.14): an acquisition may say who the
             tenant is (`organization` of `AcquisitionRequest`); a client
             sends it only to a store that lists this.
+            `tenant-access` (1.2) was removed in 1.15; a store no longer
+            lists it.
           items:
             type: string
         catalogues:
@@ -2222,7 +2115,7 @@ components:
             $ref: "#/components/schemas/Notice"
         access:
           type: object
-          description: What the account signed in may do for the tenant. Added in 1.2; see `TenantAccess`.
+          description: What the account signed in may do for the tenant. Added in 1.2; see `TenantRole`.
           required: [role]
           properties:
             role:
@@ -2233,52 +2126,20 @@ components:
         What an account may do for a tenant. Open: a client treats a value
         it does not know like `none`.
 
-        * `holder` — the first account that signed in for the tenant. It
-          manages the tenant and decides who else does.
-        * `manager` — an account the holder, or the store's operator,
-          approved. It manages the tenant: it may acquire for it.
+        * `manager` — an account that manages the tenant: it may acquire
+          for it. The account the store associated with the tenant, or
+          one an owner or administrator of the organization the tenant
+          belongs to, or the store's operator, approved.
         * `requested` — an account that asked to manage the tenant, by
           acquiring for it, and waits for approval.
         * `declined` — such a request, turned down.
         * `none` — signed in and nothing decided. Every account may read
           the tenant's standing and acquisitions.
-      examples: [holder]
-    TenantAccount:
-      type: object
-      required: [subject, role, since]
-      properties:
-        subject:
-          type: string
-          description: The account at the store's issuer (`sub`).
-          maxLength: 256
-        name:
-          type: [string, "null"]
-          description: The account's name, as the store's issuer has it. Plain text.
-        email:
-          type: [string, "null"]
-          description: The account's e-mail address.
-        role:
-          $ref: "#/components/schemas/TenantRole"
-        since:
-          type: string
-          format: date-time
-          description: Since when the account has had this role.
-    TenantAccess:
-      type: object
-      description: |
-        Who manages the tenant in the token. The store decides it, from its
-        own records; the token says only who signed in.
-      required: [role, accounts]
-      properties:
-        role:
-          $ref: "#/components/schemas/TenantRole"
-        accounts:
-          type: array
-          description: |
-            For the holder: every other account that manages the tenant, asks
-            to, or was declined. Empty for anybody else.
-          items:
-            $ref: "#/components/schemas/TenantAccount"
+
+        Removed in 1.15: `holder`, the first account that signed in for the
+        tenant, which decided who else manages it. A 1.15 store sends
+        `manager` for that account.
+      examples: [manager]
     RefusalReason:
       type: string
       description: |
@@ -2292,8 +2153,7 @@ components:
           is not associated with this tenant: it is not the account of the
           tenant's administrator (or another the store lets act for the
           tenant). A store that lets other accounts ask to manage a tenant
-          (feature `tenant-access`) does not refuse for this reason: such
-          an account is served, and its acquisitions wait for `approval`. With this reason `GET /v1/tenant` answers
+          does not refuse for this reason: such an account is served, and its acquisitions wait for `approval`. With this reason `GET /v1/tenant` answers
           `served: false`, every `/v1/acquisitions` operation answers `403`
           `tenant-refused` — also for an `id` that exists, so that the
           account learns nothing of the tenant's acquisitions — and an open
@@ -3105,7 +2965,7 @@ components:
         organization of its own accord.
       properties:
         displayName: {type: string, maxLength: 200, description: What the tenant's people call it.}
-        legalName: {type: string, maxLength: 200, description: The name the organisation is registered under.}
+        legalName: {type: string, maxLength: 200, description: The name the organization is registered under.}
         country: {type: string, pattern: "^[A-Z]{2}$"}
         website: {type: string, maxLength: 200}
         email: {type: string, maxLength: 200}
@@ -3199,9 +3059,10 @@ components:
             * `confirmation` — the store has not decided yet. It usually
               has within a second or two.
             * `approval` — the account does not manage the tenant yet (see
-              `TenantAccess`). The account that holds the tenant has been
-              asked to let it, and the acquisition goes on once it has —
-              or fails with `access-declined` if it declines.
+              `TenantRole`). An owner or administrator of the organization
+              the tenant belongs to, or the store's operator, decides
+              outside this API: the acquisition goes on once the account is
+              approved, or fails with `access-declined` if it is declined.
             * `checkout` — a payment. `checkoutUrl` is present.
 
             Added in 1.2. A 1.1 store answers every `pending` acquisition

@@ -208,7 +208,7 @@ apply() {
 }
 
 # _d03_report_app_store — one line on whether tenants get the App Store app,
-# which comes from the store's catalogue (GENTIAN_DEFAULT_PROFILES) and is
+# which comes from the store's catalog (GENTIAN_DEFAULT_PROFILES) and is
 # placed while the cluster offers an App Store.
 #
 # The verdict is the operator's, read where it writes it for the usher: beside
@@ -224,7 +224,7 @@ _d03_report_app_store() {
         -o jsonpath='{.data.tiles\.yaml}' 2>/dev/null | grep -A 2 '^appStore:' || true)"
     case "${verdict}" in
         *"offered: true"*)
-            info "App Store app: offered -- every tenant but the platform's gets it from the catalogue's app-store-pe profile, at store.<the tenant's domain>, for the people who may install apps." ;;
+            info "App Store app: offered -- every tenant but the platform's gets it from the catalog's app-store-pe profile, at store.<the tenant's domain>, for the people who may install apps." ;;
         *"reason: usage-statistics-disabled"*)
             info "App Store app: not placed -- usage statistics are off on this cluster." ;;
         *"reason: no-store-configured"*)

@@ -6,7 +6,7 @@
 # repository-default survived it for weeks.
 #
 # What this asserts is the data plane tenants are served from: one namespace
-# per engine, labelled with the tier and function every policy selects on.
+# per engine, labeled with the tier and function every policy selects on.
 apiVersion: gentianos.io/v1alpha1
 kind: XCluster
 metadata:

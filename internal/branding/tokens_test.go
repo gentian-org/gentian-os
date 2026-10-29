@@ -21,7 +21,7 @@ import (
 )
 
 // The default brand is itself a valid document, and renders the scale every
-// page reads its primary colour from.
+// page reads its primary color from.
 func TestTheDefaultBrandRenders(t *testing.T) {
 	tokens, err := Parse(defaultTokens)
 	if err != nil {
@@ -41,7 +41,7 @@ func TestTheDefaultBrandRenders(t *testing.T) {
 	}
 }
 
-// Colours in the 2025.10 object form render in their own space; the hex
+// Colors in the 2025.10 object form render in their own space; the hex
 // fallback is used only where it says the same thing.
 func TestColoursRenderInTheirOwnSpace(t *testing.T) {
 	tokens, err := Parse([]byte(`{"c": {"$type": "color",
@@ -79,7 +79,7 @@ func TestAValueThatWouldEscapeItsDeclarationIsRefused(t *testing.T) {
 	}
 }
 
-// A brand that sets only its primary colour keeps the rest of the default
+// A brand that sets only its primary color keeps the rest of the default
 // look, and its name reaches the identity and the installed app.
 func TestABrandOverridesOnlyWhatItSets(t *testing.T) {
 	spec := &gentianov1alpha1.BrandingSpec{

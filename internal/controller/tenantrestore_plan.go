@@ -31,12 +31,12 @@ import (
 //
 // A restore used to go by the tenant it was restoring into: it listed that
 // tenant's installed apps, derived each database, bucket and claim name from
-// it, and fetched whatever artefact that name spelled. The bundle's manifest
+// it, and fetched whatever artifact that name spelled. The bundle's manifest
 // -- the one part of a bundle written to say what is in it -- was never read.
 // So an app the bundle held and the tenant did not have installed was dropped
 // without a word; an app the tenant had and the bundle did not was "restored"
-// from an artefact that was not there; and a bundle brought in under another
-// tenant name could not be found at all, because its artefacts are named
+// from an artifact that was not there; and a bundle brought in under another
+// tenant name could not be found at all, because its artifacts are named
 // after the tenant it was taken of.
 //
 // The plan below is made once, before anything is changed, from the manifest
@@ -70,7 +70,7 @@ import (
 //     Where the tenant has since installed the app again, the data is the
 //     installed app's and is restored by rule 2.
 //
-// Where an artefact is, and what it was captured from, is the manifest's to
+// Where an artifact is, and what it was captured from, is the manifest's to
 // say (format 2). Where it goes is the tenant's: the database, bucket or
 // claim of that kind the installed app has, by the inventory's names -- which
 // differ from the bundle's wherever the tenant's database or bucket prefix
@@ -556,7 +556,7 @@ func planRestore(
 	return plan, nil
 }
 
-// planApp decides one app: its artefacts with where each goes, or why it is
+// planApp decides one app: its artifacts with where each goes, or why it is
 // not restored. An error is a manifest that cannot be trusted at all.
 func planApp(
 	m *backup.Manifest,
@@ -628,7 +628,7 @@ func planApp(
 			a.Target = s.Name
 			covered[backup.KindFiles] = true
 		default:
-			return nil, "", fmt.Sprintf("has an artefact of kind %q in the bundle, which this platform does not know how to restore", s.Kind), nil
+			return nil, "", fmt.Sprintf("has an artifact of kind %q in the bundle, which this platform does not know how to restore", s.Kind), nil
 		}
 		artefacts = append(artefacts, a)
 	}
@@ -660,7 +660,7 @@ func planApp(
 	return artefacts, note, "", nil
 }
 
-// plannedSecrets checks an app's secrets artefact as a manifest names it:
+// plannedSecrets checks an app's secrets artifact as a manifest names it:
 // the app's own, at the one place an export writes it. A manifest comes from
 // a bundle, and a bundle from anywhere; one that files another app's
 // secrets under this app, or names a path of its own, is not gone by.
@@ -688,10 +688,10 @@ func secretsPlanNote(appName string, profile *gentianov1alpha1.ComponentProfile,
 }
 
 // planRetained decides an app the bundle holds as retained and the tenant
-// does not have installed: its artefacts with where each goes, or why it is
+// does not have installed: its artifacts with where each goes, or why it is
 // not put back.
 //
-// Each artefact goes into the store of that kind the tenant holds for the
+// Each artifact goes into the store of that kind the tenant holds for the
 // app, by the inventory's names. A store the tenant does not hold is made
 // only for a tenant made new for the bundle; anywhere else it was purged
 // since the bundle was taken, and the app -- whole, as every app is
@@ -709,7 +709,7 @@ func planRetained(
 	}
 	if now.profile == nil && intoNewTenant {
 		return nil, "", "was uninstalled with its data kept when the bundle was taken, and has no ComponentProfile on this cluster: " +
-			"nothing says how its stores are to be made here. Add the app's definition to a catalogue of this cluster and restore it by naming it in spec.apps", nil
+			"nothing says how its stores are to be made here. Add the app's definition to a catalog of this cluster and restore it by naming it in spec.apps", nil
 	}
 	declared := backup.ProfileStores(now.profile)
 	holdsSecrets := false
@@ -772,7 +772,7 @@ func planRetained(
 				a.Claim = statusClaim(s.Claim)
 			}
 		default:
-			return nil, "", fmt.Sprintf("has an artefact of kind %q in the bundle, which this platform does not know how to restore", s.Kind), nil
+			return nil, "", fmt.Sprintf("has an artifact of kind %q in the bundle, which this platform does not know how to restore", s.Kind), nil
 		}
 		artefacts = append(artefacts, a)
 	}
@@ -841,7 +841,7 @@ func buildRule(app backup.ManifestApp, profile *gentianov1alpha1.ComponentProfil
 }
 
 // derivedStores is what a format 1 manifest's app entry means: it names the
-// kinds captured and nothing more, so the artefacts are the ones the tenant
+// kinds captured and nothing more, so the artifacts are the ones the tenant
 // the bundle was taken of would have produced, by the inventory's names for
 // that tenant. Volumes are not named even so; the claims the app has now are
 // taken to be the ones captured, and a claim the bundle turns out not to
@@ -882,7 +882,7 @@ func derivedStores(source *gentianov1alpha1.Tenant, app backup.ManifestApp, now 
 func cleanArtefactPath(p string) error {
 	if p == "" || strings.HasPrefix(p, "/") || path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") ||
 		strings.ContainsAny(p, "'\"`$\\\n ") {
-		return refuseRestore("BundleUnusable", "the bundle's manifest names an artefact path that is not a plain path inside the bundle: %q", p)
+		return refuseRestore("BundleUnusable", "the bundle's manifest names an artifact path that is not a plain path inside the bundle: %q", p)
 	}
 	return nil
 }
@@ -942,7 +942,7 @@ func restoreLimits(derivation string, schemaVersion int) []string {
 		"Members came back without passwords and have to be sent a reset. App grants, integration bindings and the cache are not in a bundle: grants and bindings are declared state and come from where the tenant is declared.",
 	}
 	if derivation == gentianov1alpha1.RestoreNamesDerived {
-		notes = append(notes, "This bundle's manifest is of format 1, which names apps and kinds only: the artefact names were derived from the tenant the manifest records, "+
+		notes = append(notes, "This bundle's manifest is of format 1, which names apps and kinds only: the artifact names were derived from the tenant the manifest records, "+
 			"and the volume claims restored are the ones the apps have now. Databases an app created besides its own are not in a format 1 bundle.")
 	}
 	return notes

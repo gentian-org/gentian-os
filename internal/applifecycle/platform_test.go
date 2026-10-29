@@ -122,7 +122,7 @@ func TestAWaiverTheClusterDoesNotPermitIsShownAsRefused(t *testing.T) {
 		t.Fatalf("allowed = %+v", out.AllowedMacWaivers)
 	}
 	if len(out.CatalogueRequests) != 1 || out.CatalogueRequests[0].Name != "element" {
-		t.Fatalf("catalogue = %+v", out.CatalogueRequests)
+		t.Fatalf("catalog = %+v", out.CatalogueRequests)
 	}
 	entry := out.CatalogueRequests[0]
 	if len(entry.Allowed) != 1 || entry.Allowed[0].Policy != "gentian-require-non-root" {

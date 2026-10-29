@@ -1,11 +1,11 @@
-# Migrating a cluster to a new node flavour
+# Migrating a cluster to a new node flavor
 
 **Audience:** cluster operators.
 **Companion docs:** [design/operations.md](design/operations.md), [tenant-backup-guide.md](tenant-backup-guide.md),
 [design/resource-plans.md](design/resource-plans.md).
 
 Moving a running cluster onto different worker nodes — usually to a larger or
-memory-heavier flavour. The workloads move by draining; the nodes are replaced by
+memory-heavier flavor. The workloads move by draining; the nodes are replaced by
 adding one instance pool and deleting another.
 
 This is a **maintenance window, not a rolling upgrade**. The kernel runs one replica
@@ -13,7 +13,7 @@ of most services, so each one restarts as its node is drained.
 
 ---
 
-## 1. Why flavour matters more than count
+## 1. Why flavor matters more than count
 
 The kubelet withholds a reserve that is **front-loaded onto the first 4 GiB** of a
 node, so a small node pays the steepest tier across its whole capacity:
@@ -28,7 +28,7 @@ reserve = 25% of first 4 GiB
 
 Measured on Infomaniak KaaS:
 
-| Flavour | Purchased | Allocatable | Usable after DaemonSets | Fraction |
+| Flavor | Purchased | Allocatable | Usable after DaemonSets | Fraction |
 |---|---|---|---|---|
 | `a2-ram4-disk50-perf1` | 3.82 GiB | 2.77 GiB | 2.44 GiB | **63.7%** |
 | `a4-ram16-disk50-perf1` | 15.62 GiB | 12.96 GiB | 12.62 GiB | **80.8%** |
@@ -112,7 +112,7 @@ through git.
 
 ## 3. Create the new pool
 
-A KaaS instance pool has a single `flavor_name`, so a new flavour means a **second
+A KaaS instance pool has a single `flavor_name`, so a new flavor means a **second
 pool**, not an edit to the existing one.
 
 ```hcl
@@ -152,7 +152,7 @@ until the old one gives ports back, and the migration runs in two waves:
 
 1. Cap the **old** pool's min and max at its current count minus the number of nodes
    being freed. **Do this before deleting anything** — otherwise the autoscaler
-   reclaims the freed ports for the old flavour the moment a pod is unschedulable.
+   reclaims the freed ports for the old flavor the moment a pod is unschedulable.
 2. Cordon and drain that many old nodes, choosing ones carrying no kernel singleton.
 3. Delete those instances explicitly, by UUID. Draining does not release a port —
    only deleting the instance does.

@@ -27,7 +27,7 @@ import (
 // external-dns has two sources here. Its gateway-httproute source reads
 // hostnames off HTTPRoutes and takes the target from the Gateway's status
 // addresses, which is exactly right on a static-ip cluster and is what
-// publishes that cluster's records today. A tunnelled Gateway never gets an
+// publishes that cluster's records today. A tunneled Gateway never gets an
 // address — traffic arrives through cloudflared, not a LoadBalancer — so that
 // source has no target to publish and, in v0.21.0, deadlocks rather than
 // skipping: it stopped syncing fourteen seconds after the kernel Gateway was
@@ -158,7 +158,7 @@ func edgeDNSRecord(name, target string, ing EdgeIngress) map[string]interface{} 
 		return rec
 	}
 	// Sorted, because this map is compared field by field on every reconcile
-	// and Go randomises map iteration: unsorted, the object would be rewritten
+	// and Go randomizes map iteration: unsorted, the object would be rewritten
 	// on roughly every pass forever.
 	sort.Strings(keys)
 

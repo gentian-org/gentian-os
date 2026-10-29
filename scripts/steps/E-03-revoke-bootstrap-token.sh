@@ -376,7 +376,7 @@ _wait_for_sign_in() {
     warn "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 
-    # Both instructions here, in the colour the rest of the installer uses for
+    # Both instructions here, in the color the rest of the installer uses for
     # things that matter.
     #
     # The kit warning used to be printed by E-02, several minutes and a few

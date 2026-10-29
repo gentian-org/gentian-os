@@ -2,8 +2,8 @@
 # step: A-01-namespaces
 # phase: control-plane
 # requires:
-# provides: every kernel namespace of kernel/namespaces.yaml, labelled with gentianos.io/tier and gentianos.io/function; the platform's own namespaces labelled; in each kernel namespace the NetworkPolicies of kernel/security/network-policies when KERNEL_NETWORK_POLICIES=true, and none of them otherwise
-# mutates: namespaces, and the NetworkPolicies labelled gentianos.io/kernel-network-policy in the kernel namespaces
+# provides: every kernel namespace of kernel/namespaces.yaml, labeled with gentianos.io/tier and gentianos.io/function; the platform's own namespaces labeled; in each kernel namespace the NetworkPolicies of kernel/security/network-policies when KERNEL_NETWORK_POLICIES=true, and none of them otherwise
+# mutates: namespaces, and the NetworkPolicies labeled gentianos.io/kernel-network-policy in the kernel namespaces
 
 # The list is kernel/namespaces.yaml and nothing else: the operator reads the
 # same file's Go twin, and a lint keeps the two equal. Every later step asks for

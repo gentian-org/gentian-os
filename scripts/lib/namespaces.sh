@@ -15,7 +15,7 @@
 NAMESPACES_FILE="${NAMESPACES_FILE:-${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}/kernel/namespaces.yaml}"
 
 # _ns_table prints "<name> <tier> <function>" per line for the kernel and the
-# labelled sections. A flat awk pass: the file is regular by construction and
+# labeled sections. A flat awk pass: the file is regular by construction and
 # the installer must not depend on a YAML parser being present.
 # The awk program uses awk's own field variables; it is kept in a shell
 # variable so that no positional-looking reference appears inside a function
@@ -49,7 +49,7 @@ ns_system() {
     local fn="${1:?ns_system <function>}" name
     # Its own pass over the system section rather than a third section in
     # _ns_table, whose other readers (ns_ensure_kernel among them) would then
-    # start labelling namespaces Crossplane owns.
+    # start labeling namespaces Crossplane owns.
     name="$(awk -v fn="${fn}" '
         /^system:/  { in_sys = 1; next }
         /^[a-z]/    { in_sys = 0; next }
@@ -103,7 +103,7 @@ ns_ensure_kernel() {
     for name in $(ns_kernel_all); do
         ns_ensure "${name}"
     done
-    # The platform's own namespaces are labelled where they exist and left alone
+    # The platform's own namespaces are labeled where they exist and left alone
     # where they do not: gentian-os does not create kube-system.
     for name in $(_ns_table | awk '$1 !~ /^kernel-/ { print $1 }'); do
         kubectl get namespace "${name}" >/dev/null 2>&1 || continue
@@ -121,7 +121,7 @@ ns_ensure_kernel() {
 # ns_declined <name> -- whether the claim declines to label one of the
 # platform's own namespaces.
 #
-# The kernel tier is what the baseline policies leave alone, so labelling a
+# The kernel tier is what the baseline policies leave alone, so labeling a
 # namespace into it is an exemption. The load balancer's is the one a cluster
 # may refuse: MetalLB needs the host's network and capabilities the baseline
 # forbids, and it is allowed them unless the claim sets platformParams.metallb

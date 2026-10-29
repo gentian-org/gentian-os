@@ -22,7 +22,7 @@ SPDX-License-Identifier: MPL-2.0
 //
 // The credential is the registrar's; the authority is always the caller's.
 // Nothing here decides who may ask: every call arrives having already been
-// authorised against OpenFGA with the caller's own token, and this package's
+// authorized against OpenFGA with the caller's own token, and this package's
 // job is to make it impossible for that check to have been made about the
 // wrong realm. So no method takes a realm from a request. A realm arrives
 // only through Realm(), which the caller builds from the tenant it just

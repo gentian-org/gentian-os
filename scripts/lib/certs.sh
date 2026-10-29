@@ -138,7 +138,7 @@ gentian_dns_credential_vault_path() {
 gentian_dns_credential_present() {
     local path; path="$(gentian_dns_credential_vault_path)"
     [[ -n "${path}" && "${path}" != "null" ]] || return 1
-    # BAO_TOKEN is a by-product of initialising the vault, so a run that skips
+    # BAO_TOKEN is a by-product of initializing the vault, so a run that skips
     # that step because it is already satisfied arrives here with nothing to
     # read OpenBao with — and this function's answer, on a cluster that has the
     # credential, would be "no credential" and the wildcard would be skipped.
@@ -399,7 +399,7 @@ edge_filter_order_ok() {
 # DNS and gentian-cluster-config point at — never matches the address traffic
 # actually arrives on. See kernel/manifests/gateway/chart for the full
 # rationale. It must run before the operator creates the edge Gateways:
-# loadBalancerIP is honoured at Service creation only, never on update.
+# loadBalancerIP is honored at Service creation only, never on update.
 #
 # tunnel: nothing outside the cluster connects to the data plane at all — the
 # tunnel daemon runs beside it and dials out. A LoadBalancer there asks for an
@@ -452,7 +452,7 @@ apply_edge_envoyproxy() {
         # loadBalancerIP is create-time only, so pinning an already-provisioned
         # data plane silently does nothing. Say so rather than reporting success
         # — the profile below is still applied, because annotations, unlike the
-        # address, are honoured on update.
+        # address, are honored on update.
         if kubectl get svc -n "${ns}" \
             -l "gateway.envoyproxy.io/owning-gateway-name=${gw_name}" \
             -o name 2>/dev/null | grep -q .; then

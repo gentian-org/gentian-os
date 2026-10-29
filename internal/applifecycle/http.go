@@ -171,7 +171,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	return mux
 }
 
-// Start runs the HTTP server until ctx is cancelled.
+// Start runs the HTTP server until ctx is canceled.
 func (h *HTTPServer) Start(ctx context.Context) error {
 	if h.Service == nil {
 		return errors.New("applifecycle service is nil")
