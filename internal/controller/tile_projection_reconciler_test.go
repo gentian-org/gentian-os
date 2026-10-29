@@ -120,7 +120,8 @@ func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
 // A tile is a link a person follows, so each of these is load-bearing: the
 // identity console's path names the realm because /admin/ alone lands on the
 // master realm's console, which a kernel-realm administrator may not open, and
-// Argo CD's path skips a login form the caller has no need of.
+// Argo CD's path skips a login form the caller has no need of, and the model
+// gateway's leads to its console rather than to its API's reference.
 func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 	got := project(t,
 		tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example"),
@@ -136,7 +137,7 @@ func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system]"},
 		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system]"},
 		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "key", "[can_configure]"},
-		"llm":      {"https://llm.k.example/", "analytics", "[can_configure]"},
+		"llm":      {"https://llm.k.example/ui/", "analytics", "[can_configure]"},
 	}
 	for _, tile := range got {
 		w, ok := want[tile.Name]

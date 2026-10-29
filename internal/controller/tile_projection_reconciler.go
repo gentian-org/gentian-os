@@ -184,7 +184,11 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			displayName: "Model gateway",
 			description: "The models this cluster offers, the keys that may call them and what they spend.",
 			icon:        "analytics",
-			anyOf:       []string{"can_configure"},
+			// LiteLLM's console, not its front page: / is the API's
+			// reference, which is no place for a person who wanted the
+			// models and the keys.
+			path:  "/ui/",
+			anyOf: []string{"can_configure"},
 		},
 	}
 }
