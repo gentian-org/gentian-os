@@ -50,10 +50,11 @@ func componentNetworkPolicyName(comp *gentianov1alpha1.Component) string {
 
 // componentEgressNamespaces lists the namespaces a component's pods may
 // reach: the one its database requirement was fulfilled from; the edge,
-// when an exposure forwards the token, because a component that is handed
-// a token verifies it against the issuer, and the issuer is reached through
-// the edge (the baseline's 443 allow names a CIDR, which Calico matches
-// against the Envoy pod's own port, never 443); and for the desktop the
+// when an exposure hands it a token, forwarded or exchanged, because a
+// component that is handed a token verifies it against the issuer, and the
+// issuer is reached through the edge (the baseline's 443 allow names a CIDR,
+// which Calico matches against the Envoy pod's own port, never 443); and for
+// the desktop the
 // director's, which the BFF relays to (ui-restructure.md §1).
 func (r *ComponentReconciler) componentEgressNamespaces(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) []string {
 	var out []string
@@ -75,7 +76,7 @@ func (r *ComponentReconciler) componentEgressNamespaces(comp *gentianov1alpha1.C
 		add(r.componentDatabaseNamespace(tenant, profile))
 	}
 	for i := range profile.Spec.Expose {
-		if profile.Spec.Expose[i].ForwardToken {
+		if e := &profile.Spec.Expose[i]; e.ForwardToken || e.ExchangeToken {
 			add(layout.Namespace(layout.Edge))
 			break
 		}

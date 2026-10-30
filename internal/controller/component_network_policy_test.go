@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"slices"
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -125,5 +126,27 @@ func TestAskingForTheUsherOpensTheControlNamespace(t *testing.T) {
 	}
 	if want := "http://gentian-os-usher.kernel-control.svc.cluster.local:8080"; r.usherURL() != want {
 		t.Fatalf("the usher's address is %s, want %s", r.usherURL(), want)
+	}
+}
+
+// An exchanged token is verified against the issuer as a forwarded one is, and
+// the issuer is reached through the edge. An app that is handed no token has
+// no reason to go there.
+func TestAComponentHandedATokenReachesTheEdge(t *testing.T) {
+	r := &ComponentReconciler{}
+	for name, tc := range map[string]struct {
+		expose gentianov1alpha1.ExposureSpec
+		want   bool
+	}{
+		"forwarded": {gentianov1alpha1.ExposureSpec{Name: "api", ForwardToken: true}, true},
+		"exchanged": {gentianov1alpha1.ExposureSpec{Name: "api", ExchangeToken: true}, true},
+		"none":      {gentianov1alpha1.ExposureSpec{Name: "web"}, false},
+	} {
+		profile := &gentianov1alpha1.ComponentProfile{}
+		profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{tc.expose}
+		got := r.componentEgressNamespaces(nil, profile, nil)
+		if reaches := slices.Contains(got, layout.Namespace(layout.Edge)); reaches != tc.want {
+			t.Errorf("%s: egress namespaces = %v, reaches the edge = %v, want %v", name, got, reaches, tc.want)
+		}
 	}
 }
