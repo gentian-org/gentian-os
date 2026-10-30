@@ -1055,11 +1055,9 @@ instead of the prompt:
 | Cloudflare Tunnel API token | `CF_TUNNEL_TOKEN` |
 | Another DNS provider's credential | `GENTIAN_DNS_<FIELD>`: the field's name in `kernel/platforms.yaml`, in capitals, with `_` for `-` and `.` |
 
-The kernel namespaces' NetworkPolicies are off unless
-`KERNEL_NETWORK_POLICIES=true` is in `install.env`. Leave them off for the
-install and turn them on once it has succeeded, with
-`./install.sh --only A-01,B-01`. They restrict what may connect into a
-kernel namespace and nothing a pod connects out to
+The kernel namespaces' NetworkPolicies are on by default, and step `A-01`
+refuses a cluster whose CNI does not enforce them. They restrict what may
+connect into a kernel namespace and nothing a pod connects out to
 ([install-reference.md §9](docs/install-reference.md)).
 
 Step 0's questions take their defaults unattended, and an environment value

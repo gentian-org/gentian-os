@@ -157,7 +157,62 @@ KERNEL_NETWORK_POLICIES_FILE="${KERNEL_NETWORK_POLICIES_FILE:-${SCRIPT_DIR:-$(cd
 KERNEL_NETWORK_POLICY_LABEL="gentianos.io/kernel-network-policy"
 
 ns_kernel_policies_wanted() {
-    [[ "${KERNEL_NETWORK_POLICIES:-false}" == "true" ]]
+    [[ "${KERNEL_NETWORK_POLICIES:-true}" == "true" ]]
+}
+
+# ns_cni_enforces_policy -- whether a NetworkPolicy refuses anything on this
+# cluster. A CNI without enforcement accepts the objects and ignores them, so
+# only a connection that should be refused can tell. A throwaway namespace
+# with a default-deny rule and a listening pod; a client that gets through
+# means the rules are decoration.
+ns_cni_enforces_policy() {
+    local ns="gentian-cni-probe" ip rc=0
+    kubectl create namespace "${ns}" >/dev/null 2>&1 || true
+    kubectl apply -n "${ns}" -f - >/dev/null <<EOF || rc=2
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: server
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: server
+      image: busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "while true; do nc -l -p 8080; done"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: client
+      image: busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "sleep 300"]
+EOF
+    if (( rc == 0 )) && kubectl wait -n "${ns}" --for=condition=Ready pod/server pod/client --timeout=90s >/dev/null 2>&1; then
+        ip="$(kubectl get pod server -n "${ns}" -o jsonpath='{.status.podIP}')"
+        # Give the CNI a moment to program the rule it was handed.
+        sleep 3
+        kubectl exec -n "${ns}" client -- nc -z -w 3 "${ip}" 8080 >/dev/null 2>&1 && rc=1
+    else
+        rc=2
+    fi
+    kubectl delete namespace "${ns}" --wait=false >/dev/null 2>&1 || true
+    return "${rc}"
 }
 
 _ns_kernel_policies_digest() {
