@@ -55,7 +55,7 @@ func componentNetworkPolicyName(comp *gentianov1alpha1.Component) string {
 // the edge (the baseline's 443 allow names a CIDR, which Calico matches
 // against the Envoy pod's own port, never 443); and for the desktop the
 // director's, which the BFF relays to (ui-restructure.md §1).
-func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) []string {
+func (r *ComponentReconciler) componentEgressNamespaces(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(ns string) {
@@ -71,7 +71,7 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	// The database, where this reconciler fulfilled it. For a chart the app
 	// Composition delivers, the Composition fulfils it and writes the way
 	// there itself (kernel-access-<app>), on the database's port only.
-	if !composedDelivery(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
+	if !deliveredComposed(comp, profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		add(r.componentDatabaseNamespace(tenant, profile))
 	}
 	for i := range profile.Spec.Expose {
@@ -116,7 +116,7 @@ func releasePods(release string) map[string]string {
 // the release label, and a policy selecting by it held the privileges granted
 // on such an app for no pod at all.
 func componentPods(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) map[string]string {
-	if composedDelivery(profile) {
+	if deliveredComposed(comp, profile) {
 		return map[string]string{appLabel: comp.Name}
 	}
 	return releasePods(releaseName(comp))
@@ -228,7 +228,7 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	} else if !errors.IsNotFound(err) {
 		return err
 	}
-	desired := buildComponentNetworkPolicy(comp, componentPods(comp, profile), r.componentEgressNamespaces(profile, tenant),
+	desired := buildComponentNetworkPolicy(comp, componentPods(comp, profile), r.componentEgressNamespaces(comp, profile, tenant),
 		append(rules, own...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}

@@ -11,13 +11,16 @@ SPDX-License-Identifier: MPL-2.0
 package netpolicy
 
 import (
+	"maps"
 	"time"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -55,8 +58,8 @@ type BuildInput struct {
 	Bindings   []*gentianov1alpha1.IntegrationBinding
 	Grants     map[string]*gentianov1alpha1.AppGrant
 	// PodSelectors are the labels each app's pods carry, for an app whose
-	// delivery does not put the app label on them. A contract's two sides
-	// are selected by these.
+	// delivery does not put the app label on them. A contract's two sides,
+	// and the app's own policies (forPods), are selected by these.
 	PodSelectors  map[string]map[string]string
 	Config        Config
 	KubeAPIEndpts *discoveryv1.EndpointSlice
@@ -76,14 +79,14 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 			continue
 		}
 		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config); np != nil {
-			out = append(out, np)
+			out = append(out, in.forPods(app.Profile, np))
 		}
-		out = append(out, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile))
+		out = append(out, in.forPods(app.Profile, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile)))
 		// Only egress somebody GRANTED. This used to apply whatever the
 		// profile declared, to every tenant that installed it, with nobody
 		// asked -- which is the hole AD-5 exists to close.
 		if rules := in.grantedEgress(app.Profile, profile); len(rules) > 0 {
-			out = append(out, AppEgressNetworkPolicy(in.TenantName, in.Namespace, app.Profile, rules))
+			out = append(out, in.forPods(app.Profile, AppEgressNetworkPolicy(in.TenantName, in.Namespace, app.Profile, rules)))
 		}
 	}
 
@@ -179,4 +182,37 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 		names[tenantCacheIngressPolicyName()] = struct{}{}
 	}
 	return names
+}
+
+// forPods points one app's policy at the pods the app has: built for the app
+// label the app Composition puts on every pod it renders, and given the
+// labels in PodSelectors instead for an app whose chart the operator
+// installs, whose pods carry its release's. Every selector in the policy
+// that names the app by its label is replaced, the peers of its in-app
+// policy included.
+func (in BuildInput) forPods(app string, np *networkingv1.NetworkPolicy) *networkingv1.NetworkPolicy {
+	labels := in.PodSelectors[app]
+	if len(labels) == 0 {
+		return np
+	}
+	byApp := func(s *metav1.LabelSelector) bool {
+		return s != nil && len(s.MatchExpressions) == 0 && len(s.MatchLabels) == 1 && s.MatchLabels[meta.AppLabel] == app
+	}
+	swap := func(s *metav1.LabelSelector) {
+		if byApp(s) {
+			s.MatchLabels = maps.Clone(labels)
+		}
+	}
+	swap(&np.Spec.PodSelector)
+	for i := range np.Spec.Ingress {
+		for j := range np.Spec.Ingress[i].From {
+			swap(np.Spec.Ingress[i].From[j].PodSelector)
+		}
+	}
+	for i := range np.Spec.Egress {
+		for j := range np.Spec.Egress[i].To {
+			swap(np.Spec.Egress[i].To[j].PodSelector)
+		}
+	}
+	return np
 }

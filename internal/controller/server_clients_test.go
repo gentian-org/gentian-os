@@ -104,7 +104,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 	}
 	built := map[string]func(*testing.T) builtClient{
 		"kernel-realm-desktop-database": func(t *testing.T) builtClient {
-			np := buildComponentNetworkPolicy(desktop(platform), releasePods(releaseName(desktop(platform))), r.componentEgressNamespaces(desktopProfile, platform), nil)
+			np := buildComponentNetworkPolicy(desktop(platform), releasePods(releaseName(desktop(platform))), r.componentEgressNamespaces(nil, desktopProfile, platform), nil)
 			return egressClient(t, np, layout.Namespace(layout.Data), provisioner.PostgresPort)
 		},
 		// The units of a backup of the tenant that adopts the kernel realm,
@@ -190,7 +190,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 	if got := r.componentDatabaseNamespace(acme, desktopProfile); got == layout.Namespace(layout.Data) {
 		t.Error("a tenant with a realm of its own keeps its desktop's database on the kernel's server")
 	}
-	for _, ns := range r.componentEgressNamespaces(desktopProfile, acme) {
+	for _, ns := range r.componentEgressNamespaces(nil, desktopProfile, acme) {
 		if ns == layout.Namespace(layout.Data) {
 			t.Error("the desktop of a tenant with a realm of its own is opened the kernel's data namespace")
 		}

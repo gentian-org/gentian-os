@@ -204,6 +204,17 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if err := r.deleteLogDestinationCertificate(ctx, comp); err != nil {
 				return ctrl.Result{}, err
 			}
+			// Its supplied credentials' declarations are cluster-wide and in
+			// the kernel's namespace, where no owner reference reaches. The
+			// values stay where the custodian stored them, as an uninstalled
+			// app's data does.
+			tenantName := comp.Labels[tenantLabel]
+			if tenantName == "" {
+				tenantName = strings.TrimPrefix(comp.Namespace, "tenant-")
+			}
+			if err := r.dropSuppliedRequirements(ctx, comp, tenantName, nil); err != nil {
+				return ctrl.Result{}, err
+			}
 			controllerutil.RemoveFinalizer(comp, componentFinalizer)
 			return ctrl.Result{}, r.Update(ctx, comp)
 		}
@@ -480,8 +491,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// A chart that needs what the app Composition renders is delivered
 	// through it, whole: its requirements, its values and its release are
-	// the Composition's, and nothing of them is written here as well.
-	composed := composedDelivery(profile)
+	// the Composition's, and nothing of them is written here as well. So is
+	// one the Composition installed, whatever its profile needs now
+	// (deliveredByAnnotation).
+	composed, err := r.deliversComposed(ctx, comp, profile)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// An authorization model that does not compile holds the install before
 	// anything is written: the store would be decided against something the
@@ -621,6 +637,16 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	switch {
 	case composed:
+		// What this reconciler declared or delivered while the chart was its
+		// own goes: the Composition makes the same names.
+		if profile.Spec.Package.Chart != nil {
+			if err := r.dropSuppliedRequirements(ctx, comp, tenant.Name, nil); err != nil {
+				return ctrl.Result{}, fmt.Errorf("supplied credentials: %w", err)
+			}
+			if err := r.dropSensitiveValues(ctx, comp); err != nil {
+				return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
+			}
+		}
 		var err error
 		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile), build,
 			r.mailboxTokenSignIn(ctx, tenant, profile), signIn, operatorValues)
@@ -639,9 +665,22 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 	case profile.Spec.Package.Chart != nil:
-		// What the profile maps from the tenant's store, before the release
+		// Not beside an App claim of the same name that is not this
+		// component's: what it composed names the same app.
+		if foreign, err := foreignClaim(ctx, r.Client, comp); err != nil {
+			return ctrl.Result{}, err
+		} else if foreign != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "Installing",
+				"waiting for "+foreign+" to go before the chart is installed here", componentRequeue)
+		}
+		// What a person has to supply, declared where the tenant's Admin
+		// Console asks for it, before the Secret that waits for it. Then
+		// what the profile maps from the tenant's store, before the release
 		// that reads it: a set entry naming a Secret that is not there yet
 		// fails the release rather than waiting for it.
+		if err := r.ensureSuppliedRequirements(ctx, comp, profile, tenant.Name); err != nil {
+			return ctrl.Result{}, fmt.Errorf("supplied credentials: %w", err)
+		}
 		sensitive := componentSensitiveValues(comp, profile, tenant.Name)
 		arrived, err := r.ensureSensitiveValues(ctx, comp, tenant.Name, sensitive)
 		if err != nil {

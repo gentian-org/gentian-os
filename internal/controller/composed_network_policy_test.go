@@ -37,7 +37,7 @@ func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
 	_ = networkingv1.AddToScheme(scheme)
 	profile := profileRequestingEgress("shop")
 	profile.Spec.Package.Chart = &gentianov1alpha1.ChartRef{Repository: "oci://example/charts", Name: "shop", Version: "1.0.0"}
-	profile.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
+	profile.Spec.Hooks = &gentianov1alpha1.HookSpec{}
 	profile.Spec.Requires.Services = &gentianov1alpha1.ServiceRequirements{
 		Partners: &gentianov1alpha1.PartnersRequirement{Accept: true},
 		Database: &gentianov1alpha1.DatabaseRequirement{},
