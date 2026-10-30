@@ -70,6 +70,10 @@ type RepositoryDeclaration struct {
 	URL      string `json:"url"`
 	Branch   string `json:"branch,omitempty"`
 	Writable bool   `json:"writable,omitempty"`
+	// App is the one profile the repository's credential is bound to: its
+	// pull Secret goes to that component alone. Empty for a repository of
+	// the whole tenant.
+	App string `json:"app,omitempty"`
 	// Confirm must repeat the repository's name for any change that is not
 	// purely additive. A confirmation enforced only on a screen is one a
 	// script skips.
@@ -136,6 +140,9 @@ func CheckRepositoryDeclaration(name string, d *RepositoryDeclaration) error {
 	}
 	if strings.ContainsAny(d.Branch, " \t\n\r") {
 		return fmt.Errorf("branch must not contain whitespace")
+	}
+	if d.App != "" && (d.Type != "oci" || !ValidName(d.App)) {
+		return fmt.Errorf("app is a profile's name, on an oci repository")
 	}
 	return nil
 }
@@ -476,6 +483,11 @@ func renderRepository(doc map[string]any, tenant, name string, d RepositoryDecla
 		spec["tenant"] = tenant
 	} else {
 		delete(spec, "tenant")
+	}
+	if d.App != "" {
+		spec["app"] = d.App
+	} else {
+		delete(spec, "app")
 	}
 	// The credential is declared, never supplied: the composition emits a
 	// CredentialRequirement from this, whose scope follows spec.tenant, and

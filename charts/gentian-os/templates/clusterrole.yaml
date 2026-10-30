@@ -477,6 +477,18 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - kyverno.io
+    resources:
+    - policies
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
     - metrics.k8s.io
     resources:
     - pods

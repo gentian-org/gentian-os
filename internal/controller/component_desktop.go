@@ -630,7 +630,7 @@ func (r *TenantReconciler) Placements(ctx context.Context) (placement.Answer, er
 		return placement.Answer{}, err
 	}
 	facts := placement.Facts{Profiles: profiles.Items, UsageStatistics: r.UsageStatisticsEnabled}
-	storeRead, goneRead := false, false
+	storeRead, goneRead, credentialsRead := false, false, false
 	for i := range profiles.Items {
 		profile := &profiles.Items[i]
 		p := profile.PlacementOf()
@@ -647,6 +647,14 @@ func (r *TenantReconciler) Placements(ctx context.Context) (placement.Answer, er
 				offered := offer.offered()
 				facts.StoreOffered = &offered
 			}
+		}
+		if p.While == gentianov1alpha1.PlacementWhileCredentialSet && !credentialsRead {
+			credentialsRead = true
+			credentialed, err := r.platformCredentials(ctx)
+			if err != nil {
+				return placement.Answer{}, err
+			}
+			facts.Credentialed = credentialed
 		}
 		// A profile materialized from a catalog that has since left the
 		// catalog directory -- retired, or replaced under another name --
