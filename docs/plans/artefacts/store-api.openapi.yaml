@@ -761,7 +761,7 @@ paths:
           not serve the tenant in the token.
 
         Refused with `409` and code `company-missing` while the account has
-        no company (`PUT /v1/account/company`): a review is shown with its
+        no company (`GET /v1/account/company`): a review is shown with its
         author's company size and industry.
 
         `scores.support` and `scores.value` are for an entry of edition
@@ -819,7 +819,11 @@ paths:
       operationId: getCompany
       summary: The company the signed-in person is with
       description: |
-        `404` until they have said.
+        The company of the person's account, whichever tenant they sign in
+        for. Its size and industry are shown with their reviews and filter
+        them; its name is not shown with a review. The store's operator
+        records it, outside this API (removed in 1.15: `PUT`). `404` until
+        it has.
       security:
         - partnerAssertion: []
       responses:
@@ -836,39 +840,6 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "404":
           $ref: "#/components/responses/NotFound"
-    put:
-      tags: [account]
-      operationId: putCompany
-      summary: Say which company the signed-in person is with
-      description: |
-        The company of the person's account, whichever tenant they sign in
-        for. Its size and industry are shown with their reviews and filter
-        them; its name is not shown with a review.
-      security:
-        - partnerAssertion: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Company"
-            examples:
-              company:
-                value: {name: Acme AG, size: 10-49, industry: information-communication}
-      responses:
-        "200":
-          description: The company as recorded.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Company"
-        "400":
-          $ref: "#/components/responses/InvalidRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
   /v1/apps/{catalogue}/{app}/reports:
     parameters:
       - $ref: "#/components/parameters/Catalogue"
@@ -1780,7 +1751,7 @@ components:
                 status: 404
                 detail: The store lists no app gentian/nextcloud-base-xx.
     CompanyMissing:
-      description: The account has said no company yet (`PUT /v1/account/company`).
+      description: The account has no company yet (`GET /v1/account/company`).
       content:
         application/problem+json:
           schema:
@@ -1790,7 +1761,7 @@ components:
               value:
                 type: urn:gentian:store:problem:company-missing
                 code: company-missing
-                title: Say which company you are with first
+                title: Your company is not known yet
                 status: 409
                 detail: A review is shown with its author's company size and industry.
     NotAcquirable:
