@@ -263,13 +263,7 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 	// ComponentProfile: AD-4 leaves one catalog kind, and this asked for
 	// the other one long after the catalog stopped shipping it, so every
 	// call failed with a NotFound and no app group ever got its attributes.
-	// Unstructured because all it wants is one annotation.
-	profile := &unstructured.Unstructured{}
-	profile.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "gentianos.io",
-		Version: "v1alpha1",
-		Kind:    "ComponentProfile",
-	})
+	profile := &gentianov1alpha1.ComponentProfile{}
 	err := s.client.Get(ctx, client.ObjectKey{Name: profileName}, profile)
 	if err != nil {
 		return fmt.Errorf("failed to get ComponentProfile %s: %w", profileName, err)
@@ -339,7 +333,24 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 		return fmt.Errorf("list keycloak users in realm %s: %w", realm, err)
 	}
 
+	// An installed app is for the tenant's people, and an administrator account
+	// is given one by hand if it needs it. A placed app keeps everybody: several
+	// are what administrators work with.
+	skip := map[string]bool{}
+	if profile.PlacementOf() == nil {
+		admins, err := kc.ListGroupMembers(ctx, realm, keycloak.TenantAdminsGroup(tenantName))
+		if err != nil {
+			return fmt.Errorf("list the administrators of realm %s: %w", realm, err)
+		}
+		for _, admin := range admins {
+			skip[admin.ID] = true
+		}
+	}
+
 	for _, u := range users {
+		if skip[u.ID] {
+			continue
+		}
 		if err := kc.AddUserToGroup(ctx, realm, u.ID, groupID); err != nil {
 			return fmt.Errorf("failed to add user %s to group %s: %w", u.Username, fullGroupName, err)
 		}
