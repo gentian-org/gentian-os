@@ -71,6 +71,16 @@ func componentDatabaseScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
+// desktopProfileFixture is the desktop's profile as far as its database
+// goes: a component the platform places itself.
+func desktopProfileFixture() *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{}
+	p.Name = DesktopProfileName
+	p.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}
+	p.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
+	return p
+}
+
 func desktopComponentFixture(tenant string) *gentianov1alpha1.Component {
 	comp := &gentianov1alpha1.Component{}
 	comp.Name = DesktopComponentName
@@ -95,7 +105,7 @@ func TestATenantDesktopsDatabaseIsMadeOnTheTenantPostgres(t *testing.T) {
 
 	step := func() (bool, string) {
 		t.Helper()
-		ready, reason, _, err := r.ensureDatabaseRequirement(ctx, comp, tenant)
+		ready, reason, _, err := r.ensureDatabaseRequirement(ctx, comp, desktopProfileFixture(), tenant)
 		if err != nil {
 			t.Fatalf("ensureDatabaseRequirement: %v", err)
 		}
@@ -226,7 +236,7 @@ func TestATenantDesktopsDatabaseWaitsWithoutAVault(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pg).Build()
 	r := &ComponentReconciler{Client: c, Scheme: s, KernelRealm: "kernel"}
 
-	ready, reason, _, err := r.ensureDatabaseRequirement(ctx, desktopComponentFixture("acme"), acmeTenantFixture())
+	ready, reason, _, err := r.ensureDatabaseRequirement(ctx, desktopComponentFixture("acme"), desktopProfileFixture(), acmeTenantFixture())
 	if err != nil || ready || reason != "DatabaseUnavailable" {
 		t.Fatalf("ready=%v reason=%q err=%v", ready, reason, err)
 	}
@@ -278,7 +288,7 @@ func TestThePlatformTenantsDesktopReadsItsPasswordThroughItsOwnStore(t *testing.
 	c := fake.NewClientBuilder().WithScheme(s).Build()
 	r := &ComponentReconciler{Client: c, Scheme: s, KernelRealm: "kernel"}
 	comp := desktopComponentFixture(gentianov1alpha1.PlatformTenantName)
-	if _, _, _, err := r.ensureDatabaseRequirement(ctx, comp, platformTenantFixture()); err != nil {
+	if _, _, _, err := r.ensureDatabaseRequirement(ctx, comp, desktopProfileFixture(), platformTenantFixture()); err != nil {
 		t.Fatal(err)
 	}
 	es := &unstructured.Unstructured{}
@@ -300,5 +310,73 @@ func TestThePlatformTenantsDesktopReadsItsPasswordThroughItsOwnStore(t *testing.
 	property, _, _ := unstructured.NestedString(refs[0].(map[string]interface{}), "remoteRef", "property")
 	if key != "gentian-os/tenants/platform/apps/shell/database" || property != "password" {
 		t.Errorf("the credential reads %s#%s", key, property)
+	}
+}
+
+// An app the tenant installed is given the database the tenant made for it,
+// under its own name, and never the desktop's: its credential Secret reads
+// the app's own path, and nothing is provisioned here -- no role Job, no
+// Database resource, no vault record. Before, any component delivered here
+// with a database was handed the desktop's.
+func TestAnInstalledComponentIsGivenItsOwnDatabaseNotTheDesktops(t *testing.T) {
+	ctx := context.Background()
+	s := componentDatabaseScheme(t)
+	pg := &unstructured.Unstructured{}
+	pg.SetGroupVersionKind(cnpgClusterGVK)
+	pg.SetName(cnpgClusterName)
+	pg.SetNamespace(postgresNamespace)
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pg).Build()
+	r := &ComponentReconciler{Client: c, Scheme: s, KernelRealm: "kernel"}
+
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace, comp.UID = "fellwort", "tenant-acme", "fellwort-uid"
+	installed := &gentianov1alpha1.ComponentProfile{}
+	installed.Name = "fellwort"
+	ready, reason, _, err := r.ensureDatabaseRequirement(ctx, comp, installed, acmeTenantFixture())
+	if err != nil || ready || reason != "DatabaseProvisioning" {
+		t.Fatalf("ready=%v reason=%q err=%v, want waiting for the credential", ready, reason, err)
+	}
+	es := &unstructured.Unstructured{}
+	es.SetGroupVersionKind(externalSecretGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: "fellwort" + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
+		t.Fatal(err)
+	}
+	data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+	for _, d := range data {
+		key := d.(map[string]interface{})["remoteRef"].(map[string]interface{})["key"]
+		if key != "gentian-os/tenants/acme/apps/fellwort/database" {
+			t.Errorf("the credential reads %v, want the app's own path", key)
+		}
+	}
+	jobs := &batchv1.JobList{}
+	if err := c.List(ctx, jobs); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Errorf("a role Job was made for an installed app: %v", jobs.Items[0].Name)
+	}
+}
+
+// An app the tenant installed reaches its database on the shared store of
+// its engine, wherever its tenant is; only the desktop's is on the kernel's
+// data plane, for the platform tenant.
+func TestAnInstalledComponentReachesTheStoreOfItsEngine(t *testing.T) {
+	r := &ComponentReconciler{KernelRealm: "kernel"}
+	engine := func(e gentianov1alpha1.DatabaseEngine) *gentianov1alpha1.ComponentProfile {
+		p := &gentianov1alpha1.ComponentProfile{}
+		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+			Database: &gentianov1alpha1.DatabaseRequirement{Engine: e}}}
+		return p
+	}
+	for _, tenant := range []*gentianov1alpha1.Tenant{acmeTenantFixture(), platformTenantFixture()} {
+		if got := r.componentDatabaseNamespace(tenant, engine("")); got != postgresNamespace {
+			t.Errorf("%s: a postgres app reaches %s", tenant.Name, got)
+		}
+		if got := r.componentDatabaseNamespace(tenant, engine(gentianov1alpha1.DatabaseEngineMariaDB)); got != mariadbNamespace {
+			t.Errorf("%s: a mariadb app reaches %s", tenant.Name, got)
+		}
+	}
+	if got := r.componentDatabaseNamespace(platformTenantFixture(), desktopProfileFixture()); got != layout.Namespace(layout.Data) {
+		t.Errorf("the platform tenant's desktop reaches %s", got)
 	}
 }

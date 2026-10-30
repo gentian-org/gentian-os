@@ -72,7 +72,7 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	// Composition delivers, the Composition fulfils it and writes the way
 	// there itself (kernel-access-<app>), on the database's port only.
 	if !composedDelivery(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
-		add(r.componentDatabaseNamespace(tenant))
+		add(r.componentDatabaseNamespace(tenant, profile))
 	}
 	for i := range profile.Spec.Expose {
 		if profile.Spec.Expose[i].ForwardToken {

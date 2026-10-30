@@ -74,7 +74,7 @@ func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
 				switch to.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] {
 				case layout.Namespace(layout.Authentication):
 					realm = true
-				case r.componentDatabaseNamespace(tenant):
+				case r.componentDatabaseNamespace(tenant, profile):
 					t.Fatal("the database is the Composition's to open, on its port only")
 				}
 			}

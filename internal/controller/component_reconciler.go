@@ -515,7 +515,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Requirements first: a chart whose database does not exist yet is not
 	// installed, it is waited for.
 	if !composed && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
-		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, tenant)
+		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, profile, tenant)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
