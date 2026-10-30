@@ -1,0 +1,45 @@
+# A chart whose pinned name is shorter than the app's (fullnameOverride demo
+# for the app demo-app) makes demo-web and demo-api. The gateway's alias,
+# demo-web, is the chart's and observed; the API alias demo-app-api is no
+# Service of the chart's, so it is composed and created: observed, nothing
+# would ever make it and the app would never be ready.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    extraValues:
+      fullnameOverride: demo
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      backend:
+        service: demo-web
+        port: 8080
