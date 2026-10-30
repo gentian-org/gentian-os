@@ -248,8 +248,8 @@ func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string
 		return "", "", "", err
 	}
 	u := string(secret.Data["url"])
-	user := string(secret.Data["username"])
-	pass := string(secret.Data["password"])
+	user := string(secret.Data["client_id"])
+	pass := string(secret.Data["client_secret"])
 	if u == "" || user == "" || pass == "" {
 		return "", "", "", fmt.Errorf("keycloak-admin secret is incomplete")
 	}

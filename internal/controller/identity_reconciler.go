@@ -533,20 +533,20 @@ func keycloakContainer(name, script string) corev1.Container {
 				},
 			},
 			{
-				Name: "KEYCLOAK_ADMIN_PASSWORD",
+				Name: "KEYCLOAK_CLIENT_SECRET",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{Name: keycloakAdminSecret},
-						Key:                  "password",
+						Key:                  "client_secret",
 					},
 				},
 			},
 			{
-				Name: "KEYCLOAK_ADMIN_USERNAME",
+				Name: "KEYCLOAK_CLIENT_ID",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{Name: keycloakAdminSecret},
-						Key:                  "username",
+						Key:                  "client_id",
 					},
 				},
 			},
@@ -929,13 +929,10 @@ func loadKeycloakAdmin(ctx context.Context, c client.Reader) (url, user, pass st
 		return "", "", "", err
 	}
 	url = string(secret.Data["url"])
-	user = string(secret.Data["username"])
-	if user == "" {
-		user = "admin"
-	}
-	pass = string(secret.Data["password"])
-	if url == "" || pass == "" {
-		return "", "", "", fmt.Errorf("keycloak-admin secret missing url or password")
+	user = string(secret.Data["client_id"])
+	pass = string(secret.Data["client_secret"])
+	if url == "" || user == "" || pass == "" {
+		return "", "", "", fmt.Errorf("keycloak-admin secret missing url, client_id or client_secret")
 	}
 	return url, user, pass, nil
 }

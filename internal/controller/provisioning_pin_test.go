@@ -64,7 +64,7 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// Nothing else in these Jobs changed.
 		"postgres role": {
 			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true),
-			"0385a66d6bb2310c243039afe72b40ea776f876c4ff3be016aa13e9c56c48fdc",
+			"6d295abc70894a261541959e5db6373b3066803534fa03dc961722d600c122fd", // moved deliberately: psql refuses an unencrypted connection (PGSSLMODE)
 		},
 		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", true, true), "14691be0177479f93914a328cb59573120d722f67ee2d773388b791be7b10d5e"},
 		// Both bucket digests moved once when the Jobs' image became the

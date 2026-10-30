@@ -383,7 +383,9 @@ create_crossplane_secrets() {
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --arg a "$(_derive keycloak adminPassword)" \
-            '{admin_password:$a}')"
+            --arg b "$(_derive keycloak operatorClientSecret)" \
+            '{admin_password:$a,operator_client_secret:$b}')" \
+        "gentian-os/kernel/identity/keycloak-bootstrap"
 
     # ── authz/openfga ─────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-authz-openfga" \
@@ -2158,8 +2160,8 @@ _claim_carry_over_role_holders() {
     local ns user="" pass="" base="" line rc=0 out
     ns="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
     if command -v kubectl >/dev/null 2>&1; then
-        user="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)"
-        pass="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+        user=admin
+        pass="$(kubectl get secret keycloak-idp-credentials -n "${ns}" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
     if [[ -n "${user}" && -n "${pass}" ]]; then
         if ! base="$(gentian_service_addr "${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http" "${ns}" 8080 http)"; then

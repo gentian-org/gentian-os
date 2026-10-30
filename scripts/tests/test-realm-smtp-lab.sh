@@ -77,6 +77,7 @@ docker run -d --name rsl-mail --network rsl \
 docker run -d --name rsl-keycloak --network rsl -p "127.0.0.1:${KC_PORT}:8080" \
     -v "${W}:/lab:ro" -e KC_TRUSTSTORE_PATHS=/lab/tls.crt -e KC_DB=dev-file \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e "KC_BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_PW}" \
+    -e KC_BOOTSTRAP_ADMIN_CLIENT_ID=gentian-operator -e "KC_BOOTSTRAP_ADMIN_CLIENT_SECRET=${ADMIN_PW}" \
     --entrypoint /opt/keycloak/bin/kc.sh "quay.io/keycloak/keycloak:${KC_VERSION}" \
     start --http-enabled=true --http-relative-path=/auth --hostname-strict=false \
     --proxy-headers=xforwarded --cache=local >/dev/null
@@ -140,7 +141,7 @@ expect_login "kernel realm, a relay" kernel-relay "relay-user"
 # ── a tenant realm: the operator's Job script, with the Job's environment ──
 job_smtp() ( # <realm> <mode>
     export REALM_SMTP_LAB_REALM="$1" MAIL_SERVICE_MODE="$2" KEYCLOAK_URL="${KC}"
-    export KEYCLOAK_ADMIN_USERNAME=admin KEYCLOAK_ADMIN_PASSWORD="${ADMIN_PW}"
+    export KEYCLOAK_CLIENT_ID=gentian-operator KEYCLOAK_CLIENT_SECRET="${ADMIN_PW}"
     export SMTP_CONFIGURE=true SMTP_PORT=587 SMTP_SSL=false SMTP_STARTTLS=true SMTP_FROM=noreply@example.org SMTP_FROM_NAME="Example Cloud"
     if [[ "$2" == "system" ]]; then
         # keycloak-smtp-credentials holds the kernel realm's login here, and

@@ -294,7 +294,8 @@ EOF
 # --- Keycloak Bootstrap (Keycloak admin) ---
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
-  "admin_password": "${KC_ADMIN_PW}"
+  "admin_password": "${KC_ADMIN_PW}",
+  "operator_client_secret": "$(derive_password "keycloak" "operatorClientSecret")"
 }
 EOF
 )"
