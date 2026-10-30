@@ -2170,21 +2170,13 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- range $e := (list
-                  (dict "kind" "Execution" "id" "cookie" "parent" "gentian-browser" "authenticator" "auth-cookie" "requirement" "ALTERNATIVE" "priority" 10)
-                  (dict "kind" "Execution" "id" "redirector" "parent" "gentian-browser" "authenticator" "identity-provider-redirector" "requirement" "ALTERNATIVE" "priority" 20)
-                  (dict "kind" "Subflow" "id" "forms" "parent" "gentian-browser" "alias" "gentian-browser-forms" "requirement" "ALTERNATIVE" "priority" 30)
-                  (dict "kind" "Execution" "id" "password" "parent" "gentian-browser-forms" "authenticator" "auth-username-password-form" "requirement" "REQUIRED" "priority" 10)
-                  (dict "kind" "Subflow" "id" "admin" "parent" "gentian-browser-forms" "alias" "gentian-browser-admin" "requirement" "CONDITIONAL" "priority" 20)
-                  (dict "kind" "Execution" "id" "admin-is" "parent" "gentian-browser-admin" "authenticator" "conditional-user-attribute" "requirement" "REQUIRED" "priority" 10 "not" "false")
-                  (dict "kind" "Execution" "id" "admin-otp" "parent" "gentian-browser-admin" "authenticator" "auth-otp-form" "requirement" "REQUIRED" "priority" 20)
-                  (dict "kind" "Subflow" "id" "other" "parent" "gentian-browser-forms" "alias" "gentian-browser-other" "requirement" "CONDITIONAL" "priority" 30)
-                  (dict "kind" "Execution" "id" "other-configured" "parent" "gentian-browser-other" "authenticator" "conditional-user-configured" "requirement" "REQUIRED" "priority" 10)
-                  (dict "kind" "Execution" "id" "other-is-not" "parent" "gentian-browser-other" "authenticator" "conditional-user-attribute" "requirement" "REQUIRED" "priority" 20 "not" "true")
-                  (dict "kind" "Execution" "id" "other-otp" "parent" "gentian-browser-other" "authenticator" "auth-otp-form" "requirement" "REQUIRED" "priority" 30)
+                  (dict "id" "forms" "parent" "gentian-browser" "alias" "gentian-browser-forms" "requirement" "ALTERNATIVE" "priority" 30)
+                  (dict "id" "admin" "parent" "gentian-browser-forms" "alias" "gentian-browser-admin" "requirement" "CONDITIONAL" "priority" 20)
+                  (dict "id" "other" "parent" "gentian-browser-forms" "alias" "gentian-browser-other" "requirement" "CONDITIONAL" "priority" 30)
                ) }}
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: {{ $e.kind }}
+            kind: Subflow
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-browser-exec-{{ $e.id }}
@@ -2194,12 +2186,36 @@ spec:
               forProvider:
                 realmId: {{ $realm }}
                 parentFlowAlias: {{ $e.parent }}
-                {{- if eq $e.kind "Subflow" }}
                 alias: {{ $e.alias }}
                 providerId: basic-flow
-                {{- else }}
+                requirement: {{ $e.requirement }}
+                priority: {{ $e.priority }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- range $e := (list
+                  (dict "id" "cookie" "parent" "gentian-browser" "authenticator" "auth-cookie" "requirement" "ALTERNATIVE" "priority" 10)
+                  (dict "id" "redirector" "parent" "gentian-browser" "authenticator" "identity-provider-redirector" "requirement" "ALTERNATIVE" "priority" 20)
+                  (dict "id" "password" "parent" "gentian-browser-forms" "authenticator" "auth-username-password-form" "requirement" "REQUIRED" "priority" 10)
+                  (dict "id" "admin-is" "parent" "gentian-browser-admin" "authenticator" "conditional-user-attribute" "requirement" "REQUIRED" "priority" 10 "not" "false")
+                  (dict "id" "admin-otp" "parent" "gentian-browser-admin" "authenticator" "auth-otp-form" "requirement" "REQUIRED" "priority" 20)
+                  (dict "id" "other-configured" "parent" "gentian-browser-other" "authenticator" "conditional-user-configured" "requirement" "REQUIRED" "priority" 10)
+                  (dict "id" "other-is-not" "parent" "gentian-browser-other" "authenticator" "conditional-user-attribute" "requirement" "REQUIRED" "priority" 20 "not" "true")
+                  (dict "id" "other-otp" "parent" "gentian-browser-other" "authenticator" "auth-otp-form" "requirement" "REQUIRED" "priority" 30)
+               ) }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-browser-exec-{{ $e.id }}
+              name: {{ $tenant }}-browser-exec-{{ $e.id }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: {{ $e.parent }}
                 authenticator: {{ $e.authenticator }}
-                {{- end }}
                 requirement: {{ $e.requirement }}
                 priority: {{ $e.priority }}
               providerConfigRef:
