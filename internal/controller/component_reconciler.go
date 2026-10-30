@@ -328,13 +328,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// has yet to apply arrives without either changing.
 			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
 		}
-	} else if comp.Labels[componentOriginLabel] == componentOriginDefault {
-		// A Component the platform placed comes from no install and names
-		// no digest. Where its profile was placed from a catalog -- the
-		// installer's default profile is -- the digest is the one recorded
-		// with the profile, and the profile and its companions are held to
-		// it at the same point and in the same way. A default whose profile
-		// the platform's chart ships has no record and is not asked.
+	} else if profile.Placeable() {
+		// A component the platform places names no digest in its entry.
+		// Where its profile was placed from a catalog -- the installer's
+		// default profiles are -- the digest is the one recorded with the
+		// profile, and the profile and its companions are held to it at the
+		// same point and in the same way. One whose profile the platform's
+		// chart ships has no record and is not asked.
 		refusal, err := profilebundle.VerifyRecordedOnCluster(ctx, r.Client, catalogueNamespace(), profile)
 		if err != nil {
 			return ctrl.Result{}, err

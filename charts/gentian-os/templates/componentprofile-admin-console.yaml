@@ -27,6 +27,10 @@ spec:
   version: {{ .Values.adminConsole.chart.version | quote }}
   # Every tenant gets one, by the same rule that gives every tenant its
   # desktop. The tile below decides who sees it.
+  placement:
+    tenants: every
+  # The same, until every cluster's definition has placement (as the
+  # desktop's profile says).
   defaultForTenants: true
   package:
     chart:

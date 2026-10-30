@@ -48,6 +48,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -242,7 +243,13 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 		} else {
 			entry.Users = &n
 		}
-		for _, app := range tenant.Spec.Apps {
+		// The apps the tenant installed: a component the platform places is
+		// not reported, whatever build it runs.
+		installed, err := placement.Installed(ctx, c, tenant.Spec.Apps)
+		if err != nil {
+			return nil, fmt.Errorf("read the apps of a tenant: %w", err)
+		}
+		for _, app := range installed {
 			if app.Digest == "" {
 				continue
 			}

@@ -27,6 +27,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/provisioning/privilege"
 )
 
@@ -48,7 +49,13 @@ const (
 // ensureAppPrivileges maps gentian:tenant:<t>:app-admins members into each
 // installed app's declared privileged role (ComponentProfile.spec.hooks.provisioning).
 func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	if len(tenant.Spec.Apps) == 0 {
+	// The installed apps: a component the platform places is not among
+	// the apps whose privileged role app-admins are mapped into.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(installed) == 0 {
 		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionTrue,
 			"NoAppsConfigured", "No application privileged roles to reconcile")
 		return ctrl.Result{}, nil
@@ -80,7 +87,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 	var privilegedApps []string
 	syncFailed := false
 	syncPending := false
-	for _, app := range tenant.Spec.Apps {
+	for _, app := range installed {
 		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err

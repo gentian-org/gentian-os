@@ -28,6 +28,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -513,22 +514,21 @@ func (v *residueView) effective(ctx context.Context, reader client.Reader, packs
 // not say for certain, no profile is listed.
 func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view *residueView) ([]found, error) {
 	var candidates []*profileState
-	// A profile that declares itself a default is in use by declaration --
-	// until it has left the catalog directory, after which the operator
-	// places it nowhere and it is residue like any other.
+	// A placeable profile is in use by declaration -- until it has left the
+	// catalog directory, after which the platform places it nowhere and it
+	// is residue like any other.
 	gone, err := profilebundle.GoneFromCatalogue(ctx, reader, layout.Namespace(layout.GitOps))
 	if err != nil {
 		gone = nil
 	}
 	for _, state := range view.profiles {
 		p := state.profile
-		declaredDefault := p.Spec.DefaultForTenants || p.Spec.DefaultForPlatform || p.Spec.DefaultWhereStoreOffered
 		switch {
 		case strings.TrimSpace(p.Annotations[profilebundle.Annotation]) == "":
 			// Not materialized from a catalogue: the platform's chart
 			// shipped it, or an earlier installer wrote it.
 		case p.Labels["app.kubernetes.io/managed-by"] == "Helm", p.Annotations[platformAppAnnotation] == "true":
-		case declaredDefault && !gone[p.Name]:
+		case placement.ByOperator(p) && !gone[p.Name]:
 		case p.DeletionTimestamp != nil, len(p.OwnerReferences) > 0:
 		case view.inUse[p.Name]:
 		default:
@@ -757,7 +757,7 @@ func (s *Service) whyNot(ctx context.Context, view *residueView, kind, name stri
 			return fmt.Sprintf("the ComponentProfile %s was not materialized from a catalogue: the platform ships it, or the installer wrote it", name)
 		case view.inUse[name]:
 			return fmt.Sprintf("the ComponentProfile %s is in use: a tenant has it installed or switched on as an add-on", name)
-		case state.profile.Spec.DefaultForTenants || state.profile.Spec.DefaultForPlatform || state.profile.Spec.DefaultWhereStoreOffered:
+		case placement.ByOperator(state.profile):
 			return fmt.Sprintf("the ComponentProfile %s is one the platform places on tenants itself", name)
 		case view.retained[name]:
 			return fmt.Sprintf("the ComponentProfile %s is not unused: a tenant retains data for it", name)

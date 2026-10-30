@@ -27,6 +27,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -139,7 +140,13 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 	// tenant's install.
 	ungranted := []string{}
 
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps: a component the platform places is not waived
+	// anything through the tenant's install grants.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	for _, app := range installed {
 		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err

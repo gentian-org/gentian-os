@@ -75,12 +75,12 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 		// The model gateway is the Composition's for an app a tenant
 		// installs. For a component the platform places it is rendered here
 		// (model_access_reconciler.go): the Secret's name, never the key.
-		if s.LLM != nil && !placedByPlatform(profile) {
+		if s.LLM != nil && !operatorPlaced(profile) {
 			return true
 		}
 	}
 	if m := spec.Package.ValueMapping; m != nil {
-		if m.OIDC != nil || m.Cache != nil || (m.LLM != nil && !placedByPlatform(profile)) || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil || len(m.Integrations) > 0 {
+		if m.OIDC != nil || m.Cache != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil || len(m.Integrations) > 0 {
 			return true
 		}
 		// A database handed over as a Secret's name is rendered here. One

@@ -40,6 +40,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/locales"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -576,159 +577,65 @@ func componentsOfZoneSecret(c client.Client) handler.EventHandler {
 	})
 }
 
-// componentOriginLabel says why a Component exists, which is what decides who
-// may remove it: one the platform ships to every tenant stays for the life of
-// the tenant, one a tenant installed goes when it leaves spec.apps.
+// componentOriginLabel marks a Component made from an entry of the tenant's
+// spec.apps ("install"): the ones ensureAppComponents removes again when
+// their entry goes.
+//
+// "default" is what an earlier release labeled the components it placed
+// itself, with no line in git. Such a Component is left exactly as it is
+// until the director's placement worker writes its entry; ensureComponent
+// then relabels it, and from then on it is an install like any other. It
+// is never removed for lacking an entry: removing one purged its data.
+// The value is read for one release.
 const (
 	componentOriginLabel   = "gentianos.io/component-origin"
 	componentOriginDefault = "default"
 	componentOriginInstall = "install"
 )
 
-// ensureDefaultComponents gives the tenant a Component of every profile that
-// declares defaultForTenants, named after the profile, and gives the platform
-// tenant one of every profile that declares defaultForPlatform.
-//
-// The desktop was the one component every tenant got, created here by name.
-// The administration console is the second, and rather than teach this
-// function a second name the profile says it: a component the platform ships
-// to everyone declares that on itself, and this creates whatever declares it.
-// The placement is declarative. A Component this function placed (labeled
-// origin default) that the profiles no longer assign to the tenant -- the
-// declaration withdrawn, the profile gone from the cluster's catalog, a
-// profile for the platform tenant found in another, or one that needs usage
-// statistics on a cluster that does not report -- is removed, with the
-// cleanup any Component's removal has; what it retained is purged as an
-// uninstalled app's is. Nobody else can remove it: it is in no tenant's
-// manifest. A Component of the same name a tenant installed is the
-// tenant's and stays, and so does one without the label.
-//
-// One declaration is conditional, and its Component is taken away again:
-// defaultWhereStoreOffered gives every tenant but the platform tenant a
-// Component while the cluster offers an App Store (store_offer.go), and
-// removes the one this function made once it no longer does. Such a profile
-// owns no data, which is what makes removing it a statement about the cluster
-// rather than about the tenant. While the claim cannot be read nothing is
-// placed and nothing is removed.
-func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+// Placements is what the platform places on this cluster now: which
+// placeable profiles a user tenant has, and which the platform tenant has
+// (internal/placement). The director's placement worker asks for it through
+// the lifecycle API and writes it into each tenant's manifest.
+func (r *TenantReconciler) Placements(ctx context.Context) (placement.Answer, error) {
 	profiles := &gentianov1alpha1.ComponentProfileList{}
 	if err := r.List(ctx, profiles); err != nil {
-		return err
+		return placement.Answer{}, err
 	}
-	var (
-		offer     storeOffer
-		offerErr  error
-		offerRead bool
-		gone      map[string]bool
-		goneErr   error
-		goneRead  bool
-	)
-	// The profiles this pass places, and those whose placement it could not
-	// decide: neither is taken away below.
-	placed := map[string]bool{}
-	undecided := map[string]bool{}
+	facts := placement.Facts{Profiles: profiles.Items, UsageStatistics: r.UsageStatisticsEnabled}
+	storeRead, goneRead := false, false
 	for i := range profiles.Items {
 		profile := &profiles.Items[i]
-		if !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
+		p := profile.PlacementOf()
+		if p == nil {
 			continue
 		}
-		// Every tenant's, or the platform tenant's alone.
-		wanted := profile.Spec.DefaultForTenants ||
-			(profile.Spec.DefaultForPlatform && r.adoptsKernelRealm(tenant))
-		// A profile that needs the cluster to report usage statistics is
-		// placed nowhere on a cluster that does not.
-		if profile.Annotations[requiresUsageStatisticsAnnotation] == "true" && !r.UsageStatisticsEnabled {
-			continue
-		}
-		if !wanted && profile.Spec.DefaultWhereStoreOffered {
-			if !offerRead {
-				offer, offerErr = readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
-				offerRead = true
-				if offerErr != nil {
-					log.FromContext(ctx).Info("whether the cluster offers an App Store could not be read; "+
-						"the components placed where it does are left as they are",
-						"tenant", tenant.Name, "error", offerErr.Error())
-				}
+		if p.While == gentianov1alpha1.PlacementWhileStoreOffered && !storeRead {
+			storeRead = true
+			offer, err := readStoreOffer(ctx, r.Client, r.UsageStatisticsEnabled, r.clusterNames())
+			if err != nil {
+				log.FromContext(ctx).Info("whether the cluster offers an App Store could not be read; "+
+					"the components placed where it does are left as they are", "error", err.Error())
+			} else {
+				offered := offer.offered()
+				facts.StoreOffered = &offered
 			}
-			if offerErr != nil {
-				undecided[profile.Name] = true
-				continue
-			}
-			if !offer.offered() || r.adoptsKernelRealm(tenant) {
-				continue
-			}
-			wanted = true
-		}
-		if !wanted {
-			continue
 		}
 		// A profile materialized from a catalog that has since left the
-		// catalogue directory -- retired, or replaced under another name --
+		// catalog directory -- retired, or replaced under another name --
 		// is still an object (the Application never prunes) and still
-		// declares itself a default. It is placed no more.
-		if strings.TrimSpace(profile.Annotations[profilebundle.Annotation]) != "" {
-			if !goneRead {
-				gone, goneErr = profilebundle.GoneFromCatalogue(ctx, r.Client, layout.Namespace(layout.GitOps))
-				goneRead = true
-				if goneErr != nil {
-					log.FromContext(ctx).V(1).Info("which profiles left the catalog directory could not be read; "+
-						"every default profile is placed", "tenant", tenant.Name, "error", goneErr.Error())
-				}
+		// declares itself placeable. It is placed no more.
+		if strings.TrimSpace(profile.Annotations[profilebundle.Annotation]) != "" && !goneRead {
+			goneRead = true
+			gone, err := profilebundle.GoneFromCatalogue(ctx, r.Client, layout.Namespace(layout.GitOps))
+			if err != nil {
+				log.FromContext(ctx).V(1).Info("which profiles left the catalog directory could not be read; "+
+					"every placeable profile is placed", "error", err.Error())
 			}
-			if gone[profile.Name] {
-				continue
-			}
-		}
-		placed[profile.Name] = true
-		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil, moveRecord{}); err != nil {
-			return err
+			facts.Gone = gone
 		}
 	}
-	components := &gentianov1alpha1.ComponentList{}
-	if err := r.List(ctx, components, client.InNamespace(tenantNamespaceName(tenant)),
-		client.MatchingLabels{componentOriginLabel: componentOriginDefault}); err != nil {
-		return err
-	}
-	for i := range components.Items {
-		name := components.Items[i].Name
-		if placed[name] || undecided[name] {
-			continue
-		}
-		if err := r.removeDefaultComponent(ctx, tenant, name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// requiresUsageStatisticsAnnotation on a ComponentProfile says the component
-// is placed by default only on a cluster that reports usage statistics: with
-// reporting off it is not placed, and the default Components of it are
-// removed. An annotation and not a field, so a catalog can say it to a
-// cluster of any version.
-const requiresUsageStatisticsAnnotation = "gentianos.io/requires-usage-statistics"
-
-// removeDefaultComponent deletes the Component this reconciler placed for a
-// profile, and only that one: named after the profile, of the profile, and
-// labeled as a default. A Component of the same name a tenant installed is
-// the tenant's and stays.
-func (r *TenantReconciler) removeDefaultComponent(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) error {
-	comp := &gentianov1alpha1.Component{}
-	err := r.Get(ctx, types.NamespacedName{Name: profileName, Namespace: tenantNamespaceName(tenant)}, comp)
-	if errors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if comp.DeletionTimestamp != nil || comp.Labels[componentOriginLabel] != componentOriginDefault ||
-		comp.Spec.ProfileRef.Name != profileName {
-		return nil
-	}
-	if err := r.Delete(ctx, comp); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("remove the %s component, which this tenant is no longer given: %w", profileName, err)
-	}
-	return nil
+	return placement.Decide(facts), nil
 }
 
 // ensureAppComponents makes every app the tenant has installed a Component,

@@ -276,6 +276,15 @@ spec:
                     movedBy:
                       maxLength: 128
                       type: string
+                    placed:
+                      description: |-
+                        Placed says the platform put this app here, because its profile is
+                        placeable (ComponentProfile spec.placement). The director's placement
+                        worker writes and removes such an entry and nobody else changes it:
+                        it is not uninstalled, moved, purged or given add-ons by hand. An
+                        export leaves it out, and the cluster an import lands on places its
+                        own.
+                      type: boolean
                     profile:
                       description: |-
                         Profile is the name of the ComponentProfile to install.

@@ -41,8 +41,10 @@ func TestTheAPIServerAdmitsTheShippedAppStoreProfile(t *testing.T) {
 		return testClient.Get(ctx, types.NamespacedName{Name: profile.Name}, stored) == nil
 	})
 	m := stored.Spec.Package.ValueMapping.Platform
-	if !stored.Spec.DefaultWhereStoreOffered || m.StoreURLKey != "store.url" || m.HostKey != "host" {
-		t.Fatalf("stored: whereStoreOffered=%v storeUrlKey=%q hostKey=%q", stored.Spec.DefaultWhereStoreOffered, m.StoreURLKey, m.HostKey)
+	placed := stored.PlacementOf()
+	if placed == nil || placed.Tenants != gentianov1alpha1.PlacementUsers || placed.While != gentianov1alpha1.PlacementWhileStoreOffered ||
+		m.StoreURLKey != "store.url" || m.HostKey != "host" {
+		t.Fatalf("stored: placement=%+v storeUrlKey=%q hostKey=%q", placed, m.StoreURLKey, m.HostKey)
 	}
 
 	// Being told where the store is opens a way out of the cluster, so only

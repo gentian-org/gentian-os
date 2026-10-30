@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // An app installed for everyone.
@@ -82,7 +83,14 @@ func (r *TenantReconciler) applyDefaultGrants(ctx context.Context, tenant *genti
 			wanted = append(wanted, profile)
 		}
 	}
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps: a component the platform places is not granted
+	// through a group. Not read is a retry, as a grant that failed is.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		logger.Error(err, "reading which apps are installed (will retry)")
+		return true
+	}
+	for _, app := range installed {
 		if app.DefaultGrant {
 			want(app.Profile)
 		}

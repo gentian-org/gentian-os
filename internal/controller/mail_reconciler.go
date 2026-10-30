@@ -35,6 +35,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -1649,7 +1650,13 @@ type appMailNeed struct{ smtp, imap bool }
 // name their records are kept under.
 func (r *TenantReconciler) appMailNeeds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (map[string]appMailNeed, error) {
 	needs := map[string]appMailNeed{}
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps: a component the platform places is given mail by
+	// its own Component.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range installed {
 		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
 		if err != nil {
 			if errors.IsNotFound(err) {

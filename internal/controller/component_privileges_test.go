@@ -182,13 +182,14 @@ func TestATenantsGrantsReachItsComponents(t *testing.T) {
 		{Install: "nextcloud", Privilege: "egress/webhooks", Approver: "u-tom",
 			ApprovedAt: metav1.Now(), Reason: "approved before it was uninstalled"},
 	}
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
 		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
 	).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
+	if err := r.ensureAppComponents(context.Background(), tenant); err != nil {
 		t.Fatal(err)
 	}
 	desktop := &gentianov1alpha1.Component{}
@@ -207,7 +208,7 @@ func TestATenantsGrantsReachItsComponents(t *testing.T) {
 		Install: "desktop", Privilege: "podSecurity/run-as-root", Approver: "u-sam",
 		ApprovedAt: metav1.Now(), Reason: "the security officer agreed on the 20th",
 	})
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
+	if err := r.ensureAppComponents(context.Background(), tenant); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(context.Background(), types.NamespacedName{

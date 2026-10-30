@@ -30,6 +30,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
@@ -204,8 +205,14 @@ func (s *Service) ListInstalled(ctx context.Context, tenant string) ([]Result, e
 	if err := s.client.Get(ctx, client.ObjectKey{Name: tenant}, t); err != nil {
 		return nil, err
 	}
-	out := make([]Result, 0, len(t.Spec.Apps))
-	for _, app := range t.Spec.Apps {
+	// What the tenant installed: a component the platform places is not
+	// listed, as a platform app is not.
+	installed, err := placement.Installed(ctx, s.client, t.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Result, 0, len(installed))
+	for _, app := range installed {
 		if app.Profile == "" {
 			continue
 		}

@@ -332,6 +332,16 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		Skipped: skipped, CustomDomain: customDomain,
 	}
 	origin := fmt.Sprintf("export %s of %s, of tenant %s", insp.Manifest.Export, insp.Manifest.CreatedAt, insp.Manifest.Tenant)
+	// This cluster's placements, in the commit that declares the tenant, as
+	// a tenant created here has them.
+	if names := s.placedForNewTenant(ctx); len(names) > 0 {
+		withPlaced := *spec
+		withPlaced.Apps = append([]gentianov1alpha1.TenantApp{}, spec.Apps...)
+		for _, name := range names {
+			withPlaced.Apps = append(withPlaced.Apps, gentianov1alpha1.TenantApp{Profile: name, Placed: true})
+		}
+		spec = &withPlaced
+	}
 	res, err := s.cfg.Repo.DeclareTenant(ctx, gitops.ImportedTenant{
 		Name: name, Spec: spec, Origin: origin, Pending: pending,
 	}, c.meta)
@@ -356,6 +366,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		st.Message = "the tenant is committed with its custom domain " + customDomain + "; the operator provisions it next. " +
 			dnsNote(customDomain)
 	}
+	s.placePlatformAppsNow()
 	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
 		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
 		return
@@ -630,8 +641,9 @@ func (s *Server) importMessage(name string) string {
 }
 
 // withoutRetiredPlatformApps answers the bundle's tenant settings without the
-// apps that were platform components of an earlier release this one no
-// longer has (gitops.RetiredPlatformProfile), and those apps, each with why.
+// apps the platform placed (Tenant.spec.apps[].placed), and without those
+// that were platform components of an earlier release this one no longer
+// has (gitops.RetiredPlatformProfile), and the latter, each with why.
 //
 // Only those: the list is of names the platform itself placed on every
 // tenant, so leaving one out loses nothing of the tenant's own. Any other
@@ -642,10 +654,17 @@ func (s *Server) importMessage(name string) string {
 func withoutRetiredPlatformApps(spec *gentianov1alpha1.TenantSpec) (*gentianov1alpha1.TenantSpec, []gitops.SkippedApp) {
 	var kept []gentianov1alpha1.TenantApp
 	var skipped []gitops.SkippedApp
+	placed := false
 	for _, app := range spec.Apps {
 		name := app.Profile
 		if name == "" && app.ProfileRef != nil {
 			name = app.ProfileRef.Name
+		}
+		// What the platform placed on the cluster the bundle came from is
+		// that cluster's: this one places its own once the tenant exists.
+		if app.Placed {
+			placed = true
+			continue
 		}
 		if why := gitops.RetiredPlatformProfile(name); why != "" {
 			skipped = append(skipped, gitops.SkippedApp{App: name, Reason: why})
@@ -653,7 +672,7 @@ func withoutRetiredPlatformApps(spec *gentianov1alpha1.TenantSpec) (*gentianov1a
 		}
 		kept = append(kept, app)
 	}
-	if len(skipped) == 0 {
+	if len(skipped) == 0 && !placed {
 		return spec, nil
 	}
 	out := *spec

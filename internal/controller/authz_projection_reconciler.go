@@ -30,6 +30,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // The authorization graph's STRUCTURE is cluster state, so the operator
@@ -325,7 +326,13 @@ func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[stri
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		for _, app := range tenant.Spec.Apps {
+		// A component the platform places has no object: it is not an app
+		// the tenant installed, and has no group (as above).
+		installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+		if err != nil {
+			return nil, err
+		}
+		for _, app := range installed {
 			profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 			if err != nil {
 				log.FromContext(ctx).Info("installed app not projected: its profile cannot be named",

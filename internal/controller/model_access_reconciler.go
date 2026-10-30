@@ -37,6 +37,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // The model gateway as a declared requirement (requires.services.llm).
@@ -120,6 +121,7 @@ func (r *TenantReconciler) ensureModelAccess(
 	logger := log.FromContext(ctx).WithName("model-access").WithValues("tenant", tenant.Name)
 
 	installed := map[string]bool{}
+	direct := map[string]bool{}
 	var declaring, undeclared []string
 	for _, app := range tenant.Spec.Apps {
 		name := app.Profile
@@ -136,6 +138,18 @@ func (r *TenantReconciler) ensureModelAccess(
 			// declared; nothing of the app's is touched.
 			continue
 		}
+		// A component the platform places, whose profile declares the
+		// gateway at platform trust, is served beside the apps; any other
+		// is looked at for what it must not hold.
+		if operatorPlaced(profile) {
+			if placedModelAccess(profile) && placedModelAccessRefusal(profile) == "" {
+				declaring = append(declaring, name)
+				direct[name] = true
+			} else {
+				undeclared = append(undeclared, name)
+			}
+			continue
+		}
 		if provisioner.MatchModelAccessProfile(profile) && !profile.IsAPI() {
 			declaring = append(declaring, name)
 		} else {
@@ -143,14 +157,12 @@ func (r *TenantReconciler) ensureModelAccess(
 		}
 	}
 
-	// The components the platform placed on this tenant. One whose profile
-	// declares the gateway, at platform trust, is served beside the apps;
-	// any other is looked at for what it must not hold.
-	placed, err := r.placedComponents(ctx, tenant)
+	// The components an earlier release placed with no entry of spec.apps,
+	// until the placement worker writes theirs: served the same way.
+	placed, err := r.legacyPlacedComponents(ctx, tenant)
 	if err != nil {
 		return state, err
 	}
-	direct := map[string]bool{}
 	for _, name := range placed {
 		if installed[name] {
 			// An app of this name is the tenant's own install.
@@ -195,7 +207,7 @@ func (r *TenantReconciler) ensureModelAccess(
 		// A key on record for a component the platform places, which this
 		// tenant no longer has: the platform took the component away. It was
 		// never the tenant's to uninstall, so nothing of it is retained.
-		if profile, ok := appProfileFromIndex(profiles, app); ok && placedByPlatform(profile) {
+		if profile, ok := appProfileFromIndex(profiles, app); ok && operatorPlaced(profile) {
 			stale = append(stale, app)
 			continue
 		}
@@ -572,18 +584,17 @@ func (r *TenantReconciler) forgetModelAccess(ctx context.Context, tenantName, ap
 	}
 }
 
-// placedByPlatform reports whether a profile is one the platform places on
-// tenants itself, rather than one a tenant installs.
-func placedByPlatform(profile *gentianov1alpha1.ComponentProfile) bool {
-	return profile != nil &&
-		(profile.Spec.DefaultForTenants || profile.Spec.DefaultForPlatform || profile.Spec.DefaultWhereStoreOffered)
+// operatorPlaced is placement.ByOperator: a component whose model gateway
+// values and network path the Component reconciler writes itself.
+func operatorPlaced(profile *gentianov1alpha1.ComponentProfile) bool {
+	return placement.ByOperator(profile)
 }
 
 // placedModelAccess reports whether a profile declares the model gateway for
 // a component the platform places. Such a component is rendered by the
 // Component reconciler, not by the app Composition (composedDelivery).
 func placedModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
-	return placedByPlatform(profile) && provisioner.MatchModelAccessProfile(profile) && !profile.IsAPI()
+	return operatorPlaced(profile) && provisioner.MatchModelAccessProfile(profile) && !profile.IsAPI()
 }
 
 // placedModelAccessRefusal says why a placed component's declaration is not
@@ -612,9 +623,10 @@ func modelAccessOptional(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchModelAccessProfile(profile) && profile.Services().LLM.Optional
 }
 
-// placedComponents are the names of the Components the platform placed on a
-// tenant that are not on their way out.
-func (r *TenantReconciler) placedComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+// legacyPlacedComponents are the names of the Components an earlier release
+// placed on a tenant, still labeled so, that are not on their way out
+// (componentOriginLabel).
+func (r *TenantReconciler) legacyPlacedComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
 	list := &gentianov1alpha1.ComponentList{}
 	if err := r.List(ctx, list, client.InNamespace(tenantNamespaceName(tenant)),
 		client.MatchingLabels{componentOriginLabel: componentOriginDefault}); err != nil {
@@ -704,7 +716,7 @@ func modelAccessFor(ctx context.Context, c client.Client, comp *gentianov1alpha1
 			isApp = true
 		}
 	}
-	v.placed = !isApp && placedByPlatform(profile) && comp.Labels[componentOriginLabel] == componentOriginDefault
+	v.placed = operatorPlaced(profile) && (isApp || comp.Labels[componentOriginLabel] == componentOriginDefault)
 	if v.placed {
 		if refusal := placedModelAccessRefusal(profile); refusal != "" {
 			v.placed = false

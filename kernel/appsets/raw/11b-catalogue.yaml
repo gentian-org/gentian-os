@@ -9,7 +9,7 @@
 # became a ComponentProfile. This is the Application that reads it.
 #
 # Wave 11, beside the claims: after the operator's CRDs, before the tenants
-# whose defaultForTenants components need the profiles.
+# whose placed components need the profiles.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

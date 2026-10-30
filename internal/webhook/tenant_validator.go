@@ -27,6 +27,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/handover"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
@@ -161,17 +162,23 @@ func (v *TenantValidator) validateHandover(ctx context.Context, tenant *gentiano
 // Validate runs all validation checks and returns a human-readable error if any fail.
 // Exported so tests can exercise the same code path the webhook does.
 func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	// Check maxApps quota.
+	// Check maxApps quota. It counts the apps the tenant installed: a
+	// component the platform places takes no place of the tenant's.
 	if tenant.Spec.Quotas != nil && tenant.Spec.Quotas.MaxApps > 0 {
-		if int32(len(tenant.Spec.Apps)) > tenant.Spec.Quotas.MaxApps {
+		installed, err := placement.Installed(ctx, v.Client, tenant.Spec.Apps)
+		if err != nil {
+			return fmt.Errorf("tenant %q: reading which apps are installed: %w", tenant.Name, err)
+		}
+		if int32(len(installed)) > tenant.Spec.Quotas.MaxApps {
 			return fmt.Errorf(
 				"tenant %q: app count %d exceeds maxApps quota %d",
-				tenant.Name, len(tenant.Spec.Apps), tenant.Spec.Quotas.MaxApps,
+				tenant.Name, len(installed), tenant.Spec.Quotas.MaxApps,
 			)
 		}
 	}
 
-	// Check each referenced ComponentProfile exists.
+	// Check each referenced ComponentProfile exists, the components the
+	// platform places among them.
 	seen := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		if _, dup := seen[app.Profile]; dup {

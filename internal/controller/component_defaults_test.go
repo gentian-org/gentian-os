@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,159 +21,32 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-func profileFixture(name string, defaultForTenants bool, classes ...gentianov1alpha1.ComponentClass) *gentianov1alpha1.ComponentProfile {
+// profileFixture is a profile of the given classes; placedOnEvery gives it
+// placement {tenants: every}, the way the desktop's profile says it.
+func profileFixture(name string, placedOnEvery bool, classes ...gentianov1alpha1.ComponentClass) *gentianov1alpha1.ComponentProfile {
 	p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	p.Spec.Classes = classes
-	p.Spec.DefaultForTenants = defaultForTenants
+	if placedOnEvery {
+		p.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
+	}
 	return p
 }
 
-// Every profile that declares itself a tenant default becomes a Component in
-// the tenant, named after the profile. Nothing is keyed on a name the operator
-// knows: the desktop and the administration console are created by the same
-// rule, and a third such component needs no change here.
-func TestEveryDeclaredDefaultBecomesAComponent(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = gentianov1alpha1.AddToScheme(scheme)
-	tenant := platformTenantFixture()
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(),
-		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
-		profileFixture("admin-console", true, gentianov1alpha1.ComponentClassApp),
-		// Declared, but not certified for tenants: there is no tenant to give
-		// a shared or system component to, so the declaration is ignored.
-		profileFixture("registry", true, gentianov1alpha1.ComponentClassSharedApp),
-		// Not declared: an ordinary app a tenant installs on purpose.
-		profileFixture("nextcloud", false, gentianov1alpha1.ComponentClassApp),
-	).Build()
-	r := &TenantReconciler{Client: c, Scheme: scheme}
-
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
-		t.Fatal(err)
-	}
-	list := &gentianov1alpha1.ComponentList{}
-	if err := c.List(context.Background(), list, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]gentianov1alpha1.Component{}
-	for _, comp := range list.Items {
-		got[comp.Name] = comp
-	}
-	if len(got) != 2 {
-		t.Fatalf("components = %v, want desktop and admin-console only", keys(got))
-	}
-	for _, name := range []string{"desktop", "admin-console"} {
-		comp, ok := got[name]
-		if !ok {
-			t.Fatalf("%s was not created", name)
-		}
-		if comp.Spec.ProfileRef.Name != name || comp.Spec.Class != gentianov1alpha1.ComponentClassApp {
-			t.Fatalf("%s spec = %+v", name, comp.Spec)
-		}
-		// Owned by the tenant, so it goes when the tenant goes.
-		if len(comp.OwnerReferences) != 1 || comp.OwnerReferences[0].Name != tenant.Name {
-			t.Fatalf("%s owners = %v", name, comp.OwnerReferences)
-		}
-	}
-
-	// Idempotent: a second pass creates nothing and changes nothing.
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
-		t.Fatal(err)
-	}
-	again := &gentianov1alpha1.ComponentList{}
-	if err := c.List(context.Background(), again, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
-		t.Fatal(err)
-	}
-	if len(again.Items) != 2 {
-		t.Fatalf("second pass: %d components", len(again.Items))
-	}
+// placedEntry is the entry of spec.apps the director's placement worker
+// writes for a placeable profile.
+func placedEntry(name string) gentianov1alpha1.TenantApp {
+	return gentianov1alpha1.TenantApp{Profile: name, Placed: true}
 }
 
-// A profile that stops declaring itself a default does not take an existing
-// Component with it. Removing a tenant's component is a tenant-level change,
-// and this is not where those are decided.
-func TestWithdrawingTheDeclarationLeavesExistingComponentsAlone(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = gentianov1alpha1.AddToScheme(scheme)
-	tenant := platformTenantFixture()
-	existing := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenantNamespaceName(tenant)}}
-	existing.Spec.ProfileRef.Name = "desktop"
-	existing.Spec.Class = gentianov1alpha1.ComponentClassApp
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(), existing,
-		profileFixture("desktop", false, gentianov1alpha1.ComponentClassApp),
-	).Build()
-	r := &TenantReconciler{Client: c, Scheme: scheme}
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
-		t.Fatal(err)
-	}
-	list := &gentianov1alpha1.ComponentList{}
-	if err := c.List(context.Background(), list, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
-		t.Fatal(err)
-	}
-	if len(list.Items) != 1 || list.Items[0].Name != "desktop" {
-		t.Fatalf("components = %v", list.Items)
-	}
-}
-
-// A Component written before spec.tenancy became spec.class carries neither,
-// and is repaired in place.
-//
-// Replacing it was the first attempt and it deadlocked a live cluster: the
-// object has a finalizer, removing a finalizer is an update of the whole
-// object, and the whole object is invalid while class is empty. The delete
-// never completed and the create that followed answered AlreadyExists, so
-// both shipped components sat terminating and un-finalizable. The
-// immutability rule admits a transition from empty for exactly this repair.
-func TestAComponentWrittenBeforeTheRenameIsRepaired(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = gentianov1alpha1.AddToScheme(scheme)
-	tenant := platformTenantFixture()
-	stale := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{
-		Name: "desktop", Namespace: tenantNamespaceName(tenant),
-	}}
-	stale.Spec.ProfileRef.Name = "desktop"
-	// No Class: what the rename leaves behind.
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(), stale,
-		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
-	).Build()
-	r := &TenantReconciler{Client: c, Scheme: scheme}
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
-		t.Fatal(err)
-	}
-	got := &gentianov1alpha1.Component{}
-	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "desktop", Namespace: tenantNamespaceName(tenant),
-	}, got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Spec.Class != gentianov1alpha1.ComponentClassApp {
-		t.Fatalf("class = %q, want app: the stale component was not repaired", got.Spec.Class)
-	}
-	// Repaired, which means the same object: a replacement would have lost
-	// the finalizer that could not have been removed in the first place.
-	if got.UID != stale.UID {
-		t.Fatal("the component was replaced rather than repaired")
-	}
-}
-
-func keys(m map[string]gentianov1alpha1.Component) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-// defaultPlaced is a Component the tenant reconciler placed for a profile.
+// defaultPlaced is a Component an earlier release placed for a profile
+// itself, labeled origin default, with no entry in spec.apps.
 func defaultPlaced(tenant *gentianov1alpha1.Tenant, name string) *gentianov1alpha1.Component {
 	c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{
 		Name: name, Namespace: tenantNamespaceName(tenant),
@@ -183,111 +57,87 @@ func defaultPlaced(tenant *gentianov1alpha1.Tenant, name string) *gentianov1alph
 	return c
 }
 
-func defaultNames(t *testing.T, c client.Client, tenant *gentianov1alpha1.Tenant) map[string]bool {
+func placementsOf(t *testing.T, r *TenantReconciler) placement.Answer {
 	t.Helper()
-	list := &gentianov1alpha1.ComponentList{}
-	if err := c.List(context.Background(), list, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
+	answer, err := r.Placements(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	out := map[string]bool{}
-	for _, comp := range list.Items {
-		out[comp.Name] = true
-	}
-	return out
+	return answer
 }
 
-// The placement is declarative: a Component the operator placed that the
-// profiles no longer give the tenant is taken away -- a platform-only
-// component left in a user tenant by an earlier placement, one whose profile
-// left the catalog, one whose declaration was withdrawn. Nothing else could
-// remove it: it is in no tenant's manifest. What a tenant installed, and a
-// Component without the label, stay.
-func TestADefaultTheTenantIsNoLongerGivenIsRemoved(t *testing.T) {
+// Every profile that declares a placement on every tenant is in the answer
+// for both kinds of tenant; one placed on the platform tenant is in the
+// platform's alone. Nothing is keyed on a name the operator knows: the
+// desktop and the administration console are placed by the same rule, and
+// a third such component needs no change here. A profile not certified for
+// class app is placed nowhere, and an installable one is not placed. The
+// deprecated flags of a catalog published before placement say the same.
+func TestPlacementsAreWhatTheProfilesDeclare(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
-	tenant := acmeTenantFixture()
 	console := profileFixture("operations-console", false, gentianov1alpha1.ComponentClassApp)
-	console.Spec.DefaultForPlatform = true
-	installed := defaultPlaced(tenant, "nextcloud")
-	installed.Labels[componentOriginLabel] = componentOriginInstall
-	unlabelled := defaultPlaced(tenant, "legacy")
-	unlabelled.Labels = nil
+	console.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementPlatform}
+	legacy := profileFixture("legacy-default", false, gentianov1alpha1.ComponentClassApp)
+	legacy.Spec.DefaultForTenants = true
+	legacyPlatform := profileFixture("legacy-platform", false, gentianov1alpha1.ComponentClassApp)
+	legacyPlatform.Spec.DefaultForPlatform = true
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(), console,
 		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
-		profileFixture("withdrawn", false, gentianov1alpha1.ComponentClassApp),
+		profileFixture("admin-console", true, gentianov1alpha1.ComponentClassApp),
+		console, legacy, legacyPlatform,
+		// Declared, but not certified for tenants: there is no tenant to give
+		// a shared or system component to, so the declaration is ignored.
+		profileFixture("registry", true, gentianov1alpha1.ComponentClassSharedApp),
+		// Not declared: an ordinary app a tenant installs on purpose.
 		profileFixture("nextcloud", false, gentianov1alpha1.ComponentClassApp),
-		defaultPlaced(tenant, "desktop"),
-		defaultPlaced(tenant, "operations-console"),
-		defaultPlaced(tenant, "withdrawn"),
-		defaultPlaced(tenant, "gone-from-the-catalogue"),
-		installed, unlabelled,
 	).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel"}
-	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
-		t.Fatal(err)
-	}
-	got := defaultNames(t, c, tenant)
-	want := map[string]bool{"desktop": true, "nextcloud": true, "legacy": true}
-	if len(got) != len(want) {
-		t.Fatalf("components = %v, want %v", got, want)
-	}
-	for name := range want {
-		if !got[name] {
-			t.Fatalf("components = %v, want %v", got, want)
-		}
-	}
 
-	// In the platform tenant the console is what the profile asks for.
-	platform := platformTenantFixture()
-	c2 := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		platform.DeepCopy(), console.DeepCopy(), defaultPlaced(platform, "operations-console"),
-	).Build()
-	r2 := &TenantReconciler{Client: c2, Scheme: scheme, KernelRealm: "kernel"}
-	if err := r2.ensureDefaultComponents(context.Background(), platform); err != nil {
-		t.Fatal(err)
+	got := placementsOf(t, r)
+	if want := []string{"admin-console", "desktop", "legacy-default"}; !reflect.DeepEqual(got.Users.Wanted, want) {
+		t.Errorf("a user tenant has %v, want %v", got.Users.Wanted, want)
 	}
-	if !defaultNames(t, c2, platform)["operations-console"] {
-		t.Fatal("the platform tenant's console was removed")
+	if want := []string{"admin-console", "desktop", "legacy-default", "legacy-platform", "operations-console"}; !reflect.DeepEqual(got.Platform.Wanted, want) {
+		t.Errorf("the platform tenant has %v, want %v", got.Platform.Wanted, want)
+	}
+	if len(got.Users.Undecided) != 0 || len(got.Platform.Undecided) != 0 {
+		t.Errorf("undecided = %v / %v, want none", got.Users.Undecided, got.Platform.Undecided)
 	}
 }
 
 // A profile annotated as needing usage statistics is placed nowhere on a
-// cluster that does not report, and its placed Components are removed;
-// with reporting on it is placed as declared.
+// cluster that does not report, so the placement worker takes its entry
+// out; with reporting on it is placed as declared.
 func TestAProfileThatNeedsUsageStatisticsFollowsTheReport(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
-	platform := platformTenantFixture()
 	console := profileFixture("operations-console", false, gentianov1alpha1.ComponentClassApp)
-	console.Spec.DefaultForPlatform = true
-	console.Annotations = map[string]string{requiresUsageStatisticsAnnotation: "true"}
+	console.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementPlatform}
+	console.Annotations = map[string]string{placement.RequiresUsageStatisticsAnnotation: "true"}
 	for _, reporting := range []bool{true, false} {
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-			platform.DeepCopy(), console.DeepCopy(), defaultPlaced(platform, "operations-console"),
-		).Build()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(console.DeepCopy()).Build()
 		r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: reporting}
-		if err := r.ensureDefaultComponents(context.Background(), platform); err != nil {
-			t.Fatal(err)
+		got := placementsOf(t, r)
+		if have := got.Platform.Has("operations-console"); have != reporting {
+			t.Fatalf("reporting %v: console placed = %v", reporting, have)
 		}
-		if got := defaultNames(t, c, platform)["operations-console"]; got != reporting {
-			t.Fatalf("reporting %v: console present = %v", reporting, got)
+		if got.Users.Has("operations-console") {
+			t.Fatalf("reporting %v: a platform-only console is placed on user tenants", reporting)
 		}
 	}
 }
 
-// A default profile materialized from a catalog that has left the catalog
+// A placeable profile materialized from a catalog that has left the catalog
 // directory -- its catalog renamed it, and the installer took the old name
 // out -- is still an object, because the catalog's Application never
-// prunes, and still declares itself a default. It is placed no more, and the
-// Components placed of it are removed: the Application marking it as
-// requiring pruning is what says it left. Until it says so, or where it
-// cannot be read, it stays placed.
-func TestADefaultProfileThatLeftTheCatalogueIsPlacedNoMore(t *testing.T) {
+// prunes, and still declares itself placeable. It is placed no more: the
+// Application marking it as requiring pruning is what says it left. Until it
+// says so, or where it cannot be read, it stays placed.
+func TestAPlaceableProfileThatLeftTheCatalogIsPlacedNoMore(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
-	tenant := acmeTenantFixture()
 	old := profileFixture("operations-console", true, gentianov1alpha1.ComponentClassApp)
 	old.Annotations = map[string]string{profilebundle.Annotation: "Ynl0ZXM="}
 	renamed := profileFixture("operations-console-ee", true, gentianov1alpha1.ComponentClassApp)
@@ -305,15 +155,12 @@ func TestADefaultProfileThatLeftTheCatalogueIsPlacedNoMore(t *testing.T) {
 	}
 	_ = unstructured.SetNestedSlice(app.Object, resources(false), "status", "resources")
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), old, renamed, app).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(old, renamed, app).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
-	names := func() string { return componentNames(t, c, tenantNamespaceName(tenant)) }
 
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
-		t.Fatal(err)
-	}
-	if got := names(); got != "operations-console operations-console-ee" {
-		t.Fatalf("while both are declared: components = %q", got)
+	want := []string{"operations-console", "operations-console-ee"}
+	if got := placementsOf(t, r); !reflect.DeepEqual(got.Users.Wanted, want) || !reflect.DeepEqual(got.Platform.Wanted, want) {
+		t.Fatalf("while both are declared: placements = %+v, want %v", got, want)
 	}
 
 	if err := c.Get(ctx, client.ObjectKeyFromObject(app), app); err != nil {
@@ -323,46 +170,195 @@ func TestADefaultProfileThatLeftTheCatalogueIsPlacedNoMore(t *testing.T) {
 	if err := c.Update(ctx, app); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
-		t.Fatal(err)
-	}
-	if got := names(); got != "operations-console-ee" {
-		t.Fatalf("after the old name left the catalogue: components = %q, want operations-console-ee only", got)
+	want = []string{"operations-console-ee"}
+	if got := placementsOf(t, r); !reflect.DeepEqual(got.Users.Wanted, want) || !reflect.DeepEqual(got.Platform.Wanted, want) {
+		t.Fatalf("after the old name left the catalog: placements = %+v, want %v", got, want)
 	}
 
 	// No catalog Application to ask: nothing is known to be gone, and the
 	// declaration is followed as before.
-	bare := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), old.DeepCopy()).Build()
+	bare := fake.NewClientBuilder().WithScheme(scheme).WithObjects(old.DeepCopy()).Build()
 	rb := &TenantReconciler{Client: bare, Scheme: scheme}
-	if err := rb.ensureDefaultComponents(ctx, tenant); err != nil {
-		t.Fatal(err)
-	}
-	if got := componentNames(t, bare, tenantNamespaceName(tenant)); got != "operations-console" {
-		t.Fatalf("without an Application: components = %q", got)
+	if got := placementsOf(t, rb); !got.Users.Has("operations-console") {
+		t.Fatalf("without an Application: placements = %+v", got)
 	}
 }
 
-// The catalog's Application wakes the tenants only when the profiles it
-// reports as gone change, not on each of its status writes.
-func TestTheCatalogueApplicationWakesTenantsOnlyWhenAProfileLeaves(t *testing.T) {
-	p := catalogueProfilesGoneChanged()
-	app := func(name string, prunable bool, reconciledAt string) *unstructured.Unstructured {
-		u := &unstructured.Unstructured{}
-		u.SetGroupVersionKind(profilebundle.ApplicationGVK)
-		u.SetName(name)
-		_ = unstructured.SetNestedField(u.Object, reconciledAt, "status", "reconciledAt")
-		_ = unstructured.SetNestedSlice(u.Object, []interface{}{
-			map[string]interface{}{"group": "gentianos.io", "kind": "ComponentProfile", "name": "a", "requiresPruning": prunable},
-		}, "status", "resources")
-		return u
+// A placed entry of spec.apps becomes a Component like any install: named
+// after its profile, of class app, labeled install, owned by the tenant so
+// it goes when the tenant goes. When the placement worker takes the entry
+// out, the Component goes with it -- the same path as an uninstall, and the
+// only one: the operator decides no placement of its own.
+func TestAPlacedEntryIsAComponentUntilItLeavesSpecApps(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := platformTenantFixture()
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop"), placedEntry("admin-console")}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(),
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+		profileFixture("admin-console", true, gentianov1alpha1.ComponentClassApp),
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+	ns := tenantNamespaceName(tenant)
+
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
 	}
-	if p.Update(event.UpdateEvent{ObjectOld: app("gentian-catalogue-prod", false, "1"), ObjectNew: app("gentian-catalogue-prod", false, "2")}) {
-		t.Fatal("a status write that changes no profile woke the tenants")
+	if got := componentNames(t, c, ns); got != "admin-console desktop" {
+		t.Fatalf("components = %q, want admin-console and desktop", got)
 	}
-	if !p.Update(event.UpdateEvent{ObjectOld: app("gentian-catalogue-prod", false, "1"), ObjectNew: app("gentian-catalogue-prod", true, "2")}) {
-		t.Fatal("a profile leaving the catalog did not wake the tenants")
+	for _, name := range []string{"desktop", "admin-console"} {
+		comp := &gentianov1alpha1.Component{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, comp); err != nil {
+			t.Fatal(err)
+		}
+		if comp.Spec.ProfileRef.Name != name || comp.Spec.Class != gentianov1alpha1.ComponentClassApp {
+			t.Fatalf("%s spec = %+v", name, comp.Spec)
+		}
+		if comp.Labels[componentOriginLabel] != componentOriginInstall {
+			t.Fatalf("%s origin = %q, want install", name, comp.Labels[componentOriginLabel])
+		}
+		if len(comp.OwnerReferences) != 1 || comp.OwnerReferences[0].Name != tenant.Name {
+			t.Fatalf("%s owners = %v", name, comp.OwnerReferences)
+		}
 	}
-	if p.Update(event.UpdateEvent{ObjectOld: app("tenant-acme", false, "1"), ObjectNew: app("tenant-acme", true, "2")}) {
-		t.Fatal("another Application woke the tenants")
+
+	// Idempotent: a second pass creates nothing and changes nothing.
+	before := &gentianov1alpha1.Component{}
+	_ = c.Get(ctx, types.NamespacedName{Name: "desktop", Namespace: ns}, before)
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	after := &gentianov1alpha1.Component{}
+	_ = c.Get(ctx, types.NamespacedName{Name: "desktop", Namespace: ns}, after)
+	if after.ResourceVersion != before.ResourceVersion {
+		t.Fatal("a second pass wrote the desktop again")
+	}
+
+	// The placement worker takes the console's entry out.
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, c, ns); got != "desktop" {
+		t.Fatalf("after the entry left: components = %q, want desktop only", got)
+	}
+}
+
+// A Component an earlier release placed itself (labeled origin default) has
+// no entry in spec.apps until the placement worker writes one. Until then it
+// is left exactly as it is -- not deleted, because removing one purged its
+// data, and not changed. So is a Component without the label at all. Once
+// its entry appears, it is relabeled install, the same object, and from then
+// on it is an install like any other.
+func TestALegacyPlacedComponentIsLeftAloneUntilItsEntryAppears(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	ns := tenantNamespaceName(tenant)
+	unlabeled := defaultPlaced(tenant, "legacy")
+	unlabeled.Labels = nil
+	legacyDesktop := defaultPlaced(tenant, "desktop")
+	legacyDesktop.UID = "uid-legacy-desktop"
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(),
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+		profileFixture("nextcloud", false, gentianov1alpha1.ComponentClassApp),
+		legacyDesktop,
+		unlabeled,
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+
+	get := func(name string) *gentianov1alpha1.Component {
+		t.Helper()
+		comp := &gentianov1alpha1.Component{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, comp); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return comp
+	}
+	desktopBefore, legacyBefore := get("desktop"), get("legacy")
+
+	// An install of something else, and no entry for the desktop.
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "nextcloud"}}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, c, ns); got != "desktop legacy nextcloud" {
+		t.Fatalf("components = %q", got)
+	}
+	if d := get("desktop"); d.ResourceVersion != desktopBefore.ResourceVersion || d.Labels[componentOriginLabel] != componentOriginDefault {
+		t.Fatalf("the legacy desktop was changed: labels %v", d.Labels)
+	}
+	if l := get("legacy"); l.ResourceVersion != legacyBefore.ResourceVersion {
+		t.Fatal("the unlabeled component was changed")
+	}
+
+	// Its entry appears: the same object, relabeled.
+	tenant.Spec.Apps = append(tenant.Spec.Apps, placedEntry("desktop"))
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	d := get("desktop")
+	if d.Labels[componentOriginLabel] != componentOriginInstall {
+		t.Fatalf("origin = %q, want install once its entry is there", d.Labels[componentOriginLabel])
+	}
+	if d.UID != desktopBefore.UID {
+		t.Fatal("the legacy desktop was replaced rather than relabeled")
+	}
+
+	// From then on it goes with its entry.
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "nextcloud"}}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, c, ns); got != "legacy nextcloud" {
+		t.Fatalf("after its entry left: components = %q", got)
+	}
+}
+
+// A Component written before spec.tenancy became spec.class carries neither,
+// and is repaired in place.
+//
+// Replacing it was the first attempt and it deadlocked a live cluster: the
+// object has a finalizer, removing a finalizer is an update of the whole
+// object, and the whole object is invalid while class is empty. The delete
+// never completed and the create that followed answered AlreadyExists, so
+// both shipped components sat terminating and un-finalizable. The
+// immutability rule admits a transition from empty for exactly this repair.
+func TestAComponentWrittenBeforeTheRenameIsRepaired(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := platformTenantFixture()
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
+	stale := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{
+		Name: "desktop", Namespace: tenantNamespaceName(tenant),
+	}}
+	stale.Spec.ProfileRef.Name = "desktop"
+	// No Class: what the rename leaves behind.
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), stale,
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+	if err := r.ensureAppComponents(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	got := &gentianov1alpha1.Component{}
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "desktop", Namespace: tenantNamespaceName(tenant),
+	}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Class != gentianov1alpha1.ComponentClassApp {
+		t.Fatalf("class = %q, want app: the stale component was not repaired", got.Spec.Class)
+	}
+	// Repaired, which means the same object: a replacement would have lost
+	// the finalizer that could not have been removed in the first place.
+	if got.UID != stale.UID {
+		t.Fatal("the component was replaced rather than repaired")
 	}
 }

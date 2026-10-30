@@ -23,6 +23,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/resourceplan"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
@@ -103,13 +104,19 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 		return nil, err
 	}
 	resolution := catalogue.Resolve(tenant)
+	// The apps the tenant installed, as its quota counts them: a component
+	// the platform places is not one.
+	installed, err := placement.Installed(ctx, s.client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &ResourceStateResult{
 		Tenant:        tenant.Name,
 		AnnotatedPlan: resolution.Annotated,
 		Drifted:       resolution.Drifted,
 		Custom:        resolution.Custom,
-		InstalledApps: len(tenant.Spec.Apps),
+		InstalledApps: len(installed),
 	}
 	if resolution.Plan != nil {
 		result.Plan = resolution.Plan.Name

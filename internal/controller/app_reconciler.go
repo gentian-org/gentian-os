@@ -31,6 +31,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -97,7 +98,13 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("ensure app components: %w", err)
 	}
 
-	if len(tenant.Spec.Apps) == 0 {
+	// What the tenant installed. A component the platform places is neither
+	// seeded nor waited for here: its Component says whether it is ready.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(installed) == 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "NoAppsConfigured", "No applications are configured for this tenant")
 		return ctrl.Result{}, nil
 	}
@@ -109,7 +116,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 
 	allReady := true
 
-	for _, app := range tenant.Spec.Apps {
+	for _, app := range installed {
 		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -311,6 +318,10 @@ func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gent
 // apps no longer listed in tenant.Spec.Apps. Crossplane deletes App claims on
 // uninstall, but composition Jobs (e.g. catalogue-app-oidc-seed) can leave pods
 // running when the owning Job disappears first.
+//
+// Every entry of spec.apps counts as wanted here, the components the platform
+// places among them: what a placed component runs is never an orphan while it
+// is placed.
 func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	desired := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {

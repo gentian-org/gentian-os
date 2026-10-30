@@ -416,11 +416,11 @@ profile in the store's own catalog (`app-store-pe` at
 `catalogue.aluvian.io`), one of the store's *extra services* that the
 installer's step 0 places in the cluster's catalog unless
 `--no-extra-services` leaves them out. The profile says
-`defaultWhereStoreOffered`, and the operator places a Component of it on
-every tenant except the platform tenant, where nobody installs apps, for as
+`placement: {tenants: users, while: storeOffered}`, and the platform places it
+in every tenant except the platform tenant, where nobody installs apps, for as
 long as two things hold: usage statistics are on, and the Cluster claim
 names a store (`spec.catalogue.storeUrl`, an https address). When either stops holding the
-Component is removed again — the workload only; the app owns no data — and
+entry is removed again — the workload only; the app owns no data — and
 it is placed again when both hold. The operator watches the claim, so a
 change there takes effect when Argo CD has applied it; the reporting setting
 is the operator's own and changes with its rollout. The usher's answer

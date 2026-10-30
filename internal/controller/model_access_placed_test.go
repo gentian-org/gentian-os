@@ -37,8 +37,8 @@ func shippedDesktopProfile(t *testing.T) *gentianov1alpha1.ComponentProfile {
 		"desktop.enabled=true", "desktop.chart.version=0.1.0-develop.0000000")
 }
 
-// placedComponent is the Component ensureComponent makes for a profile the
-// platform places.
+// placedComponent is the Component an earlier release made for a profile
+// the platform places, labeled origin default, with no entry in spec.apps.
 func placedComponent(tenant, name string) *gentianov1alpha1.Component {
 	return &gentianov1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
@@ -78,8 +78,9 @@ func (w *modelAccessWorld) verdict(t *testing.T, name string) modelAccessVerdict
 // key, and rendered by the Component reconciler rather than the Composition.
 func TestTheDesktopProfileDeclaresTheModelGatewayOptionally(t *testing.T) {
 	p := shippedDesktopProfile(t)
-	if p.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform || !p.Spec.DefaultForTenants {
-		t.Fatalf("tier %s, defaultForTenants %v", p.Spec.TrustTier, p.Spec.DefaultForTenants)
+	if placed := p.PlacementOf(); p.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform || p.Spec.Placement == nil ||
+		placed.Tenants != gentianov1alpha1.PlacementEvery || placed.While != "" {
+		t.Fatalf("tier %s, placement %+v", p.Spec.TrustTier, p.Spec.Placement)
 	}
 	llm := p.Services().LLM
 	if llm == nil || !llm.Optional {
@@ -260,8 +261,9 @@ func TestAPlacedComponentIsServedOnlyAtPlatformTrustAndNeverByValue(t *testing.T
 	}
 }
 
-// A component the tenant has by another way -- no placement label -- is not
-// served by the placed route, whatever its profile declares.
+// A component the tenant has by another way -- neither an entry of
+// spec.apps nor the label an earlier release placed it with -- is not served
+// by the placed route, whatever its profile declares.
 func TestOnlyAComponentThePlatformPlacedIsServedAsOne(t *testing.T) {
 	w := newPlacedWorld(t)
 	comp := placedComponent("demo", "desktop")
@@ -269,6 +271,50 @@ func TestOnlyAComponentThePlatformPlacedIsServedAsOne(t *testing.T) {
 	v, err := modelAccessFor(context.Background(), w.r.Client, comp, w.profiles["desktop"], w.tenant)
 	if err != nil || v.reason != "ModelAccessUnsupported" || v.placed {
 		t.Fatalf("verdict = %+v %v", v, err)
+	}
+}
+
+// The desktop as the placement worker writes it now: an entry of spec.apps
+// marked placed, and a Component made from it labeled install. It is served
+// exactly as the Component an earlier release placed: by the Component
+// reconciler, at platform trust, with a key of its own. When the worker
+// takes the entry out, the platform took the component away, and its key
+// goes rather than being kept as an uninstalled app's.
+func TestAPlacedEntryIsServedAsAPlacedComponent(t *testing.T) {
+	comp := placedComponent("demo", "desktop")
+	comp.Labels[componentOriginLabel] = componentOriginInstall
+	w := newModelAccessWorld(t, nil, comp)
+	w.profiles["desktop"] = shippedDesktopProfile(t)
+	w.tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
+
+	state := w.pass(t)
+	if len(state.served) != 1 || state.served[0] != "desktop" || len(state.waiting) != 0 {
+		t.Fatalf("state = %+v", state)
+	}
+	key := secretValue(w.secret(t, "desktop"), modelCredentialsAPIKey)
+	if key == "" || w.gateway.keys["demo-desktop"] != modelgateway.HashKey(key) {
+		t.Fatalf("key = %q, gateway keys = %v", key, w.gateway.keys)
+	}
+	recorded, err := w.r.provisionedStores(context.Background(), "demo")
+	if err != nil || recorded["desktop"].ModelKey != "demo-desktop" {
+		t.Errorf("record = %+v, %v", recorded, err)
+	}
+	if v := w.verdict(t, "desktop"); v.reason != "" || !v.placed || !v.delivered {
+		t.Fatalf("verdict = %+v", v)
+	}
+
+	// The worker takes the entry out; the Component goes with it.
+	w.tenant.Spec.Apps = nil
+	if err := w.r.Delete(context.Background(), comp.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	state = w.pass(t)
+	if len(state.removed) != 1 || state.removed[0] != "desktop" {
+		t.Fatalf("state = %+v", state)
+	}
+	recorded, _ = w.r.provisionedStores(context.Background(), "demo")
+	if w.secret(t, "desktop") != nil || len(w.gateway.keys) != 0 || recorded["desktop"].ModelKey != "" {
+		t.Errorf("secret %v, keys %v, record %+v", w.secret(t, "desktop") != nil, w.gateway.keys, recorded)
 	}
 }
 

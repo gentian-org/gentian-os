@@ -245,10 +245,13 @@ func (s *Server) readExposureView(ctx context.Context, tenant string) (*exposure
 	if err != nil {
 		return nil, err
 	}
-	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	all, err := s.cfg.Repo.Apps(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
+	// The platform's own components publish what their profiles say, as
+	// they always have; their surfaces are not a tenant's to request.
+	apps := installedApps(all)
 	placement, err := s.cfg.Repo.TenantPlacement(ctx, tenant)
 	if err != nil {
 		return nil, err

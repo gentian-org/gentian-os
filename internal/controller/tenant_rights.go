@@ -22,6 +22,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // A tenant's rights in a backup.
@@ -51,7 +52,13 @@ func (r *TenantExportReconciler) storeOnlyRights(ctx context.Context, tenant *ge
 		return nil, nil
 	}
 	var installed []authz.InstalledApp
-	for _, app := range tenant.Spec.Apps {
+	// As the projection lists them: without the components the platform
+	// places, which have no object in the store.
+	apps, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range apps {
 		profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			// As the projection does: an install whose profile cannot be

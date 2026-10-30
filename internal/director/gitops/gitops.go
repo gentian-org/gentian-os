@@ -562,6 +562,9 @@ func (g *GitOps) InstallFrom(
 			return "", "", false, ErrPlatformTenant
 		}
 		lines := strings.Split(text, "\n")
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
+		}
 		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
 			out, ok := insertComponentProfile(text, profile, digest, catalogue, forEveryone)
 			if !ok {
@@ -631,6 +634,9 @@ func (g *GitOps) RetryMove(ctx context.Context, tenant, profile, digest string, 
 		lines := strings.Split(text, "\n")
 		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
 			return "", "", false, ErrNotInstalled
+		}
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
 		}
 		if pinned := appEntryValue(lines, profile, "digest"); pinned != digest {
 			return "", "", false, fmt.Errorf("%w: %s is pinned to %q, not %s", ErrNotPinnedThere, profile, pinned, shortDigest(digest))
@@ -743,6 +749,9 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 		// Remove the whole list entry, not just its `- profile:` line: an entry can carry
 		// nested keys (addons, config) and leaving those behind produces YAML that does
 		// not parse, which wedges every later reconcile. See removeAppEntry.
+		if err := refusePlaced(strings.Split(text, "\n"), profile); err != nil {
+			return "", "", false, err
+		}
 		out, ok := removeAppEntry(text, profile)
 		if !ok || out == text {
 			return text, "not_installed", false, nil

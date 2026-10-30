@@ -39,8 +39,14 @@ func (in BuildInput) grantedEgress(install string, profile *gentianov1alpha1.Com
 type BuildInput struct {
 	TenantName string
 	Namespace  string
-	Apps       []gentianov1alpha1.TenantApp
-	Profiles   map[string]*gentianov1alpha1.ComponentProfile
+	// Apps are the apps the tenant installed: the per-app policies are
+	// built for these. A component the platform places writes its own and
+	// is not among them.
+	Apps []gentianov1alpha1.TenantApp
+	// Profiles are the profiles by install name. They may name more than
+	// Apps -- a placed component's, for the pod selectors of a contract.
+	Profiles map[string]*gentianov1alpha1.ComponentProfile
+
 	// Privileges are the grants the Tenant carries. Egress beyond the
 	// baseline is a privilege somebody has to have answered (AD-5), and this
 	// is where the answer is: an app installed through Tenant.spec.apps has

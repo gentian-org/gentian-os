@@ -11,7 +11,7 @@
 Every tenant needs a place to govern **who** belongs to it and **which apps**
 each person may use. The administration console is that place. It is **an
 app**: a component with its own profile (`admin-console`, shipped by the
-operator chart with `defaultForTenants: true`), so every tenant has one at
+operator chart with `placement: {tenants: every}`), so every tenant has one at
 `admin.<tenant domain>`, behind the tenant's session. It reaches a person as a
 tile on the desktop, shown to whoever holds `can_administer` on the tenant and
 to nobody else. The platform tenant has one too, at `admin.platform.<KERNEL_DOMAIN>`.

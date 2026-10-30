@@ -59,6 +59,8 @@ type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
+	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
+	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
 	Tenants(ctx context.Context) ([]string, error)
@@ -233,6 +235,9 @@ type Server struct {
 	// platformApps keeps two placements of the platform's apps from
 	// running at once (platform_apps.go).
 	platformApps sync.Mutex
+	// placementAbsent is what the last placement found withdrawn, by
+	// tenant and app; held under platformApps (platform_apps.go).
+	placementAbsent map[string]bool
 }
 
 // New returns a Server with every route registered.
@@ -1020,7 +1025,23 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request, _ call) {
 		s.repoError(w, r, err)
 		return
 	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "apps": apps})
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "apps": installedApps(apps)})
+}
+
+// installedApps are the entries a tenant's apps are listed as: every one but
+// the platform's own components, which are placed pinning no build and which
+// a console shows as the platform's (their state says origin "default"), not
+// as apps with an uninstall. One the cluster's capabilities placed from a
+// catalog is listed, marked placed.
+func installedApps(apps []gitops.App) []gitops.App {
+	out := make([]gitops.App, 0, len(apps))
+	for _, a := range apps {
+		if a.Placed && a.Digest == "" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
@@ -1582,7 +1603,7 @@ const uninstallNote = "The app's data is kept, and backups taken from now on go 
 	"Deleting the tenant, or purging the app, destroys it."
 
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
-	if s.refusedAsPlatformApp(w, r, r.PathValue("p")) {
+	if s.refusedAsCapabilityApp(w, r, r.PathValue("p")) {
 		return
 	}
 	res, err := s.cfg.Repo.Uninstall(r.Context(), r.PathValue("t"), r.PathValue("p"), c.meta)
@@ -1933,6 +1954,9 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	body.Country = country
+	// What the platform places in every user tenant, in the commit that
+	// makes the tenant: it has its desktop from the start.
+	body.Placed = s.placedForNewTenant(r.Context())
 	res, err := s.cfg.Repo.CreateTenant(r.Context(), body, c.meta)
 	if errors.Is(err, gitops.ErrTenantExists) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
@@ -1952,7 +1976,8 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	answer["commit"] = res.Commit
-	// A new tenant gets the apps the cluster's capabilities bring.
+	// A new tenant gets the apps the cluster's capabilities bring, and
+	// whatever the commit could not place.
 	s.placePlatformAppsNow()
 	s.json(w, http.StatusAccepted, answer)
 }
@@ -2218,6 +2243,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusNotFound, "tenant not found")
 	case errors.Is(err, gitops.ErrPlatformTenant):
 		s.fail(w, r, http.StatusConflict, gitops.ErrPlatformTenant.Error())
+	case errors.Is(err, gitops.ErrPlacedApp):
+		s.fail(w, r, http.StatusConflict, err.Error())
 	case errors.Is(err, gitops.ErrNoClusterClaim):
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):

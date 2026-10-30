@@ -128,6 +128,9 @@ func (g *GitOps) SetAddonsPinned(
 		if adoptsAnotherRealm(text, tenant) {
 			return "", "", false, ErrPlatformTenant
 		}
+		if err := refusePlaced(strings.Split(text, "\n"), profile); err != nil {
+			return "", "", false, err
+		}
 		had, hadGrants, err := addonsOf(text, profile)
 		if err != nil {
 			return "", "", false, err

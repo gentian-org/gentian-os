@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // collectOIDCIngressSubdomainsByTenant returns ingress hostname prefixes for every
@@ -46,7 +47,14 @@ func collectOIDCIngressSubdomainsByTenant(
 		// the catalog declares one today, so this changes nothing yet -- it
 		// keeps the two walks agreeing, rather than leaving one of them to be
 		// discovered later by a login that fails on a host nobody allowed.
-		for _, app := range tenant.Spec.Apps {
+		//
+		// The installed apps, as the ingress collector walks them: a component
+		// the platform places is not among them.
+		installed, err := placement.Installed(ctx, c, tenant.Spec.Apps)
+		if err != nil {
+			return nil, err
+		}
+		for _, app := range installed {
 			for _, profileName := range append([]string{app.Profile}, app.Addons...) {
 				profile, err := cachedComponentProfile(ctx, c, profileCache, profileName)
 				if err != nil {

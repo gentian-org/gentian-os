@@ -37,6 +37,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
@@ -1690,7 +1691,13 @@ func (r *TenantExportReconciler) exportAppSet(
 		}
 	}
 
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps: a component the platform places is the
+	// platform's, not the tenant's install, and is not exported.
+	fromSpec, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range fromSpec {
 		add(app.Profile)
 	}
 	sort.Strings(installed)

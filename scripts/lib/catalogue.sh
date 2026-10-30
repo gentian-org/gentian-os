@@ -351,10 +351,9 @@ _address_origin_name() {
 
 # The store's extra services: the profiles an installation places from the
 # store's catalog unless --no-extra-services says otherwise. Where each runs
-# is the profile's own to say: the Operations Console in the platform tenant
-# (defaultForPlatform), the App Store app and the Aluvian Center in every
-# other tenant while the cluster offers a store (defaultWhereStoreOffered),
-# tenants made later included.
+# is the profile's own to say (its placement): the Operations Console in the
+# platform tenant, the App Store app and the Aluvian Center in every other
+# tenant while the cluster offers a store, tenants made later included.
 _EXTRA_SERVICE_PROFILES="operations-console-ee app-store-pe aluvian-center-pe"
 
 # Names the extra services were placed under before the catalog renamed

@@ -28,6 +28,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -466,8 +467,14 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 		return attrs, nil
 	}
 
-	// 2. Add groups for all tenant apps, and for the addons activated inside them
-	for _, app := range tenant.Spec.Apps {
+	// 2. Add groups for all tenant apps, and for the addons activated inside them.
+	// Not for a component the platform places: it is not an app the tenant
+	// installed, and was never granted by a group of its own.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return "", err
+	}
+	for _, app := range installed {
 		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return "", err

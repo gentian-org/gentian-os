@@ -31,6 +31,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -279,7 +280,13 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			provNames := []string{
 				realmJobName(tenant.Name), gentianGroupsJobName(tenant.Name), adminJobName(tenant.Name),
 			}
-			for _, app := range tenant.Spec.Apps {
+			// The client Jobs of the installed apps; a component the
+			// platform places has its client made by its own Component.
+			installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+			if err != nil {
+				return err
+			}
+			for _, app := range installed {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
 			}
 			if clientApps, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, clientJobName(tenant.Name, "")); err != nil {

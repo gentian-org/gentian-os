@@ -847,34 +847,25 @@ spec:
                 type: object
               defaultForPlatform:
                 description: |-
-                  DefaultForPlatform means the platform tenant gets a Component of this
-                  profile, and no other tenant does: something the cluster has one of and
-                  that runs with a tenant's authority rather than the kernel's. Created
-                  and named the way DefaultForTenants creates its own.
+                  DefaultForPlatform is placement {tenants: platform}.
+
+                  Superseded by placement: read for one release so that catalogs
+                  published before it keep working.
                 type: boolean
               defaultForTenants:
                 description: |-
-                  DefaultForTenants means every tenant gets a Component of this profile,
-                  created by the operator when the tenant is provisioned and named after
-                  the profile. It is how the desktop reaches every tenant without anyone
-                  declaring it, and it is here as a field so that a second component the
-                  platform ships to everyone, such as the administration console, is
-                  declared the same way rather than by another name the operator knows.
-                  Only a profile of class "app" may say it: a service and a shared-app
-                  have one instance, so there is nothing to give each tenant.
+                  DefaultForTenants is placement {tenants: every}.
+
+                  Superseded by placement: read for one release so that catalogs
+                  published before it keep working.
                 type: boolean
               defaultWhereStoreOffered:
                 description: |-
-                  DefaultWhereStoreOffered means every tenant except the platform tenant
-                  gets a Component of this profile for as long as the cluster offers an
-                  App Store: usage statistics are on and the Cluster claim names a store
-                  (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
-                  creates its own.
+                  DefaultWhereStoreOffered is placement {tenants: users, while:
+                  storeOffered}.
 
-                  Unlike the two above it is also taken away: when the cluster stops
-                  offering a store the Component is removed again, so a profile that says
-                  this must own no data. The platform tenant gets none because nobody
-                  installs apps there.
+                  Superseded by placement: read for one release so that catalogs
+                  published before it keep working.
                 type: boolean
               expose:
                 description: |-
@@ -2915,6 +2906,36 @@ spec:
                         type: object
                     type: object
                 type: object
+              placement:
+                description: |-
+                  Placement makes this a component the platform places, and says where.
+                  A profile with a placement is placeable: the platform writes it into
+                  the tenants it names, as an entry of their spec.apps, and takes it out
+                  again when they no longer qualify; no tenant installs, moves or removes
+                  it. A profile without one is installable: a tenant's administrator
+                  installs it, and the platform never places it.
+                  Only a profile of class "app" is placed: a service and a shared-app
+                  have one instance, so there is nothing to give each tenant.
+                properties:
+                  tenants:
+                    description: Tenants are the tenants that get the component.
+                    enum:
+                    - every
+                    - platform
+                    - users
+                    type: string
+                  while:
+                    description: |-
+                      While names the condition the placement lasts for; absent, it lasts
+                      for the life of each tenant. A conditional placement is also taken
+                      away, so a profile placed under one must own no data.
+                    enum:
+                    - storeOffered
+                    - llm
+                    type: string
+                required:
+                - tenants
+                type: object
               provides:
                 description: |-
                   Provides lists the contracts this component supplies. The class decides
@@ -4375,6 +4396,18 @@ spec:
               rule: '!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants)
                 || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
                 && self.defaultWhereStoreOffered))'
+            - message: 'an adapter is never placed: a tenant''s administrator installs
+                it'
+              rule: '!has(self.adapter) || !has(self.placement)'
+            - message: 'placement is for class app: a service and a shared-app have
+                one instance'
+              rule: '!has(self.placement) || !has(self.classes) || (''app'' in self.classes)'
+            - message: 'a component the platform places on tenants declares requires.services.llm
+                only at trustTier platform: it is given a key at the model gateway
+                without a tenant having installed it'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm)
+                || !has(self.placement) || (has(self.placement.while) && self.placement.while
+                == ''llm'') || self.trustTier == ''platform'''
           status:
             description: ComponentProfileStatus is the observed state of a ComponentProfile.
             properties:

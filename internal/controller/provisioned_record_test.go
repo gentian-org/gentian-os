@@ -202,3 +202,42 @@ func TestTheModelKeyIsRecordedForAnAppThatDeclaredTheGateway(t *testing.T) {
 		t.Errorf("an app that declared no gateway is on record: %+v", got["notes"])
 	}
 }
+
+// A component the platform places -- the desktop, placed on every tenant --
+// has its entry in spec.apps like any app, and declares a PostgreSQL
+// database. Its stores are made through its own Component, so the
+// tenant-level kernel requirement path leaves its entry out: neither the
+// database provisioning nor the record of provisioned stores sees it, and no
+// second database appears beside the one its Component has. An app the
+// tenant installed next to it is provisioned as before.
+func TestAPlacedEntryGetsNoTenantLevelStores(t *testing.T) {
+	ctx := context.Background()
+	scheme := deleteGapsScheme()
+	desktop := storesProfile("desktop", gentianov1alpha1.DatabaseEnginePostgreSQL, false, false)
+	desktop.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}
+	desktop.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
+	wiki := storesProfile("wiki", gentianov1alpha1.DatabaseEnginePostgreSQL, false, false)
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{
+			Apps: []gentianov1alpha1.TenantApp{placedEntry("desktop"), {Profile: "wiki"}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(desktop, wiki).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+
+	pg, err := r.collectPostgresApps(ctx, tenant)
+	if err != nil || !reflect.DeepEqual(pg, []string{"wiki"}) {
+		t.Fatalf("PostgreSQL apps to provision = %v, %v; want wiki alone", pg, err)
+	}
+	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := r.provisionedStores(ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := recorded["desktop"]; ok || len(recorded) != 1 {
+		t.Fatalf("recorded = %+v, want wiki's stores alone", recorded)
+	}
+}

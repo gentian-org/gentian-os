@@ -28,6 +28,10 @@ spec:
   trustTier: platform
   version: {{ .Values.concierge.chart.version | quote }}
   # The cluster has one, and it is the platform tenant's.
+  placement:
+    tenants: platform
+  # The same, until every cluster's definition has placement (as the
+  # desktop's profile says).
   defaultForPlatform: true
   package:
     chart:
