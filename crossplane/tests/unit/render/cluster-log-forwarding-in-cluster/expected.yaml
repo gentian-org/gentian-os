@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 29 more'
+      gentian-cluster-config, and 30 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -428,6 +428,219 @@ spec:
           automated:
             prune: true
             selfHeal: true
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: monitoring-application
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-monitoring
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        finalizers:
+        - resources-finalizer.argocd.argoproj.io
+        name: monitoring
+        namespace: kernel-gitops
+      spec:
+        destination:
+          namespace: kernel-observability
+          server: https://kubernetes.default.svc
+        ignoreDifferences:
+        - group: apps
+          jsonPointers:
+          - /spec/template/spec/hostUsers
+          kind: Deployment
+        - group: apps
+          jsonPointers:
+          - /spec/template/spec/hostUsers
+          kind: DaemonSet
+        project: gentian
+        source:
+          chart: kube-prometheus-stack
+          helm:
+            valuesObject:
+              additionalPrometheusRulesMap:
+                gentian-audit:
+                  groups:
+                  - name: gentian-audit
+                    rules:
+                    - alert: LogForwardingFailing
+                      annotations:
+                        description: Audit records are buffered on the nodes' disks
+                          until the destination takes them again; a full buffer stops
+                          the forwarder reading.
+                        summary: The log forwarder cannot deliver to {{ $labels.component_id
+                          }}.
+                      expr: sum by (component_id) (rate(vector_component_errors_total{component_kind="sink"}[5m]))
+                        > 0
+                      for: 10m
+                      labels:
+                        severity: critical
+                    - alert: AuditSourceSilent
+                      annotations:
+                        description: It wrote records in the last day and none since.
+                          A source that went quiet is the first thing an auditor finds.
+                        summary: No audit record from {{ $labels.source }} for two
+                          hours.
+                      expr: (sum by (source) (increase(gentian_audit_records_total[1d]))
+                        > 0) unless (sum by (source) (increase(gentian_audit_records_total[2h]))
+                        > 0)
+                      for: 15m
+                      labels:
+                        severity: warning
+                    - alert: BreakGlassUsed
+                      annotations:
+                        summary: Break-glass access was used.
+                      expr: sum(increase(gentian_audit_records_total{kind="break-glass"}[10m]))
+                        > 0
+                      labels:
+                        severity: critical
+                    - alert: RefusalsSpiking
+                      annotations:
+                        summary: Refusals in tenant {{ $labels.tenant }} are ten times
+                          their weekly rate.
+                      expr: |
+                        sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[10m]))
+                          > 10 * sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[7d]))
+                        and sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[10m])) > 0.2
+                      for: 10m
+                      labels:
+                        severity: warning
+              alertmanager:
+                alertmanagerSpec:
+                  resources:
+                    limits:
+                      memory: 128Mi
+                    requests:
+                      cpu: 20m
+                      memory: 64Mi
+              defaultRules:
+                create: true
+                rules:
+                  etcd: false
+                  kubeControllerManager: false
+                  kubeProxy: false
+                  kubeSchedulerAlerting: false
+                  kubeSchedulerRecording: false
+              fullnameOverride: monitoring
+              grafana:
+                enabled: true
+                envValueFrom:
+                  GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+                    secretKeyRef:
+                      key: client_secret
+                      name: grafana-oidc
+                grafana.ini:
+                  analytics:
+                    check_for_plugin_updates: false
+                    check_for_updates: false
+                    reporting_enabled: false
+                  auth:
+                    disable_login_form: true
+                    signout_redirect_url: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/logout?client_id=grafana&post_logout_redirect_uri=https://monitoring.platform.example.test/
+                  auth.anonymous:
+                    enabled: false
+                  auth.basic:
+                    enabled: false
+                  auth.generic_oauth:
+                    allow_assign_grafana_admin: false
+                    allow_sign_up: true
+                    api_url: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/userinfo
+                    auth_url: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/auth
+                    auto_login: true
+                    client_id: grafana
+                    enabled: true
+                    login_attribute_path: preferred_username
+                    name: kernel
+                    role_attribute_path: contains(groups[*], '/gentian:platform:admin')
+                      && 'Admin' || 'Viewer'
+                    role_attribute_strict: false
+                    scopes: openid profile email groups
+                    token_url: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/token
+                    use_pkce: true
+                  server:
+                    root_url: https://monitoring.platform.example.test
+                  users:
+                    allow_sign_up: false
+                resources:
+                  limits:
+                    memory: 256Mi
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+              kubeControllerManager:
+                enabled: false
+              kubeEtcd:
+                enabled: false
+              kubeProxy:
+                enabled: false
+              kubeScheduler:
+                enabled: false
+              prometheus:
+                additionalServiceMonitors:
+                - endpoints:
+                  - interval: 30s
+                    path: /metrics
+                    port: metrics
+                    scrapeTimeout: 10s
+                  name: gentian-os
+                  namespaceSelector:
+                    matchNames:
+                    - kernel-control
+                  selector:
+                    matchLabels:
+                      app.kubernetes.io/name: gentian-os
+                prometheusSpec:
+                  podMonitorSelectorNilUsesHelmValues: false
+                  probeSelectorNilUsesHelmValues: false
+                  resources:
+                    limits:
+                      memory: 2Gi
+                    requests:
+                      cpu: 200m
+                      memory: 1Gi
+                  retention: 15d
+                  retentionSize: 18GB
+                  ruleSelectorNilUsesHelmValues: false
+                  serviceMonitorSelectorNilUsesHelmValues: false
+                  storageSpec:
+                    volumeClaimTemplate:
+                      spec:
+                        accessModes:
+                        - ReadWriteOnce
+                        resources:
+                          requests:
+                            storage: 20Gi
+              prometheusOperator:
+                resources:
+                  limits:
+                    memory: 256Mi
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+          repoURL: https://prometheus-community.github.io/helm-charts
+          targetRevision: 92.3.0
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+          - ServerSideApply=true
   providerConfigRef:
     name: kubernetes
 ---

@@ -838,7 +838,7 @@ namespaces:
       # sameNamespace admits; what it scrapes elsewhere is admitted by the
       # scraped side (the operator's metrics port admits any source).
       - name: prometheus
-        installedBy: bootstrap-application:monitoring
+        installedBy: composition:cluster-default
         readAt: kube-prometheus-stack chart, pinned in versions.yaml
         podLabels: {app.kubernetes.io/name: prometheus}
         ports:
@@ -849,7 +849,7 @@ namespaces:
             what: the configuration reloader's metrics
             closed: scraped from this namespace only
       - name: alertmanager
-        installedBy: bootstrap-application:monitoring
+        installedBy: composition:cluster-default
         readAt: kube-prometheus-stack chart, pinned in versions.yaml
         podLabels: {app.kubernetes.io/name: alertmanager}
         ports:
@@ -863,7 +863,7 @@ namespaces:
             what: the configuration reloader's metrics
             closed: scraped from this namespace only
       - name: prometheus-operator
-        installedBy: bootstrap-application:monitoring
+        installedBy: composition:cluster-default
         readAt: kube-prometheus-stack chart, pinned in versions.yaml
         podLabels: {app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator}
         ports:
@@ -871,7 +871,7 @@ namespaces:
             what: the admission webhook for PrometheusRule objects
             open: the API server calls webhooks, and no portable rule names the API server
       - name: grafana
-        installedBy: bootstrap-application:monitoring
+        installedBy: composition:cluster-default
         readAt: kube-prometheus-stack chart, pinned in versions.yaml
         podLabels: {app.kubernetes.io/name: grafana}
         ports:
@@ -896,7 +896,7 @@ namespaces:
             what: its own and the audit records' metrics
             closed: scraped from this namespace only
       - name: kube-state-metrics
-        installedBy: bootstrap-application:monitoring
+        installedBy: composition:cluster-default
         readAt: kube-prometheus-stack chart, pinned in versions.yaml
         podLabels: {app.kubernetes.io/name: kube-state-metrics}
         ports:

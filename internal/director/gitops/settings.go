@@ -106,6 +106,8 @@ var clusterSettings = []ClusterSetting{
 	{Path: "llm.gpuAcceleration", Doc: "Whether model serving uses a GPU.", OneOf: []string{"true", "false"}},
 	{Path: "logForwarding.destination.endpoint", Doc: "Where the log forwarder sends the platform's logs: an HTTPS URL taking newline-delimited JSON, with the log-destination credential as its bearer. Empty: no forwarder.", Match: httpsURL, Shape: "an https:// URL, or nothing"},
 	{Path: "logForwarding.destination.streams", Doc: "Which streams the forwarder sends: audit, the audit records; operations, every other line. Comma-separated; both when empty.", List: true, Each: logStream, Shape: "audit or operations"},
+	{Path: "monitoring.enabled", Doc: "Whether the platform's metrics and alerts run: Prometheus, Alertmanager, Grafana and the platform's rules. About 0.4 CPU, 1.5 GiB and a 20 GiB volume.", OneOf: []string{"true", "false"}},
+	{Path: "monitoring.alerts.webhook", Doc: "Where Alertmanager sends alerts: an HTTPS URL taking Alertmanager's webhook body. Empty holds them in Alertmanager.", Match: httpsURL, Shape: "an https:// URL, or nothing"},
 	{Path: "mail.serviceMode", Doc: "Whether the platform runs its own mail stack in system-mail, or relays through an external provider.", OneOf: []string{"system", "external"}},
 	{Path: "mail.host", Doc: "The external relay's hostname, when mail is external."},
 	{Path: "mail.port", Doc: "The external relay's port."},

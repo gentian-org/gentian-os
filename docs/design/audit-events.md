@@ -170,8 +170,10 @@ Grafana answers at `monitoring.<kernel domain>` (a name for the function,
 so a tenant's own Grafana keeps its name), behind the kernel Gateway's
 session under `can_audit`, and asks for its own sign-in at the kernel realm
 like Argo CD and Headlamp; the platform administrator is Grafana's Admin,
-everyone else who reaches it a Viewer. Switched off on the claim, the
-installer removes the stack. The operator's
+everyone else who reaches it a Viewer. The Cluster Composition composes the
+stack while `monitoring.enabled` is true and removes it when it is not, so
+the setting (`kubectl gentian settings set monitoring.enabled=true`) takes
+effect with no installer step. The operator's
 `ServiceMonitor`, the vendored Redis and SeaweedFS monitors and the
 Keycloak and OpenFGA metrics switch on with it. The platform ships these
 rules:
