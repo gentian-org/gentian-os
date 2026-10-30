@@ -169,6 +169,9 @@ func (g *GitOps) SetAppUpdateMode(ctx context.Context, tenant, profile, mode str
 		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
 			return "", "", false, ErrNotInstalled
 		}
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
+		}
 		after := "digest"
 		if appEntryHasKey(lines, profile, "catalogue") {
 			after = "catalogue"

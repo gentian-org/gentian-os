@@ -42,8 +42,8 @@ import (
 // grant is declared state -- it changes what the platform gives the app, and
 // git keeps who said yes -- and a request is a note on the thing that waits,
 // which is why it lives with the Component's own status rather than beside
-// the grants. The operator already writes the Component's metadata
-// (componentOriginLabel); nothing re-renders it over this.
+// the grants. The operator writes the Component's labels, not its
+// annotations; nothing re-renders this one.
 //
 // A decline is the same kind of note. Saying no changes nothing the platform
 // gives the app -- the privilege stays pending and the install keeps

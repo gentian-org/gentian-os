@@ -26,6 +26,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
@@ -92,6 +93,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
+	// Every entry's profile, the components the platform places among them:
+	// a contract's two sides are selected by what their pods carry, whichever
+	// side a placed component is on.
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
 	for _, app := range tenant.Spec.Apps {
 		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
@@ -114,10 +118,19 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		}
 	}
 
+	// The per-app policies (kernel access, in-app traffic, granted egress,
+	// adapters, the cache) are the installed apps'. A component the
+	// platform places has its own written by its Component
+	// (component_network_policy.go), and is left out here.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return err
+	}
+
 	in := netpolicy.BuildInput{
 		TenantName:    tenant.Name,
 		Namespace:     nsName,
-		Apps:          tenant.Spec.Apps,
+		Apps:          installed,
 		Profiles:      profiles,
 		Bindings:      bindings,
 		Grants:        grants,

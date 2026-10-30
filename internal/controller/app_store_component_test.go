@@ -511,9 +511,10 @@ func checkAgainstSchema(root, schema map[string]interface{}, value interface{}, 
 	return problems
 }
 
-// The App Store app is on a tenant exactly while the cluster offers a store
-// -- it reports what it runs and its claim names one -- and never on the
-// platform tenant. The tenancy mode changes its host and nothing about this.
+// The App Store app is placed on a user tenant exactly while the cluster
+// offers a store -- it reports what it runs and its claim names one -- and
+// never on the platform tenant. The tenancy mode changes its host and
+// nothing about this.
 func TestTheAppStoreIsPlacedWhereTheClusterOffersAStore(t *testing.T) {
 	scheme := appStoreScheme(t)
 	for _, mode := range []string{"multi", "single"} {
@@ -523,36 +524,38 @@ func TestTheAppStoreIsPlacedWhereTheClusterOffersAStore(t *testing.T) {
 				if mode == "single" {
 					user = tileFixtureTenant(gentianov1alpha1.SingleUserTenantName)
 				}
-				for _, tenant := range []*gentianov1alpha1.Tenant{user, platformTenantFixture()} {
-					name := fmt.Sprintf("%s mode, reporting %v, store %q, tenant %s", mode, reporting, storeURL, tenant.Name)
-					c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-						tenant.DeepCopy(), clusterClaim(storeURL), shippedAppStoreProfile(t),
-						profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
-					).Build()
-					r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example",
-						TenancyMode: mode, UsageStatisticsEnabled: reporting}
-					if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
-						t.Fatalf("%s: %v", name, err)
-					}
-					want := reporting && storeURL != "" && tenant.Name != "platform"
-					err := c.Get(context.Background(), types.NamespacedName{Name: "app-store", Namespace: tenantNamespaceName(tenant)}, &gentianov1alpha1.Component{})
-					if have := err == nil; have != want {
-						t.Errorf("%s: App Store component present = %v, want %v (%v)", name, have, want, err)
-					}
-					// The components every tenant gets are not conditional.
-					if err := c.Get(context.Background(), types.NamespacedName{Name: "desktop", Namespace: tenantNamespaceName(tenant)}, &gentianov1alpha1.Component{}); err != nil {
-						t.Errorf("%s: the desktop is missing: %v", name, err)
-					}
+				name := fmt.Sprintf("%s mode, reporting %v, store %q", mode, reporting, storeURL)
+				c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+					user.DeepCopy(), platformTenantFixture(), clusterClaim(storeURL), shippedAppStoreProfile(t),
+					profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+				).Build()
+				r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example",
+					TenancyMode: mode, UsageStatisticsEnabled: reporting}
+				got, err := r.Placements(context.Background())
+				if err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+				want := reporting && storeURL != ""
+				if have := got.Users.Has("app-store"); have != want {
+					t.Errorf("%s: App Store placed on a user tenant = %v, want %v", name, have, want)
+				}
+				if got.Platform.Has("app-store") {
+					t.Errorf("%s: the App Store is placed on the platform tenant", name)
+				}
+				// The components every tenant gets are not conditional.
+				if !got.Users.Has("desktop") || !got.Platform.Has("desktop") {
+					t.Errorf("%s: the desktop is not placed everywhere: %+v", name, got)
 				}
 			}
 		}
 	}
 }
 
-// When the cluster stops offering a store the Component this reconciler
-// placed is removed, and placed again when it offers one. A Component of the
-// same name that a tenant installed is the tenant's and stays; and while the
-// claim cannot be read, nothing is taken away.
+// When the cluster stops offering a store the App Store leaves the
+// placement, and returns when it offers one again; the placement worker
+// follows by taking the entry out and writing it back, and the Component
+// follows the entry. While the claim cannot be read the placement is
+// undecided: nothing is placed and nothing is taken away.
 func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 	scheme := appStoreScheme(t)
 	ctx := context.Background()
@@ -562,28 +565,44 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 		tenant.DeepCopy(), clusterClaim("https://store.example.org"), shippedAppStoreProfile(t)).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: true}
 	present := func() bool { return c.Get(ctx, key, &gentianov1alpha1.Component{}) == nil }
+	// follow is the placement worker and the operator after it: the entry is
+	// in spec.apps exactly while the answer places it.
+	follow := func() bool {
+		t.Helper()
+		got, err := r.Placements(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tenant.Spec.Apps = nil
+		if got.Users.Has("app-store") {
+			tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("app-store")}
+		}
+		if err := r.ensureAppComponents(ctx, tenant); err != nil {
+			t.Fatal(err)
+		}
+		return got.Users.Has("app-store")
+	}
 
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || !present() {
-		t.Fatalf("not placed while a store is offered (%v)", err)
+	if !follow() || !present() {
+		t.Fatal("not placed while a store is offered")
 	}
 	comp := &gentianov1alpha1.Component{}
 	_ = c.Get(ctx, key, comp)
-	if comp.Labels[componentOriginLabel] != componentOriginDefault {
-		t.Fatalf("origin = %q", comp.Labels[componentOriginLabel])
+	if comp.Labels[componentOriginLabel] != componentOriginInstall {
+		t.Fatalf("origin = %q, want install", comp.Labels[componentOriginLabel])
 	}
 
 	// The claim stops naming a store.
-	claim := clusterClaim("")
 	live := clusterClaim("")
-	if err := c.Get(ctx, client.ObjectKeyFromObject(claim), live); err != nil {
+	if err := c.Get(ctx, client.ObjectKeyFromObject(live), live); err != nil {
 		t.Fatal(err)
 	}
 	unstructured.RemoveNestedField(live.Object, "spec", "catalogue")
 	if err := c.Update(ctx, live); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || present() {
-		t.Fatalf("still placed after the claim named no store (%v)", err)
+	if follow() || present() {
+		t.Fatal("still placed after the claim named no store")
 	}
 
 	// Named again, with reporting off: still none. Reporting on: placed.
@@ -592,15 +611,15 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.UsageStatisticsEnabled = false
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || present() {
-		t.Fatalf("placed with usage statistics off (%v)", err)
+	if follow() || present() {
+		t.Fatal("placed with usage statistics off")
 	}
 	r.UsageStatisticsEnabled = true
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil || !present() {
-		t.Fatalf("not placed again (%v)", err)
+	if !follow() || !present() {
+		t.Fatal("not placed again")
 	}
 
-	// The claim cannot be read: left as it is.
+	// The claim cannot be read: undecided, neither placed nor taken away.
 	failing := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), shippedAppStoreProfile(t)).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
@@ -610,33 +629,13 @@ func TestTheAppStoreComponentFollowsTheOffer(t *testing.T) {
 				return cl.List(ctx, list, opts...)
 			},
 		}).Build()
-	placed := comp.DeepCopy()
-	placed.ResourceVersion = ""
-	if err := failing.Create(ctx, placed); err != nil {
-		t.Fatal(err)
-	}
 	rf := &TenantReconciler{Client: failing, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: true}
-	if err := rf.ensureDefaultComponents(ctx, tenant); err != nil {
+	got, err := rf.Placements(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := failing.Get(ctx, key, &gentianov1alpha1.Component{}); err != nil {
-		t.Fatalf("removed while the claim could not be read: %v", err)
-	}
-
-	// A tenant's own install under that name is not this reconciler's.
-	own := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), clusterClaim(""), shippedAppStoreProfile(t)).Build()
-	installed := comp.DeepCopy()
-	installed.ResourceVersion = ""
-	installed.Labels[componentOriginLabel] = componentOriginInstall
-	if err := own.Create(ctx, installed); err != nil {
-		t.Fatal(err)
-	}
-	ro := &TenantReconciler{Client: own, Scheme: scheme, KernelRealm: "kernel", UsageStatisticsEnabled: true}
-	if err := ro.ensureDefaultComponents(ctx, tenant); err != nil {
-		t.Fatal(err)
-	}
-	if err := own.Get(ctx, key, &gentianov1alpha1.Component{}); err != nil {
-		t.Fatalf("a tenant's own install was removed: %v", err)
+	if got.Users.Has("app-store") || got.Users.Decided("app-store") {
+		t.Fatalf("while the claim could not be read: users = %+v, want app-store undecided", got.Users)
 	}
 }
 
@@ -862,17 +861,15 @@ func TestAStoreAddressThatIsTheAppsOwnHostIsNoStore(t *testing.T) {
 			t.Errorf("%s: a component would be told %q", name, offer.url)
 		}
 
-		// The tenant reconciler places by that verdict, on every tenant.
+		// The placement follows that verdict, for every user tenant.
 		tr := &TenantReconciler{Client: cl, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example",
 			TenancyMode: c.mode, UsageStatisticsEnabled: true}
-		for _, tenant := range c.tenants {
-			if err := tr.ensureDefaultComponents(ctx, tenant); err != nil {
-				t.Fatalf("%s: %v", name, err)
-			}
-			err := cl.Get(ctx, types.NamespacedName{Name: "app-store", Namespace: tenantNamespaceName(tenant)}, &gentianov1alpha1.Component{})
-			if have := err == nil; have != (c.reason == "") {
-				t.Errorf("%s: App Store component on %s present = %v", name, tenant.Name, have)
-			}
+		placed, err := tr.Placements(ctx)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if have := placed.Users.Has("app-store"); have != (c.reason == "") {
+			t.Errorf("%s: App Store placed on user tenants = %v", name, have)
 		}
 
 		// And the projection writes it beside the tiles, for the usher.

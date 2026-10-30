@@ -514,7 +514,7 @@ spec:
 
                  desktop and admin are the components every tenant gets: the
                  desktop, and the administration console beside it. Both are
-                 ComponentProfiles with defaultForTenants, so both hosts exist
+                 ComponentProfiles placed in every tenant, so both hosts exist
                  in every zone, kernel and tenant alike.
 
                  This list is enumerated and not derived, which is a known

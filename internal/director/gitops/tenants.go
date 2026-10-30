@@ -144,6 +144,10 @@ type Tenant struct {
 	Realm string `json:"realm,omitempty"`
 	// Apps are the profile names installed into it.
 	Apps []string `json:"apps"`
+	// Placed are the platform's own components placed in it
+	// (Tenant.spec.apps[].placed, pinning no build), which nobody
+	// installed and which are not listed among its apps.
+	Placed []string `json:"placed,omitempty"`
 	// LoginDomain is the domain its people sign in under, and so where the
 	// concierge sends an address on it: see TenantLoginDomain.
 	LoginDomain string `json:"loginDomain,omitempty"`
@@ -300,6 +304,8 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						} `json:"isolation"`
 						Apps []struct {
 							Profile string `json:"profile"`
+							Digest  string `json:"digest"`
+							Placed  bool   `json:"placed"`
 						} `json:"apps"`
 						Catalogue struct {
 							Delegated bool `json:"delegated"`
@@ -326,6 +332,13 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
 					for _, a := range doc.Spec.Apps {
+						// One of the platform's own components, which pins
+						// no build, is listed apart; one the cluster's
+						// capabilities brought from a catalog is an app.
+						if a.Profile != "" && a.Placed && a.Digest == "" {
+							t.Placed = append(t.Placed, a.Profile)
+							continue
+						}
 						if a.Profile != "" {
 							t.Apps = append(t.Apps, a.Profile)
 						}
@@ -366,6 +379,10 @@ type NewTenant struct {
 	// (catalogue.delegated). Left out, it is off. The route that creates a
 	// tenant is the cluster administrator's, as the route that changes it is.
 	Catalogue *NewTenantCatalogue `json:"catalogue,omitempty"`
+	// Placed are the components the platform places in the new tenant,
+	// written into it in the commit that creates it. The director's to
+	// say, from the operator's placement; never read from a request.
+	Placed []string `json:"-"`
 }
 
 // NewTenantCatalogue is the switch in spec.catalogue of a tenant being
@@ -402,6 +419,14 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 		}
 		if req.Catalogue != nil && req.Catalogue.Delegated {
 			if text, err = setTenantCatalogue(text, TenantCatalogue{Delegated: true}); err != nil {
+				return nil, err
+			}
+		}
+		for _, name := range req.Placed {
+			if !ValidName(name) {
+				return nil, fmt.Errorf("%w: placed profile %q", ErrInvalidName, name)
+			}
+			if text, _, _, err = placeEntry(text, name, "", "", false, meta); err != nil {
 				return nil, err
 			}
 		}

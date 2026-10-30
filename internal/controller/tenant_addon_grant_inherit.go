@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // Addons installed before an addon was granted on its own.
@@ -48,7 +49,14 @@ func (r *TenantReconciler) inheritAddonGrants(ctx context.Context, tenant *genti
 	}
 	logger := log.FromContext(ctx).WithName("addon-grant").WithValues("tenant", tenant.Name)
 	failed := false
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps: a component the platform places has no addon
+	// groups to inherit.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		logger.Error(err, "reading which apps are installed (will retry)")
+		return true
+	}
+	for _, app := range installed {
 		for _, addon := range app.Addons {
 			if app.Profile == "" || addon == "" || app.AddonDefaultGranted(addon) {
 				// Declared for everyone: the default grant applies it.

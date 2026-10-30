@@ -43,7 +43,8 @@ func componentNames(t *testing.T, c client.Client, namespace string) string {
 
 // Every app a tenant installs is a Component, and so is every addon activated
 // inside one. Removing the entry removes the Component -- and only a
-// Component that was an install, never one the platform ships to everybody.
+// Component that was an install, never one an earlier release placed itself
+// (labeled origin default) that has no entry yet.
 func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -64,12 +65,10 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
 		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+		defaultPlaced(tenant, "desktop"),
 	).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
-		t.Fatal(err)
-	}
 	if err := r.ensureAppComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}

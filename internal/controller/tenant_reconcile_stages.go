@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
@@ -229,7 +230,11 @@ func (r *TenantReconciler) persistTenantStageProgress(ctx context.Context, state
 		tenant.Status.Namespace = state.nsName
 		tenant.Status.AdminEmail = r.tenantAdminEmail(tenant)
 	}
-	tenant.Status.AppCount = len(tenant.Spec.Apps)
+	// Without the components the platform places (as in finalize); a count
+	// that cannot be made now keeps the one last written.
+	if installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps); err == nil {
+		tenant.Status.AppCount = len(installed)
+	}
 	provisioning := state.identityResult.RequeueAfter > 0 ||
 		state.databaseResult.RequeueAfter > 0 ||
 		state.mariadbResult.RequeueAfter > 0 ||
@@ -430,14 +435,6 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.privilegeResult = privilegeResult
 
-	// Every tenant gets the components the platform ships to everyone: the
-	// desktop, the administration console, whatever else declares
-	// defaultForTenants on its profile. Reconciled beside its apps
-	// (ui-restructure.md §1).
-	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure default components: %w", err)
-	}
-
 	// The model gateway, for the apps and the placed components that
 	// declared it -- and its removal from the ones that did not. After both
 	// kinds of Component exist: each holds its release, or runs without the
@@ -506,7 +503,13 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = state.nsName
 	tenant.Status.AdminEmail = r.tenantAdminEmail(tenant)
-	tenant.Status.AppCount = len(tenant.Spec.Apps)
+	// The apps the tenant installed: a component the platform places is not
+	// counted, as it was not before it had an entry in spec.apps.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	tenant.Status.AppCount = len(installed)
 	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
 
 	provisioning := state.identityResult.RequeueAfter > 0 ||

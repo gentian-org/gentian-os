@@ -46,6 +46,9 @@ type App struct {
 	// MovedAt and MovedBy record the last move of the pin.
 	MovedAt string `json:"movedAt,omitempty"`
 	MovedBy string `json:"movedBy,omitempty"`
+	// Placed says the platform put the app here (Tenant.spec.apps[].placed):
+	// only the placement worker changes the entry.
+	Placed bool `json:"placed,omitempty"`
 }
 
 // Apps returns what git says a tenant has installed. Git is the desired state;

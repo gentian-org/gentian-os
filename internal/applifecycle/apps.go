@@ -33,6 +33,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -70,8 +71,8 @@ type AppState struct {
 	// can tell it is running; it is not the tenant's to install, remove or
 	// grant access to.
 	Origin string `json:"origin"`
-	Ready   bool   `json:"ready"`
-	Phase   string `json:"phase"`
+	Ready  bool   `json:"ready"`
+	Phase  string `json:"phase"`
 	// Message is why it is in that phase, in the reconciler's own words.
 	Message string `json:"message,omitempty"`
 	// Failure is set when the workload itself is broken rather than slow:
@@ -201,18 +202,18 @@ var waitingReasons = map[string]bool{
 	"PrivilegesPending": true,
 }
 
-// componentOriginLabel says who put a component in the tenant, as the
-// operator labels it (internal/controller, componentOriginLabel): "default"
-// for one the platform places in every tenant, "install" for one the
-// tenant installed.
+// componentOriginLabel is the operator's label of a component an earlier
+// release placed itself with no entry of spec.apps (internal/controller,
+// componentOriginLabel). Read for one release; a placed component is
+// otherwise known by its profile (ComponentProfile spec.placement).
 const (
 	componentOriginLabel   = "gentianos.io/component-origin"
 	componentOriginDefault = "default"
 	componentOriginInstall = "install"
 )
 
-// componentOrigin is the origin a state reports: the operator's label, and
-// "install" for anything it did not mark as its own default.
+// componentOrigin is the origin a state reports from the component alone:
+// "default" for one an earlier release placed, "install" otherwise.
 func componentOrigin(comp *gentianov1alpha1.Component) string {
 	if comp.Labels[componentOriginLabel] == componentOriginDefault {
 		return componentOriginDefault
@@ -260,7 +261,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		}
 		state := componentState(comp)
 		state.Origin = componentOrigin(comp)
-		if found && cp.Annotations[platformAppAnnotation] == "true" {
+		if found && (placement.ByOperator(cp) || cp.Annotations[platformAppAnnotation] == "true") {
 			state.Origin = componentOriginDefault
 		}
 		if found {
@@ -479,7 +480,14 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 	// An app of the tenant's, or an add-on switched on inside one. An add-on
 	// has an access group of its own, and purging one that is still switched
 	// on would take that group from the people using it.
-	for _, a := range tenant.Spec.Apps {
+	//
+	// A component the platform places is not the tenant's app: what holds a
+	// purge of it back is its Component, which waitForAppGone waits for.
+	installedApps, err := placement.Installed(ctx, s.client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range installedApps {
 		if a.Profile == profile {
 			return nil, fmt.Errorf("%w: uninstall %s before purging it", ErrStillInstalled, profile)
 		}
@@ -715,9 +723,14 @@ func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) 
 	}
 	// An app of the tenant's, or an add-on switched on inside one: an add-on
 	// has a group of its own, and who may use it is decided separately from
-	// who may use its base.
+	// who may use its base. A component the platform places has no group to
+	// grant, and is not one.
+	apps, err := placement.Installed(ctx, s.client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
 	installed := false
-	for _, a := range tenant.Spec.Apps {
+	for _, a := range apps {
 		if a.Profile == profile {
 			installed = true
 			break

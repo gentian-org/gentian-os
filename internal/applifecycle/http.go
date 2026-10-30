@@ -20,6 +20,7 @@ import (
 
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
@@ -84,6 +85,10 @@ type HTTPServer struct {
 	// resource definitions it was built with (internal/schemacheck). Nil on
 	// an operator that runs no check, which the route then says.
 	Definitions *schemacheck.Gate
+	// Placements answers which placeable components the platform puts in
+	// which tenants (internal/placement). Nil on an operator that does not
+	// reconcile tenants, which the route then answers as unavailable.
+	Placements func(ctx context.Context) (placement.Answer, error)
 }
 
 // bearer returns the token a request presents, or "".
@@ -164,6 +169,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	h.registerImportRoutes(guarded)
 	h.registerSourceRoutes(guarded)
 	h.registerDefinitionRoutes(guarded)
+	h.registerPlacementRoutes(guarded)
 	h.registerRolloutRoutes(guarded)
 	h.registerResidueRoutes(guarded)
 	h.registerApprovalRoutes(guarded)

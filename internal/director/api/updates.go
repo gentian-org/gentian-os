@@ -150,9 +150,11 @@ func (s *Server) updateReport(ctx context.Context, tenant string) (*updateReport
 			return nil, err
 		}
 		for _, app := range apps {
-			if app.Profile == "" || app.Digest == "" {
+			if app.Profile == "" || app.Digest == "" || app.Placed {
 				// An install pinned to nothing follows the profile on the
-				// cluster and has no build to be outdated against.
+				// cluster and has no build to be outdated against. A placed
+				// app is moved by the placement alone, to the build its
+				// catalog lists (platform_apps.go).
 				continue
 			}
 			e := updateEntry{Tenant: t, Profile: app.Profile, Pinned: app.Digest}

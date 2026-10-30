@@ -1050,6 +1050,15 @@ type TenantApp struct {
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
 
+	// Placed says the platform put this app here, because its profile is
+	// placeable (ComponentProfile spec.placement). The director's placement
+	// worker writes and removes such an entry and nobody else changes it:
+	// it is not uninstalled, moved, purged or given add-ons by hand. An
+	// export leaves it out, and the cluster an import lands on places its
+	// own.
+	// +optional
+	Placed bool `json:"placed,omitempty"`
+
 	// AddonGrants says which addons of this app every member of the tenant
 	// has access to by default. An addon is entitled by its own group, as an
 	// app is, and defaultGrant on an entry here is that addon's defaultGrant:

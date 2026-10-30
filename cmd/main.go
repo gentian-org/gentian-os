@@ -741,6 +741,9 @@ func main() {
 		// What the check found, for the director to ask before it commits
 		// and for an operations screen to show.
 		lifecycle.Server.Definitions = definitions
+		// Which placeable components go to which tenants, for the
+		// director's placement worker to write into their manifests.
+		lifecycle.Server.Placements = tenantReconciler.Placements
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 

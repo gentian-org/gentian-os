@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -98,7 +99,13 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 		return nil, err
 	}
 	var intents []ingressIntent
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps: a component the platform places routes its hosts
+	// through its own Component.
+	installed, err := placement.Installed(ctx, c, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range installed {
 		profile, ok := appProfileForApp(profileIndex, app)
 		if !ok {
 			continue

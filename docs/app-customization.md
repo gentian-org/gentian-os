@@ -245,8 +245,8 @@ model gateway. An app that keeps the key somewhere of its own on first start
 has to take it again when it changes -- the platform replaces a key at the
 gateway, it cannot reach into an app's database.
 
-A component the platform places on every tenant itself (`defaultForTenants`
-and its siblings: the desktop) may declare the same need, at `trustTier:
+A component the platform places on tenants itself (`spec.placement`, other
+than `while: llm`: the desktop) may declare the same need, at `trustTier:
 platform` only. It gets a key of its own per tenant under the same names, and
 its chart is told the Secret's *name*, never the key:
 

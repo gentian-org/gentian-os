@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
-	"maps"
 	"os"
 	"strings"
 	"time"
@@ -52,7 +51,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
-	"github.com/gentian-org/gentian-os/internal/profilebundle"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
@@ -606,17 +605,6 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// The verdict also turns on every tenant's domain (store_offer.go).
 		ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
-	}
-
-	// A profile leaving the catalog directory is a change of what every
-	// tenant is given by default (ensureDefaultComponents), and nothing else
-	// about the profile changes: the catalog's Application saying so is the
-	// event. Only where Argo CD is installed.
-	if _, err := mgr.GetRESTMapper().RESTMapping(profilebundle.ApplicationGVK.GroupKind(), profilebundle.ApplicationGVK.Version); err == nil {
-		catalogueApp := &unstructured.Unstructured{}
-		catalogueApp.SetGroupVersionKind(profilebundle.ApplicationGVK)
-		ctrlBuilder = ctrlBuilder.Watches(catalogueApp, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
-			builder.WithPredicates(catalogueProfilesGoneChanged()))
 	}
 
 	return ctrlBuilder.Complete(r.guarded())
@@ -1377,8 +1365,14 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		return nil, fmt.Errorf("load ComponentProfile index: %w", err)
 	}
 
-	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps. A component the platform places is installed by
+	// its own Component; in the XTenant it would be composed a second time.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	apps := make([]interface{}, 0, len(installed))
+	for _, app := range installed {
 		entry := map[string]interface{}{"profile": app.Profile}
 		profile, exists := appProfileForApp(profileIndex, app)
 		if exists {
@@ -1447,29 +1441,4 @@ func toInterfaceSlice(in []string) []interface{} {
 		out = append(out, s)
 	}
 	return out
-}
-
-// catalogueProfilesGoneChanged passes the catalog's Application when the
-// profiles it reports as gone from the catalog directory change, and
-// nothing else of it: its status is rewritten on every comparison.
-func catalogueProfilesGoneChanged() predicate.Funcs {
-	catalogue := func(obj client.Object) bool {
-		return strings.HasPrefix(obj.GetName(), profilebundle.CatalogueApplicationPrefix)
-	}
-	return predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return catalogue(e.Object) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return catalogue(e.Object) },
-		GenericFunc: func(event.GenericEvent) bool { return false },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			if !catalogue(e.ObjectNew) {
-				return false
-			}
-			oldApp, okOld := e.ObjectOld.(*unstructured.Unstructured)
-			newApp, okNew := e.ObjectNew.(*unstructured.Unstructured)
-			if !okOld || !okNew {
-				return true
-			}
-			return !maps.Equal(profilebundle.PrunableProfiles(oldApp), profilebundle.PrunableProfiles(newApp))
-		},
-	}
 }

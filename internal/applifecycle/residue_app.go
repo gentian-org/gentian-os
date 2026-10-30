@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
@@ -147,6 +148,14 @@ func (s *Service) tenantHas(ctx context.Context, tenantName, profile string) ([]
 		}
 		return nil, fmt.Errorf("get tenant %s: %w", tenantName, err)
 	}
+	// A component the platform places is not the tenant's app: its
+	// leftovers are the platform's to list and remove. The copy read here is
+	// this call's own, so it is narrowed in place.
+	installed, err := placement.Installed(ctx, s.live(), tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	tenant.Spec.Apps = installed
 	profiles := installedAs(&tenant, profile)
 	if len(profiles) == 0 {
 		return nil, fmt.Errorf("%w: %s in %s", ErrNotInstalled, profile, tenantName)

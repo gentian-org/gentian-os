@@ -72,6 +72,51 @@ const (
 	ComponentLaunchNone ComponentLaunch = "none"
 )
 
+// PlacementTenants are the tenants a placeable component goes to.
+//
+// +kubebuilder:validation:Enum=every;platform;users
+type PlacementTenants string
+
+const (
+	// PlacementEvery is every tenant, the platform tenant included.
+	PlacementEvery PlacementTenants = "every"
+	// PlacementPlatform is the platform tenant alone: something the cluster
+	// has one of and that runs with a tenant's authority rather than the
+	// kernel's.
+	PlacementPlatform PlacementTenants = "platform"
+	// PlacementUsers is every tenant except the platform tenant, where
+	// nobody installs apps.
+	PlacementUsers PlacementTenants = "users"
+)
+
+// PlacementCondition is what a placement lasts for.
+//
+// +kubebuilder:validation:Enum=storeOffered;llm
+type PlacementCondition string
+
+const (
+	// PlacementWhileStoreOffered is for as long as the cluster offers an App
+	// Store: usage statistics are on and the Cluster claim names a store
+	// (spec.catalogue.storeUrl).
+	PlacementWhileStoreOffered PlacementCondition = "storeOffered"
+	// PlacementWhileLLM is for as long as the cluster serves models
+	// (spec.llm.enabled). The catalog's index repeats it as placedWith: llm,
+	// which is how the platform finds the entry before it is on the cluster.
+	PlacementWhileLLM PlacementCondition = "llm"
+)
+
+// ComponentPlacement is where the platform places a component.
+type ComponentPlacement struct {
+	// Tenants are the tenants that get the component.
+	Tenants PlacementTenants `json:"tenants"`
+
+	// While names the condition the placement lasts for; absent, it lasts
+	// for the life of each tenant. A conditional placement is also taken
+	// away, so a profile placed under one must own no data.
+	// +optional
+	While PlacementCondition `json:"while,omitempty"`
+}
+
 // ComponentProfileSpec is one catalog entry: what a component is, what it
 // needs from the platform, and what it may expose. The presentation of a
 // catalog listing stays the store's, outside the cluster. The one piece of
@@ -154,6 +199,9 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.__package__.addon)",message="an adapter is deployed or reached: a chart, a composition, or an api -- not an addon inside another component"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, adapts none"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.classes) || ('app' in self.classes)",message="placement is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !has(self.placement) || (has(self.placement.while) && self.placement.while == 'llm') || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
 type ComponentProfileSpec struct {
 	// Classes lists the modes this component may be deployed under. It is a
 	// certification claim, not a choice: whether a component *can* serve
@@ -253,34 +301,36 @@ type ComponentProfileSpec struct {
 	// +optional
 	Customization *CustomizationSurface `json:"customization,omitempty"`
 
-	// DefaultForTenants means every tenant gets a Component of this profile,
-	// created by the operator when the tenant is provisioned and named after
-	// the profile. It is how the desktop reaches every tenant without anyone
-	// declaring it, and it is here as a field so that a second component the
-	// platform ships to everyone, such as the administration console, is
-	// declared the same way rather than by another name the operator knows.
-	// Only a profile of class "app" may say it: a service and a shared-app
+	// Placement makes this a component the platform places, and says where.
+	// A profile with a placement is placeable: the platform writes it into
+	// the tenants it names, as an entry of their spec.apps, and takes it out
+	// again when they no longer qualify; no tenant installs, moves or removes
+	// it. A profile without one is installable: a tenant's administrator
+	// installs it, and the platform never places it.
+	// Only a profile of class "app" is placed: a service and a shared-app
 	// have one instance, so there is nothing to give each tenant.
+	// +optional
+	Placement *ComponentPlacement `json:"placement,omitempty"`
+
+	// DefaultForTenants is placement {tenants: every}.
+	//
+	// Superseded by placement: read for one release so that catalogs
+	// published before it keep working.
 	// +optional
 	DefaultForTenants bool `json:"defaultForTenants,omitempty"`
 
-	// DefaultForPlatform means the platform tenant gets a Component of this
-	// profile, and no other tenant does: something the cluster has one of and
-	// that runs with a tenant's authority rather than the kernel's. Created
-	// and named the way DefaultForTenants creates its own.
+	// DefaultForPlatform is placement {tenants: platform}.
+	//
+	// Superseded by placement: read for one release so that catalogs
+	// published before it keep working.
 	// +optional
 	DefaultForPlatform bool `json:"defaultForPlatform,omitempty"`
 
-	// DefaultWhereStoreOffered means every tenant except the platform tenant
-	// gets a Component of this profile for as long as the cluster offers an
-	// App Store: usage statistics are on and the Cluster claim names a store
-	// (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
-	// creates its own.
+	// DefaultWhereStoreOffered is placement {tenants: users, while:
+	// storeOffered}.
 	//
-	// Unlike the two above it is also taken away: when the cluster stops
-	// offering a store the Component is removed again, so a profile that says
-	// this must own no data. The platform tenant gets none because nobody
-	// installs apps there.
+	// Superseded by placement: read for one release so that catalogs
+	// published before it keep working.
 	// +optional
 	DefaultWhereStoreOffered bool `json:"defaultWhereStoreOffered,omitempty"`
 }
@@ -1082,6 +1132,41 @@ func (p *ComponentProfile) SuppliedSecrets() []SuppliedSecret {
 func (p *ComponentProfile) IsAPI() bool {
 	return p != nil && p.Spec.Package.API != nil
 }
+
+// RequiresCapabilityAnnotation is how a catalog published before placement
+// said a profile comes with a capability of the cluster.
+//
+// Superseded by placement: read for one release, with the flags
+// PlacementOf reads.
+const RequiresCapabilityAnnotation = "gentianos.io/requires-capability"
+
+// PlacementOf is where the platform places this component, or nil for one a
+// tenant installs. spec.placement when the profile has one; otherwise what a
+// catalog published before it said with the deprecated flags, or with the
+// requires-capability annotation.
+func (p *ComponentProfile) PlacementOf() *ComponentPlacement {
+	if p == nil {
+		return nil
+	}
+	s := &p.Spec
+	switch {
+	case s.Placement != nil:
+		return s.Placement
+	case s.DefaultForTenants:
+		return &ComponentPlacement{Tenants: PlacementEvery}
+	case s.DefaultForPlatform:
+		return &ComponentPlacement{Tenants: PlacementPlatform}
+	case s.DefaultWhereStoreOffered:
+		return &ComponentPlacement{Tenants: PlacementUsers, While: PlacementWhileStoreOffered}
+	case p.Annotations[RequiresCapabilityAnnotation] == string(PlacementWhileLLM):
+		return &ComponentPlacement{Tenants: PlacementUsers, While: PlacementWhileLLM}
+	}
+	return nil
+}
+
+// Placeable reports whether the platform places this component, rather than
+// a tenant installing it.
+func (p *ComponentProfile) Placeable() bool { return p.PlacementOf() != nil }
 
 // DeploysWorkload reports whether installing this creates something that runs.
 // An API entry contributes a tile and an integration; an addon flips a switch

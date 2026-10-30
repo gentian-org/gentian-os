@@ -22,26 +22,33 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// placed makes the harness's Component one the platform placed itself: it
-// names no digest and carries the label ensureDefaultComponents gives it.
+// placedWikiBundle is wikiBundle as a profile the platform places on every
+// tenant: its Component comes from an entry of spec.apps that names no
+// digest.
+var placedWikiBundle = strings.Replace(wikiBundle, "spec:\n", "spec:\n  placement:\n    tenants: every\n", 1)
+
+// placed makes the harness's Component one made from a placed entry of
+// spec.apps: it names no digest and is labeled install, like any install.
+// What asks for the recorded build is its profile being placeable, not the
+// label.
 func (h *digestHarness) placed() *digestHarness {
 	h.t.Helper()
 	comp := &gentianov1alpha1.Component{}
 	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), comp); err != nil {
 		h.t.Fatal(err)
 	}
-	comp.Labels = map[string]string{componentOriginLabel: componentOriginDefault}
+	comp.Labels = map[string]string{componentOriginLabel: componentOriginInstall}
 	if err := h.c.Update(context.Background(), comp); err != nil {
 		h.t.Fatal(err)
 	}
 	return h
 }
 
-// consoleProfile is a default profile as the installer places it: the
+// consoleProfile is a placeable profile as the installer places it: the
 // document, its bytes beside it, and the catalog they were fetched from.
 func consoleProfile(t *testing.T) *gentianov1alpha1.ComponentProfile {
 	t.Helper()
-	p := materialised(t, wikiBundle)
+	p := materialised(t, placedWikiBundle)
 	p.Annotations[profilebundle.OriginAnnotation] = profilebundle.ClusterOrigin("main")
 	return p
 }
@@ -76,7 +83,7 @@ func TestADefaultComponentWhoseProfileIsNotItsRecordedBuildRendersNothing(t *tes
 	if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonMismatch {
 		t.Fatalf("condition = %+v, want %s", ready, profilebundle.ReasonMismatch)
 	}
-	for _, want := range []string{profilebundle.Short(profilebundle.Digest([]byte(wikiBundle))), "as recorded", "spec.package"} {
+	for _, want := range []string{profilebundle.Short(profilebundle.Digest([]byte(placedWikiBundle))), "as recorded", "spec.package"} {
 		if !strings.Contains(ready.Message, want) {
 			t.Fatalf("the condition does not say %q: %s", want, ready.Message)
 		}
@@ -120,7 +127,7 @@ func TestADefaultProfileChangedAfterRolloutIsCaughtAndNothingIsTakenDown(t *test
 // A companion the recorded bundle brings holds a default as it holds a
 // pinned install, and is looked for again.
 func TestADefaultComponentWaitsForItsBundlesCompanions(t *testing.T) {
-	bundle := wikiBundle + "---\n" + wikiPage
+	bundle := placedWikiBundle + "---\n" + wikiPage
 	profile := materialised(t, bundle)
 	profile.Annotations[profilebundle.OriginAnnotation] = profilebundle.ClusterOrigin("main")
 	h := startDigestHarness(t, profile, "").placed()
@@ -157,11 +164,11 @@ func TestADefaultComponentWhoseProfileLostItsBundleIsHeld(t *testing.T) {
 	}
 }
 
-// Two that are not asked, as before: a default whose profile the platform's
-// chart ships, which has no record of any kind, and an install that named no
-// digest, whatever its profile carries.
+// Two that are not asked, as before: a placed component whose profile the
+// platform's chart ships, which has no record of any kind, and an install of
+// an installable profile that named no digest, whatever its profile carries.
 func TestWhatHasNoRecordAndWhatIsNoDefaultAreNotAsked(t *testing.T) {
-	shipped := materialised(t, wikiBundle)
+	shipped := materialised(t, placedWikiBundle)
 	shipped.Annotations = nil
 	shipped.Spec.Package.Chart.Version = "3.0.0"
 	h := startDigestHarness(t, shipped, "").placed()
@@ -170,7 +177,8 @@ func TestWhatHasNoRecordAndWhatIsNoDefaultAreNotAsked(t *testing.T) {
 		t.Fatalf("a default with no record was not rolled out: release %q", h.releasedVersion())
 	}
 
-	changed := consoleProfile(t)
+	changed := materialised(t, wikiBundle)
+	changed.Annotations[profilebundle.OriginAnnotation] = profilebundle.ClusterOrigin("main")
 	changed.Spec.Package.Chart.Version = "3.0.0"
 	h = startDigestHarness(t, changed, "")
 	h.reconcile()

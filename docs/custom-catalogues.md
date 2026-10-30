@@ -595,6 +595,33 @@ the whole cluster: the handler is a companion (§2), and a tenant's own catalog 
 The digest of the bundle covers the handler. A changed handler is a new digest, and reaches a
 cluster only when an install is moved to it.
 
+### 4.1b A component the platform places
+
+A profile is *installable* — a tenant's administrator installs it — unless it says where the
+platform places it:
+
+```yaml
+spec:
+  classes: [app]
+  placement:
+    tenants: users        # every (the platform tenant too), platform (it alone), users (all but it)
+    while: storeOffered   # optional: storeOffered, or llm (the cluster serves models)
+```
+
+The director writes a placed profile into each tenant it names, as an entry of the tenant's apps
+marked `placed: true`, and takes it out when the condition stops holding; nobody installs,
+uninstalls, moves or changes it by hand, and an export leaves it out. A profile placed under a
+condition must own no data. Only a cluster's own catalogs place.
+
+A profile placed `while: llm` is found through the index (`placedWith: llm`) before it is on the
+cluster, and is installed into every user tenant for everyone at the build the index lists, as an
+ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who
+asks to uninstall it.
+
+`defaultForTenants`, `defaultForPlatform`, `defaultWhereStoreOffered` and the
+`gentianos.io/requires-capability` annotation are what catalogs said before `placement`; they are
+read as the placement they meant for one more release, and are then removed.
+
 ### 4.2 Generate the index
 
 Take the build script from gentian-apps and run it. It is on that repository's `develop` branch,

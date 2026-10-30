@@ -24,6 +24,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // LiteLLM teams, one per tenant.
@@ -142,8 +143,14 @@ func (r *TenantReconciler) deleteModelAccess(ctx context.Context, tenant *gentia
 		}
 	}
 	// And the apps the tenant has now, whose key may have been registered
-	// since the record was last written.
-	for _, app := range tenant.Spec.Apps {
+	// since the record was last written. Not the components the platform
+	// places: their key is on record before it is registered
+	// (ensureModelAccess), so the record above has it.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return fmt.Errorf("remove the model keys of tenant %s: %w", tenant.Name, err)
+	}
+	for _, app := range installed {
 		aliases[modelgateway.KeyAlias(tenant.Name, app.Profile)] = struct{}{}
 	}
 	for alias := range aliases {

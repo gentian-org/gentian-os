@@ -26,6 +26,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/oidc"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // oidcAppConfig holds resolved OIDC settings for one tenant app profile.
@@ -79,7 +80,13 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 		seen[key] = struct{}{}
 		return nil
 	}
-	for _, app := range tenant.Spec.Apps {
+	// The installed apps' clients. A component the platform places has its
+	// client composed with its own Component, and no Job here.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, app := range installed {
 		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
 		if err != nil {
 			if errors.IsNotFound(err) {
@@ -368,7 +375,12 @@ type samlAppConfig struct {
 
 func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]samlAppConfig, error) {
 	var configs []samlAppConfig
-	for _, app := range tenant.Spec.Apps {
+	// As for OIDC: the installed apps, not the components the platform places.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range installed {
 		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
 		if err != nil {
 			if errors.IsNotFound(err) {
