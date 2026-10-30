@@ -1997,7 +1997,7 @@ issue_admin_activation() {
     local realm="$1" username="$2" require_mfa="$3" email="${4:-}" again="${5:-}" ns
     ns="$(_pl_identity_ns)"
     local kc_user kc_pass base token uid creds has_pw
-    kc_user=admin
+    kc_user="admin"
     kc_pass="$(kubectl get secret keycloak-idp-credentials -n "${ns}" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     local svc="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http"
     if [[ -z "${kc_user}" || -z "${kc_pass}" ]] || ! base="$(gentian_service_addr "${svc}" "${ns}" 8080 http)"; then

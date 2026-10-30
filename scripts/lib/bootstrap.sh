@@ -2160,7 +2160,7 @@ _claim_carry_over_role_holders() {
     local ns user="" pass="" base="" line rc=0 out
     ns="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
     if command -v kubectl >/dev/null 2>&1; then
-        user=admin
+        user="admin"
         pass="$(kubectl get secret keycloak-idp-credentials -n "${ns}" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
     if [[ -n "${user}" && -n "${pass}" ]]; then
