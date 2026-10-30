@@ -751,7 +751,8 @@ _seed_once() {
 # nothing trusts yet. The recovery kit, which opens the vault, reaches it with
 # everything else the vault holds.
 #
-# The role gentian-ca says what may be signed: the object store's names, and
+# The role gentian-ca says what may be signed: the object store's, Argo CD's
+# and the shared MariaDB's names, and
 # on a self-signed cluster, where gentian-ca is the anchor of the public
 # names too, the kernel domain and the names under it. Rewritten on every
 # run, so it follows the issuer mode. Certificates live at most 90 days,
@@ -777,6 +778,12 @@ _internal_ca_role() {
     local s3; s3="$(ns_system s3)"
     local svc="seaweedfs-all-in-one"
     local names="seaweedfs-server,seaweedfs-shell,${svc},${svc}.${s3},${svc}.${s3}.svc,${svc}.${s3}.svc.cluster.local"
+    # The Gateway checks Argo CD's server against this name.
+    local gitops; gitops="$(ns_kernel gitops)"
+    names="${names},argocd-server.${gitops}.svc,argocd-server.${gitops}.svc.cluster.local"
+    # The shared MariaDB's server certificate.
+    local mariadb; mariadb="$(ns_system mariadb)"
+    names="${names},mariadb.${mariadb}.svc,mariadb.${mariadb}.svc.cluster.local"
     local subdomains=false wildcard=false
     if [[ "$(gentian_issuer_mode)" == "self-signed" && -n "${KERNEL_DOMAIN:-}" ]]; then
         names="${names},${KERNEL_DOMAIN}"

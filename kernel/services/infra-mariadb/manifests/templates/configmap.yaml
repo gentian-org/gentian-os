@@ -42,6 +42,26 @@ data:
       fsGroup: 1001
       fsGroupChangePolicy: OnRootMismatch
 
+    # TLS is offered and not required: an app's client that does not ask for
+    # it still connects.
+    mariadb:
+      configuration: |
+        [mysqld]
+        ssl_cert=/etc/mysql/tls/tls.crt
+        ssl_key=/etc/mysql/tls/tls.key
+        ssl_ca=/etc/mysql/tls/ca.crt
+
+    extraVolumes:
+      - name: tls
+        secret:
+          secretName: mariadb-tls
+          defaultMode: 0440
+
+    extraVolumeMounts:
+      - name: tls
+        mountPath: /etc/mysql/tls
+        readOnly: true
+
     job:
       enabled: false
 

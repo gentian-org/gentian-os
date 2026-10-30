@@ -815,6 +815,10 @@ func PlatformStorageEnv() []corev1.EnvVar {
 	return storageEnv(StorageAdminSecret)
 }
 
+// PostgresTLS makes a psql, pg_dump or pg_restore client refuse an unencrypted
+// connection.
+var PostgresTLS = corev1.EnvVar{Name: "PGSSLMODE", Value: "require"}
+
 // PostgresAdminEnv, MariaDBAdminEnv and CacheAdminEnv are how a Job reaches
 // a shared store as its administrator: the store's admin Secret, in the
 // store's own namespace. Provisioning, capture, restore and destruction all
@@ -825,6 +829,7 @@ func PostgresAdminEnv() []corev1.EnvVar {
 		meta.SecretEnv("PGPORT", PostgresAdminSecret, "port"),
 		meta.SecretEnv("PGUSER", PostgresAdminSecret, "username"),
 		meta.SecretEnv("PGPASSWORD", PostgresAdminSecret, "password"),
+		PostgresTLS,
 	}
 }
 
