@@ -504,6 +504,16 @@ func TestAddonsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAnAddonNamedBesideItsBuildIsRefusedWithTheReason(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/apps/nextcloud/addons", tom,
+		`{"addons":[{"name":"deck","coordinate":"gentian/deck","digest":"sha256:00"}]}`)
+	if code != http.StatusBadRequest || fmt.Sprint(body["error"]) != "an addon is named or given as a build, not both" {
+		t.Fatalf("name and build: %d %v", code, body)
+	}
+}
+
 func TestNamesAndUnknownTenants(t *testing.T) {
 	h := start(t)
 	alice := h.token(t, "gentian", "alice")
