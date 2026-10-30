@@ -1121,6 +1121,49 @@ spec:
                 exit 1
               fi
 
+              # Passwords, and the second factor of whoever is in an
+              # administrator group: the kernel realm's copy of what the Tenant
+              # composition gives a tenant realm (its sign-in flow), which it
+              # does not compose here.
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" \\
+                -d '{"passwordPolicy":"length(12) and passwordHistory(5)"}' >/dev/null
+              FLOWS="\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/flows"
+              kc_post() { curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" "\$1" -d "\$2" >/dev/null; }
+              # kc_set <flow> <step> <requirement> [not]: the newest step of that
+              # name takes the requirement, and with [not] the attribute check.
+              kc_set() {
+                curl -sf -H "\${AUTH}" "\${FLOWS}/\$1/executions" |
+                  jq -c --arg want "\$2" --arg r "\$3" '[.[] | select(.providerId == \$want or .displayName == \$want)] | last | .requirement = \$r' > /tmp/exec.json
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${FLOWS}/\$1/executions" -d @/tmp/exec.json >/dev/null
+                [ -z "\${4:-}" ] && return 0
+                kc_post "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/executions/\$(jq -r .id /tmp/exec.json)/config" \\
+                  "\$(jq -n --arg a "\$1-\$4" --arg n "\$4" '{alias:\$a,config:{attribute_name:"gentianRequiresMFA",attribute_expected_value:"true",include_group_attributes:"true",not:\$n}}')"
+              }
+              kc_step() { kc_post "\${FLOWS}/\$1/executions/execution" "{\"provider\":\"\$2\"}"; kc_set "\$@"; }
+              kc_sub() {
+                kc_post "\${FLOWS}/\$1/executions/flow" "{\"alias\":\"\$2\",\"type\":\"basic-flow\",\"provider\":\"registration-page-form\"}"
+                kc_set "\$@"
+              }
+              if ! curl -sf -H "\${AUTH}" "\${FLOWS}" | jq -e '.[] | select(.alias=="gentian-browser")' >/dev/null; then
+                kc_post "\${FLOWS}" '{"alias":"gentian-browser","description":"The stock browser flow, with a second factor required of administrators","providerId":"basic-flow","topLevel":true,"builtIn":false}'
+                kc_step gentian-browser auth-cookie ALTERNATIVE
+                kc_step gentian-browser identity-provider-redirector ALTERNATIVE
+                kc_sub gentian-browser gentian-browser-forms ALTERNATIVE
+                kc_step gentian-browser-forms auth-username-password-form REQUIRED
+                kc_sub gentian-browser-forms gentian-browser-admin CONDITIONAL
+                kc_step gentian-browser-admin conditional-user-attribute REQUIRED false
+                kc_step gentian-browser-admin auth-otp-form REQUIRED
+                kc_sub gentian-browser-forms gentian-browser-other CONDITIONAL
+                kc_step gentian-browser-other conditional-user-configured REQUIRED
+                kc_step gentian-browser-other conditional-user-attribute REQUIRED true
+                kc_step gentian-browser-other auth-otp-form REQUIRED
+              fi
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d '{"browserFlow":"gentian-browser"}' >/dev/null
+              echo "Realm \${REALM} requires a second factor of its administrators"
+
               PROFILE=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile")
               if ! echo "\${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
                 UPDATED=\$(echo "\${PROFILE}" | jq '.attributes += [{"name":"gentian.inviteEmail","displayName":"Recovery email","validations":{"email":{},"length":{"max":255}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
@@ -1253,6 +1296,10 @@ spec:
               curl -sf -X PUT -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
               echo "User \${PORTAL_USERNAME} joined \${ADMIN_GROUP}"
+              curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}" |
+                jq -c '.attributes.gentianRequiresMFA = ["true"]' > /tmp/group.json
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}" -d @/tmp/group.json >/dev/null
 
               # The account this one replaces. Removed rather than left
               # disabled: two administrators, one of whom cannot be reached by
