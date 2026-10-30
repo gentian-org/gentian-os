@@ -2371,6 +2371,10 @@ spec:
               providerConfigRef:
                 name: kubernetes
             {{- /* Stable alias for companion API service (e.g. app-store-api). */}}
+            {{- /* The chart's own only when it is exactly <fullnameOverride>-api: */}}
+            {{- /* an app named past its override (fellwort-ee, override fellwort) */}}
+            {{- /* starts with it too, but its chart makes fellwort-api, and an    */}}
+            {{- /* observed alias nobody creates keeps the app unready for good.   */}}
             {{- $apiSvcName := printf "%s-api" $app }}
             {{- $apiSvcPort := 8000 }}
             ---
@@ -2381,7 +2385,7 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-api-stable-svc
               name: {{ $xrName }}-api-stable-svc
             spec:
-              {{- if and $fullnameOverride (hasPrefix $chartsOwn $apiSvcName) }}
+              {{- if and $fullnameOverride (eq $apiSvcName (printf "%s-api" $fullnameOverride)) }}
               managementPolicies: ["Observe"]
               {{- end }}
               forProvider:
