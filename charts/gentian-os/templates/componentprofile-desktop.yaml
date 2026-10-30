@@ -88,6 +88,7 @@ spec:
         create: false
       api:
         env:
+          ENVIRONMENT: production
           TENANCY_MODE: multi
       {{- with .Values.desktop.extraValues }}
       {{- toYaml . | nindent 6 }}
