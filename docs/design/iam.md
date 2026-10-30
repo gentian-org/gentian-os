@@ -425,7 +425,8 @@ grant, and nothing a store states gives access.
   per activated addon. A tenant's administrator puts people in it, in the
   administration console. An app installed for everyone
   (`Tenant.spec.apps[].defaultGrant`) has its current members added once, and
-  is pre-selected when a person is invited later.
+  is pre-selected when a person is invited later. That leaves out the tenant's
+  administrators, who are given such an app by hand; a placed app includes them.
 - **The model.** The operator writes, for each installed app, the tuple that
   makes the group's members `entitled` on `app:<tenant>/<profile>`
   (`internal/director/authz/apps.go`). `can_use` is *entitled, and not an

@@ -159,3 +159,56 @@ func TestGrantAppByDefaultWaitsForTheGroupThenAddsEverybody(t *testing.T) {
 		t.Fatalf("marking the group dropped an attribute somebody else set: %v", attrs)
 	}
 }
+
+// An installed app is for the tenant's people, so its grant leaves out the
+// tenant's administrators. A placed app keeps them: administrators work with
+// several of those.
+func TestDefaultGrantLeavesOutAdministratorsOfAnInstalledApp(t *testing.T) {
+	placed := &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
+	for _, tc := range []struct {
+		name      string
+		placement *gentianov1alpha1.ComponentPlacement
+		want      string
+	}{
+		{"installed", nil, "ada"},
+		{"placed", placed, "ada,root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admins := keycloak.TenantAdminsGroup("acme")
+			group := keycloak.TenantAppGroup("acme", "wiki")
+			kc := &realm{
+				groups:  map[string]map[string][]string{admins: {}, group: {}},
+				members: map[string][]string{admins: {"root"}},
+				users:   []string{"ada", "root"},
+			}
+			srv := httptest.NewServer(kc)
+			defer srv.Close()
+
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
+					Data:       map[string][]byte{"url": []byte(srv.URL), "username": []byte("admin"), "password": []byte("pw")},
+				},
+				&gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"},
+					Spec: gentianov1alpha1.ComponentProfileSpec{Placement: tc.placement}},
+				&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+					Spec: gentianov1alpha1.TenantSpec{Isolation: &gentianov1alpha1.TenantIsolation{KeycloakRealm: "demo"}}},
+			).Build()
+
+			granted, err := (&Service{client: c}).GrantAppByDefault(context.Background(), "acme", "wiki")
+			if err != nil || !granted {
+				t.Fatalf("granted=%v err=%v", granted, err)
+			}
+			if got := strings.Join(kc.members[group], ","); got != tc.want {
+				t.Fatalf("members = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
