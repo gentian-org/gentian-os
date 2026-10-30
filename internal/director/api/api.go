@@ -1638,6 +1638,10 @@ type addonEntry struct {
 	DefaultGrant *bool
 }
 
+// errAddonNameAndBuild is said as it is: what the caller got wrong is more
+// than the shape of the body.
+var errAddonNameAndBuild = errors.New("an addon is named or given as a build, not both")
+
 func (a *addonEntry) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 0 && raw[0] == '"' {
 		return json.Unmarshal(raw, &a.Name)
@@ -1654,7 +1658,7 @@ func (a *addonEntry) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	if pinned.Name != "" && (pinned.Coordinate != "" || pinned.Digest != "") {
-		return errors.New("an addon is named or given as a build, not both")
+		return errAddonNameAndBuild
 	}
 	a.Name, a.Coordinate, a.Digest, a.DefaultGrant = pinned.Name, pinned.Coordinate, pinned.Digest, pinned.DefaultGrant
 	return nil
@@ -1680,7 +1684,12 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	var body addonsRequest
-	if err := decode(r, &body); err != nil || body.Addons == nil {
+	err := decode(r, &body)
+	if errors.Is(err, errAddonNameAndBuild) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil || body.Addons == nil {
 		s.fail(w, r, http.StatusBadRequest,
 			`body must be {"addons": [...]}, each a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
 		return
