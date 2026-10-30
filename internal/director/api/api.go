@@ -788,7 +788,7 @@ func (s *Server) routes() {
 		// revoke (sovereignty-concept.md §4.2). The one read of live state
 		// left here: the usher's identity at the operator lists backups and
 		// does not fetch one.
-		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_view", tenantObject, s.tenantBundleDownload)
+		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_administer", tenantObject, s.tenantBundleDownload)
 
 		// Writing a backup policy is writing declared state: what should be
 		// true of every run from now on. It is a commit, under
